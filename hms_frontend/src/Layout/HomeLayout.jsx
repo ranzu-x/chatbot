@@ -2,7 +2,7 @@ import React from 'react';
 import NavBar from '../Components/Common/NavBar';
 import { Outlet } from 'react-router';
 
-const MainOutlet = () => {
+const HomeLayout = () => {
     return (
         <div>
             <NavBar></NavBar>
@@ -11,4 +11,4 @@ const MainOutlet = () => {
     );
 };
 
-export default MainOutlet;
+export default HomeLayout;
