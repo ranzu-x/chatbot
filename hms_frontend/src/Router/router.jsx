@@ -7,19 +7,19 @@ import Register from "../Pages/Register/Register";
 const router = createBrowserRouter([
   {
     path: "/",
-    element: <HomeLayout />,
+    Component: HomeLayout,
     children: [
       {
         path: "/",
-        element: <Home />,
+        Component: Home,
       },
       {
         path: "/login",
-        element: <LogIn />,
+        Component: LogIn,
       },
       {
         path: "/register",
-        element: <Register />,
+        Component: Register,
       },
     ]
   },
