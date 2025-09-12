@@ -2,25 +2,32 @@ import express from "express";
 import dotenv from "dotenv";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import cors from "cors";
 import pool from "./db.js"; // your MySQL pool connection
 
 dotenv.config();
 const app = express();
+
+// ✅ Middleware
 app.use(express.json());
+app.use(cors());
 
 // ✅ Super Admin Login
 app.post("/api/v1/superadmin/login", async (req, res) => {
   const { email, password } = req.body;
+  console.log("Login attempt:", email);
 
   try {
-    // 1. Find user by email with role = super_admin
+    // 1. Find user by email in super_admin table
     const [rows] = await pool.execute(
-      "SELECT * FROM users WHERE email = ? AND role = 'super_admin' LIMIT 1",
+      "SELECT * FROM super_admin WHERE email = ? LIMIT 1",
       [email]
     );
 
+    console.log(rows);
+
     if (rows.length === 0) {
-      return res.status(401).json({ message: "Invalid email or role" });
+      return res.status(401).json({ message: "Invalid email" });
     }
 
     const user = rows[0];
@@ -31,9 +38,9 @@ app.post("/api/v1/superadmin/login", async (req, res) => {
       return res.status(401).json({ message: "Invalid password" });
     }
 
-    // 3. Generate JWT
+    // 3. Generate JWT (no role column in your schema)
     const token = jwt.sign(
-      { id: user.id, role: user.role },
+      { id: user.id, type: "super_admin" },
       process.env.JWT_SECRET,
       { expiresIn: "1h" }
     );
@@ -45,7 +52,7 @@ app.post("/api/v1/superadmin/login", async (req, res) => {
         id: user.id,
         name: `${user.first_name} ${user.last_name}`,
         email: user.email,
-        role: user.role,
+        type: "super_admin", // since role column doesn’t exist
       },
     });
   } catch (err) {
