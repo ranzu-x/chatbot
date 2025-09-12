@@ -6,7 +6,7 @@ const NavBar = () => {
 
     return (
         <nav className="bg-gray-800 p-4">
-            <div className="container mx-auto flex justify-between items-center">
+            <div className="max-w-7xl container mx-auto flex justify-between items-center">
                 {/* Left Side - Logo */}
                 <div className="text-white text-2xl font-bold">
                     <Link to="/">HMS</Link> {/* Replaced <a> with <Link> */}
