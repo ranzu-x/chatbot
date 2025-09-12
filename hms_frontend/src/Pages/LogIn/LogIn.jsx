@@ -3,8 +3,23 @@ import React from 'react';
 const LogIn = () => {
     const handleLogin = (e) => {
         e.preventDefault();
+        const form = e.target;
+        const email = form.email.value;
+        const password = form.email.value;
+        const userData = { email, password }
         console.log('Form Submited');
-
+        fetch("http://localhost:5000/api/v1/superadmin/login",
+            {
+                method: 'POST',
+                headers: {
+                    'content-type': 'application/json'
+                },
+                body: JSON.stringify(userData)
+            })
+            .then(res => res.json())
+            .then(result => {
+                console.log(result);
+            })
     }
     return (
         <div className="min-h-screen bg-gray-50 flex">
@@ -25,7 +40,7 @@ const LogIn = () => {
                     <h2 className="text-3xl font-bold mb-6 text-center text-gray-800">Welcome Back!</h2>
                     <form onSubmit={handleLogin}>
                         <div className="mb-4">
-                            <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="email">
+                            <label className="block text-gray-700 text-sm font-bold mb-2" name="email" htmlFor="email">
                                 Email Address
                             </label>
                             <input
@@ -36,7 +51,7 @@ const LogIn = () => {
                             />
                         </div>
                         <div className="mb-6">
-                            <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="password">
+                            <label className="block text-gray-700 text-sm font-bold mb-2" name="email" htmlFor="password">
                                 Password
                             </label>
                             <input
