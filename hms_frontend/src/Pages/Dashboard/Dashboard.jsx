@@ -9,6 +9,7 @@ import {
   BellIcon,
   UserCircleIcon
 } from '@heroicons/react/24/outline';
+import { Link } from 'react-router';
 
 // --- Reusable Sub-Components ---
 
@@ -37,11 +38,14 @@ const StatCard = ({ title, value, icon, color }) => (
 );
 
 // Quick Action Button Component
-const QuickActionButton = ({ text, icon }) => (
-  <button className="flex flex-col items-center justify-center p-4 bg-white rounded-lg shadow-md hover:bg-gray-50 transition">
+const QuickActionButton = ({ to, text, icon }) => (
+  <Link
+    to={to}
+    className="flex flex-col items-center justify-center p-4 bg-white rounded-lg shadow-md hover:bg-gray-50 transition" >
     {icon}
     <span className="mt-2 text-sm font-medium text-gray-700">{text}</span>
-  </button>
+
+  </Link>
 );
 
 // Table Row Component for Upcoming Appointments
@@ -118,10 +122,11 @@ const Dashboard = () => {
           </div>
 
           {/* Quick Actions */}
-          <div className="mb-8">
+          {/* <div className="mb-8">
             <h2 className="text-xl font-semibold text-gray-700 mb-4">Quick Actions</h2>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
               <QuickActionButton
+                to="/addpatient"
                 text="Add New Patient"
                 icon={<UserPlusIcon className="h-8 w-8 text-indigo-500" />}
               />
@@ -138,7 +143,31 @@ const Dashboard = () => {
                 icon={<ChartBarIcon className="h-8 w-8 text-red-500" />}
               />
             </div>
+          </div> */}
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+            <QuickActionButton
+              to='/addpatient'
+              text="Add New Patient"
+              icon={<UserPlusIcon className="h-8 w-8 text-indigo-500" />}
+            />
+            <QuickActionButton
+              to="/appointments"
+              text="Schedule Appointment"
+              icon={<CalendarDaysIcon className="h-8 w-8 text-green-500" />}
+            />
+            <QuickActionButton
+              to="/records"
+              text="Create New Record"
+              icon={<DocumentPlusIcon className="h-8 w-8 text-blue-500" />}
+            />
+            <QuickActionButton
+              to="/reports"
+              text="View Reports"
+              icon={<ChartBarIcon className="h-8 w-8 text-red-500" />}
+            />
           </div>
+
 
           {/* Upcoming Appointments Table */}
           <div>
