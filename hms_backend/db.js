@@ -1,13 +1,18 @@
 import mysql from "mysql2/promise";
+import dotenv from "dotenv";
+
+// Load environment variables
+dotenv.config();
 
 const pool = mysql.createPool({
-  host: "localhost",   // XAMPP MySQL host
-  user: "root",        // default XAMPP user
-  password: "",        // default is empty unless you set one in phpMyAdmin
-  database: "hms_databse", // your database name
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  port: process.env.DB_PORT,
+  waitForConnections: process.env.DB_WAIT_FOR_CONNECTIONS === "true",
+  connectionLimit: parseInt(process.env.DB_CONNECTION_LIMIT),
+  queueLimit: parseInt(process.env.DB_QUEUE_LIMIT),
 });
 
 export default pool;
