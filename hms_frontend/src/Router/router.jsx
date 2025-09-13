@@ -3,23 +3,33 @@ import HomeLayout from "../Layout/HomeLayout";
 import Home from "../Pages/Home/Home";
 import LogIn from "../Pages/LogIn/LogIn";
 import Register from "../Pages/Register/Register";
+import AddPatient from "../Pages/AddPatient/AddPatient";
+import Dashboard from "../Pages/Dashboard/Dashboard";
 
 const router = createBrowserRouter([
   {
     path: "/",
-    element: <HomeLayout />,
+    Component: HomeLayout,
     children: [
       {
         path: "/",
-        element: <Home />,
+        Component: Home,
       },
       {
         path: "/login",
-        element: <LogIn />,
+        Component: LogIn,
       },
       {
         path: "/register",
-        element: <Register />,
+        Component: Register,
+      },
+      {
+        path: "/addpatient",
+        Component: AddPatient,
+      },
+      {
+        path: "/dashboard",
+        Component: Dashboard,
       },
     ]
   },
