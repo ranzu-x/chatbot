@@ -1,6 +1,8 @@
 import React from 'react';
+import { useNavigate } from 'react-router';
 
 const LogIn = () => {
+    const navigate = useNavigate();
     const handleLogin = (e) => {
         e.preventDefault();
         const form = e.target;
@@ -19,7 +21,10 @@ const LogIn = () => {
             .then(res => res.json())
             .then(result => {
                 console.log(result);
-            })
+                navigate(location.state?.from || '/dashboard');
+            }
+            
+        )
     }
     return (
         <div className="min-h-screen bg-gray-50 flex">
