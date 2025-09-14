@@ -7,6 +7,7 @@ import pool from "./db.js"; // your MySQL pool connection
 
 dotenv.config();
 const app = express();
+const port = process.env.PORT || 5000;
 
 // ✅ Middleware
 app.use(express.json());
@@ -15,7 +16,8 @@ app.use(cors());
 // ✅ Super Admin Login
 app.post("/api/v1/superadmin/login", async (req, res) => {
   const { email, password } = req.body;
-  console.log("Login attempt:", email);
+  console.log("Entered Email:", email);
+  console.log("Entered password:", JSON.stringify(password));
 
   try {
     // 1. Find user by email in super_admin table
@@ -24,13 +26,17 @@ app.post("/api/v1/superadmin/login", async (req, res) => {
       [email]
     );
 
-    console.log(rows);
+
+    // The password is adminpass
+
 
     if (rows.length === 0) {
       return res.status(401).json({ message: "Invalid email" });
     }
 
     const user = rows[0];
+    console.log(user.password);
+
 
     // 2. Compare password (bcrypt hashed)
     const isMatch = await bcrypt.compare(password, user.password);
@@ -39,15 +45,15 @@ app.post("/api/v1/superadmin/login", async (req, res) => {
     }
 
     // 3. Generate JWT (no role column in your schema)
-    const token = jwt.sign(
-      { id: user.id, type: "super_admin" },
-      process.env.JWT_SECRET,
-      { expiresIn: "1h" }
-    );
+    // const token = jwt.sign(
+    //   { id: user.id, type: "super_admin" },
+    //   process.env.JWT_SECRET,
+    //   { expiresIn: "1h" }
+    // );
 
     res.json({
       message: "Login successful",
-      token,
+      // token,
       user: {
         id: user.id,
         name: `${user.first_name} ${user.last_name}`,
@@ -86,6 +92,6 @@ app.post("/patients", async (req, res) => {
 });
 
 // ✅ Server
-app.listen(5000, () => {
-  console.log("Server running on port 5000");
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
 });

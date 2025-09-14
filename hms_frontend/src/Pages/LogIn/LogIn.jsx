@@ -5,7 +5,7 @@ const LogIn = () => {
         e.preventDefault();
         const form = e.target;
         const email = form.email.value;
-        const password = form.email.value;
+        const password = form.password.value;
         const userData = { email, password }
         console.log('Form Submited');
         fetch("http://localhost:5000/api/v1/superadmin/login",
