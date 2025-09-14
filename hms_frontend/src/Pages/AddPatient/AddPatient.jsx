@@ -8,6 +8,8 @@ import {
     CalendarDaysIcon,
     BuildingOffice2Icon
 } from '@heroicons/react/24/outline';
+import axios from 'axios';
+
 
 // Reusable Section Header - Enhanced for better visual separation
 const SectionHeader = ({ title, icon }) => (
@@ -63,7 +65,7 @@ const AddPatient = () => {
         const { name, value } = e.target;
         setFormData(prev => ({ ...prev, [name]: value }));
     };
-
+    // validation the form field
     const validate = () => {
         let tempErrors = {};
         if (!formData.firstName) tempErrors.firstName = "First name is required.";
@@ -85,8 +87,31 @@ const AddPatient = () => {
     const handleSubmit = (e) => {
         e.preventDefault();
         if (validate()) {
+            // Send Data to backend
+
+
+            fetch("http://localhost:5000/patients",
+                {
+                    method: 'POST',
+                    headers: {
+                        'content-type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        firstName: formData.firstName,
+                        gender: formData.gender,
+                        phoneNumber: formData.phoneNumber,
+                        presentAddress: formData.presentAddress
+                    }),
+                })
+                .then(res => res.json())
+                .then(result => {
+                    console.log(result)
+                })
+
+
+
             alert('This is a demo form. Patient data will not be saved.');
-            console.log('Captured Patient Data:', formData);
+            // console.log('Captured Patient Data:', formData);
         }
     };
 

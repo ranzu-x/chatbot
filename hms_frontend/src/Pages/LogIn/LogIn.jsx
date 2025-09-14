@@ -8,7 +8,7 @@ const LogIn = () => {
         const password = form.password.value;
         const userData = { email, password }
         console.log('Form Submited');
-        fetch("http://localhost:5000/api/v1/superadmin/login",
+        fetch("http://192.168.0.100:5000/api/v1/superadmin/login",
             {
                 method: 'POST',
                 headers: {
