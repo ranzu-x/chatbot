@@ -123,19 +123,21 @@ app.get("/patients", async (req, res) => {
   }
 });
 
+
 // ✅ Add a patient
 app.post("/patients", async (req, res) => {
-  const { name, age } = req.body;
+  const { firstName, gender, age, phoneNumber, presentAddress, permanentAddress, fatherOrHusbandName, motherName, nid, bloodGroup, email, emergencyContactName, emergencyContactRelation, emergencyContactPhone, department, consultantDoctor, admissionDate, ward, bedNumber, pastConditions, currentMedications, allergies } = req.body;
   try {
     const [result] = await pool.query(
-      "INSERT INTO patients (name, age) VALUES (?, ?)",
-      [name, age]
+      "INSERT INTO patients (name, age, gender, phone, fatherOrHusbandName, motherName, nid, bloodGroup, email, permanentAddress, presentAddress, emergencyContactName, emergencyContactRelation, emergencyContactPhone, department, consultantDoctor, admissionDate, ward, bedNumber, pastConditions, CurrentMedications, KnownAllergies) VALUES (?, ?, ?, ?, ?,?, ?, ?, ?, ?,?, ?, ?, ?, ?,?, ?, ?, ?, ?,?, ?)",
+      [firstName, age, gender, phoneNumber, fatherOrHusbandName, motherName, nid, bloodGroup, email, permanentAddress, presentAddress, emergencyContactName, emergencyContactRelation, emergencyContactPhone, department, consultantDoctor, admissionDate, ward, bedNumber, pastConditions, currentMedications, allergies]
     );
-    res.json({ id: result.insertId, name, age });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // ✅ Server
 app.listen(port, () => {

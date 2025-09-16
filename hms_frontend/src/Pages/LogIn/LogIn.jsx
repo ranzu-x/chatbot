@@ -12,12 +12,32 @@ const LogIn = () => {
         const form = e.target;
         const email = form.email.value;
         const password = form.password.value;
+<<<<<<< HEAD
 
      const success = await login(email, password);
     if (success) {
       navigate("/dashboard");
     } else {
       alert("Invalid credentials");
+=======
+        const userData = { email, password }
+        console.log('Form Submited');
+        fetch("http://192.168.0.100:5000/api/v1/superadmin/login",
+            {
+                method: 'POST',
+                headers: {
+                    'content-type': 'application/json'
+                },
+                body: JSON.stringify(userData)
+            })
+            .then(res => res.json())
+            .then(result => {
+                console.log(result);
+                navigate(location.state?.from || '/dashboard');
+            }
+            
+        )
+>>>>>>> 5f97351cb48851746b3373803faae678a330d1cf
     }
   };
 
