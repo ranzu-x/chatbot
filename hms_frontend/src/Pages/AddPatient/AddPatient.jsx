@@ -100,7 +100,8 @@ const AddPatient = () => {
                         firstName: formData.firstName,
                         gender: formData.gender,
                         phoneNumber: formData.phoneNumber,
-                        presentAddress: formData.presentAddress
+                        presentAddress: formData.presentAddress,
+                        nid: formData.nid
                     }),
                 })
                 .then(res => res.json())
@@ -111,7 +112,7 @@ const AddPatient = () => {
 
 
             alert('This is a demo form. Patient data will not be saved.');
-            // console.log('Captured Patient Data:', formData);
+            console.log('Captured Patient Data:', formData);
         }
     };
 
