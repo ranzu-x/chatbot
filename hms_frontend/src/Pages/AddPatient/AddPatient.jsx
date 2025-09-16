@@ -8,8 +8,7 @@ import {
     CalendarDaysIcon,
     BuildingOffice2Icon
 } from '@heroicons/react/24/outline';
-import axios from 'axios';
-
+import Swal from 'sweetalert2'
 
 // Reusable Section Header - Enhanced for better visual separation
 const SectionHeader = ({ title, icon }) => (
@@ -21,11 +20,11 @@ const SectionHeader = ({ title, icon }) => (
 );
 
 const AddPatient = () => {
-    const [formData, setFormData] = useState({
+    const initialFormData = {
         // Patient Information
         patientId: '',
         firstName: '',
-        lastName: '',
+        age: '',
         fatherOrHusbandName: '',
         motherName: '',
         dateOfBirth: '',
@@ -57,10 +56,10 @@ const AddPatient = () => {
         allergies: '',
         currentMedications: '',
         pastConditions: '',
-    });
+    }
+    const [formData, setFormData] = useState(initialFormData);
 
     const [errors, setErrors] = useState({});
-
     const handleChange = (e) => {
         const { name, value } = e.target;
         setFormData(prev => ({ ...prev, [name]: value }));
@@ -68,51 +67,86 @@ const AddPatient = () => {
     // validation the form field
     const validate = () => {
         let tempErrors = {};
-        if (!formData.firstName) tempErrors.firstName = "First name is required.";
-        if (!formData.lastName) tempErrors.lastName = "Last name is required.";
+        if (!formData.firstName) tempErrors.firstName = "Full name is required.";
+        if (!formData.age) tempErrors.age = "age is required.";
         if (!formData.dateOfBirth) tempErrors.dateOfBirth = "Date of birth is required.";
         if (!formData.phoneNumber) tempErrors.phoneNumber = "Phone number is required.";
         if (!formData.bloodGroup) tempErrors.bloodGroup = "Blood group is required.";
         if (!formData.department) tempErrors.department = "Department is required.";
         if (!formData.emergencyContactName) tempErrors.emergencyContactName = "Emergency contact is required.";
-        if (!formData.email) {
-            tempErrors.email = "Email is required.";
-        } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
+        if (formData.email && !/\S+@\S+\.\S+/.test(formData.email)) {
             tempErrors.email = "Email is not valid.";
         }
         setErrors(tempErrors);
         return Object.keys(tempErrors).length === 0;
     };
 
+    // Handle Form Data
     const handleSubmit = (e) => {
         e.preventDefault();
-        if (validate()) {
+        if (!validate()) {
+            Swal.fire({
+                icon: "error",
+                title: "Required Field Empty",
+                text: "Please complete required field",
+                footer: '<a href="#">Form submission failed: missing required field</a>'
+            });
+        }
+        else {
             // Send Data to backend
-
-
             fetch("http://localhost:5000/patients",
                 {
                     method: 'POST',
                     headers: {
                         'content-type': 'application/json'
                     },
-                    body: JSON.stringify({
-                        firstName: formData.firstName,
-                        gender: formData.gender,
-                        phoneNumber: formData.phoneNumber,
-                        presentAddress: formData.presentAddress,
-                        nid: formData.nid
-                    }),
+                    body: JSON.stringify(
+                        {
+                            firstName: formData.firstName,
+                            gender: formData.gender,
+                            age: formData.age,
+                            phoneNumber: formData.phoneNumber,
+                            presentAddress: formData.presentAddress,
+                            permanentAddress: formData.permanentAddress,
+                            fatherOrHusbandName: formData.fatherOrHusbandName,
+                            motherName: formData.motherName,
+                            nid: formData.nid,
+                            bloodGroup: formData.bloodGroup,
+                            email: formData.email,
+                            emergencyContactName: formData.emergencyContactName,
+                            emergencyContactRelation: formData.emergencyContactRelation,
+                            emergencyContactPhone: formData.emergencyContactPhone,
+                            department: formData.department,
+                            consultantDoctor: formData.consultantDoctor,
+                            admissionDate: formData.admissionDate,
+                            ward: formData.ward,
+                            bedNumber: formData.bedNumber,
+                            pastConditions: formData.pastConditions,
+                            currentMedications: formData.currentMedications,
+                            allergies: formData.allergies
+                        }
+                    ),
                 })
                 .then(res => res.json())
                 .then(result => {
                     console.log(result)
+                    if (result.affectedRows > 0) {
+                        Swal.fire({
+                            title: `Patient: ${formData.firstName} Added Successful`,
+                            icon: "success",
+                            draggable: true
+                        });
+                        setFormData(initialFormData);
+                    }
+                    else {
+                        Swal.fire({
+                            icon: "error",
+                            title: 'Database Error',
+                            text: result.error,
+                            // footer: '<a href="#"></a>'
+                        });
+                    }
                 })
-
-
-
-            alert('This is a demo form. Patient data will not be saved.');
-            console.log('Captured Patient Data:', formData);
         }
     };
 
@@ -142,45 +176,52 @@ const AddPatient = () => {
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Patient ID</label>
                                     <input type="text" name="patientId" onChange={handleChange} className={inputStyle} placeholder="Auto-generated or Manual" />
                                 </div>
+                                {/* Name */}
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">First Name *</label>
-                                    <input type="text" name="firstName" onChange={handleChange} className={inputStyle} />
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Full Name *</label>
+                                    <input type="text" value={formData.firstName} name="firstName" onChange={handleChange} className={inputStyle} />
                                     {errors.firstName && <p className="text-red-600 text-xs mt-1">{errors.firstName}</p>}
                                 </div>
+                                {/* Age */}
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Last Name *</label>
-                                    <input type="text" name="lastName" onChange={handleChange} className={inputStyle} />
-                                    {errors.lastName && <p className="text-red-600 text-xs mt-1">{errors.lastName}</p>}
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Age *</label>
+                                    <input value={formData.age} type="text" name="age" onChange={handleChange} className={inputStyle} />
+                                    {errors.age && <p className="text-red-600 text-xs mt-1">{errors.age}</p>}
                                 </div>
+                                {/* Father / Husband Name */}
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Father / Husband Name</label>
-                                    <input type="text" name="fatherOrHusbandName" onChange={handleChange} className={inputStyle} />
+                                    <input value={formData.fatherOrHusbandName} type="text" name="fatherOrHusbandName" onChange={handleChange} className={inputStyle} />
                                 </div>
+                                {/* Mother’s Name */}
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Mother’s Name</label>
-                                    <input type="text" name="motherName" onChange={handleChange} className={inputStyle} />
+                                    <input value={formData.motherName} type="text" name="motherName" onChange={handleChange} className={inputStyle} />
                                 </div>
+                                {/* Date of Birth */}
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Date of Birth *</label>
-                                    <input type="date" name="dateOfBirth" onChange={handleChange} className={inputStyle} />
+                                    <input value={formData.dateOfBirth} type="date"  name="dateOfBirth" onChange={handleChange} className={inputStyle} />
                                     {errors.dateOfBirth && <p className="text-red-600 text-xs mt-1">{errors.dateOfBirth}</p>}
                                 </div>
+                                {/* Gender */}
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Gender</label>
-                                    <select name="gender" onChange={handleChange} className={inputStyle}>
+                                    <select value={formData.gender} name="gender" onChange={handleChange} className={inputStyle}>
                                         <option value="">Select...</option>
                                         <option>Male</option>
                                         <option>Female</option>
                                         <option>Other</option>
                                     </select>
                                 </div>
+                                {/* NID / Birth Reg. / Passport */}
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">NID / Birth Reg. / Passport</label>
-                                    <input type="text" name="nid" onChange={handleChange} className={inputStyle} />
+                                    <input value={formData.nid} type="text" name="nid" onChange={handleChange} className={inputStyle} />
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Blood Group *</label>
-                                    <select name="bloodGroup" onChange={handleChange} className={inputStyle}>
+                                    <select  value={formData.bloodGroup}  name="bloodGroup" onChange={handleChange} className={inputStyle}>
                                         <option value="">Select...</option>
                                         <option>A+</option><option>A-</option><option>B+</option><option>B-</option>
                                         <option>O+</option><option>O-</option><option>AB+</option><option>AB-</option>
@@ -196,29 +237,29 @@ const AddPatient = () => {
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-6">
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number *</label>
-                                    <input type="tel" name="phoneNumber" placeholder="+8801XXXXXXXXX" onChange={handleChange} className={inputStyle} />
+                                    <input value={formData.phoneNumber} type="tel" name="phoneNumber" placeholder="+8801XXXXXXXXX" onChange={handleChange} className={inputStyle} />
                                     {errors.phoneNumber && <p className="text-red-600 text-xs mt-1">{errors.phoneNumber}</p>}
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Email Address *</label>
-                                    <input type="email" name="email" onChange={handleChange} className={inputStyle} />
+                                    <input  value={formData.email} type="email" name="email" onChange={handleChange} className={inputStyle} />
                                     {errors.email && <p className="text-red-600 text-xs mt-1">{errors.email}</p>}
                                 </div>
                                 <div className="lg:col-span-3">
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Present Address</label>
-                                    <input type="text" name="presentAddress" onChange={handleChange} className={inputStyle} />
+                                    <input value={formData.presentAddress} type="text" name="presentAddress" onChange={handleChange} className={inputStyle} />
                                 </div>
                                 <div className="lg:col-span-3">
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Permanent Address</label>
-                                    <input type="text" name="permanentAddress" onChange={handleChange} className={inputStyle} />
+                                    <input  value={formData.permanentAddress} type="text" name="permanentAddress" onChange={handleChange} className={inputStyle} />
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">District</label>
-                                    <input type="text" name="district" onChange={handleChange} className={inputStyle} />
+                                    <input  value={formData.district} type="text" name="district" onChange={handleChange} className={inputStyle} />
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Upazila</label>
-                                    <input type="text" name="upazila" onChange={handleChange} className={inputStyle} />
+                                    <input  value={formData.upazila} type="text" name="upazila" onChange={handleChange} className={inputStyle} />
                                 </div>
                             </div>
                         </div>
