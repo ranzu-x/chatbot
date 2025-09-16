@@ -5,6 +5,7 @@ import LogIn from "../Pages/LogIn/LogIn";
 import Register from "../Pages/Register/Register";
 import AddPatient from "../Pages/AddPatient/AddPatient";
 import Dashboard from "../Pages/Dashboard/Dashboard";
+import PrivateRoute from "./PrivateRoute";
 
 const router = createBrowserRouter([
   {
@@ -29,7 +30,11 @@ const router = createBrowserRouter([
       },
       {
         path: "/dashboard",
-        Component: Dashboard,
+        Component: () => {
+          return (
+            <PrivateRoute><Dashboard></Dashboard></PrivateRoute>
+          );
+        }
       },
     ]
   },

@@ -1,31 +1,28 @@
 import React from 'react';
 import { useNavigate } from 'react-router';
+import { useAuth } from '../../Provider/AuthContexProvider';
 
 const LogIn = () => {
+
+    const {login} = useAuth();
     const navigate = useNavigate();
-    const handleLogin = (e) => {
+
+    const handleLogin = async (e) => {
         e.preventDefault();
         const form = e.target;
         const email = form.email.value;
         const password = form.password.value;
-        const userData = { email, password }
-        console.log('Form Submited');
-        fetch("http://localhost:5000/api/v1/superadmin/login",
-            {
-                method: 'POST',
-                headers: {
-                    'content-type': 'application/json'
-                },
-                body: JSON.stringify(userData)
-            })
-            .then(res => res.json())
-            .then(result => {
-                console.log(result);
-                navigate(location.state?.from || '/dashboard');
-            }
-            
-        )
+
+     const success = await login(email, password);
+    if (success) {
+      navigate("/dashboard");
+    } else {
+      alert("Invalid credentials");
     }
+  };
+
+
+
     return (
         <div className="min-h-screen bg-gray-50 flex">
             {/* Left Side: Branding and Welcome Message */}

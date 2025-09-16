@@ -4,6 +4,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import cors from "cors";
 import pool from "./db.js"; // your MySQL pool connection
+import cookieParser from "cookie-parser";
 
 dotenv.config();
 const app = express();
@@ -11,7 +12,30 @@ const port = process.env.PORT || 5000;
 
 // ✅ Middleware
 app.use(express.json());
-app.use(cors());
+app.use(cors({
+    origin: 'http://localhost:5173',
+    credentials: true,
+}));
+app.use(cookieParser());
+
+// JWT Token verification
+
+const authMiddleWare = (req, res, next) => {
+  const token = req?.cookies?.token;
+  if(!token) {
+    return res.status(401).send({ message: "Unauthorized Access" })
+  }
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  }
+
+  catch (err) {
+    return res.status(401).json({ message: "Invalid or expired token" });
+  }
+}
+
 
 // ✅ Super Admin Login
 app.post("/api/v1/superadmin/login", async (req, res) => {
@@ -45,15 +69,22 @@ app.post("/api/v1/superadmin/login", async (req, res) => {
     }
 
     // 3. Generate JWT (no role column in your schema)
-    // const token = jwt.sign(
-    //   { id: user.id, type: "super_admin" },
-    //   process.env.JWT_SECRET,
-    //   { expiresIn: "1h" }
-    // );
+    const token = jwt.sign(
+    { id: user.id, type: "super_admin" },
+    process.env.JWT_SECRET,
+    { expiresIn: "1h" }
+  );
+
+   // 🔹 Set JWT in cookie
+  res.cookie("token", token, {
+    httpOnly: true,   // prevents JS access
+    secure: false,    // set to true in production (https)
+    sameSite: "lax",  // protects CSRF
+    maxAge: 60 * 60 * 1000, // 1 hour
+  });
 
     res.json({
       message: "Login successful",
-      // token,
       user: {
         id: user.id,
         name: `${user.first_name} ${user.last_name}`,
@@ -61,11 +92,26 @@ app.post("/api/v1/superadmin/login", async (req, res) => {
         type: "super_admin", // since role column doesn’t exist
       },
     });
-  } catch (err) {
+  }
+
+  catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
+
+// Check-auth
+app.get("/api/v1/check-auth", authMiddleWare, (req, res) => {
+  res.json({user: req.user});
+});
+
+
+// logout
+app.post("/api/v1/logout", (req, res) => {
+  res.clearCookie("token");
+  res.json({ message: "Logged out "});
+});
+
 
 // ✅ Get all patients
 app.get("/patients", async (req, res) => {
