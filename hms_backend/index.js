@@ -79,20 +79,21 @@ app.get("/patients", async (req, res) => {
 
 // ✅ Add a patient
 app.post("/patients", async (req, res) => {
-  const { firstName, gender, phoneNumber, presentAddress } = req.body;
-  console.log(firstName);
-  
+  const { firstName, gender, phoneNumber, presentAddress, nid } = req.body;
+  console.log('Age:', nid);
+
   try {
     const [result] = await pool.query(
-      "INSERT INTO patients (name, gender, phone, address) VALUES (?, ?, ?, ?)",
-      [firstName, gender, phoneNumber, presentAddress]
+      "INSERT INTO patients (name, age, gender, phone, address) VALUES (?, ?, ?, ?, ?)",
+      [firstName, nid, gender, phoneNumber, presentAddress]
     );
     res.json({
       id: result.insertId,
       name: firstName,
-      gender,
+      gender: gender,
       phone: phoneNumber,
-      address: presentAddress
+      address: presentAddress,
+      age: nid
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
