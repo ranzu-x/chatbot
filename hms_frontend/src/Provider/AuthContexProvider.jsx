@@ -26,7 +26,6 @@ export const AuthContexProvider = ({ children }) => {
     return false;
   };
 
-
   const logout = async () => {
     await fetch("http://localhost:5000/api/v1/logout", {
       method: "POST",

@@ -22,7 +22,6 @@ app.use(cookieParser());
 
 
 
-
 // ✅ Super Admin Login
 app.post("/api/v1/superadmin/login", async (req, res) => {
   const { email, password } = req.body;
@@ -53,7 +52,6 @@ app.post("/api/v1/superadmin/login", async (req, res) => {
 
     // 3. Generate JWT (no role column in your schema)
     const token = jwt.sign(
-
     { id: user.id, email: user.email, type: "super_admin" },
     process.env.JWT_SECRET,
     { expiresIn: "1h" }
