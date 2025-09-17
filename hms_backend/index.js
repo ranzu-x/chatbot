@@ -13,8 +13,8 @@ const port = process.env.PORT || 5000;
 // ✅ Middleware
 app.use(express.json());
 app.use(cors({
-    origin: 'http://localhost:5173',
-    credentials: true,
+  origin: 'http://localhost:5173',
+  credentials: true,
 }));
 app.use(cookieParser());
 
@@ -22,7 +22,7 @@ app.use(cookieParser());
 
 const authMiddleWare = (req, res, next) => {
   const token = req?.cookies?.token;
-  if(!token) {
+  if (!token) {
     return res.status(401).send({ message: "Unauthorized Access" })
   }
   try {
@@ -50,9 +50,7 @@ app.post("/api/v1/superadmin/login", async (req, res) => {
       [email]
     );
 
-
     // The password is adminpass
-
 
     if (rows.length === 0) {
       return res.status(401).json({ message: "Invalid email" });
@@ -60,7 +58,6 @@ app.post("/api/v1/superadmin/login", async (req, res) => {
 
     const user = rows[0];
     console.log(user.password);
-
 
     // 2. Compare password (bcrypt hashed)
     const isMatch = await bcrypt.compare(password, user.password);
@@ -70,18 +67,18 @@ app.post("/api/v1/superadmin/login", async (req, res) => {
 
     // 3. Generate JWT (no role column in your schema)
     const token = jwt.sign(
-    { id: user.id, type: "super_admin" },
-    process.env.JWT_SECRET,
-    { expiresIn: "1h" }
-  );
+      { id: user.id, type: "super_admin" },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
 
-   // 🔹 Set JWT in cookie
-  res.cookie("token", token, {
-    httpOnly: true,   // prevents JS access
-    secure: false,    // set to true in production (https)
-    sameSite: "lax",  // protects CSRF
-    maxAge: 60 * 60 * 1000, // 1 hour
-  });
+    // 🔹 Set JWT in cookie
+    res.cookie("token", token, {
+      httpOnly: true,   // prevents JS access
+      secure: false,    // set to true in production (https)
+      sameSite: "lax",  // protects CSRF
+      maxAge: 60 * 60 * 1000, // 1 hour
+    });
 
     res.json({
       message: "Login successful",
@@ -102,14 +99,14 @@ app.post("/api/v1/superadmin/login", async (req, res) => {
 
 // Check-auth
 app.get("/api/v1/check-auth", authMiddleWare, (req, res) => {
-  res.json({user: req.user});
+  res.json({ user: req.user });
 });
 
 
 // logout
 app.post("/api/v1/logout", (req, res) => {
   res.clearCookie("token");
-  res.json({ message: "Logged out "});
+  res.json({ message: "Logged out " });
 });
 
 

@@ -6,6 +6,7 @@ import Register from "../Pages/Register/Register";
 import AddPatient from "../Pages/AddPatient/AddPatient";
 import Dashboard from "../Pages/Dashboard/Dashboard";
 import PrivateRoute from "./PrivateRoute";
+import PatientsList from "../Pages/PatientsList/PatientsList";
 
 const router = createBrowserRouter([
   {
@@ -27,6 +28,10 @@ const router = createBrowserRouter([
       {
         path: "/addpatient",
         Component: AddPatient,
+      },
+      {
+        path: "/paitentsList",
+        Component: PatientsList,
       },
       {
         path: "/dashboard",
