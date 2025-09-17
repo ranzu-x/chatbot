@@ -172,8 +172,8 @@ const PatientsList = () => {
                     key={i}
                     onClick={() => paginate(i)}
                     className={`min-w-[40px] px-3 py-2 rounded-lg font-medium transition-all duration-200 ${currentPage === i
-                            ? "bg-indigo-600 text-white shadow-md"
-                            : "bg-white text-gray-700 hover:bg-gray-100 border border-gray-300"
+                        ? "bg-indigo-600 text-white shadow-md"
+                        : "bg-white text-gray-700 hover:bg-gray-100 border border-gray-300"
                         }`}
                 >
                     {i}
@@ -189,37 +189,37 @@ const PatientsList = () => {
                     Patient Dashboard
                 </h1>
 
-                {/* Search and Add Patient */}
-                <div className="mb-8 flex flex-col sm:flex-row justify-between items-center space-y-4 sm:space-y-0 sm:space-x-4 p-5 bg-white/70 backdrop-blur-md rounded-2xl shadow-xl border border-white border-opacity-60 transform transition-all duration-300 hover:scale-[1.01] focus-within:scale-[1.01]">
-                    <div className="relative w-full sm:w-80">
-
-
-                        <input
-                            type="text"
-                            placeholder="Search by contact..."
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                            className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-full bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all duration-200 text-base shadow-sm"
-                        />
-                        <svg className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
-                        </svg>
-                    </div>
-                    <button
-                        onClick={() => navigate("/patients/new")}
-                        className="w-full sm:w-auto px-8 py-3 bg-indigo-500 text-white font-semibold rounded-full shadow-lg hover:from-indigo-600 hover:to-purple-600 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 focus:ring-offset-white transition-all duration-300 flex items-center justify-center space-x-2"
-                    >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
-                        </svg>
-                        <span>Add New Patient</span>
-                    </button>
-                </div>
 
                 {/* Patients Table */}
-                <div className="bg-white/70 backdrop-blur-md rounded-2xl shadow-xl overflow-hidden border border-white border-opacity-60 transform transition-all duration-300 hover:scale-[1.005]">
+                <div className="bg-white/70 backdrop-blur-md rounded-2xl shadow overflow-hidden border border-white border-opacity-60 transform transition-all duration-300">
+                    {/* Search and Add Patient */}
+                    <div className="mt-4 flex flex-col sm:flex-row justify-between items-center space-y-4 sm:space-y-0 sm:space-x-4 p-5 ">
+                        <div className="relative w-full sm:w-80">
+
+
+                            <input
+                                type="text"
+                                placeholder="Search by contact..."
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                                className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-full bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all duration-200 text-base shadow-sm"
+                            />
+                            <svg className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                            </svg>
+                        </div>
+                        <button
+                            onClick={() => navigate("/patients/new")}
+                            className="w-full sm:w-auto px-8 py-3 bg-indigo-500 text-white font-semibold rounded-full shadow-lg hover:from-indigo-600 hover:to-purple-600 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 focus:ring-offset-white transition-all duration-300 flex items-center justify-center space-x-2"
+                        >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                            </svg>
+                            <span>Add New Patient</span>
+                        </button>
+                    </div>
                     <div className="overflow-x-auto">
-                        <table className="min-w-full text-left">
+                        <table className="min-w-full text-center">
                             <thead className="bg-indigo-600 text-white shadow-md">
                                 <tr>
                                     <th className="p-4 text-sm font-semibold tracking-wide uppercase">#</th>
@@ -294,34 +294,34 @@ const PatientsList = () => {
                             </tbody>
                         </table>
                     </div>
+                    {/* Pagination Controls */}
+                    {totalPages > 1 && (
+                        <div className="flex justify-center items-center space-x-2 mt-8 p-4 bg-white/70 backdrop-blur-md rounded-b-2xl border border-white border-opacity-60">
+                            <button
+                                onClick={() => paginate(currentPage - 1)}
+                                disabled={currentPage === 1}
+                                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 flex items-center space-x-1"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7"></path></svg>
+                                <span className="hidden sm:inline">Previous</span>
+                            </button>
+
+                            <div className="flex space-x-1 overflow-x-auto hide-scrollbar">
+                                {renderPageNumbers()}
+                            </div>
+
+                            <button
+                                onClick={() => paginate(currentPage + 1)}
+                                disabled={currentPage === totalPages}
+                                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 flex items-center space-x-1"
+                            >
+                                <span className="hidden sm:inline">Next</span>
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path></svg>
+                            </button>
+                        </div>
+                    )}
                 </div>
 
-                {/* Pagination Controls */}
-                {totalPages > 1 && (
-                    <div className="flex justify-center items-center space-x-2 mt-8 p-4 bg-white/70 backdrop-blur-md rounded-2xl shadow-xl border border-white border-opacity-60">
-                        <button
-                            onClick={() => paginate(currentPage - 1)}
-                            disabled={currentPage === 1}
-                            className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 flex items-center space-x-1"
-                        >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7"></path></svg>
-                            <span className="hidden sm:inline">Previous</span>
-                        </button>
-
-                        <div className="flex space-x-1 overflow-x-auto hide-scrollbar">
-                            {renderPageNumbers()}
-                        </div>
-
-                        <button
-                            onClick={() => paginate(currentPage + 1)}
-                            disabled={currentPage === totalPages}
-                            className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 flex items-center space-x-1"
-                        >
-                            <span className="hidden sm:inline">Next</span>
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path></svg>
-                        </button>
-                    </div>
-                )}
             </div>
         </div>
     );
