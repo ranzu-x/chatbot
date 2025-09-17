@@ -5,6 +5,7 @@ import jwt from "jsonwebtoken";
 import cors from "cors";
 import pool from "./db.js"; // your MySQL pool connection
 import cookieParser from "cookie-parser";
+import { authMiddleWare } from "./middleware/authmiddleware.js";
 
 dotenv.config();
 const app = express();
@@ -18,23 +19,7 @@ app.use(cors({
 }));
 app.use(cookieParser());
 
-// JWT Token verification
 
-const authMiddleWare = (req, res, next) => {
-  const token = req?.cookies?.token;
-  if(!token) {
-    return res.status(401).send({ message: "Unauthorized Access" })
-  }
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
-    next();
-  }
-
-  catch (err) {
-    return res.status(401).json({ message: "Invalid or expired token" });
-  }
-}
 
 
 // ✅ Super Admin Login
@@ -70,7 +55,7 @@ app.post("/api/v1/superadmin/login", async (req, res) => {
 
     // 3. Generate JWT (no role column in your schema)
     const token = jwt.sign(
-    { id: user.id, type: "super_admin" },
+    { id: user.id, email: user.email, type: "super_admin" },
     process.env.JWT_SECRET,
     { expiresIn: "1h" }
   );
