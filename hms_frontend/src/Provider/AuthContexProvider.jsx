@@ -5,6 +5,7 @@ export const AuthContexProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true); // Wait for check auth
 
+
   const login = async (email, password) => {
     const res = await fetch("http://localhost:5000/api/v1/superadmin/login", {
       method: "POST",

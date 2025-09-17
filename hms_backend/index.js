@@ -57,13 +57,13 @@ app.post("/api/v1/superadmin/login", async (req, res) => {
     { expiresIn: "1h" }
   );
 
-    // 🔹 Set JWT in cookie
-    res.cookie("token", token, {
-      httpOnly: true,   // prevents JS access
-      secure: false,    // set to true in production (https)
-      sameSite: "lax",  // protects CSRF
-      maxAge: 60 * 60 * 1000, // 1 hour
-    });
+   // 🔹 Set JWT in cookie
+  res.cookie("token", token, {
+    httpOnly: true,   // prevents JS access
+    secure: false,    // set to true in production (https)
+    sameSite: "lax",  // protects CSRF
+    maxAge: 60 * 60 * 1000, // 1 hour
+  });
 
     res.json({
       message: "Login successful",
