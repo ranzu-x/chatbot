@@ -13,14 +13,18 @@ export const AuthContexProvider = ({ children }) => {
       },
       body: JSON.stringify({ email, password }),
       credentials: 'include', // cookie comes here
+
     });
+
     const data = await res.json();
     if (res.ok && data?.user) {
       setUser(data.user);
       return true;
     }
+
     return false;
   };
+
   const logout = async () => {
     await fetch("http://localhost:5000/api/v1/logout", {
       method: "POST",
@@ -28,6 +32,8 @@ export const AuthContexProvider = ({ children }) => {
     });
     setUser(null);
   };
+
+
 
   // ✅ Restore login state on refresh
   useEffect(() => {
@@ -48,11 +54,13 @@ export const AuthContexProvider = ({ children }) => {
       .finally(() => setLoading(false));
   }, []);
 
+
   return (
     <AuthContext.Provider value={{ user, login, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );
 };
+
 
 export const useAuth = () => useContext(AuthContext);
