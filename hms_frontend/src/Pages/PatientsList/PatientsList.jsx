@@ -1,11 +1,17 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import Swal from "sweetalert2";
+import {
+    XCircleIcon,
+    UserCircleIcon,
+} from '@heroicons/react/24/outline';
 
 const PatientsList = () => {
     const [patients, setPatients] = useState([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState("");
+    const [isOpen, setIsOpen] = useState(false);
+    const [selectedData, setSelectedData] = useState('');
     const navigate = useNavigate();
 
     // Pagination states
@@ -126,7 +132,21 @@ const PatientsList = () => {
 
     // View patient details
     const handleView = (id) => {
-        navigate(`/patients/${id}`);
+        const item = patients.filter(p => p.id == id)
+        setSelectedData(item);
+        openModal(selectedData)
+        // navigate(`/patients/${id}`);
+    };
+    console.log(selectedData);
+
+    // View patient details modal open
+    const openModal = (item) => {
+        setIsOpen(true);
+    };
+    // View patient details modal Close
+    const closeModal = () => {
+        setIsOpen(false);
+        setSelectedData('');
     };
 
     // Search only by phone number
@@ -323,8 +343,128 @@ const PatientsList = () => {
                 </div>
 
             </div>
-        </div>
+
+            {/* Modal */}
+            {isOpen && selectedData && (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center">
+                    <div className="bg-white p-6 rounded-lg shadow-lg min-w-fit relative">
+                        <div>
+                            <div>
+                                {/* Profile Overview */}
+                                <div className="flex items-center justify-center gap-4 mb-6">
+                                    <div className="w-20 h-20 rounded-full bg-blue-100 flex items-center justify-center text-2xl font-bold text-blue-700">
+                                        {selectedData.image?.[0] || <UserCircleIcon className="size-16 text-blue-300" />}
+                                    </div>
+                                    <div>
+                                        <p className="text-2xl font-bold text-gray-900"> {selectedData[0].name}</p>
+                                        <div className="flex items-center gap-5">
+                                            <p className="text-gray-600">{selectedData[0].gender} • {selectedData[0].age} years</p>
+                                            <p className="text-sm text-gray-500">Blood Group: {selectedData[0].bloodGroup || `N/A`}</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* All Data Display */}
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    <div>
+                                        <p className="text-sm text-gray-500">Phone Number</p>
+                                        <p className="text-gray-800 font-medium">{selectedData[0].phoneNumber || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Email</p>
+                                        <p className="text-gray-800 font-medium">{selectedData[0].email || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Present Address</p>
+                                        <p className="text-gray-800 font-medium">{selectedData[0].presentAddress || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Permanent Address</p>
+                                        <p className="text-gray-800 font-medium">{selectedData[0].permanentAddress || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Father/Husband Name</p>
+                                        <p className="text-gray-800 font-medium">{selectedData[0].fatherOrHusbandName || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Mother Name</p>
+                                        <p className="text-gray-800 font-medium">{selectedData[0].motherName || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">NID</p>
+                                        <p className="text-gray-800 font-medium">{selectedData[0].nid || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Emergency Contact Name</p>
+                                        <p className="text-gray-800 font-medium">{selectedData[0].emergencyContactName || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Emergency Contact Relation</p>
+                                        <p className="text-gray-800 font-medium">{selectedData[0].emergencyContactRelation || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Emergency Contact Phone</p>
+                                        <p className="text-gray-800 font-medium">{selectedData[0].emergencyContactPhone || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Department</p>
+                                        <p className="text-gray-800 font-medium">{selectedData[0].department || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Consultant Doctor</p>
+                                        <p className="text-gray-800 font-medium">{selectedData[0].consultantDoctor || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Admission Date</p>
+                                        <p className="text-gray-800 font-medium">{selectedData[0].admissionDate || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Ward</p>
+                                        <p className="text-gray-800 font-medium">{selectedData[0].ward || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Bed Number</p>
+                                        <p className="text-gray-800 font-medium">{selectedData[0].bedNumber || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Past Conditions</p>
+                                        <p className="text-gray-800 font-medium">{selectedData[0].pastConditions || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Current Medications</p>
+                                        <p className="text-gray-800 font-medium">{selectedData[0].currentMedications || "N/A"}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Allergies</p>
+                                        <p className="text-gray-800 font-medium">{selectedData[0].allergies || "N/A"}</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                        <button
+                            onClick={closeModal}
+                            className="absolute top-2 right-2 p-2 text-gray-500 hover:text-gray-700"
+                        >
+
+                            <XCircleIcon className="size-8 text-blue-500">
+                            </XCircleIcon>
+                        </button>
+                    </div>
+                </div>
+
+            )
+            }
+
+
+
+
+        </div >
     );
 };
 
 export default PatientsList;
+
+
+
+
