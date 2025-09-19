@@ -33,15 +33,24 @@ const router = createBrowserRouter([
         path: "/paitentsList",
         Component: PatientsList,
       },
-      {
-        path: "/dashboard",
-        Component: () => {
-          return (
-            <PrivateRoute><Dashboard></Dashboard></PrivateRoute>
-          );
-        }
-      },
+      // {
+      //   path: "/dashboard",
+      //   Component: () => {
+      //     return (
+      //       <PrivateRoute><Dashboard></Dashboard></PrivateRoute>
+      //     );
+      //   }
+      // },
     ]
+  },
+  {
+    path: "/dashboard",
+    Component: () => {
+      return (
+        <PrivateRoute><Dashboard></Dashboard></PrivateRoute>
+      );
+    }
+
   },
 ]);
 
