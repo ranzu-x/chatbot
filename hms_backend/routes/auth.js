@@ -26,6 +26,8 @@ router.post("/superadmin/login", async (req, res) => {
       return res.status(401).json({ message: "Invalid password" });
     }
 
+    
+    // Create token
     const token = jwt.sign(
       { id: user.id, email: user.email, type: "super_admin" },
       process.env.JWT_SECRET,
