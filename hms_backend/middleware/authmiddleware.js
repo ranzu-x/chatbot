@@ -13,6 +13,8 @@ export const authMiddleWare = (req, res, next) => {
     req.user = {
       id: decoded.id,
       email: decoded.email,
+      hospital_id:decoded.hospital_id,
+      hospital_name:decoded.hospital_name,
       type: decoded.type,
     };
     next();
