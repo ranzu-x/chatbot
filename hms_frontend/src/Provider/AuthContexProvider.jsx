@@ -26,6 +26,8 @@ export const AuthContexProvider = ({ children }) => {
     return false;
   };
 
+
+
   const logout = async () => {
     await fetch("http://localhost:5000/api/v1/logout", {
       method: "POST",
@@ -41,6 +43,7 @@ export const AuthContexProvider = ({ children }) => {
     fetch("http://localhost:5000/api/v1/check-auth", {
       credentials: "include", // ✅ must include cookies
     })
+    
       .then(async (res) => {
         console.log("check-auth status:", res.status);
         if (res.ok) return res.json();
@@ -48,11 +51,15 @@ export const AuthContexProvider = ({ children }) => {
         console.log("check-auth response:", text);
         return null;
       })
+
       .then((data) => {
         console.log("check-auth data:", data);
-        if (data?.user) setUser(data.user);
+        if (data?.user)
+          setUser(data.user);
       })
+
       .finally(() => setLoading(false));
+
   }, []);
 
 

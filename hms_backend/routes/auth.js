@@ -12,7 +12,18 @@ router.post("/superadmin/login", async (req, res) => {
 
   try {
     const [rows] = await pool.execute(
-      "SELECT * FROM super_admin WHERE email = ? LIMIT 1",
+      `SELECT 
+         users.id AS user_id,
+         users.first_name,
+         users.last_name,
+         users.email,
+         users.password,
+         hospitals.id AS hospital_id,
+         hospitals.hospital_name AS hospital_name
+      FROM users
+      LEFT JOIN hospitals ON users.hospital_id = hospitals.id
+      WHERE users.email = ? 
+      LIMIT 1;`,
       [email]
     );
 
@@ -26,10 +37,16 @@ router.post("/superadmin/login", async (req, res) => {
       return res.status(401).json({ message: "Invalid password" });
     }
 
-    
+
     // Create token
     const token = jwt.sign(
-      { id: user.id, email: user.email, type: "super_admin" },
+      { 
+        id: user.id, 
+        email: user.email, 
+        hospital_id: user.hospital_id,
+        hospital_name: user.hospital_name,
+        type: "super_admin" 
+      },
       process.env.JWT_SECRET,
       { expiresIn: "1h" }
     );
@@ -47,6 +64,9 @@ router.post("/superadmin/login", async (req, res) => {
         id: user.id,
         name: `${user.first_name} ${user.last_name}`,
         email: user.email,
+        username: user.username,
+        hospital_id:user.hospital_id,
+        hospital_name:user.hospital_name,
         type: "super_admin",
       },
     });
