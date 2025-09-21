@@ -18,27 +18,7 @@ import { useAuth } from '../../Provider/AuthContexProvider';
 // --- Reusable Sub-Components ---
 
 // Header Component
-const Header = () => {
 
-  const { user, logout, loading } = useAuth(); // ✅ get user and logout from context
-  if (loading) return null;
-
-  return (
-    <div className="flex justify-between items-center p-4 bg-white border-b border-gray-200">
-      <h1 className="text-2xl font-bold text-gray-800">Dashboard</h1>
-      <div className="flex items-center space-x-4">
-<<<<<<< HEAD
-        {user ? <h1>Welcome {user?.email}</h1> : <h1>Please login</h1>}
-=======
-          {user ? <h1>Welcome {user?.email} Your Hospital Name:<b> {user?.hospital_name}</b></h1> : <h1>Please login</h1>}
->>>>>>> f9a8891eaa9ee17591813d6a601ccda211f2d037
-        <button onClick={logout}>Logout</button>
-        <BellIcon className="h-6 w-6 text-gray-500 hover:text-gray-700 cursor-pointer" />
-        <UserCircleIcon className="h-8 w-8 text-gray-500 hover:text-gray-700 cursor-pointer" />
-      </div>
-    </div>
-  );
-}
 // Stat Card Component
 const StatCard = ({ title, value, icon, color }) => (
   <div className="bg-white p-6 rounded-lg shadow-md flex items-center">
@@ -82,31 +62,13 @@ const AppointmentRow = ({ patientName, doctor, time, status }) => {
 
 const Dashboard = () => {
   return (
-    <div className="flex h-screen bg-gray-100">
+    <div className="h-screen bg-gray-100">
       {/* Sidebar Navigation */}
-      <aside className="w-64 bg-white shadow-md flex flex-col">
-        <Link to={"/"} className="p-6 text-2xl font-bold text-indigo-600 border-b">
-          Hospital MS
-        </Link>
-        <nav className="flex-1 p-4 space-y-2">
-          <a href="#" className="flex items-center px-4 py-2 text-gray-700 bg-gray-200 rounded-lg">
-            <ChartBarIcon className="h-5 w-5 mr-3" /> Dashboard
-          </a>
-          <a href="#" className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
-            <UsersIcon className="h-5 w-5 mr-3" /> Patients
-          </a>
-          <a href="#" className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
-            <CalendarDaysIcon className="h-5 w-5 mr-3" /> Appointments
-          </a>
-          <a href="#" className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
-            <RectangleStackIcon className="h-5 w-5 mr-3" /> Departments
-          </a>
-        </nav>
-      </aside>
+      {/* move to sidebar.jsx */}
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <Header />
+      <main className="flex flex-col overflow-hidden">
+        {/* <Header /> */}
         <div className="flex-1 p-6 overflow-y-auto">
           {/* Statistics Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
