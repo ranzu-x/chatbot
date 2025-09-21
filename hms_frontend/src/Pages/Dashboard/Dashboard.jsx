@@ -20,14 +20,14 @@ import { useAuth } from '../../Provider/AuthContexProvider';
 // Header Component
 const Header = () => {
 
-   const { user, logout, loading } = useAuth(); // ✅ get user and logout from context
-   if (loading) return null;
+  const { user, logout, loading } = useAuth(); // ✅ get user and logout from context
+  if (loading) return null;
 
   return (
     <div className="flex justify-between items-center p-4 bg-white border-b border-gray-200">
       <h1 className="text-2xl font-bold text-gray-800">Dashboard</h1>
       <div className="flex items-center space-x-4">
-          {user ? <h1>Welcome {user?.email}</h1> : <h1>Please login</h1>}
+        {user ? <h1>Welcome {user?.email}</h1> : <h1>Please login</h1>}
         <button onClick={logout}>Logout</button>
         <BellIcon className="h-6 w-6 text-gray-500 hover:text-gray-700 cursor-pointer" />
         <UserCircleIcon className="h-8 w-8 text-gray-500 hover:text-gray-700 cursor-pointer" />
@@ -81,9 +81,9 @@ const Dashboard = () => {
     <div className="flex h-screen bg-gray-100">
       {/* Sidebar Navigation */}
       <aside className="w-64 bg-white shadow-md flex flex-col">
-        <div className="p-6 text-2xl font-bold text-indigo-600 border-b">
+        <Link to={"/"} className="p-6 text-2xl font-bold text-indigo-600 border-b">
           Hospital MS
-        </div>
+        </Link>
         <nav className="flex-1 p-4 space-y-2">
           <a href="#" className="flex items-center px-4 py-2 text-gray-700 bg-gray-200 rounded-lg">
             <ChartBarIcon className="h-5 w-5 mr-3" /> Dashboard
