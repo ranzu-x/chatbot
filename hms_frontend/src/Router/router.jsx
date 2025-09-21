@@ -27,14 +27,6 @@ const router = createBrowserRouter([
         Component: Register,
       },
 
-      // {
-      //   path: "/dashboard",
-      //   Component: () => {
-      //     return (
-      //       <PrivateRoute><Dashboard></Dashboard></PrivateRoute>
-      //     );
-      //   }
-      // },
     ]
   },
   {
