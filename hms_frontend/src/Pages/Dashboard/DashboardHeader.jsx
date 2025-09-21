@@ -6,7 +6,7 @@ const DashboardHeader = () => {
     const { user, logout, loading } = useAuth(); // ✅ get user and logout from context
     if (loading) return null;
     return (
-        <div className="flex justify-between items-center p-4 bg-white border-b border-gray-200">
+        <div className="flex justify-between items-center p-6 bg-white border-b border-gray-200">
             <h1 className="text-2xl font-bold text-gray-800">Dashboard</h1>
             <div className="flex items-center space-x-4">
                 {user ? <h1>Welcome {user?.email} Your Hospital Name:<b> {user?.hospital_name}</b></h1> : <h1>Please login</h1>}
