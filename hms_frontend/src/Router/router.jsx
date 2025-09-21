@@ -42,7 +42,7 @@ const router = createBrowserRouter([
         }
       },
       {
-        path: "/patients",
+        path: "/patients/list",
         Component: () => {
           return (
             <PrivateRoute><PatientsList></PatientsList></PrivateRoute>

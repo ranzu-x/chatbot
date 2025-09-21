@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 
 // JWT Token verification
 export const authMiddleWare = (req, res, next) => {
+  // console.log("Middleware hit, cookies:", req.cookies);
   const token = req?.cookies?.token;
   if(!token) {
     return res.status(401).send({ message: "Unauthorized Access" })
