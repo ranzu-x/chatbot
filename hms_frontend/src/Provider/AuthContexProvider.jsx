@@ -40,7 +40,7 @@ export const AuthContexProvider = ({ children }) => {
 
   // ✅ Restore login state on refresh
   useEffect(() => {
-    fetch("http://localhost:5000/api/v1/check-auth", {
+    fetch(`${import.meta.env.VITE_API_BASE_URL}/api/v1/check-auth`, {
       credentials: "include", // ✅ must include cookies
     })
     
