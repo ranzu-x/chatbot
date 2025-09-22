@@ -27,14 +27,6 @@ const router = createBrowserRouter([
         Component: Register,
       },
 
-      // {
-      //   path: "/dashboard",
-      //   Component: () => {
-      //     return (
-      //       <PrivateRoute><Dashboard></Dashboard></PrivateRoute>
-      //     );
-      //   }
-      // },
     ]
   },
   {
@@ -50,7 +42,7 @@ const router = createBrowserRouter([
         }
       },
       {
-        path: "/patients",
+        path: "/patients/list",
         Component: () => {
           return (
             <PrivateRoute><PatientsList></PatientsList></PrivateRoute>

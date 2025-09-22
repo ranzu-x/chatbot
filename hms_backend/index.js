@@ -19,7 +19,7 @@ app.use(cookieParser());
 
 // ✅ Routes
 app.use("/api/v1", authRoutes);
-app.use("/patients", patientRoutes);
+app.use("/api/v1", patientRoutes);
 
 // ✅ Server
 app.listen(port, () => {

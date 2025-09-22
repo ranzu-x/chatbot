@@ -5,6 +5,7 @@ import {
     XCircleIcon,
     UserCircleIcon,
 } from '@heroicons/react/24/outline';
+import { useAuth } from "../../Provider/AuthContexProvider";
 
 const PatientsList = () => {
     const [patients, setPatients] = useState([]);
@@ -14,6 +15,8 @@ const PatientsList = () => {
     const [selectedData, setSelectedData] = useState('');
     const navigate = useNavigate();
 
+    const { user } = useAuth();
+
     // Pagination states
     const [currentPage, setCurrentPage] = useState(1);
     const [patientsPerPage] = useState(15); // You can adjust this value
@@ -21,14 +24,16 @@ const PatientsList = () => {
     // Fetch patients
     const fetchPatients = () => {
         setLoading(true);
-        fetch("http://192.168.0.100:5000/patients")
+        fetch("http://localhost:5000/api/v1/patients", { credentials: "include" })
             .then((res) => {
+                console.log(res);
                 if (!res.ok) {
                     throw new Error(`HTTP error! status: ${res.status}`);
                 }
                 return res.json();
             })
             .then((data) => {
+                console.log("hello", data);
                 setPatients(data);
                 setLoading(false);
             })
@@ -203,7 +208,7 @@ const PatientsList = () => {
     };
     return (
         <div className="p-4 sm:p-8 font-poppins text-gray-800">
-            <div className="max-w-7xl mx-auto">
+            <div className="max-w-full mx-auto">
                 {/* Patients Table */}
                 <div className="bg-white/70 backdrop-blur-md rounded-2xl shadow overflow-hidden border border-white border-opacity-60 transform transition-all duration-300">
                     {/* Search and Add Patient */}
@@ -237,7 +242,8 @@ const PatientsList = () => {
                             <thead className="bg-indigo-600 text-white shadow-md">
                                 <tr>
                                     <th className="p-4 text-sm font-semibold tracking-wide uppercase">#</th>
-                                    <th className="p-4 text-sm font-semibold tracking-wide uppercase">Name</th>
+                                    <th className="p-4 text-sm font-semibold tracking-wide uppercase">First Name</th>
+                                    <th className="p-4 text-sm font-semibold tracking-wide uppercase">Last Name</th>
                                     <th className="p-4 text-sm font-semibold tracking-wide uppercase">Age</th>
                                     <th className="p-4 text-sm font-semibold tracking-wide uppercase">Gender</th>
                                     <th className="p-4 text-sm font-semibold tracking-wide uppercase">Contact</th>
@@ -264,7 +270,8 @@ const PatientsList = () => {
                                             className="even:bg-gray-50/50 odd:bg-white/50 hover:bg-indigo-50/70 transition-colors duration-200"
                                         >
                                             <td className="p-4 text-gray-700 text-base">{(currentPage - 1) * patientsPerPage + index + 1}</td>
-                                            <td className="p-4 font-medium text-gray-900 text-base">{patient.name}</td>
+                                            <td className="p-4 font-medium text-gray-900 text-base">{patient.first_name}</td>
+                                            <td className="p-4 font-medium text-gray-900 text-base">{patient.last_name}</td>
                                             <td className="p-4 text-gray-700 text-base">{patient.age}</td>
                                             <td className="p-4 text-gray-700 text-base">{patient.gender}</td>
                                             <td className="p-4 text-gray-700 text-base">{patient.phone}</td>
