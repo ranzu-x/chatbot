@@ -14,7 +14,7 @@ const Sidebar = () => {
                     <Link to={'/'} className="flex items-center px-4 py-2 text-gray-700 bg-gray-200 rounded-lg">
                         <ChartBarIcon className="h-5 w-5 mr-3" /> Dashboard
                     </Link>
-                    <Link to={'/'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
+                    <Link to={'/patients'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
                         <UsersIcon className="h-5 w-5 mr-3" /> Patients
                     </Link>
                     <Link to={'/'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">

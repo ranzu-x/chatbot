@@ -9,7 +9,7 @@ const router = express.Router();
 // ✅ Super Admin Login
 router.post("/superadmin/login", async (req, res) => {
   const { email, password } = req.body;
-
+ console.log("RUPOS: ",email);
   try {
     const [rows] = await pool.execute(
       `SELECT 
@@ -50,7 +50,6 @@ router.post("/superadmin/login", async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: "1h" }
     );
-
     res.cookie("token", token, {
       httpOnly: true,
       secure: false,
