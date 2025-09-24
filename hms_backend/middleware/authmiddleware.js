@@ -5,18 +5,22 @@ import jwt from "jsonwebtoken";
 export const authMiddleWare = (req, res, next) => {
   // console.log("Middleware hit, cookies:", req.cookies);
   const token = req?.cookies?.token;
-  if(!token) {
+  if (!token) {
     return res.status(401).send({ message: "Unauthorized Access" })
   }
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        // ✅ Make sure req.user has email/id
+    // ✅ Make sure req.user has email/id
     req.user = {
-      id: decoded.id,
-      email: decoded.email,
+
+      id:decoded.id,
+      name:decoded.name,
+      email:decoded.email,
+      username:decoded.username,
       hospital_id:decoded.hospital_id,
       hospital_name:decoded.hospital_name,
-      type: decoded.type,
+      roles:decoded.roles,
+      permissions:decoded.permissions
     };
     next();
   }

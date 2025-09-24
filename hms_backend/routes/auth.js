@@ -9,26 +9,29 @@ const router = express.Router();
 // ✅ Super Admin Login
 router.post("/superadmin/login", async (req, res) => {
   const { email, password } = req.body;
-<<<<<<< HEAD
- console.log("RUPOS: ",email);
-=======
   console.log("rupos: ", email);
 
->>>>>>> de4b7231bfa3dfc6f07b980e08379e878a3959d2
   try {
     const [rows] = await pool.execute(
       `SELECT 
-         users.id AS user_id,
-         users.first_name,
-         users.last_name,
-         users.email,
-         users.password,
-         hospitals.id AS hospital_id,
-         hospitals.hospital_name AS hospital_name
-      FROM users
-      LEFT JOIN hospitals ON users.hospital_id = hospitals.id
-      WHERE users.email = ? 
-      LIMIT 1;`,
+    u.id AS user_id,
+    u.first_name,
+    u.last_name,
+    u.email,
+    u.password,
+    h.id AS hospital_id,
+    h.hospital_name,
+    GROUP_CONCAT(DISTINCT r.name) AS roles,
+    GROUP_CONCAT(DISTINCT p.name) AS permissions
+FROM users u
+LEFT JOIN hospitals h ON u.hospital_id = h.id
+LEFT JOIN user_roles ur ON u.id = ur.user_id
+LEFT JOIN roles r ON ur.role_id = r.id
+LEFT JOIN role_permissions rp ON r.id = rp.role_id
+LEFT JOIN permissions p ON rp.permission_id = p.id
+WHERE u.email = ?
+GROUP BY u.id
+LIMIT 1`,
       [email]
     );
 
@@ -45,12 +48,15 @@ router.post("/superadmin/login", async (req, res) => {
 
     // Create token
     const token = jwt.sign(
-      { 
-        id: user.id, 
-        email: user.email, 
+      {
+        id: user.id,
+        name: `${user.first_name} ${user.last_name}`,
+        email: user.email,
+        username: user.username,
         hospital_id: user.hospital_id,
         hospital_name: user.hospital_name,
-        type: "super_admin" 
+        roles: user.roles ? user.roles.split(',') : [],
+        permissions: user.permissions ? user.permissions.split(',') : [],
       },
       process.env.JWT_SECRET,
       { expiresIn: "1h" }
@@ -69,9 +75,10 @@ router.post("/superadmin/login", async (req, res) => {
         name: `${user.first_name} ${user.last_name}`,
         email: user.email,
         username: user.username,
-        hospital_id:user.hospital_id,
-        hospital_name:user.hospital_name,
-        type: "super_admin",
+        hospital_id: user.hospital_id,
+        hospital_name: user.hospital_name,
+        roles: user.roles ? user.roles.split(',') : [],
+        permissions: user.permissions ? user.permissions.split(',') : [],
       },
     });
   } catch (err) {
