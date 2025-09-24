@@ -14,11 +14,7 @@ const Sidebar = () => {
                     <Link to={'/dashboard'} className="flex items-center px-4 py-2 text-gray-700 bg-gray-200 rounded-lg">
                         <ChartBarIcon className="h-5 w-5 mr-3" /> Dashboard
                     </Link>
-<<<<<<< HEAD
                     <Link to={'/patients'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
-=======
-                    <Link to={'/patients/list'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
->>>>>>> de4b7231bfa3dfc6f07b980e08379e878a3959d2
                         <UsersIcon className="h-5 w-5 mr-3" /> Patients
                     </Link>
                     <Link to={'/appointments'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
@@ -26,6 +22,12 @@ const Sidebar = () => {
                     </Link>
                     <Link to={'/departments'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
                         <RectangleStackIcon className="h-5 w-5 mr-3" /> Departments
+                    </Link>
+                    <Link to={'/users/doctors'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
+                        <RectangleStackIcon className="h-5 w-5 mr-3" /> Doctors
+                    </Link>
+                    <Link to={'/adduser'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
+                        <RectangleStackIcon className="h-5 w-5 mr-3" /> Add User
                     </Link>
                 </nav>
             </aside>
