@@ -9,7 +9,7 @@ const router = express.Router();
 // ✅ Super Admin Login
 router.post("/superadmin/login", async (req, res) => {
   const { email, password } = req.body;
-  console.log("rupos: ", email);
+  console.log("rupos: ", password);
 
   try {
     const [rows] = await pool.execute(
@@ -38,13 +38,11 @@ LIMIT 1`,
     if (rows.length === 0) {
       return res.status(401).json({ message: "Invalid email" });
     }
-
     const user = rows[0];
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid password" });
     }
-
 
     // Create token
     const token = jwt.sign(
@@ -60,14 +58,13 @@ LIMIT 1`,
       },
       process.env.JWT_SECRET,
       { expiresIn: "1h" }
-    );
+    );    
     res.cookie("token", token, {
       httpOnly: true,
       secure: false,
       sameSite: "lax",
       maxAge: 60 * 60 * 1000,
     });
-
     res.json({
       message: "Login successful",
       user: {

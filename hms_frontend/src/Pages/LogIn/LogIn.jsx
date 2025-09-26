@@ -4,7 +4,7 @@ import { useAuth } from '../../Provider/AuthContexProvider';
 
 const LogIn = () => {
 
-    const {login} = useAuth();
+    const { login } = useAuth();
     const navigate = useNavigate();
 
     const handleLogin = async (e) => {
@@ -12,14 +12,13 @@ const LogIn = () => {
         const form = e.target;
         const email = form.email.value;
         const password = form.password.value;
-
-     const success = await login(email, password);
-    if (success) {
-      navigate("/dashboard");
-    } else {
-      alert("Invalid credentials");
-    }
-  };
+        const success = await login(email, password);
+        if (success) {
+            navigate("/dashboard");
+        } else {
+            alert("Invalid credentials");
+        }
+    };
 
 
 

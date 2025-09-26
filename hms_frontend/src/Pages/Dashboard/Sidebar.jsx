@@ -1,22 +1,29 @@
 import { CalendarDaysIcon, ChartBarIcon, RectangleStackIcon, UsersIcon } from '@heroicons/react/24/outline';
 import React from 'react';
-import { Link } from 'react-router';
+import { Link, NavLink } from 'react-router';
 
 const Sidebar = () => {
+
+    const navLinkClass = ({ isActive }) =>
+        `flex items-center px-4 py-2 hover:bg-gray-100 rounded-lg
+     ${isActive ? "text-gray-700 bg-gray-200" : "text-gray-600"}`;
     return (
         <div>
             {/* Sidebar Navigation */}
             <aside className="w-64 bg-white flex flex-col">
-                <Link to={"/"} className="p-6 text-2xl font-bold text-indigo-600 border-b">
+                <NavLink to={"/"} className="p-6 text-2xl font-bold text-indigo-600 border-b">
                     Hospital MS
-                </Link>
+                </NavLink>
                 <nav className="flex-1 p-4 space-y-2">
-                    <Link to={'/dashboard'} className="flex items-center px-4 py-2 text-gray-700 bg-gray-200 rounded-lg">
+                    <NavLink to={'/dashboard'} className={navLinkClass}>
                         <ChartBarIcon className="h-5 w-5 mr-3" /> Dashboard
-                    </Link>
-                    <Link to={'/patients'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
+                    </NavLink>
+                    <NavLink to={'/patients'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
                         <UsersIcon className="h-5 w-5 mr-3" /> Patients
-                    </Link>
+                    </NavLink>
+                    <NavLink to={'/prescription'} className={navLinkClass}>
+                        <UsersIcon className="h-5 w-5 mr-3" /> prescription
+                    </NavLink>
                     <Link to={'/appointments'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
                         <CalendarDaysIcon className="h-5 w-5 mr-3" /> Appointments
                     </Link>

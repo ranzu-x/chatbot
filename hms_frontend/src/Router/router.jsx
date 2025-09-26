@@ -8,6 +8,7 @@ import Dashboard from "../Pages/Dashboard/Dashboard";
 import PrivateRoute from "./PrivateRoute";
 import PatientsList from "../Pages/PatientsList/PatientsList";
 import DashboardLayout from "../Layout/DashboardLayout";
+import Prescription from "../Pages/Prescription/Prescription";
 import AddUserForm from "../Pages/Add User/AddUser";
 
 const router = createBrowserRouter([
@@ -30,6 +31,7 @@ const router = createBrowserRouter([
 
     ]
   },
+  // Dashboard layout
   {
     path: "/",
     Component: DashboardLayout,
@@ -55,6 +57,14 @@ const router = createBrowserRouter([
         Component: () => {
           return (
             <PrivateRoute><AddPatient></AddPatient></PrivateRoute>
+          );
+        }
+      },
+      {
+        path: "/prescription",
+        Component: () => {
+          return (
+            <PrivateRoute><Prescription></Prescription></PrivateRoute>
           );
         }
       },

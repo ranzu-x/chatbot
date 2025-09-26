@@ -8,6 +8,8 @@ const router = express.Router();
 router.get("/patients", authMiddleWare, async (req, res) => {
   try {
     const hospitalId = req.user.hospital_id;
+    console.log(hospitalId);
+    
     const [rows] = await pool.query("SELECT * FROM patients WHERE hospital_id = ?",
       [hospitalId]
     );
