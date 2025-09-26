@@ -9,22 +9,33 @@ const router = express.Router();
 // ✅ Super Admin Login
 router.post("/superadmin/login", async (req, res) => {
   const { email, password } = req.body;
+<<<<<<< HEAD
   console.log("rupos: ", password);
+=======
+  console.log("rupos: ", email);
+>>>>>>> e8b5ae9df18d368139b69fa8ca645e17d43ca512
 
   try {
     const [rows] = await pool.execute(
       `SELECT 
-         users.id AS user_id,
-         users.first_name,
-         users.last_name,
-         users.email,
-         users.password,
-         hospitals.id AS hospital_id,
-         hospitals.hospital_name AS hospital_name
-      FROM users
-      LEFT JOIN hospitals ON users.hospital_id = hospitals.id
-      WHERE users.email = ? 
-      LIMIT 1;`,
+    u.id AS user_id,
+    u.first_name,
+    u.last_name,
+    u.email,
+    u.password,
+    h.id AS hospital_id,
+    h.hospital_name,
+    GROUP_CONCAT(DISTINCT r.name) AS roles,
+    GROUP_CONCAT(DISTINCT p.name) AS permissions
+FROM users u
+LEFT JOIN hospitals h ON u.hospital_id = h.id
+LEFT JOIN user_roles ur ON u.id = ur.user_id
+LEFT JOIN roles r ON ur.role_id = r.id
+LEFT JOIN role_permissions rp ON r.id = rp.role_id
+LEFT JOIN permissions p ON rp.permission_id = p.id
+WHERE u.email = ?
+GROUP BY u.id
+LIMIT 1`,
       [email]
     );
 
@@ -40,11 +51,22 @@ router.post("/superadmin/login", async (req, res) => {
     // Create token
     const token = jwt.sign(
       {
+<<<<<<< HEAD
         id: user.user_id,
         email: user.email,
         hospital_id: user.hospital_id,
         hospital_name: user.hospital_name,
         type: "super_admin"
+=======
+        id: user.id,
+        name: `${user.first_name} ${user.last_name}`,
+        email: user.email,
+        username: user.username,
+        hospital_id: user.hospital_id,
+        hospital_name: user.hospital_name,
+        roles: user.roles ? user.roles.split(',') : [],
+        permissions: user.permissions ? user.permissions.split(',') : [],
+>>>>>>> e8b5ae9df18d368139b69fa8ca645e17d43ca512
       },
       process.env.JWT_SECRET,
       { expiresIn: "1h" }
@@ -64,7 +86,12 @@ router.post("/superadmin/login", async (req, res) => {
         username: user.username,
         hospital_id: user.hospital_id,
         hospital_name: user.hospital_name,
+<<<<<<< HEAD
         type: "super_admin",
+=======
+        roles: user.roles ? user.roles.split(',') : [],
+        permissions: user.permissions ? user.permissions.split(',') : [],
+>>>>>>> e8b5ae9df18d368139b69fa8ca645e17d43ca512
       },
     });
   } catch (err) {
