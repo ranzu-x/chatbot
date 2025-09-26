@@ -9,11 +9,7 @@ const router = express.Router();
 // ✅ Super Admin Login
 router.post("/superadmin/login", async (req, res) => {
   const { email, password } = req.body;
-<<<<<<< HEAD
   console.log("rupos: ", password);
-=======
-  console.log("rupos: ", email);
->>>>>>> e8b5ae9df18d368139b69fa8ca645e17d43ca512
 
   try {
     const [rows] = await pool.execute(
@@ -51,13 +47,6 @@ LIMIT 1`,
     // Create token
     const token = jwt.sign(
       {
-<<<<<<< HEAD
-        id: user.user_id,
-        email: user.email,
-        hospital_id: user.hospital_id,
-        hospital_name: user.hospital_name,
-        type: "super_admin"
-=======
         id: user.id,
         name: `${user.first_name} ${user.last_name}`,
         email: user.email,
@@ -66,7 +55,6 @@ LIMIT 1`,
         hospital_name: user.hospital_name,
         roles: user.roles ? user.roles.split(',') : [],
         permissions: user.permissions ? user.permissions.split(',') : [],
->>>>>>> e8b5ae9df18d368139b69fa8ca645e17d43ca512
       },
       process.env.JWT_SECRET,
       { expiresIn: "1h" }
@@ -86,12 +74,8 @@ LIMIT 1`,
         username: user.username,
         hospital_id: user.hospital_id,
         hospital_name: user.hospital_name,
-<<<<<<< HEAD
-        type: "super_admin",
-=======
         roles: user.roles ? user.roles.split(',') : [],
         permissions: user.permissions ? user.permissions.split(',') : [],
->>>>>>> e8b5ae9df18d368139b69fa8ca645e17d43ca512
       },
     });
   } catch (err) {

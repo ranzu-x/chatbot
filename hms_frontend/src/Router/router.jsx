@@ -8,11 +8,8 @@ import Dashboard from "../Pages/Dashboard/Dashboard";
 import PrivateRoute from "./PrivateRoute";
 import PatientsList from "../Pages/PatientsList/PatientsList";
 import DashboardLayout from "../Layout/DashboardLayout";
-<<<<<<< HEAD
 import Prescription from "../Pages/Prescription/Prescription";
-=======
 import AddUserForm from "../Pages/Add User/AddUser";
->>>>>>> e8b5ae9df18d368139b69fa8ca645e17d43ca512
 
 const router = createBrowserRouter([
   {
@@ -64,7 +61,6 @@ const router = createBrowserRouter([
         }
       },
       {
-<<<<<<< HEAD
         path: "/prescription",
         Component: () => {
           return (
@@ -72,7 +68,7 @@ const router = createBrowserRouter([
           );
         }
       },
-=======
+      {
         path: "/adduser",
         Component: () => {
           return (
@@ -81,7 +77,6 @@ const router = createBrowserRouter([
         }
       },
 
->>>>>>> e8b5ae9df18d368139b69fa8ca645e17d43ca512
     ]
 
   },
