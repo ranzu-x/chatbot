@@ -3,6 +3,7 @@ const AuthContext = createContext();
 
 export const AuthContexProvider = ({ children }) => {
   const [user, setUser] = useState(null);
+  const [medicines, setMedicines] = useState([]);
   const [loading, setLoading] = useState(true); // Wait for check auth
 
   const login = async (email, password) => {
@@ -17,12 +18,34 @@ export const AuthContexProvider = ({ children }) => {
 
     const data = await res.json();
     if (res.ok && data?.user) {
-      console.log("Rupos Data:",data);
+      console.log("Rupos Data:", data);
       setUser(data.user);
       return true;
     }
     return false;
   };
+
+  // Fetch Medicines
+  useEffect(() => {
+    setLoading(true);
+    fetch("http://localhost:5000/api/v1/medicines", { credentials: "include" })
+      .then((res) => {
+        console.log(res);
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((data) => {
+        setMedicines(data);
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error("Error fetching Medicines:", err);
+        setLoading(false);
+      });
+  }, []);
+
 
 
 
@@ -62,7 +85,7 @@ export const AuthContexProvider = ({ children }) => {
 
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading }}>
+    <AuthContext.Provider value={{ user, login, logout, loading, medicines }}>
       {children}
     </AuthContext.Provider>
   );

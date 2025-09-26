@@ -6,6 +6,8 @@ import {
     UserCircleIcon,
 } from '@heroicons/react/24/outline';
 import { useAuth } from "../../Provider/AuthContexProvider";
+import { FaEye, FaUserEdit } from "react-icons/fa";
+import { MdDelete } from "react-icons/md";
 
 const PatientsList = () => {
     const [patients, setPatients] = useState([]);
@@ -239,15 +241,15 @@ const PatientsList = () => {
                     </div>
                     <div className="overflow-x-auto">
                         <table className="min-w-full text-center">
-                            <thead className="bg-indigo-600 text-white shadow-md">
+                            <thead className="bg-gray-200 text-black shadow-md">
                                 <tr>
-                                    <th className="p-4 text-sm font-semibold tracking-wide uppercase">#</th>
-                                    <th className="p-4 text-sm font-semibold tracking-wide uppercase">First Name</th>
-                                    <th className="p-4 text-sm font-semibold tracking-wide uppercase">Last Name</th>
-                                    <th className="p-4 text-sm font-semibold tracking-wide uppercase">Age</th>
-                                    <th className="p-4 text-sm font-semibold tracking-wide uppercase">Gender</th>
-                                    <th className="p-4 text-sm font-semibold tracking-wide uppercase">Contact</th>
-                                    <th className="p-4 text-sm font-semibold tracking-wide uppercase text-center">Actions</th>
+                                    <th className="p-4 text-sm font-bold tracking-wide uppercase">#</th>
+                                    <th className="p-4 text-sm font-bold tracking-wide uppercase">First Name</th>
+                                    <th className="p-4 text-sm font-bold tracking-wide uppercase">Last Name</th>
+                                    <th className="p-4 text-sm font-bold tracking-wide uppercase">Age</th>
+                                    <th className="p-4 text-sm font-bold tracking-wide uppercase">Gender</th>
+                                    <th className="p-4 text-sm font-bold tracking-wide uppercase">Contact</th>
+                                    <th className="p-4 text-sm font-bold tracking-wide uppercase text-center">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200">
@@ -279,21 +281,21 @@ const PatientsList = () => {
                                                 <div className="flex flex-col sm:flex-row justify-center space-y-2 sm:space-y-0 sm:space-x-2">
                                                     <button
                                                         onClick={() => handleView(patient.id)}
-                                                        className="px-5 bg-green-100 text-green-600  border-green-500 rounded-lg text-sm font-semibold hover:from-green-600 hover:to-teal-600 focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-offset-2 transition-all duration-200"
+                                                        className="px-4 py-3 bg-green-100 text-green-600  border-green-500 rounded-lg text-sm font-semibold hover:from-green-600 hover:to-teal-600 focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-offset-2 transition-all duration-200"
                                                     >
-                                                        View
+                                                        <FaEye />
                                                     </button>
                                                     <button
                                                         onClick={() => handleEdit(patient.id)}
-                                                        className="px-5 bg-amber-100 text-amber-600 rounded-lg text-sm font-semibold hover:from-yellow-600 hover:to-orange-600 focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:ring-offset-2 transition-all duration-200"
+                                                        className="px-4 py-3 bg-amber-100 text-amber-600 rounded-lg text-sm font-semibold hover:from-yellow-600 hover:to-orange-600 focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:ring-offset-2 transition-all duration-200"
                                                     >
-                                                        Edit
+                                                        <FaUserEdit />
                                                     </button>
                                                     <button
                                                         onClick={() => handleDelete(patient.id)}
-                                                        className="px-5 py-2 bg-rose-100 text-rose-600 rounded-lg text-sm font-semibold hover:from-red-600 hover:to-pink-600 focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2 transition-all duration-200"
+                                                        className="px-4 py-3 bg-rose-100 text-rose-600 rounded-lg text-sm font-semibold hover:from-red-600 hover:to-pink-600 focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2 transition-all duration-200"
                                                     >
-                                                        Delete
+                                                        <MdDelete className="text-xl" />
                                                     </button>
                                                 </div>
                                             </td>

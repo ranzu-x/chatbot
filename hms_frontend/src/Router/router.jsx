@@ -10,6 +10,7 @@ import PatientsList from "../Pages/PatientsList/PatientsList";
 import DashboardLayout from "../Layout/DashboardLayout";
 import Prescription from "../Pages/Prescription/Prescription";
 import AddUserForm from "../Pages/Add User/AddUser";
+import AddPrescription from "../Pages/Prescription/Prescription";
 
 const router = createBrowserRouter([
   {
@@ -64,7 +65,7 @@ const router = createBrowserRouter([
         path: "/prescription",
         Component: () => {
           return (
-            <PrivateRoute><Prescription></Prescription></PrivateRoute>
+            <PrivateRoute><AddPrescription></AddPrescription></PrivateRoute>
           );
         }
       },

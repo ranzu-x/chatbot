@@ -22,7 +22,7 @@ const Sidebar = () => {
                         <UsersIcon className="h-5 w-5 mr-3" /> Patients
                     </NavLink>
                     <NavLink to={'/prescription'} className={navLinkClass}>
-                        <UsersIcon className="h-5 w-5 mr-3" /> prescription
+                        <UsersIcon className="h-5 w-5 mr-3" /> Prescription
                     </NavLink>
                     <Link to={'/appointments'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
                         <CalendarDaysIcon className="h-5 w-5 mr-3" /> Appointments
