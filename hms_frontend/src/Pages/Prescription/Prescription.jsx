@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 // Import icons for a better UI
-import { FaTrash, FaEdit } from 'react-icons/fa';
+import { FaTrash, FaEdit, FaPlus, FaCapsules } from 'react-icons/fa';
 
 // --- Mock Data and API (same as before) ---
 const allMedicines = [
@@ -21,18 +21,27 @@ const fetchMedicinesFromDB = () => {
   });
 };
 
-const Prescription = () => {
-  // State for the dropdown options
+const AddPrescription = () => {
+  // --- State for Doctor and Patient Details ---
+  const [doctorDetails, setDoctorDetails] = useState({
+    name: 'Dr. Emily Carter',
+    clinic: 'Community Health Clinic',
+    contact: 'contact@healthclinic.com',
+  });
+
+  const [patientDetails, setPatientDetails] = useState({
+    name: '',
+    age: '',
+    gender: 'Male',
+    date: new Date().toISOString().slice(0, 10), // Default to today
+  });
+
+  // --- State for Medications (same as before) ---
   const [medicationOptions, setMedicationOptions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-
-  // State for the final list of prescribed medicines
   const [prescribedMedicines, setPrescribedMedicines] = useState([]);
-
-  // State to track if we are in "edit mode" and which medicine is being edited
   const [editingId, setEditingId] = useState(null);
-
-  // Initial state for a single prescription entry
+  
   const initialPrescriptionState = {
     medicationId: '',
     medicationName: '',
@@ -42,8 +51,6 @@ const Prescription = () => {
     doseInterval: 'Once a day',
     comment: '',
   };
-
-  // State for the form's input fields
   const [currentPrescription, setCurrentPrescription] = useState(initialPrescriptionState);
 
   // Fetch medications on component mount
@@ -55,6 +62,12 @@ const Prescription = () => {
   }, []);
 
   // --- Event Handlers ---
+
+  // Handles input changes for the patient and doctor details form
+  const handleDetailsChange = (e, setter) => {
+    const { name, value } = e.target;
+    setter((prev) => ({ ...prev, [name]: value }));
+  };
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -71,16 +84,14 @@ const Prescription = () => {
     }));
   };
 
-  // --- Core CRUD Functions ---
+  // --- Core CRUD Functions (same as before) ---
 
   const handleAddOrUpdateMedicine = () => {
-    // Basic validation
     if (!currentPrescription.medicationId || !currentPrescription.dosage) {
       alert('Please select a medication and enter a dosage.');
       return;
     }
 
-    // If we are in edit mode, update the existing medicine
     if (editingId !== null) {
       setPrescribedMedicines((prevMedicines) =>
         prevMedicines.map((med) =>
@@ -88,122 +99,165 @@ const Prescription = () => {
         )
       );
     } else {
-      // Otherwise, add a new medicine with a unique ID
       setPrescribedMedicines((prev) => [
         ...prev,
         { ...currentPrescription, id: Date.now() },
       ]);
     }
-
-    // Reset the form and exit edit mode
     setCurrentPrescription(initialPrescriptionState);
     setEditingId(null);
   };
 
   const handleEdit = (id) => {
-    // Find the medicine to edit from the list
     const medicineToEdit = prescribedMedicines.find((med) => med.id === id);
     if (medicineToEdit) {
-      // Set the form's state to the data of the medicine being edited
       setCurrentPrescription(medicineToEdit);
-      // Enter "edit mode"
       setEditingId(id);
     }
   };
 
   const handleDelete = (id) => {
-    // Filter out the medicine with the matching ID
     setPrescribedMedicines((prevMedicines) =>
       prevMedicines.filter((med) => med.id !== id)
     );
   };
-
-  // Function to cancel editing
+  
   const cancelEdit = () => {
     setCurrentPrescription(initialPrescriptionState);
     setEditingId(null);
   };
 
   return (
-    <div className="bg-gray-50 min-h-screen p-4 sm:p-6 lg:p-8">
-      <div className="max-w-7xl mx-auto">
-        <header className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-800">Create Prescription</h1>
-          <p className="text-sm text-gray-500 mt-1">Add, edit, or remove medications to manage patient prescriptions.</p>
+    <div className="bg-gray-100 min-h-screen font-sans">
+      <div className="container mx-auto p-4 sm:p-6 lg:p-8">
+        <header className="mb-10">
+          <h1 className="text-4xl font-bold text-gray-800">Create Prescription</h1>
+          <p className="text-md text-gray-500 mt-2">A streamlined interface for managing patient prescriptions.</p>
         </header>
 
+        {/* Patient and Doctor Details Form */}
+        <div className="bg-white p-6 rounded-2xl  mb-8 transition-all duration-300">
+           <h2 className="text-xl font-semibold text-gray-800 mb-4 border-b-2 border-gray-100 pb-3">
+            Patient &amp; Doctor Details
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+            {/* Patient Details */}
+            <h3 className="md:col-span-2 text-lg font-semibold text-blue-600">Patient Information</h3>
+            <div>
+                <label htmlFor="patientName" className="block text-sm font-medium text-gray-600 mb-1">Patient Name</label>
+                <input type="text" id="patientName" name="name" value={patientDetails.name} onChange={(e) => handleDetailsChange(e, setPatientDetails)} className="w-full p-2.5 border border-gray-200 rounded-lg  focus:ring-2 focus:ring-blue-500 transition-all duration-200" placeholder="e.g., John Doe"/>
+            </div>
+            <div>
+                <label htmlFor="age" className="block text-sm font-medium text-gray-600 mb-1">Age</label>
+                <input type="number" id="age" name="age" value={patientDetails.age} onChange={(e) => handleDetailsChange(e, setPatientDetails)} className="w-full p-2.5 border border-gray-200 rounded-lg  focus:ring-2 focus:ring-blue-500 transition-all duration-200" placeholder="e.g., 42"/>
+            </div>
+            <div>
+                <label htmlFor="gender" className="block text-sm font-medium text-gray-600 mb-1">Gender</label>
+                 <select id="gender" name="gender" value={patientDetails.gender} onChange={(e) => handleDetailsChange(e, setPatientDetails)} className="w-full p-2.5 border border-gray-200 rounded-lg  focus:ring-2 focus:ring-blue-500 transition-all duration-200 bg-white">
+                    <option>Male</option>
+                    <option>Female</option>
+                    <option>Other</option>
+                </select>
+            </div>
+             <div>
+                <label htmlFor="date" className="block text-sm font-medium text-gray-600 mb-1">Date</label>
+                <input type="date" id="date" name="date" value={patientDetails.date} onChange={(e) => handleDetailsChange(e, setPatientDetails)} className="w-full p-2.5 border border-gray-200 rounded-lg  focus:ring-2 focus:ring-blue-500 transition-all duration-200"/>
+            </div>
+
+            {/* Doctor Details */}
+            <h3 className="md:col-span-2 mt-4 text-lg font-semibold text-blue-600">Doctor Information</h3>
+             <div>
+                <label htmlFor="doctorName" className="block text-sm font-medium text-gray-600 mb-1">Doctor Name</label>
+                <input type="text" id="doctorName" name="name" value={doctorDetails.name} onChange={(e) => handleDetailsChange(e, setDoctorDetails)} className="w-full p-2.5 border border-gray-200 rounded-lg  focus:ring-2 focus:ring-blue-500 transition-all duration-200"/>
+            </div>
+             <div>
+                <label htmlFor="clinic" className="block text-sm font-medium text-gray-600 mb-1">Clinic / Hospital</label>
+                <input type="text" id="clinic" name="clinic" value={doctorDetails.clinic} onChange={(e) => handleDetailsChange(e, setDoctorDetails)} className="w-full p-2.5 border border-gray-200 rounded-lg  focus:ring-2 focus:ring-blue-500 transition-all duration-200"/>
+            </div>
+          </div>
+        </div>
+
         {/* Medication Entry Form Card */}
-        <div className="bg-white p-6 rounded-xl shadow-md mb-8">
-           <h2 className="text-xl font-semibold text-gray-700 mb-4 border-b pb-3">
+        <div className="bg-white p-6 rounded-2xl mb-8 transition-all duration-300">
+           <h2 className="text-xl font-semibold text-gray-800 mb-4 border-b-2 border-gray-100 pb-3 flex items-center gap-3">
+            <FaCapsules className="text-blue-500"/>
             {editingId ? 'Edit Medicine' : 'Add New Medicine'}
           </h2>
-          {/* Form Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
-            {/* Medication Dropdown */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-6">
             <div className="lg:col-span-1">
               <label htmlFor="medicationId" className="block text-sm font-medium text-gray-600 mb-1">Medication</label>
-              <select id="medicationId" name="medicationId" value={currentPrescription.medicationId} onChange={handleMedicationSelect} className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-blue-500" disabled={isLoading}>
+              <select id="medicationId" name="medicationId" value={currentPrescription.medicationId} onChange={handleMedicationSelect} className="w-full p-2.5 border border-gray-200 rounded-lg  focus:ring-2 focus:ring-blue-500 transition-all duration-200 bg-white" disabled={isLoading}>
                 <option value="">{isLoading ? 'Loading...' : 'Select a medication'}</option>
                 {medicationOptions.map((med) => (<option key={med.id} value={med.id}>{med.name}</option>))}
               </select>
             </div>
-            {/* Dosage */}
             <div>
               <label htmlFor="dosage" className="block text-sm font-medium text-gray-600 mb-1">Dosage</label>
-              <input type="text" id="dosage" name="dosage" value={currentPrescription.dosage} onChange={handleInputChange} className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-blue-500" placeholder="e.g., 1 tablet"/>
+              <input type="text" id="dosage" name="dosage" value={currentPrescription.dosage} onChange={handleInputChange} className="w-full p-2.5 border border-gray-200 rounded-lg  focus:ring-2 focus:ring-blue-500 transition-all duration-200" placeholder="e.g., 1 tablet"/>
             </div>
-            {/* Dose Duration */}
             <div>
               <label htmlFor="doseDuration" className="block text-sm font-medium text-gray-600 mb-1">Dose Duration</label>
-              <input type="text" id="doseDuration" name="doseDuration" value={currentPrescription.doseDuration} onChange={handleInputChange} className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-blue-500" placeholder="e.g., 7 days"/>
+              <input type="text" id="doseDuration" name="doseDuration" value={currentPrescription.doseDuration} onChange={handleInputChange} className="w-full p-2.5 border border-gray-200 rounded-lg  focus:ring-2 focus:ring-blue-500 transition-all duration-200" placeholder="e.g., 7 days"/>
             </div>
-            {/* Time */}
             <div>
               <label htmlFor="time" className="block text-sm font-medium text-gray-600 mb-1">Time</label>
-              <select id="time" name="time" value={currentPrescription.time} onChange={handleInputChange} className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-blue-500">
+              <select id="time" name="time" value={currentPrescription.time} onChange={handleInputChange} className="w-full p-2.5 border border-gray-200 rounded-lg  focus:ring-2 focus:ring-blue-500 transition-all duration-200 bg-white">
                 <option>After Meal</option>
                 <option>Before Meal</option>
                 <option>With Meal</option>
               </select>
             </div>
-            {/* Dose Interval */}
             <div>
               <label htmlFor="doseInterval" className="block text-sm font-medium text-gray-600 mb-1">Dose Interval</label>
-              <select id="doseInterval" name="doseInterval" value={currentPrescription.doseInterval} onChange={handleInputChange} className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-blue-500">
+              <select id="doseInterval" name="doseInterval" value={currentPrescription.doseInterval} onChange={handleInputChange} className="w-full p-2.5 border border-gray-200 rounded-lg  focus:ring-2 focus:ring-blue-500 transition-all duration-200 bg-white">
                 <option>Once a day</option>
                 <option>Twice a day</option>
                 <option>Three times a day</option>
                 <option>As needed</option>
               </select>
             </div>
-            {/* Comment */}
             <div className="md:col-span-2 lg:col-span-1">
               <label htmlFor="comment" className="block text-sm font-medium text-gray-600 mb-1">Comment</label>
-              <input type="text" id="comment" name="comment" value={currentPrescription.comment} onChange={handleInputChange} className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-blue-500" placeholder="Optional notes"/>
+              <input type="text" id="comment" name="comment" value={currentPrescription.comment} onChange={handleInputChange} className="w-full p-2.5 border border-gray-200 rounded-lg  focus:ring-2 focus:ring-blue-500 transition-all duration-200" placeholder="Optional notes"/>
             </div>
           </div>
-          
-          {/* Action Buttons */}
-          <div className="mt-6 flex justify-end items-center gap-4">
+          <div className="mt-8 flex justify-end items-center gap-4">
             {editingId && (
-              <button onClick={cancelEdit} className="px-6 py-2 bg-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-300 transition duration-200">
+              <button onClick={cancelEdit} className="px-6 py-2.5 bg-gray-200 text-gray-800 font-semibold rounded-lg hover:bg-gray-300 transition-all duration-200 transform hover:scale-105">
                 Cancel
               </button>
             )}
-            <button onClick={handleAddOrUpdateMedicine} className={`px-6 py-2 text-white font-semibold rounded-lg shadow-md focus:outline-none focus:ring-2 focus:ring-opacity-75 transition duration-200 ${editingId ? 'bg-green-600 hover:bg-green-700 focus:ring-green-500' : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500'}`}>
+            <button onClick={handleAddOrUpdateMedicine} className={`px-6 py-2.5 text-white font-semibold rounded-lg shadow-md focus:outline-none focus:ring-2 focus:ring-opacity-75 transition-all duration-200 transform hover:scale-105 flex items-center gap-2 ${editingId ? 'bg-green-500 hover:bg-green-600 focus:ring-green-500' : 'bg-blue-500 hover:bg-blue-600 focus:ring-blue-500'}`}>
+              {editingId ? <FaEdit/> : <FaPlus/>}
               {editingId ? 'Update Medicine' : 'Add Medicine'}
             </button>
           </div>
         </div>
 
-        {/* Prescription List Table */}
-        <div>
-            <h2 className="text-xl font-semibold text-gray-700 mb-4">Prescribed Medicines</h2>
-            <div className="bg-white rounded-xl shadow-md overflow-hidden">
+        {/* --- Prescription Header & List --- */}
+        <div className="bg-white rounded-2xl transition-all duration-300">
+            <div className="p-6 border-b-2 border-dashed border-gray-200">
+                <h2 className="text-3xl font-bold text-center text-gray-800 mb-4 tracking-wider">PRESCRIPTION</h2>
+                <div className="flex justify-between items-start text-sm text-gray-700">
+                    {/* Doctor Details */}
+                    <div>
+                        <p className="font-bold text-lg text-gray-900">{doctorDetails.name}</p>
+                        <p className="text-gray-600">{doctorDetails.clinic}</p>
+                        <p className="text-gray-600">{doctorDetails.contact}</p>
+                    </div>
+                    {/* Patient Details */}
+                    <div className="text-right">
+                        <p><span className="font-semibold text-gray-800">Patient:</span> {patientDetails.name || 'N/A'}</p>
+                        <p><span className="font-semibold text-gray-800">Age:</span> {patientDetails.age || 'N/A'}, <span className="font-semibold">Gender:</span> {patientDetails.gender}</p>
+                        <p><span className="font-semibold text-gray-800">Date:</span> {patientDetails.date}</p>
+                    </div>
+                </div>
+            </div>
+            <div className="overflow-hidden">
                 <div className="overflow-x-auto">
                     {prescribedMedicines.length > 0 ? (
-                        <table className="min-w-full text-sm divide-y divide-gray-200">
-                            <thead className="bg-gray-100">
+                        <table className="min-w-full text-sm">
+                            <thead className="bg-gray-50">
                             <tr>
                                 <th className="px-6 py-3 text-left font-semibold text-gray-600 uppercase tracking-wider">Medication</th>
                                 <th className="px-6 py-3 text-left font-semibold text-gray-600 uppercase tracking-wider">Dosage</th>
@@ -212,19 +266,19 @@ const Prescription = () => {
                                 <th className="px-6 py-3 text-left font-semibold text-gray-600 uppercase tracking-wider">Actions</th>
                             </tr>
                             </thead>
-                            <tbody className="bg-white divide-y divide-gray-200">
-                            {prescribedMedicines.map((med) => (
-                                <tr key={med.id} className="hover:bg-gray-50">
-                                <td className="px-6 py-4 whitespace-nowrap text-gray-800">{med.medicationName}</td>
+                            <tbody className="divide-y divide-gray-200">
+                            {prescribedMedicines.map((med, index) => (
+                                <tr key={med.id} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
+                                <td className="px-6 py-4 whitespace-nowrap text-gray-800 font-medium">{med.medicationName}</td>
                                 <td className="px-6 py-4 whitespace-nowrap text-gray-600">{med.dosage}</td>
                                 <td className="px-6 py-4 whitespace-nowrap text-gray-600">{med.doseDuration}</td>
                                 <td className="px-6 py-4 whitespace-nowrap text-gray-600">{med.doseInterval}</td>
                                 <td className="px-6 py-4 whitespace-nowrap">
                                     <div className="flex items-center gap-4">
-                                        <button onClick={() => handleEdit(med.id)} className="text-blue-500 hover:text-blue-700 transition-colors duration-200">
+                                        <button onClick={() => handleEdit(med.id)} className="text-blue-600 hover:text-blue-800 transition-colors duration-200" title="Edit">
                                             <FaEdit size={16}/>
                                         </button>
-                                        <button onClick={() => handleDelete(med.id)} className="text-red-500 hover:text-red-700 transition-colors duration-200">
+                                        <button onClick={() => handleDelete(med.id)} className="text-red-600 hover:text-red-800 transition-colors duration-200" title="Delete">
                                             <FaTrash size={16}/>
                                         </button>
                                     </div>
@@ -234,7 +288,11 @@ const Prescription = () => {
                             </tbody>
                         </table>
                     ) : (
-                        <p className="p-6 text-center text-gray-500">No medicines have been prescribed yet.</p>
+                        <div className="p-10 text-center">
+                          <FaCapsules className="mx-auto text-4xl text-gray-300 mb-4"/>
+                          <p className="text-gray-500">No medicines have been prescribed yet.</p>
+                          <p className="text-sm text-gray-400 mt-1">Use the form above to add medications to this prescription.</p>
+                        </div>
                     )}
                 </div>
             </div>
@@ -244,5 +302,4 @@ const Prescription = () => {
   );
 };
 
-
-export default Prescription;
+export default AddPrescription;

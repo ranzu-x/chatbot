@@ -147,7 +147,7 @@ const Dashboard = () => {
 
 
           {/* Upcoming Appointments Table */}
-          <div>
+          <div className='mt-10'>
             <h2 className="text-xl font-semibold text-gray-700 mb-4">Upcoming Appointments</h2>
             <div className="bg-white rounded-lg shadow-md overflow-hidden">
               <table className="min-w-full">

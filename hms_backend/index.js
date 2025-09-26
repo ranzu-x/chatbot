@@ -4,6 +4,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import authRoutes from "./routes/auth.js";
 import patientRoutes from "./routes/patients.js";
+import medicines from "./routes/medicines.js";
 
 dotenv.config();
 const app = express();
@@ -20,6 +21,7 @@ app.use(cookieParser());
 // ✅ Routes
 app.use("/api/v1", authRoutes);
 app.use("/api/v1", patientRoutes);
+app.use("/api/v1", medicines);
 
 // ✅ Server
 app.listen(port, () => {
