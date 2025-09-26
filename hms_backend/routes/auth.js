@@ -9,12 +9,8 @@ const router = express.Router();
 // ✅ Super Admin Login
 router.post("/superadmin/login", async (req, res) => {
   const { email, password } = req.body;
-<<<<<<< HEAD
- console.log("RUPOS: ",email);
-=======
-  console.log("rupos: ", email);
+  console.log("rupos: ", password);
 
->>>>>>> de4b7231bfa3dfc6f07b980e08379e878a3959d2
   try {
     const [rows] = await pool.execute(
       `SELECT 
@@ -35,33 +31,30 @@ router.post("/superadmin/login", async (req, res) => {
     if (rows.length === 0) {
       return res.status(401).json({ message: "Invalid email" });
     }
-
     const user = rows[0];
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid password" });
     }
 
-
     // Create token
     const token = jwt.sign(
-      { 
-        id: user.id, 
-        email: user.email, 
+      {
+        id: user.user_id,
+        email: user.email,
         hospital_id: user.hospital_id,
         hospital_name: user.hospital_name,
-        type: "super_admin" 
+        type: "super_admin"
       },
       process.env.JWT_SECRET,
       { expiresIn: "1h" }
-    );
+    );    
     res.cookie("token", token, {
       httpOnly: true,
       secure: false,
       sameSite: "lax",
       maxAge: 60 * 60 * 1000,
     });
-
     res.json({
       message: "Login successful",
       user: {
@@ -69,8 +62,8 @@ router.post("/superadmin/login", async (req, res) => {
         name: `${user.first_name} ${user.last_name}`,
         email: user.email,
         username: user.username,
-        hospital_id:user.hospital_id,
-        hospital_name:user.hospital_name,
+        hospital_id: user.hospital_id,
+        hospital_name: user.hospital_name,
         type: "super_admin",
       },
     });
