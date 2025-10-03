@@ -5,6 +5,7 @@ import cookieParser from "cookie-parser";
 import authRoutes from "./routes/auth.js";
 import patientRoutes from "./routes/patients.js";
 import medicines from "./routes/medicines.js";
+import hospitalAdminRegister from "./routes/hospitalAdminRegister.js";
 
 dotenv.config();
 const app = express();
@@ -22,6 +23,7 @@ app.use(cookieParser());
 app.use("/api/v1", authRoutes);
 app.use("/api/v1", patientRoutes);
 app.use("/api/v1", medicines);
+app.use("/api/v1", hospitalAdminRegister)
 
 // ✅ Server
 app.listen(port, () => {
