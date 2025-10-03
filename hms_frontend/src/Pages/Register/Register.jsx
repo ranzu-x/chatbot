@@ -14,8 +14,6 @@ const Register = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  const roles = ['Super Admin', 'Admin', 'Manager', 'Other Staff'];
-
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData({
