@@ -1,6 +1,7 @@
 import express from "express";
 import pool from "../db.js";
 import { authMiddleWare } from "../middleware/authmiddleware.js";
+import { generatePatientCode } from "../utility/generatePatientCode.js";
 
 const router = express.Router();
 
@@ -8,9 +9,8 @@ const router = express.Router();
 router.get("/patients", authMiddleWare, async (req, res) => {
   try {
     const hospitalId = req.user.hospital_id;
-    console.log(hospitalId);
-    
-    const [rows] = await pool.query("SELECT * FROM patients WHERE hospital_id = ?",
+    const [rows] = await pool.query(
+      "SELECT * FROM patients WHERE hospital_id = ?",
       [hospitalId]
     );
     res.json(rows);
@@ -19,29 +19,31 @@ router.get("/patients", authMiddleWare, async (req, res) => {
   }
 });
 
-
-
 // ✅ Add a patient
-router.post("/", async (req, res) => {
+router.post("/add_patients", authMiddleWare, async (req, res) => {
   const {
-    firstName, gender, age, phoneNumber, presentAddress, permanentAddress,
-    fatherOrHusbandName, motherName, nid, bloodGroup, email,
+    firstName, lastName, gender, age, phoneNumber, presentAddress,
+    fathersName, motherName, nid, bloodGroup, email,
     emergencyContactName, emergencyContactRelation, emergencyContactPhone,
     department, consultantDoctor, admissionDate, ward, bedNumber,
     pastConditions, currentMedications, allergies
   } = req.body;
 
   try {
+    const hospitalId = req.user.hospital_id;
+    const patient_id = await generatePatientCode(hospitalId);
+
     const [result] = await pool.query(
-      "INSERT INTO patients (name, age, gender, phone, fatherOrHusbandName, motherName, nid, bloodGroup, email, permanentAddress, presentAddress, emergencyContactName, emergencyContactRelation, emergencyContactPhone, department, consultantDoctor, admissionDate, ward, bedNumber, pastConditions, CurrentMedications, KnownAllergies) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      `INSERT INTO patients (
+        hospital_id, patient_id, first_name, last_name, email, phone, age, gender, address
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        firstName, age, gender, phoneNumber, fatherOrHusbandName, motherName, nid,
-        bloodGroup, email, permanentAddress, presentAddress, emergencyContactName,
-        emergencyContactRelation, emergencyContactPhone, department, consultantDoctor,
-        admissionDate, ward, bedNumber, pastConditions, currentMedications, allergies
+        hospitalId, patient_id, firstName, lastName, email,
+        phoneNumber, age, gender, presentAddress
       ]
     );
-    res.json(result);
+
+    res.json({ success: true, patient_id, insertId: result.insertId });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

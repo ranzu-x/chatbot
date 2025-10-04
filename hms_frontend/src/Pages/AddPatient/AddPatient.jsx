@@ -24,9 +24,10 @@ const AddPatient = () => {
         // Patient Information
         patientId: '',
         firstName: '',
+        lastName:'',
         age: '',
-        fatherOrHusbandName: '',
-        motherName: '',
+        fathersName: '',
+        spouseName: '',
         dateOfBirth: '',
         gender: '',
         nid: '',
@@ -67,13 +68,14 @@ const AddPatient = () => {
     // validation the form field
     const validate = () => {
         let tempErrors = {};
-        if (!formData.firstName) tempErrors.firstName = "Full name is required.";
+        if (!formData.firstName) tempErrors.firstName = "First name is required.";
+        if (!formData.lastName) tempErrors.lastName = "Last name is required.";
         if (!formData.age) tempErrors.age = "age is required.";
-        if (!formData.dateOfBirth) tempErrors.dateOfBirth = "Date of birth is required.";
+        // if (!formData.dateOfBirth) tempErrors.dateOfBirth = "Date of birth is required.";
         if (!formData.phoneNumber) tempErrors.phoneNumber = "Phone number is required.";
-        if (!formData.bloodGroup) tempErrors.bloodGroup = "Blood group is required.";
-        if (!formData.department) tempErrors.department = "Department is required.";
-        if (!formData.emergencyContactName) tempErrors.emergencyContactName = "Emergency contact is required.";
+        // if (!formData.bloodGroup) tempErrors.bloodGroup = "Blood group is required.";
+        // if (!formData.department) tempErrors.department = "Department is required.";
+        // if (!formData.emergencyContactName) tempErrors.emergencyContactName = "Emergency contact is required.";
         if (formData.email && !/\S+@\S+\.\S+/.test(formData.email)) {
             tempErrors.email = "Email is not valid.";
         }
@@ -94,21 +96,24 @@ const AddPatient = () => {
         }
         else {
             // Send Data to backend
-            fetch("http://localhost:5000/patients",
+            fetch("http://localhost:5000/api/v1/add_patients",
                 {
                     method: 'POST',
                     headers: {
-                        'content-type': 'application/json'
+                        'content-type': 'application/json',
+                         
                     },
+                    credentials: "include",
                     body: JSON.stringify(
                         {
                             firstName: formData.firstName,
+                            lastName:formData.lastName,
                             gender: formData.gender,
                             age: formData.age,
                             phoneNumber: formData.phoneNumber,
                             presentAddress: formData.presentAddress,
                             permanentAddress: formData.permanentAddress,
-                            fatherOrHusbandName: formData.fatherOrHusbandName,
+                            fathersName: formData.fathersName,
                             motherName: formData.motherName,
                             nid: formData.nid,
                             bloodGroup: formData.bloodGroup,
@@ -130,7 +135,7 @@ const AddPatient = () => {
                 .then(res => res.json())
                 .then(result => {
                     console.log(result)
-                    if (result.affectedRows > 0) {
+                    if (result.insertId > 0) {
                         Swal.fire({
                             title: `Patient: ${formData.firstName} Added Successful`,
                             icon: "success",
@@ -172,15 +177,17 @@ const AddPatient = () => {
                         <div className="p-8 rounded-xl border border-gray-200 bg-gray-50/50">
                             <SectionHeader title="Patient Information" icon={<UserCircleIcon />} />
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-6">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Patient ID</label>
-                                    <input type="text" name="patientId" onChange={handleChange} className={inputStyle} placeholder="Auto-generated or Manual" />
-                                </div>
+
                                 {/* Name */}
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Full Name *</label>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">First Name *</label>
                                     <input type="text" value={formData.firstName} name="firstName" onChange={handleChange} className={inputStyle} />
                                     {errors.firstName && <p className="text-red-600 text-xs mt-1">{errors.firstName}</p>}
+                                </div>
+                                 <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Last Name *</label>
+                                    <input type="text" value={formData.lastName} name="lastName" onChange={handleChange} className={inputStyle} />
+                                    {errors.lastName && <p className="text-red-600 text-xs mt-1">{errors.lastName}</p>}
                                 </div>
                                 {/* Age */}
                                 <div>
@@ -188,15 +195,15 @@ const AddPatient = () => {
                                     <input value={formData.age} type="text" name="age" onChange={handleChange} className={inputStyle} />
                                     {errors.age && <p className="text-red-600 text-xs mt-1">{errors.age}</p>}
                                 </div>
-                                {/* Father / Husband Name */}
+                                {/* Father's Name */}
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Father / Husband Name</label>
-                                    <input value={formData.fatherOrHusbandName} type="text" name="fatherOrHusbandName" onChange={handleChange} className={inputStyle} />
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Father's Name</label>
+                                    <input value={formData.fathersName} type="text" name="fathersName" onChange={handleChange} className={inputStyle} />
                                 </div>
-                                {/* Mother’s Name */}
+                                {/* Spouse's Name */}
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Mother’s Name</label>
-                                    <input value={formData.motherName} type="text" name="motherName" onChange={handleChange} className={inputStyle} />
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Spouse Name</label>
+                                    <input value={formData.spouseName} type="text" name="spouseName" onChange={handleChange} className={inputStyle} />
                                 </div>
                                 {/* Date of Birth */}
                                 <div>

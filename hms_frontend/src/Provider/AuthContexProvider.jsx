@@ -26,25 +26,25 @@ export const AuthContexProvider = ({ children }) => {
   };
 
   // Fetch Medicines
-  useEffect(() => {
-    setLoading(true);
-    fetch("http://localhost:5000/api/v1/medicines", { credentials: "include" })
-      .then((res) => {
-        console.log(res);
-        if (!res.ok) {
-          throw new Error(`HTTP error! status: ${res.status}`);
-        }
-        return res.json();
-      })
-      .then((data) => {
-        setMedicines(data);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error("Error fetching Medicines:", err);
-        setLoading(false);
-      });
-  }, []);
+  // useEffect(() => {
+  //   setLoading(true);
+  //   fetch("http://localhost:5000/api/v1/medicines", { credentials: "include" })
+  //     .then((res) => {
+  //       console.log(res);
+  //       if (!res.ok) {
+  //         throw new Error(`HTTP error! status: ${res.status}`);
+  //       }
+  //       return res.json();
+  //     })
+  //     .then((data) => {
+  //       setMedicines(data);
+  //       setLoading(false);
+  //     })
+  //     .catch((err) => {
+  //       console.error("Error fetching Medicines:", err);
+  //       setLoading(false);
+  //     });
+  // }, []);
 
 
 
