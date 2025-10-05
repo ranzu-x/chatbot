@@ -47,7 +47,7 @@ LIMIT 1`,
     // Create token
     const token = jwt.sign(
       {
-        id: user.id,
+        id: user.user_id,
         name: `${user.first_name} ${user.last_name}`,
         email: user.email,
         username: user.username,
@@ -68,7 +68,7 @@ LIMIT 1`,
     res.json({
       message: "Login successful",
       user: {
-        id: user.id,
+        id: user.user_id,
         name: `${user.first_name} ${user.last_name}`,
         email: user.email,
         username: user.username,
