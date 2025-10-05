@@ -1,5 +1,10 @@
 import React, { useState } from 'react';
 import { User, Mail, Lock, Users, Building, Eye, EyeOff } from 'lucide-react';
+import { useNavigate } from 'react-router';
+import { useAuth } from '../../Provider/AuthContexProvider';
+
+
+
 
 const Register = () => {
   const [formData, setFormData] = useState({
@@ -13,6 +18,8 @@ const Register = () => {
   const [errors, setErrors] = useState({});
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const { setUser } = useAuth();
+  const navigate = useNavigate();
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -21,6 +28,9 @@ const Register = () => {
       [name]: value,
     });
   };
+
+
+  // Signup form validation
 
   const validate = () => {
     let tempErrors = {};
@@ -51,39 +61,49 @@ const Register = () => {
     return Object.keys(tempErrors).length === 0;
   };
 
+  // Signup form submit fundtion
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (validate()) {
-      try {
-        const response = await fetch("http://localhost:5000/api/v1/hospital-admin/signup", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(formData), //Sending form datat to backend
-        });
+    if (!validate()) return;
 
-        const data = await response.json();
-        if (response.ok) {
-          alert('User Registered Successfully!');
-          console.log('Form submitted successfully:', formData);
-          setFormData({
-            firstname: '',
-            lastname: '',
-            email: '',
-            password: '',
-            confirmPassword: '',
-          });
-          setErrors({});
-        } else {
-          alert(data.message || "Registration failed");
-        }
-      } catch (error) {
-        console.error("Error:", error);
-        alert("Something went wrong, please try again later.");
+    try {
+      const response = await fetch("http://localhost:5000/api/v1/hospital-admin/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include", // ✅ crucial
+        body: JSON.stringify(formData),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        alert("User Registered Successfully!");
+        console.log("Form submitted successfully:", data);
+
+        // ✅ Save logged-in user
+        setUser(data.user);
+
+        // ✅ Go to dashboard
+        navigate("/dashboard");
+
+        // ✅ Reset form
+        setFormData({
+          firstname: "",
+          lastname: "",
+          email: "",
+          password: "",
+          confirmPassword: "",
+        });
+        setErrors({});
+      } else {
+        alert(data.message || "Registration failed");
       }
+    } catch (error) {
+      console.error("Error:", error);
+      alert("Something went wrong, please try again later.");
     }
   };
+
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-100 to-indigo-200 flex items-center justify-center p-4">

@@ -146,7 +146,7 @@ const AddPatient = () => {
                     else {
                         Swal.fire({
                             icon: "error",
-                            title: 'Database Error',
+                            title: result.message,
                             text: result.error,
                             // footer: '<a href="#"></a>'
                         });

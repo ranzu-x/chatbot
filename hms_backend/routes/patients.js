@@ -31,6 +31,20 @@ router.post("/add_patients", authMiddleWare, async (req, res) => {
 
   try {
     const hospitalId = req.user.hospital_id;
+
+    // Check if the phone number is already exists for this hospital
+    const [existingPatient] = await pool.query(
+      `SELECT id FROM patients WHERE hospital_id = ? AND phone = ?`,
+      [hospitalId, phoneNumber]
+    );
+
+    if (existingPatient.length > 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "This phone number is already registered for this hospital." });
+    }
+
+    //  Generate patient code (custom function)
     const patient_id = await generatePatientCode(hospitalId);
 
     const [result] = await pool.query(
@@ -43,8 +57,10 @@ router.post("/add_patients", authMiddleWare, async (req, res) => {
       ]
     );
 
-    res.json({ success: true, patient_id, insertId: result.insertId });
-  } catch (err) {
+    res.json({ success: true, message: "Patient added successfully", patient_id, insertId: result.insertId });
+  }
+
+  catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

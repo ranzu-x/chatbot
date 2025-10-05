@@ -17,6 +17,7 @@ export const AuthContexProvider = ({ children }) => {
     });
 
     const data = await res.json();
+    console.log(data);
     if (res.ok && data?.user) {
       console.log("Rupos Data:", data);
       setUser(data.user);
@@ -85,7 +86,7 @@ export const AuthContexProvider = ({ children }) => {
 
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading, medicines }}>
+    <AuthContext.Provider value={{ user, setUser, login, logout, loading, medicines }}>
       {children}
     </AuthContext.Provider>
   );
