@@ -134,7 +134,7 @@ const AddPatient = () => {
                 })
                 .then(res => res.json())
                 .then(result => {
-                    console.log(result)
+                    console.log("This is the result", result)
                     if (result.insertId > 0) {
                         Swal.fire({
                             title: `Patient: ${formData.firstName} Added Successful`,
@@ -147,7 +147,7 @@ const AddPatient = () => {
                         Swal.fire({
                             icon: "error",
                             title: result.message,
-                            text: result.error,
+                            text: result.message,
                             // footer: '<a href="#"></a>'
                         });
                     }

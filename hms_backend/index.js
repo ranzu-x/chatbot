@@ -5,7 +5,8 @@ import cookieParser from "cookie-parser";
 import authRoutes from "./routes/auth.js";
 import patientRoutes from "./routes/patients.js";
 import medicines from "./routes/medicines.js";
-import hospitalAdminSignUp from "./routes/hospitalAdminSignUp.js";
+import hospitalAdminSignUpRoutes from "./routes/hospitalAdminSignUp.js";
+import createUsersRoutes from "./routes/createUsers.js"
 
 dotenv.config();
 const app = express();
@@ -23,7 +24,8 @@ app.use(cookieParser());
 app.use("/api/v1", authRoutes);
 app.use("/api/v1", patientRoutes);
 app.use("/api/v1", medicines);
-app.use("/api/v1", hospitalAdminSignUp)
+app.use("/api/v1", hospitalAdminSignUpRoutes)
+app.use("/api/v1", createUsersRoutes)
 
 // ✅ Server
 app.listen(port, () => {
