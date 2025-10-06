@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Eye, EyeOff, Check, X, User, Mail, Phone, Calendar, Briefcase, GraduationCap, Stethoscope, MapPin, Camera } from 'lucide-react';
+import { useAuth } from '../../Provider/AuthContexProvider';
 
 const UserCreationForm = () => {
+  const { user } = useAuth();
   const [formData, setFormData] = useState({
     firstName: '',
     lastName: '',
@@ -60,11 +62,11 @@ const UserCreationForm = () => {
     const birthDate = new Date(dateOfBirth);
     let age = today.getFullYear() - birthDate.getFullYear();
     const monthDiff = today.getMonth() - birthDate.getMonth();
-    
+
     if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
       age--;
     }
-    
+
     return age;
   };
 
@@ -126,7 +128,7 @@ const UserCreationForm = () => {
 
     if (!formData.firstName.trim()) newErrors.firstName = 'First name is required';
     if (!formData.lastName.trim()) newErrors.lastName = 'Last name is required';
-    
+
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!formData.email.trim()) {
       newErrors.email = 'Email is required';
@@ -162,11 +164,11 @@ const UserCreationForm = () => {
   // Handle input changes
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    
+
     if (name === 'password') {
       setPasswordStrength(checkPasswordStrength(value));
     }
-    
+
     if (name === 'age' && value) {
       const dob = calculateDateOfBirth(value);
       setFormData(prev => ({
@@ -211,7 +213,7 @@ const UserCreationForm = () => {
   // Handle form submission
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     if (!validateForm()) {
       return;
     }
@@ -227,11 +229,24 @@ const UserCreationForm = () => {
         }
       });
 
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
+
+      submitData.append('hospital_id', user?.hospital_id);
+
+      const response = await fetch('http://localhost:5000/api/v1/users/create-users', {
+        method: 'POST',
+        // Don't set Content-Type header - browser will set it with boundary
+        body: submitData, // Send FormData directly
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to create user');
+      }
+
+      const data = await response.json();
+      console.log(data);
       alert('User created successfully!');
-      
+
       // Reset form
       setFormData({
         firstName: '',
@@ -251,9 +266,9 @@ const UserCreationForm = () => {
         profileImage: null
       });
       setPasswordStrength({ score: 0, feedback: [] });
-      
+
     } catch (error) {
-      alert('Error creating user. Please try again.');
+      alert('Error creating user. Please try again.', error);
     } finally {
       setIsSubmitting(false);
     }
@@ -290,9 +305,9 @@ const UserCreationForm = () => {
               <div className="relative">
                 <div className="w-24 h-24 bg-gray-200 rounded-full flex items-center justify-center overflow-hidden">
                   {formData.profileImage ? (
-                    <img 
-                      src={URL.createObjectURL(formData.profileImage)} 
-                      alt="Profile" 
+                    <img
+                      src={URL.createObjectURL(formData.profileImage)}
+                      alt="Profile"
                       className="w-full h-full object-cover"
                     />
                   ) : (
@@ -301,9 +316,9 @@ const UserCreationForm = () => {
                 </div>
                 <label className="absolute bottom-0 right-0 bg-blue-600 text-white p-2 rounded-full cursor-pointer hover:bg-blue-700 transition-colors">
                   <Camera className="w-4 h-4" />
-                  <input 
-                    type="file" 
-                    accept="image/*" 
+                  <input
+                    type="file"
+                    accept="image/*"
                     onChange={handleFileChange}
                     className="hidden"
                   />
@@ -316,7 +331,7 @@ const UserCreationForm = () => {
               <h2 className="text-xl font-semibold text-gray-800 border-b border-gray-200 pb-2">
                 Personal Information
               </h2>
-              
+
               <div className="grid md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -327,9 +342,8 @@ const UserCreationForm = () => {
                     name="firstName"
                     value={formData.firstName}
                     onChange={handleInputChange}
-                    className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
-                      errors.firstName ? 'border-red-500' : 'border-gray-300'
-                    }`}
+                    className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${errors.firstName ? 'border-red-500' : 'border-gray-300'
+                      }`}
                     placeholder="Enter first name"
                   />
                   {errors.firstName && (
@@ -349,9 +363,8 @@ const UserCreationForm = () => {
                     name="lastName"
                     value={formData.lastName}
                     onChange={handleInputChange}
-                    className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
-                      errors.lastName ? 'border-red-500' : 'border-gray-300'
-                    }`}
+                    className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${errors.lastName ? 'border-red-500' : 'border-gray-300'
+                      }`}
                     placeholder="Enter last name"
                   />
                   {errors.lastName && (
@@ -374,9 +387,8 @@ const UserCreationForm = () => {
                     name="email"
                     value={formData.email}
                     onChange={handleInputChange}
-                    className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
-                      errors.email ? 'border-red-500' : 'border-gray-300'
-                    }`}
+                    className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${errors.email ? 'border-red-500' : 'border-gray-300'
+                      }`}
                     placeholder="Enter email address"
                   />
                   {errors.email && (
@@ -397,9 +409,8 @@ const UserCreationForm = () => {
                     name="phone"
                     value={formData.phone}
                     onChange={handleInputChange}
-                    className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
-                      errors.phone ? 'border-red-500' : 'border-gray-300'
-                    }`}
+                    className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${errors.phone ? 'border-red-500' : 'border-gray-300'
+                      }`}
                     placeholder="Enter phone number"
                   />
                   {errors.phone && (
@@ -432,7 +443,7 @@ const UserCreationForm = () => {
               <h2 className="text-xl font-semibold text-gray-800 border-b border-gray-200 pb-2">
                 Security Information
               </h2>
-              
+
               <div className="grid md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -444,9 +455,8 @@ const UserCreationForm = () => {
                       name="password"
                       value={formData.password}
                       onChange={handleInputChange}
-                      className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors pr-12 ${
-                        errors.password ? 'border-red-500' : 'border-gray-300'
-                      }`}
+                      className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors pr-12 ${errors.password ? 'border-red-500' : 'border-gray-300'
+                        }`}
                       placeholder="Enter password"
                     />
                     <button
@@ -457,20 +467,19 @@ const UserCreationForm = () => {
                       {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                     </button>
                   </div>
-                  
+
                   {formData.password && (
                     <div className="mt-2">
                       <div className="flex items-center gap-2 mb-2">
                         <div className="flex-1 bg-gray-200 rounded-full h-2">
-                          <div 
+                          <div
                             className={`h-2 rounded-full transition-all duration-300 ${getPasswordStrengthColor()}`}
                             style={{ width: `${(passwordStrength.score / 6) * 100}%` }}
                           />
                         </div>
-                        <span className={`text-sm font-medium ${
-                          passwordStrength.score <= 2 ? 'text-red-600' :
+                        <span className={`text-sm font-medium ${passwordStrength.score <= 2 ? 'text-red-600' :
                           passwordStrength.score <= 4 ? 'text-yellow-600' : 'text-green-600'
-                        }`}>
+                          }`}>
                           {getPasswordStrengthText()}
                         </span>
                       </div>
@@ -489,7 +498,7 @@ const UserCreationForm = () => {
                       )}
                     </div>
                   )}
-                  
+
                   {errors.password && (
                     <p className="text-red-500 text-sm mt-1 flex items-center gap-1">
                       <X className="w-4 h-4" />
@@ -508,9 +517,8 @@ const UserCreationForm = () => {
                       name="confirmPassword"
                       value={formData.confirmPassword}
                       onChange={handleInputChange}
-                      className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors pr-12 ${
-                        errors.confirmPassword ? 'border-red-500' : 'border-gray-300'
-                      }`}
+                      className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors pr-12 ${errors.confirmPassword ? 'border-red-500' : 'border-gray-300'
+                        }`}
                       placeholder="Confirm password"
                     />
                     <button
@@ -521,14 +529,14 @@ const UserCreationForm = () => {
                       {showConfirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                     </button>
                   </div>
-                  
+
                   {formData.confirmPassword && formData.password === formData.confirmPassword && (
                     <p className="text-green-500 text-sm mt-1 flex items-center gap-1">
                       <Check className="w-4 h-4" />
                       Passwords match
                     </p>
                   )}
-                  
+
                   {errors.confirmPassword && (
                     <p className="text-red-500 text-sm mt-1 flex items-center gap-1">
                       <X className="w-4 h-4" />
@@ -544,7 +552,7 @@ const UserCreationForm = () => {
               <h2 className="text-xl font-semibold text-gray-800 border-b border-gray-200 pb-2">
                 Personal Details
               </h2>
-              
+
               <div className="grid md:grid-cols-3 gap-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -554,9 +562,8 @@ const UserCreationForm = () => {
                     name="gender"
                     value={formData.gender}
                     onChange={handleInputChange}
-                    className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
-                      errors.gender ? 'border-red-500' : 'border-gray-300'
-                    }`}
+                    className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${errors.gender ? 'border-red-500' : 'border-gray-300'
+                      }`}
                   >
                     <option value="">Select Gender</option>
                     <option value="male">Male</option>
@@ -582,9 +589,8 @@ const UserCreationForm = () => {
                     name="dateOfBirth"
                     value={formData.dateOfBirth}
                     onChange={handleInputChange}
-                    className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
-                      errors.dateOfBirth ? 'border-red-500' : 'border-gray-300'
-                    }`}
+                    className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${errors.dateOfBirth ? 'border-red-500' : 'border-gray-300'
+                      }`}
                   />
                   {errors.dateOfBirth && (
                     <p className="text-red-500 text-sm mt-1 flex items-center gap-1">
@@ -631,7 +637,7 @@ const UserCreationForm = () => {
               <h2 className="text-xl font-semibold text-gray-800 border-b border-gray-200 pb-2">
                 Professional Information
               </h2>
-              
+
               <div className="grid md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -642,9 +648,8 @@ const UserCreationForm = () => {
                     name="department"
                     value={formData.department}
                     onChange={handleInputChange}
-                    className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
-                      errors.department ? 'border-red-500' : 'border-gray-300'
-                    }`}
+                    className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${errors.department ? 'border-red-500' : 'border-gray-300'
+                      }`}
                   >
                     <option value="">Select Role</option>
                     {roles.map(role => (
@@ -672,59 +677,70 @@ const UserCreationForm = () => {
                     disabled={!formData.department}
                   >
                     <option value="">Select Specialization</option>
-                    {formData.department && specializations[formData.department]?.map(spec => (
-                      <option key={spec} value={spec}>{spec}</option>
-                    ))}
+                    {formData.department &&
+                      specializations[formData.department]?.map(spec => (
+                        <option key={spec} value={spec}>{spec}</option>
+                      ))
+                    }
                   </select>
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  <GraduationCap className="w-4 h-4 inline mr-2" />
-                  Qualification *
-                </label>
-                <input
-                  type="text"
-                  name="qualification"
-                  value={formData.qualification}
-                  onChange={handleInputChange}
-                  className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
-                    errors.qualification ? 'border-red-500' : 'border-gray-300'
-                  }`}
-                  placeholder="e.g., MBBS, BSN, PharmD, etc."
-                />
-                {errors.qualification && (
-                  <p className="text-red-500 text-sm mt-1 flex items-center gap-1">
-                    <X className="w-4 h-4" />
-                    {errors.qualification}
-                  </p>
-                )}
+              <div className="grid md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <GraduationCap className="w-4 h-4 inline mr-2" />
+                    Qualification *
+                  </label>
+                  <input
+                    type="text"
+                    name="qualification"
+                    value={formData.qualification}
+                    onChange={handleInputChange}
+                    className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${errors.qualification ? 'border-red-500' : 'border-gray-300'
+                      }`}
+                    placeholder="Enter qualification (e.g. MBBS, BSc Nursing)"
+                  />
+                  {errors.qualification && (
+                    <p className="text-red-500 text-sm mt-1 flex items-center gap-1">
+                      <X className="w-4 h-4" />
+                      {errors.qualification}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <Briefcase className="w-4 h-4 inline mr-2" />
+                    Department
+                  </label>
+                  <select
+                    name="departmentName"
+                    value={formData.departmentName || ''}
+                    onChange={handleInputChange}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                  >
+                    <option value="">Select Department</option>
+                    {departments.map(dep => (
+                      <option key={dep} value={dep}>{dep}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
 
             {/* Submit Button */}
-            <div className="pt-6 border-t border-gray-200">
+            <div className="pt-6">
               <button
                 type="submit"
+                onClick={handleSubmit}
                 disabled={isSubmitting}
-                className={`w-full py-4 px-6 rounded-lg font-semibold text-white transition-all duration-200 ${
-                  isSubmitting 
-                    ? 'bg-gray-400 cursor-not-allowed' 
+                className={`w-full py-4 px-6 rounded-lg font-semibold text-white transition-all duration-200 ${isSubmitting
+                    ? 'bg-gray-400 cursor-not-allowed'
                     : 'bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 transform hover:scale-[1.02] active:scale-[0.98]'
-                } shadow-lg`}
+                  } shadow-lg`}
               >
-                {isSubmitting ? (
-                  <div className="flex items-center justify-center gap-3">
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Creating Account...
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-center gap-3">
-                    <User className="w-5 h-5" />
-                    Create User Account
-                  </div>
-                )}
+                {isSubmitting ? 'Creating Account...' : 'Create Account'}
               </button>
             </div>
           </div>
