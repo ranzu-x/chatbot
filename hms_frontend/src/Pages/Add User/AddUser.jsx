@@ -236,6 +236,7 @@ const UserCreationForm = () => {
         method: 'POST',
         // Don't set Content-Type header - browser will set it with boundary
         body: submitData, // Send FormData directly
+        credentials: "include", // ✅ VERY IMPORTANT
       });
 
       if (!response.ok) {
@@ -268,7 +269,8 @@ const UserCreationForm = () => {
       setPasswordStrength({ score: 0, feedback: [] });
 
     } catch (error) {
-      alert('Error creating user. Please try again.', error);
+      alert(error.message);
+      console.log(error);
     } finally {
       setIsSubmitting(false);
     }
