@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Eye, EyeOff, Check, X, User, Mail, Phone, Calendar, Briefcase, GraduationCap, Stethoscope, MapPin, Camera } from 'lucide-react';
 import { useAuth } from '../../Provider/AuthContexProvider';
 
@@ -145,7 +145,7 @@ const UserCreationForm = () => {
       newErrors.confirmPassword = 'Passwords do not match';
     }
 
-    const phoneRegex = /^\+?[\d\s\-\(\)]{10,}$/;
+    const phoneRegex = /^\+?[\d\s\-()]{10,}$/;
     if (!formData.phone.trim()) {
       newErrors.phone = 'Phone number is required';
     } else if (!phoneRegex.test(formData.phone)) {
@@ -231,11 +231,13 @@ const UserCreationForm = () => {
 
 
       submitData.append('hospital_id', user?.hospital_id);
+      
 
       const response = await fetch('http://localhost:5000/api/v1/users/create-users', {
         method: 'POST',
         // Don't set Content-Type header - browser will set it with boundary
         body: submitData, // Send FormData directly
+        credentials: "include", // ✅ VERY IMPORTANT
       });
 
       if (!response.ok) {
@@ -268,7 +270,8 @@ const UserCreationForm = () => {
       setPasswordStrength({ score: 0, feedback: [] });
 
     } catch (error) {
-      alert('Error creating user. Please try again.', error);
+      alert(error.message);
+      console.log(error);
     } finally {
       setIsSubmitting(false);
     }
@@ -285,6 +288,7 @@ const UserCreationForm = () => {
     if (passwordStrength.score <= 4) return 'Medium';
     return 'Strong';
   };
+  
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-8 px-4">
