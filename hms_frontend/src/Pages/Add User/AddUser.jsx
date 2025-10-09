@@ -231,6 +231,7 @@ const UserCreationForm = () => {
 
 
       submitData.append('hospital_id', user?.hospital_id);
+      
 
       const response = await fetch('http://localhost:5000/api/v1/users/create-users', {
         method: 'POST',
@@ -287,6 +288,7 @@ const UserCreationForm = () => {
     if (passwordStrength.score <= 4) return 'Medium';
     return 'Strong';
   };
+  
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-8 px-4">
