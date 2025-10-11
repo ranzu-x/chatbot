@@ -30,7 +30,7 @@ const Sidebar = () => {
                     <Link to={'/departments'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
                         <RectangleStackIcon className="h-5 w-5 mr-3" /> Departments
                     </Link>
-                    <Link to={'/users/doctors'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
+                    <Link to={'/users'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
                         <RectangleStackIcon className="h-5 w-5 mr-3" /> Doctors
                     </Link>
                     <Link to={'/adduser'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
