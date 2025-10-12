@@ -62,7 +62,7 @@ const AppointmentRow = ({ patientName, doctor, time, status }) => {
 
 const Dashboard = () => {
   return (
-    <div className="h-screen bg-gray-100">
+    <div className="h-screen bg-gray-50">
       {/* Sidebar Navigation */}
       {/* move to sidebar.jsx */}
 

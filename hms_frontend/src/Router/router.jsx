@@ -12,6 +12,10 @@ import Prescription from "../Pages/Prescription/Prescription";
 import AddUserForm from "../Pages/Add User/AddUser";
 import AddPrescription from "../Pages/Prescription/Prescription";
 import HospitalStaffs from "../Pages/Hospital Staffs/HospitalStaffs";
+import AppointmentForm from "../Pages/Appointment/AppointmentForm";
+import BillingForm from "../Pages/Billing/BillingForm";
+import AppointmentList from "../Pages/Appointment/AppointmentList";
+import BillingList from "../Pages/Billing/BillingList";
 
 const router = createBrowserRouter([
   {
@@ -83,6 +87,38 @@ const router = createBrowserRouter([
         Component: () => {
           return (
             <PrivateRoute><HospitalStaffs></HospitalStaffs></PrivateRoute>
+          );
+        }
+      },
+      {
+        path: "/appointments",
+        Component: () => {
+          return (
+            <PrivateRoute><AppointmentList></AppointmentList></PrivateRoute>
+          );
+        }
+      },
+      {
+        path: "/appointments/new",
+        Component: () => {
+          return (
+            <PrivateRoute><AppointmentForm></AppointmentForm></PrivateRoute>
+          );
+        }
+      },
+      {
+        path: "/billing",
+        Component: () => {
+          return (
+            <PrivateRoute><BillingList></BillingList></PrivateRoute>
+          );
+        }
+      },
+      {
+        path: "/billing/new",
+        Component: () => {
+          return (
+            <PrivateRoute><BillingForm></BillingForm></PrivateRoute>
           );
         }
       },

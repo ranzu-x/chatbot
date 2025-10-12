@@ -7,7 +7,8 @@ import patientRoutes from "./routes/patients.js";
 import medicines from "./routes/medicines.js";
 import hospitalAdminSignUpRoutes from "./routes/hospitalAdminSignUp.js";
 import createUsersRoutes from "./routes/createUsers.js";
-import teamMemberRoutes from "./routes/teamMembers.js"
+import teamMemberRoutes from "./routes/teamMembers.js";
+import appointmentRoutes from "./routes/appointment.js"
 
 dotenv.config();
 const app = express();
@@ -28,6 +29,7 @@ app.use("/api/v1", medicines);
 app.use("/api/v1", hospitalAdminSignUpRoutes)
 app.use("/api/v1", createUsersRoutes)
 app.use("/api/v1", teamMemberRoutes)
+app.use("/api/v1", appointmentRoutes)
 
 // ✅ Server
 app.listen(port, () => {

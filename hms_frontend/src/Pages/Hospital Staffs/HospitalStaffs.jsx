@@ -230,13 +230,13 @@ const HospitalStaffs = () => {
                             </svg>
                         </div>
                         <button
-                            onClick={() => navigate("/addpatient")}
+                            onClick={() => navigate("/adduser")}
                             className="w-full sm:w-auto px-8 py-3 bg-indigo-500 text-white font-semibold rounded-full shadow-lg hover:from-indigo-600 hover:to-purple-600 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 focus:ring-offset-white transition-all duration-300 flex items-center justify-center space-x-2"
                         >
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
                             </svg>
-                            <span>Add New Patient</span>
+                            <span>Add Team Member</span>
                         </button>
                     </div>
                     <div className="overflow-x-auto">
@@ -456,11 +456,6 @@ const HospitalStaffs = () => {
                     </div>
                 </div>
             )}
-
-
-
-
-
 
         </div >
     );

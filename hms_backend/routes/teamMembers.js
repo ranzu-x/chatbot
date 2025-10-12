@@ -15,7 +15,7 @@ router.get("/team-members", authMiddleWare, async (req, res) => {
        JOIN user_roles ur ON u.id = ur.user_id
        JOIN roles r ON ur.role_id = r.id
        WHERE u.hospital_id = ?
-         AND r.name != "hospital_admin"`,
+         AND r.name != "hospital_admin";`,
             [hospitalId]
         );
 
