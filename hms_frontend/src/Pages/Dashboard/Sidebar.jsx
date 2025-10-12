@@ -27,6 +27,9 @@ const Sidebar = () => {
                     <Link to={'/appointments'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
                         <CalendarDaysIcon className="h-5 w-5 mr-3" /> Appointments
                     </Link>
+                    <Link to={'/billing'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
+                        <CalendarDaysIcon className="h-5 w-5 mr-3" /> Billing
+                    </Link>
                     <Link to={'/departments'} className="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
                         <RectangleStackIcon className="h-5 w-5 mr-3" /> Departments
                     </Link>

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import Swal from "sweetalert2";
 import {
     XCircleIcon,
@@ -297,6 +297,13 @@ const PatientsList = () => {
                                                     >
                                                         <MdDelete className="text-xl" />
                                                     </button>
+                                                    <Link
+                                                        to={`/appointments/new?patientId=${patient.id}`}
+                                                        className="flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-600 border border-blue-500 rounded-lg text-sm font-semibold hover:bg-blue-600 hover:text-white transition-all duration-200"
+                                                    >
+                                                        📅 Appointment
+                                                    </Link>
+
                                                 </div>
                                             </td>
                                         </tr>
