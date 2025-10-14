@@ -27,4 +27,29 @@ router.get("/team-members", authMiddleWare, async (req, res) => {
     }
 });
 
+// Get all doctors
+
+router.get("/doctors", authMiddleWare, async (req, res) => {
+    try {
+        const hospitalId = req.user.hospital_id;
+
+        const [rows] = await pool.query(
+            `SELECT DISTINCT u.*
+             FROM users u
+             JOIN user_roles ur ON u.id = ur.user_id
+             JOIN roles r ON ur.role_id = r.id
+             WHERE u.hospital_id = ?
+               AND r.name = 'doctor'`,
+            [hospitalId]
+        );
+
+        console.log("Hospital ID:", hospitalId);
+        console.log("Doctors found:", rows.length);
+        res.json(rows);
+    } catch (err) {
+        console.error("Error fetching doctors:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 export default router;

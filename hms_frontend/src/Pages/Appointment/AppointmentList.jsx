@@ -6,7 +6,9 @@ const AppointmentList = () => {
 
 const fetchAppointments = async () => {
   try {
-    const res = await fetch("/api/v1/appointments");
+    const res = await fetch("http://localhost:5000/api/v1/appointments",{
+      credentials: "include",
+    } );
     
     if (!res.ok) {
       throw new Error(`HTTP error! status: ${res.status}`);

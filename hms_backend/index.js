@@ -30,6 +30,7 @@ app.use("/api/v1", hospitalAdminSignUpRoutes)
 app.use("/api/v1", createUsersRoutes)
 app.use("/api/v1", teamMemberRoutes)
 app.use("/api/v1", appointmentRoutes)
+app.use("/api/v1", teamMemberRoutes)
 
 // ✅ Server
 app.listen(port, () => {
