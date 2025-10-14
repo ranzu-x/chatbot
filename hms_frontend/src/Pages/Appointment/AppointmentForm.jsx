@@ -17,24 +17,84 @@ const AppointmentForm = () => {
     fetchPatients();
   }, []);
 
-  const fetchDoctors = async () => {
-    const res = await axios.get("/api/doctors");
-    setDoctors(res.data);
-  };
+ const fetchDoctors = async () => {
+  try {
+    const response = await fetch("http://localhost:5000/api/v1/doctors", {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include", // ✅ very important for JWT cookies
+    });
 
-  const fetchPatients = async () => {
-    const res = await axios.get("/api/patients");
-    setPatients(res.data);
-  };
+    if (!response.ok) {
+      throw new Error("Failed to fetch doctors");
+    }
+
+    const data = await response.json();
+    setDoctors(data);
+  } catch (error) {
+    console.error("Error fetching doctors:", error);
+  }
+};
+
+const fetchPatients = async () => {
+  try {
+    const response = await fetch("http://localhost:5000/api/v1/patients", {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include", // ✅ send cookies
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to fetch patients");
+    }
+
+    const data = await response.json();
+    setPatients(data);
+  } catch (error) {
+    console.error("Error fetching patients:", error);
+  }
+};
+
+//  Using Axios
+
+//  const fetchPatients = async () => {
+//     const res = await axios.get("http://localhost:5000/api/v1/patients" , {
+//        withCredentials: true // Send cookies with request    
+//     });
+//     setPatients(res.data);
+//   };
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    await axios.post("/api/appointments", formData);
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  console.log(formData);
+  
+  try {
+    const response = await fetch("http://localhost:5000/api/v1/create-appointments", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(formData), // ✅ Must stringify the object
+      credentials: "include", // ✅ Added comma above
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.message || "DB Failed to create appointment");
+    }
+
+    const data = await response.json();
     alert("Appointment created successfully!");
+    
+    // Reset form
     setFormData({
       doctor_id: "",
       patient_id: "",
@@ -42,7 +102,12 @@ const AppointmentForm = () => {
       appointment_time: "",
       reason: "",
     });
-  };
+    
+  } catch (error) {
+    console.error("Error:", error);
+    alert(error.message || "Failed to create appointment");
+  }
+};
 
   return (
     <div className="p-6 max-w-lg mx-auto bg-white shadow-md rounded-2xl">
