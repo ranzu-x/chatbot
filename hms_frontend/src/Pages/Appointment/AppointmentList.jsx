@@ -4,22 +4,22 @@ import axios from "axios";
 const AppointmentList = () => {
   const [appointments, setAppointments] = useState([]);
 
-const fetchAppointments = async () => {
-  try {
-    const res = await fetch("http://localhost:5000/api/v1/appointments",{
-      credentials: "include",
-    } );
-    
-    if (!res.ok) {
-      throw new Error(`HTTP error! status: ${res.status}`);
+  const fetchAppointments = async () => {
+    try {
+      const res = await fetch("http://localhost:5000/api/v1/appointments", {
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
+
+      const data = await res.json();
+      setAppointments(data);
+    } catch (error) {
+      console.error("Error fetching appointments:", error);
     }
-    
-    const data = await res.json();
-    setAppointments(data);
-  } catch (error) {
-    console.error("Error fetching appointments:", error);
-  }
-};
+  };
 
   useEffect(() => {
     fetchAppointments();
@@ -31,7 +31,7 @@ const fetchAppointments = async () => {
   };
 
   console.log('appointments:', appointments);
-console.log('Is array?', Array.isArray(appointments));
+  console.log('Is array?', Array.isArray(appointments));
 
   return (
     <div className="p-6">

@@ -19,6 +19,63 @@ router.get("/patients", authMiddleWare, async (req, res) => {
   }
 });
 
+// Get patients by sarch
+router.get("/patients/search", authMiddleWare, async (req, res) => {
+    const { q } = req.query; // Search query
+    const { hospital_id } = req.user;
+
+    if (!q || q.length < 2) {
+        return res.status(400).json({ error: "Search query must be at least 2 characters" });
+    }
+
+    try {
+        const searchTerm = `%${q}%`;
+        
+        const [rows] = await pool.query(
+            `SELECT id, patient_id, first_name, last_name, phone, email
+             FROM patients
+             WHERE hospital_id = ?
+               AND (
+                   first_name LIKE ? 
+                   OR last_name LIKE ? 
+                   OR patient_id LIKE ?
+                   OR phone LIKE ?
+               )
+             LIMIT 20`,
+            [hospital_id, searchTerm, searchTerm, searchTerm, searchTerm]
+        );
+
+        res.json(rows);
+    } catch (error) {
+        console.error("Error searching patients:", error);
+        res.status(500).json({ error: "Failed to search patients" });
+    }
+});
+
+// Make sure this route comes BEFORE /patients/:id to avoid conflicts
+
+// ✅ Get a single patient
+router.get("/patients/:id", authMiddleWare, async (req, res) => {
+    const { id } = req.params;
+    const { hospital_id } = req.user;
+
+    try {
+        const [rows] = await pool.query(
+            `SELECT * FROM patients WHERE id = ? AND hospital_id = ?`,
+            [id, hospital_id]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ error: "Patient not found" });
+        }
+
+        res.json(rows[0]);
+    } catch (error) {
+        console.error("Error fetching patient:", error);
+        res.status(500).json({ error: "Failed to fetch patient" });
+    }
+});
+
 // ✅ Add a patient
 router.post("/add_patients", authMiddleWare, async (req, res) => {
   const {
