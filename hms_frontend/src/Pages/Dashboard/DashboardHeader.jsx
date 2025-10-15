@@ -45,7 +45,6 @@ const DashboardHeader = () => {
             <h1 className="text-2xl font-bold text-gray-800">Dashboard</h1>
             <div className="flex items-center space-x-4">
                 {user ? <h1>Welcome {user?.email} Your Hospital Name:<b> {user?.hospital_name}</b></h1> : <h1>Please login</h1>}
-                <button onClick={logout}>Logout</button>
                 <BellIcon className="h-6 w-6 text-gray-500 hover:text-gray-700 cursor-pointer" />
                 <UserCircleIcon className="h-8 w-8 text-gray-500 hover:text-gray-700 cursor-pointer" />
 
@@ -60,7 +59,7 @@ const DashboardHeader = () => {
                             aria-label="User menu"
                             aria-haspopup="true"
                         >
-                            <span className="sr-only">Open user menu</span>
+                            {/* <span className="sr-only">Open user menu</span> */}
                             <img
                                 className="h-8 w-8 rounded-full"
                                 src="https://via.placeholder.com/150"
@@ -71,10 +70,11 @@ const DashboardHeader = () => {
                     {dropdownOpen && (
                         <div
                             ref={dropdown}
-                            className="origin-top-right absolute right-0 mt-2 w-48 rounded-md shadow-lg py-1 bg-white ring-1 ring-black ring-opacity-5 z-10"
+                            className="origin-top-right absolute right-0 mt-2 w-48 rounded-md shadow-lg py-1 bg-white ring-1 ring-gray-200 ring-opacity-5 z-10"
                         >
+                            <a className="block px-4 py-2 text-sm font-bold text-gray-700"> {user?.hospital_name}e</a>
                             <a href="/profile" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Your Profile</a>
-                            <a href="/logout" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Sign out</a>
+                            <a onClick={logout} className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Log Out</a>
                         </div>
                     )}
                 </div>
