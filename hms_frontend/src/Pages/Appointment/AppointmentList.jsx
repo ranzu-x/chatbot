@@ -30,9 +30,18 @@ const AppointmentList = () => {
     fetchAppointments();
   }, []);
 
-  const updateStatus = async (id, status) => {
-    await axios.put(`/api/v1/appointments/${id}/status`, { status });
-    fetchAppointments();
+// Appointment status update function
+  const updateStatus = async (id, newStatus) => {
+    try {
+      await axios.put(`/api/appointments/${id}/status`, { status: newStatus });
+      setAppointments((prev) =>
+        prev.map((a) =>
+          a.id === id ? { ...a, status: newStatus } : a
+        )
+      );
+    } catch (error) {
+      console.error("Failed to update status", error);
+    }
   };
 
   const navigate = useNavigate();
@@ -51,48 +60,50 @@ const AppointmentList = () => {
 
 
 
+
+
   console.log('appointments:', appointments);
   console.log('Is array?', Array.isArray(appointments));
 
   const columns = [
-    {header: "#", render: (row, index) => (currentPage -1) * appointmentsPerPage + index + 1},
-    {header: "Name", accessor: "patient_name"},
-    {header: "Doctor", accessor: "doctor_name"},
-    {header: "Date", accessor: "appointment_date"},
-    {header: "Time", accessor: "appointment_time"},
-    {header: "Status", accessor: "status"},
+    { header: "#", render: (row, index) => (currentPage - 1) * appointmentsPerPage + index + 1 },
+    { header: "Name", accessor: "patient_name" },
+    { header: "Doctor", accessor: "doctor_name" },
+    { header: "Date", accessor: "appointment_date" },
+    { header: "Time", accessor: "appointment_time" },
     {
-    header: "Status",
-    render: (row) => (
-      <select
-        value={row.status}
-        onChange={(e) => updateStatus(row.id, e.target.value)}
-        className="border p-1 rounded"
-      >
-        <option value="pending">Scheduled</option>
-        <option value="confirmed">Confirmed</option>
-        <option value="completed">Completed</option>
-        <option value="cancelled">Cancelled</option>
-      </select>
-    ),
-  },
+      header: "Status",
+      render: (row) => (
+        <select
+          value={row.status}
+          onChange={(e) => updateStatus(row.id, e.target.value)}
+          className="border p-1 rounded"
+        >
+          <option value="pending">Scheduled</option>
+          <option value="confirmed">Confirmed</option>
+          <option value="completed">Completed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+      ),
+    },
 
   ]
 
   return (
-    <div  className="p-4 sm:p-8">
+    <div className="p-4 sm:p-8">
       <DataTable
-        title = "Appointment"
-        columns = {columns}
-        data= {appointments}
-        actions= {(item) => (
+        title="Appointment"
+        columns={columns}
+        data={appointments}
+        onAddNew={() => navigate("/appointments/new")}
+        actions={(item) => (
           <TableActions
-          item = {item}
-          onView={handleView}
-          onEdit={handleEdit}
-          onDelete={handleDelete}
+            item={item}
+            onView={handleView}
+            onEdit={handleEdit}
+            onDelete={handleDelete}
           />
-        
+
         )}
       />
     </div>

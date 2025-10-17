@@ -5,14 +5,14 @@ const BillingList = () => {
   const [billings, setBillings] = useState([]);
 
  
-//   const fetchBillings = async () => {
-//     const res = await axios.get("/api/billing");
-//     setBillings(res.data);
-//   };
+  const fetchBillings = async () => {
+    const res = await axios.get("http://localhost:5000/api/v1/billing");
+    setBillings(res.data);
+  };
 
-//    useEffect(() => {
-//     fetchBillings();
-//   }, []);
+   useEffect(() => {
+    fetchBillings();
+  }, []);
 
 
   const markPaid = async (id) => {

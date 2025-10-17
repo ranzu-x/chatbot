@@ -30,7 +30,7 @@ const DataTable = ({
                         className="w-full sm:w-auto px-8 py-3 bg-indigo-500 text-white font-semibold rounded-full shadow-lg hover:bg-indigo-600 focus:ring-2 focus:ring-indigo-400 transition-all duration-300 flex items-center gap-2"
                     >
                         <span className="text-lg">＋</span>
-                        <span>Add New {title}</span>
+                        <span>Create New {title}</span>
                     </button>
                 )}
             </div>
