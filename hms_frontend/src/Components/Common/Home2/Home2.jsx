@@ -1,4 +1,3 @@
-import React from 'react';
 import { PhoneIcon, MapPinIcon, HeartIcon, UserGroupIcon, ShieldCheckIcon, BeakerIcon, StarIcon } from '@heroicons/react/24/solid';
 
 // --- Reusable Sub-Components ---

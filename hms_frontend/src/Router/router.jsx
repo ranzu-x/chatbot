@@ -3,10 +3,10 @@ import HomeLayout from "../Layout/HomeLayout";
 import Home from "../Pages/Home/Home";
 import LogIn from "../Pages/LogIn/LogIn";
 import Register from "../Pages/Register/Register";
-import AddPatient from "../Pages/AddPatient/AddPatient";
+import AddPatient from "../Pages/Patients/AddPatient"
 import Dashboard from "../Pages/Dashboard/Dashboard";
 import PrivateRoute from "./PrivateRoute";
-import PatientsList from "../Pages/PatientsList/PatientsList";
+import PatientsList from "../Pages/Patients/PatientsList";
 import DashboardLayout from "../Layout/DashboardLayout";
 import Prescription from "../Pages/Prescription/Prescription";
 import AddUserForm from "../Pages/Add User/AddUser";
@@ -16,6 +16,8 @@ import AppointmentForm from "../Pages/Appointment/AppointmentForm";
 import BillingForm from "../Pages/Billing/BillingForm";
 import AppointmentList from "../Pages/Appointment/AppointmentList";
 import BillingList from "../Pages/Billing/BillingList";
+import Home2 from "../Components/Common/Home2/Home2";
+import PatientsList2 from "../Pages/Patients/testpatientslist";
 
 const router = createBrowserRouter([
   {
@@ -54,7 +56,8 @@ const router = createBrowserRouter([
         path: "/patients",
         Component: () => {
           return (
-            <PrivateRoute><PatientsList></PatientsList></PrivateRoute>
+            // <PrivateRoute><PatientsList></PatientsList></PrivateRoute>
+            <PrivateRoute><PatientsList2></PatientsList2></PrivateRoute>
           );
         }
       },

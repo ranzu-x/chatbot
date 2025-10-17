@@ -1,4 +1,3 @@
-import React from 'react';
 import { PhoneIcon, EnvelopeIcon, MapPinIcon, HeartIcon, ShieldCheckIcon, BeakerIcon, UserGroupIcon } from '@heroicons/react/24/outline';
 import Home2 from '../../Components/Common/Home2/Home2';
 

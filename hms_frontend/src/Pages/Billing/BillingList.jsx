@@ -21,8 +21,9 @@ const BillingList = () => {
   };
 
   return (
-    <div className="p-6 bg-amber-500">
+    <div className="p-6">
       <h2 className="text-xl font-semibold mb-4">Billing</h2>
+      <h2>Create Bill</h2>
       <table className="w-full border">
         <thead>
           <tr className="bg-gray-100">
