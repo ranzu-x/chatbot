@@ -5,6 +5,7 @@ import {
     XCircleIcon,
     UserCircleIcon,
 } from '@heroicons/react/24/outline';
+import { useAuth } from "../../Provider/AuthContexProvider";
 import { FaEye, FaUserEdit } from "react-icons/fa";
 import { MdDelete } from "react-icons/md";
 
@@ -16,10 +17,11 @@ const PatientsList = () => {
     const [selectedData, setSelectedData] = useState('');
     const navigate = useNavigate();
 
+    const { user } = useAuth();
 
     // Pagination states
     const [currentPage, setCurrentPage] = useState(1);
-    const [patientsPerPage] = useState(10); // You can adjust this value
+    const [patientsPerPage] = useState(15); // You can adjust this value
 
     // Fetch patients
     const fetchPatients = () => {

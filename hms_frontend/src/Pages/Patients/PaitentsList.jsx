@@ -4,9 +4,9 @@ import { useNavigate, Link } from "react-router";
 import Swal from "sweetalert2";
 import DataTable from "../../Components/Table Components/DataTable";
 import TableActions from "../../Components/Table Components/TableActionButtons";
-import Pagination from "../../Components/Table Components/Pagination";
 
-function PatientsList2() {
+
+function PatientsList() {
     const [patients, setPatients] = useState([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState("");
@@ -133,4 +133,4 @@ function PatientsList2() {
     );
 }
 
-export default PatientsList2;
+export default PatientsList;

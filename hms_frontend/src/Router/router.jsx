@@ -6,7 +6,7 @@ import Register from "../Pages/Register/Register";
 import AddPatient from "../Pages/Patients/AddPatient"
 import Dashboard from "../Pages/Dashboard/Dashboard";
 import PrivateRoute from "./PrivateRoute";
-import PatientsList from "../Pages/Patients/PatientsList";
+import PatientsList from "../Pages/Patients/PaitentsList";
 import DashboardLayout from "../Layout/DashboardLayout";
 import Prescription from "../Pages/Prescription/Prescription";
 import AddUserForm from "../Pages/Add User/AddUser";
@@ -17,7 +17,6 @@ import BillingForm from "../Pages/Billing/BillingForm";
 import AppointmentList from "../Pages/Appointment/AppointmentList";
 import BillingList from "../Pages/Billing/BillingList";
 import Home2 from "../Components/Common/Home2/Home2";
-import PatientsList2 from "../Pages/Patients/testpatientslist";
 
 const router = createBrowserRouter([
   {
@@ -56,8 +55,7 @@ const router = createBrowserRouter([
         path: "/patients",
         Component: () => {
           return (
-            // <PrivateRoute><PatientsList></PatientsList></PrivateRoute>
-            <PrivateRoute><PatientsList2></PatientsList2></PrivateRoute>
+            <PrivateRoute><PatientsList></PatientsList></PrivateRoute>
           );
         }
       },
