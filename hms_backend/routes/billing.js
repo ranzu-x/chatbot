@@ -5,7 +5,7 @@ import { authMiddleWare } from "../middleware/authmiddleware.js";
 const router = express.Router();
 
 // ✅ Generate bill after appointment
-router.post("/", authMiddleWare, async (req, res) => {
+router.post("/bills", authMiddleWare, async (req, res) => {
   const { appointment_id, doctor_fee, discount, payment_method } = req.body;
   const hospital_id = req.user.hospital_id;
   const total = doctor_fee - (discount || 0);
@@ -23,20 +23,18 @@ router.post("/", authMiddleWare, async (req, res) => {
 });
 
 // ✅ Get all bills for hospital
-router.get("/", authMiddleWare, async (req, res) => {
+router.get("/bills", authMiddleWare, async (req, res) => {
   const hospital_id = req.user.hospital_id;
 
   try {
     const [rows] = await pool.query(
-      `SELECT b.*, 
-              CONCAT(p.first_name, ' ', p.last_name) AS patient_name,
-              CONCAT(d.first_name, ' ', d.last_name) AS doctor_name
-       FROM billing b
-       JOIN appointments a ON b.appointment_id = a.id
-       JOIN users p ON a.patient_id = p.id
-       JOIN users d ON a.doctor_id = d.id
-       WHERE b.hospital_id = ?
-       ORDER BY b.created_at DESC`,
+      `SELECT 
+        b.*, 
+        CONCAT(p.first_name, ' ', p.last_name) AS patient_name
+      FROM billing b
+      LEFT JOIN patients p ON b.patient_id = p.id
+      WHERE b.hospital_id = ?
+      ORDER BY b.created_at DESC`,
       [hospital_id]
     );
     res.json(rows);
