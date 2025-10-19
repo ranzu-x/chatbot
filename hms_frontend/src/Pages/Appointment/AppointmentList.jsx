@@ -16,10 +16,7 @@ const AppointmentList = () => {
         credentials: "include",
       });
 
-      if (!res.ok) {
-        throw new Error(`HTTP error! status: ${res.status}`);
-      }
-
+      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       const data = await res.json();
       setAppointments(data);
     } catch (error) {
@@ -31,40 +28,33 @@ const AppointmentList = () => {
     fetchAppointments();
   }, []);
 
-  // Appointment status update function
+  // ✅ Appointment status update
   const updateStatus = async (id, newStatus) => {
     try {
-      await axios.put(`/api/appointments/${id}/status`, { status: newStatus });
+      if (newStatus === "confirmed") {
+        // Navigate to billing page when confirming
+        navigate(`/billing/new?appointment_id=${id}`);
+        return; // don’t update immediately — do it after billing is completed
+      }
+
+      // Otherwise just update status directly
+      await axios.put(`http://localhost:5000/api/v1/appointments/${id}/status`, { status: newStatus });
       setAppointments((prev) =>
-        prev.map((a) =>
-          a.id === id ? { ...a, status: newStatus } : a
-        )
+        prev.map((a) => (a.id === id ? { ...a, status: newStatus } : a))
       );
     } catch (error) {
       console.error("Failed to update status", error);
     }
   };
 
+  // ✅ Manual Billing button
+  const handleBilling = (appointment) => {
+    navigate(`/billing/new?appointment_id=${appointment.id}`);
+  };
 
-
-  const handleView = (item) => {
-    navigate(`/appointments/view/${item.id}`);
-  }
-
-  const handleEdit = (item) => {
-    navigate(`/appointments/edit/${item.id}`);
-  }
-
-  const handleDelete = (item) => {
-    const getId = item.id;
-  }
-
-
-
-
-
-  console.log('appointments:', appointments);
-  console.log('Is array?', Array.isArray(appointments));
+  const handleView = (item) => navigate(`/appointments/view/${item.id}`);
+  const handleEdit = (item) => navigate(`/appointments/edit/${item.id}`);
+  const handleDelete = (item) => console.log("Delete:", item.id);
 
   const columns = [
     { header: "#", render: (row, index) => (currentPage - 1) * appointmentsPerPage + index + 1 },
@@ -87,8 +77,18 @@ const AppointmentList = () => {
         </select>
       ),
     },
-
-  ]
+    {
+      header: "Billing",
+      render: (row) => (
+        <button
+          onClick={() => handleBilling(row)}
+          className="px-3 py-1 text-sm text-white bg-blue-600 rounded hover:bg-blue-700"
+        >
+          Make Bill
+        </button>
+      ),
+    },
+  ];
 
   return (
     <div className="p-4 sm:p-8">
@@ -104,7 +104,6 @@ const AppointmentList = () => {
             onEdit={handleEdit}
             onDelete={handleDelete}
           />
-
         )}
       />
     </div>
