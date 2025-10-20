@@ -1,19 +1,63 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Printer, Save, Search, User } from 'lucide-react';
+import axios from 'axios';
+import { useSearchParams } from 'react-router';
 
-export default function HospitalBillingSystem() {
+const HospitalBillingSystem = () => {
   const [billType, setBillType] = useState('doctor');
   const [patientInfo, setPatientInfo] = useState({
-    patientId: '',
-    patientName: '',
-    age: '',
-    gender: '',
-    phone: '',
-    address: '',
-    doctorName: '',
-    date: new Date().toISOString().split('T')[0]
-  });
+  patientId: '',
+  patientName: '',
+  age: '',
+  gender: '',
+  phone: '',
+  address: '',
+  doctorName: '',
+  date: new Date().toISOString().split('T')[0]
+});
 
+  const [searchParams] = useSearchParams();
+  const appointmentId = searchParams.get("appointment_id");
+  const [appointmentData, setAppointmentData] = useState(null);
+
+  useEffect(() => {
+  if (appointmentId) {
+    axios.get(`http://localhost:5000/api/v1/appointments/${appointmentId}`, { withCredentials: true })
+      .then((res) => {
+        
+        setAppointmentData(res.data);
+        
+        // ✅ Prefill all patient information fields
+        setPatientInfo({
+          patientId: res.data.patient_id || '',
+          patientName: res.data.patient_name || '',
+          age: res.data.patient_age || '',
+          gender: res.data.patient_gender || '',
+          phone: res.data.patient_phone || '',
+          address: res.data.patient_address || '',
+          doctorName: res.data.doctor_name || '',
+          doctorFee: res.data.appointment_fee || 0,
+          date: res.data.appointment_date || new Date().toISOString().split('T')[0]
+        });
+
+         // ✅ Auto-populate doctor service with consultation fee
+        if (res.data.doctor_name && res.data.appointment_fee) {
+          setDoctorItems([{
+            id: 1,
+            service: `Consultation - Dr. ${res.data.doctor_name}`,
+            amount: res.data.appointment_fee
+          }]);
+        }
+        console.log("Appointment data:", res);
+      })
+      .catch((err) => {
+        console.error("Error fetching appointment:", err);
+        alert("Failed to load appointment details");
+      });
+  }
+}, [appointmentId]);
+
+console.log(patientInfo)
   const [doctorItems, setDoctorItems] = useState([
     { id: 1, service: '', amount: 0 }
   ]);
@@ -43,8 +87,8 @@ export default function HospitalBillingSystem() {
   };
 
   const subtotal = calculateSubtotal();
-  const discountAmount = discountType === 'percentage' 
-    ? (subtotal * discount) / 100 
+  const discountAmount = discountType === 'percentage'
+    ? (subtotal * discount) / 100
     : discount;
   const tax = (subtotal - discountAmount) * 0.05; // 5% tax
   const grandTotal = subtotal - discountAmount + tax;
@@ -61,7 +105,7 @@ export default function HospitalBillingSystem() {
   };
 
   const updateDoctorItem = (id, field, value) => {
-    setDoctorItems(doctorItems.map(item => 
+    setDoctorItems(doctorItems.map(item =>
       item.id === id ? { ...item, [field]: value } : item
     ));
   };
@@ -152,31 +196,28 @@ export default function HospitalBillingSystem() {
           <div className="flex gap-4">
             <button
               onClick={() => setBillType('doctor')}
-              className={`px-6 py-2 rounded-lg font-medium transition ${
-                billType === 'doctor' 
-                  ? 'bg-blue-600 text-white' 
+              className={`px-6 py-2 rounded-lg font-medium transition ${billType === 'doctor'
+                  ? 'bg-blue-600 text-white'
                   : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              }`}
+                }`}
             >
               Doctor Fee
             </button>
             <button
               onClick={() => setBillType('lab')}
-              className={`px-6 py-2 rounded-lg font-medium transition ${
-                billType === 'lab' 
-                  ? 'bg-blue-600 text-white' 
+              className={`px-6 py-2 rounded-lg font-medium transition ${billType === 'lab'
+                  ? 'bg-blue-600 text-white'
                   : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              }`}
+                }`}
             >
               Lab Tests
             </button>
             <button
               onClick={() => setBillType('medicine')}
-              className={`px-6 py-2 rounded-lg font-medium transition ${
-                billType === 'medicine' 
-                  ? 'bg-blue-600 text-white' 
+              className={`px-6 py-2 rounded-lg font-medium transition ${billType === 'medicine'
+                  ? 'bg-blue-600 text-white'
                   : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              }`}
+                }`}
             >
               Medicine
             </button>
@@ -195,7 +236,7 @@ export default function HospitalBillingSystem() {
               <input
                 type="text"
                 value={patientInfo.patientId}
-                onChange={(e) => setPatientInfo({...patientInfo, patientId: e.target.value})}
+                onChange={(e) => setPatientInfo({ ...patientInfo, patientId: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 placeholder="PID-001"
               />
@@ -205,7 +246,7 @@ export default function HospitalBillingSystem() {
               <input
                 type="text"
                 value={patientInfo.patientName}
-                onChange={(e) => setPatientInfo({...patientInfo, patientName: e.target.value})}
+                onChange={(e) => setPatientInfo({ ...patientInfo, patientName: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 placeholder="John Doe"
               />
@@ -215,7 +256,7 @@ export default function HospitalBillingSystem() {
               <input
                 type="number"
                 value={patientInfo.age}
-                onChange={(e) => setPatientInfo({...patientInfo, age: e.target.value})}
+                onChange={(e) => setPatientInfo({ ...patientInfo, age: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 placeholder="30"
               />
@@ -224,7 +265,7 @@ export default function HospitalBillingSystem() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Gender</label>
               <select
                 value={patientInfo.gender}
-                onChange={(e) => setPatientInfo({...patientInfo, gender: e.target.value})}
+                onChange={(e) => setPatientInfo({ ...patientInfo, gender: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
                 <option value="">Select</option>
@@ -238,7 +279,7 @@ export default function HospitalBillingSystem() {
               <input
                 type="tel"
                 value={patientInfo.phone}
-                onChange={(e) => setPatientInfo({...patientInfo, phone: e.target.value})}
+                onChange={(e) => setPatientInfo({ ...patientInfo, phone: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 placeholder="+1234567890"
               />
@@ -248,7 +289,7 @@ export default function HospitalBillingSystem() {
               <input
                 type="date"
                 value={patientInfo.date}
-                onChange={(e) => setPatientInfo({...patientInfo, date: e.target.value})}
+                onChange={(e) => setPatientInfo({ ...patientInfo, date: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
@@ -257,7 +298,7 @@ export default function HospitalBillingSystem() {
               <input
                 type="text"
                 value={patientInfo.address}
-                onChange={(e) => setPatientInfo({...patientInfo, address: e.target.value})}
+                onChange={(e) => setPatientInfo({ ...patientInfo, address: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 placeholder="123 Main St, City, State"
               />
@@ -267,7 +308,7 @@ export default function HospitalBillingSystem() {
               <input
                 type="text"
                 value={patientInfo.doctorName}
-                onChange={(e) => setPatientInfo({...patientInfo, doctorName: e.target.value})}
+                onChange={(e) => setPatientInfo({ ...patientInfo, doctorName: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 placeholder="Dr. Smith"
               />
@@ -588,3 +629,5 @@ export default function HospitalBillingSystem() {
     </div>
   );
 }
+
+export default HospitalBillingSystem;
