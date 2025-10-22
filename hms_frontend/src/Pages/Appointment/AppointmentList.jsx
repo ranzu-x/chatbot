@@ -63,31 +63,38 @@ const AppointmentList = () => {
     { header: "Date", accessor: "appointment_date" },
     { header: "Time", accessor: "appointment_time" },
     {
-      header: "Status",
-      render: (row) => (
-        <select
-          value={row.status}
-          onChange={(e) => updateStatus(row.id, e.target.value)}
-          className="border p-1 rounded"
-        >
-          <option value="pending">Scheduled</option>
-          <option value="confirmed">Confirmed</option>
-          <option value="completed">Completed</option>
-          <option value="cancelled">Cancelled</option>
-        </select>
-      ),
-    },
-    {
-      header: "Billing",
-      render: (row) => (
-        <button
-          onClick={() => handleBilling(row)}
-          className="px-3 py-1 text-sm text-white bg-blue-600 rounded hover:bg-blue-700"
-        >
-          Make Bill
-        </button>
-      ),
-    },
+  header: "Status",
+  render: (row) => (
+    <select
+      value={row.status} // show actual status from DB
+      onChange={(e) => updateStatus(row.id, e.target.value)}
+      className="border p-1 rounded"
+      disabled={row.payment_status === "paid"} // disable if payment done
+    >
+      <option value="pending">Scheduled</option>
+      <option value="confirmed">Confirmed</option>
+      <option value="completed">Completed</option>
+      <option value="cancelled">Cancelled</option>
+    </select>
+  ),
+},
+{
+  header: "Billing",
+  render: (row) => (
+    <button
+      onClick={() => handleBilling(row)}
+      className={`px-3 py-1 text-sm text-white rounded ${
+        row.payment_status === "paid"
+          ? "bg-gray-400 cursor-not-allowed"
+          : "bg-blue-600 hover:bg-blue-700"
+      }`}
+      disabled={row.payment_status === "paid"} // disable if already paid
+    >
+      {row.payment_status === "paid" ? "Paid" : "Make Bill"}
+    </button>
+  ),
+}
+
   ];
 
   return (

@@ -6,58 +6,59 @@ import { useSearchParams } from 'react-router';
 const HospitalBillingSystem = () => {
   const [billType, setBillType] = useState('doctor');
   const [patientInfo, setPatientInfo] = useState({
-  patientId: '',
-  patientName: '',
-  age: '',
-  gender: '',
-  phone: '',
-  address: '',
-  doctorName: '',
-  date: new Date().toISOString().split('T')[0]
-});
+    patientId: '',
+    patientName: '',
+    age: '',
+    gender: '',
+    phone: '',
+    address: '',
+    doctorName: '',
+    date: new Date().toISOString().split('T')[0]
+  });
 
   const [searchParams] = useSearchParams();
   const appointmentId = searchParams.get("appointment_id");
   const [appointmentData, setAppointmentData] = useState(null);
 
   useEffect(() => {
-  if (appointmentId) {
-    axios.get(`http://localhost:5000/api/v1/appointments/${appointmentId}`, { withCredentials: true })
-      .then((res) => {
-        
-        setAppointmentData(res.data);
-        
-        // ✅ Prefill all patient information fields
-        setPatientInfo({
-          patientId: res.data.patient_id || '',
-          patientName: res.data.patient_name || '',
-          age: res.data.patient_age || '',
-          gender: res.data.patient_gender || '',
-          phone: res.data.patient_phone || '',
-          address: res.data.patient_address || '',
-          doctorName: res.data.doctor_name || '',
-          doctorFee: res.data.appointment_fee || 0,
-          date: res.data.appointment_date || new Date().toISOString().split('T')[0]
+    if (appointmentId) {
+      axios.get(`http://localhost:5000/api/v1/appointments/${appointmentId}`, { withCredentials: true })
+        .then((res) => {
+
+          setAppointmentData(res.data);
+
+          // ✅ Prefill all patient information fields
+          setPatientInfo({
+            patientId: res.data.patient_id || '',
+            patientName: res.data.patient_name || '',
+            age: res.data.patient_age || '',
+            gender: res.data.patient_gender || '',
+            phone: res.data.patient_phone || '',
+            address: res.data.patient_address || '',
+            doctorId: res.data.doctor_id || '',
+            doctorName: res.data.doctor_name || '',
+            doctorFee: res.data.appointment_fee || 0,
+            date: res.data.appointment_date || new Date().toISOString().split('T')[0]
+          });
+
+          // ✅ Auto-populate doctor service with consultation fee
+          if (res.data.doctor_name && res.data.appointment_fee) {
+            setDoctorItems([{
+              id: 1,
+              service: `Consultation - Dr. ${res.data.doctor_name}`,
+              amount: res.data.appointment_fee
+            }]);
+          }
+          console.log("Appointment data:", res);
+        })
+        .catch((err) => {
+          console.error("Error fetching appointment:", err);
+          alert("Failed to load appointment details");
         });
+    }
+  }, [appointmentId]);
 
-         // ✅ Auto-populate doctor service with consultation fee
-        if (res.data.doctor_name && res.data.appointment_fee) {
-          setDoctorItems([{
-            id: 1,
-            service: `Consultation - Dr. ${res.data.doctor_name}`,
-            amount: res.data.appointment_fee
-          }]);
-        }
-        console.log("Appointment data:", res);
-      })
-      .catch((err) => {
-        console.error("Error fetching appointment:", err);
-        alert("Failed to load appointment details");
-      });
-  }
-}, [appointmentId]);
-
-console.log(patientInfo)
+  console.log(patientInfo)
   const [doctorItems, setDoctorItems] = useState([
     { id: 1, service: '', amount: 0 }
   ]);
@@ -164,21 +165,48 @@ console.log(patientInfo)
     window.print();
   };
 
-  const handleSave = () => {
-    const billData = {
-      patientInfo,
-      billType,
-      items: billType === 'doctor' ? doctorItems : billType === 'lab' ? labItems : medicineItems,
-      subtotal,
-      discount: discountAmount,
-      tax,
-      grandTotal,
-      paymentMode,
-      remarks,
-      timestamp: new Date().toISOString()
-    };
-    console.log('Bill saved:', billData);
-    alert('Bill saved successfully!');
+  const handleSave = async () => {
+    try {
+      const billData = {
+        appointmentId: appointmentData.id,
+        doctorId:appointmentData.doctor_id,
+        patientId: appointmentData.patient_id,
+        billType,
+        items: billType === 'doctor' ? doctorItems : billType === 'lab' ? labItems : medicineItems,
+        subtotal,
+        discount: discountAmount,
+        tax,
+        grandTotal,
+        paymentMode,
+        remarks,
+        timestamp: new Date().toISOString()
+      };
+
+      const response = await axios.post("http://localhost:5000/api/v1/bills", billData, { withCredentials: true })
+      console.log('Bill saved:', response.data);
+      alert('Bill saved successfully!');
+    }
+    
+    catch (error) {
+    console.error("❌ Error saving bill:", error);
+
+    // Handle common error cases
+    if (error.response) {
+      // Server responded with a non-2xx status
+      alert(
+        `Server Error (${error.response.status}): ${
+          error.response.data.message || "Unable to save bill"
+        }`
+      );
+    } else if (error.request) {
+      // Request made but no response received
+      alert("Network error: Server not responding.");
+    } else {
+      // Other unexpected issues
+      alert("Unexpected error occurred while saving bill.");
+    }
+  }
+    
   };
 
   return (
@@ -197,8 +225,8 @@ console.log(patientInfo)
             <button
               onClick={() => setBillType('doctor')}
               className={`px-6 py-2 rounded-lg font-medium transition ${billType === 'doctor'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                 }`}
             >
               Doctor Fee
@@ -206,8 +234,8 @@ console.log(patientInfo)
             <button
               onClick={() => setBillType('lab')}
               className={`px-6 py-2 rounded-lg font-medium transition ${billType === 'lab'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                 }`}
             >
               Lab Tests
@@ -215,8 +243,8 @@ console.log(patientInfo)
             <button
               onClick={() => setBillType('medicine')}
               className={`px-6 py-2 rounded-lg font-medium transition ${billType === 'medicine'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                 }`}
             >
               Medicine
