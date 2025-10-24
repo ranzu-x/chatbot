@@ -7,7 +7,7 @@ const router = express.Router();
 
 
 // ✅ Create new appointment
-router.post("/create-appointments", authMiddleWare, async (req, res) => {
+router.post("/appointments", authMiddleWare, async (req, res) => {
     const {doctor_id, patient_id, appointment_date, appointment_time, reason} = req.body;
     const {hospital_id, id: user_id} = req.user;
 
@@ -36,7 +36,7 @@ router.get("/appointments", authMiddleWare, async (req, res) => {
 
   try {
     const [rows] = await pool.query(
-      `SELECT a.id, a.status, a.reason, DATE_FORMAT(a.appointment_date, '%Y-%m-%d') AS appointment_date, a.appointment_time,
+      `SELECT a.id, a.status, a.reason, DATE_FORMAT(a.appointment_date, '%Y-%m-%d') AS appointment_date, a.appointment_time, a.payment_status,
               CONCAT(p.first_name, ' ', p.last_name) AS patient_name,
               CONCAT(d.first_name, ' ', d.last_name) AS doctor_name
        FROM appointments a
@@ -56,13 +56,13 @@ router.get("/appointments", authMiddleWare, async (req, res) => {
 
 
 // ✅ Update appointment status
-router.put("/:id/status", authMiddleWare, async (req, res) => {
+router.put("/appointments/:id/status", authMiddleWare, async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
 
   try {
     await pool.query(`UPDATE appointments SET status = ? WHERE id = ?`, [status, id]);
-    res.json({ message: "Status updated" });
+    res.status(200).json({ message: "Status updated" });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -83,6 +83,7 @@ router.get("/appointments/:id", authMiddleWare, async (req, res) => {
         a.patient_id,
         a.doctor_id,
         a.appointment_fee,
+        a.payment_status,
         CONCAT(p.first_name, ' ', p.last_name) AS patient_name,
         p.age AS patient_age,
         p.gender AS patient_gender,

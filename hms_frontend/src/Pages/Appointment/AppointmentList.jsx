@@ -38,7 +38,9 @@ const AppointmentList = () => {
       }
 
       // Otherwise just update status directly
-      await axios.put(`http://localhost:5000/api/v1/appointments/${id}/status`, { status: newStatus });
+      await axios.put(`http://localhost:5000/api/v1/appointments/${id}/status`, { status: newStatus }, { withCredentials: true });
+
+      // Update local state
       setAppointments((prev) =>
         prev.map((a) => (a.id === id ? { ...a, status: newStatus } : a))
       );
@@ -63,37 +65,59 @@ const AppointmentList = () => {
     { header: "Date", accessor: "appointment_date" },
     { header: "Time", accessor: "appointment_time" },
     {
-  header: "Status",
-  render: (row) => (
-    <select
-      value={row.status} // show actual status from DB
-      onChange={(e) => updateStatus(row.id, e.target.value)}
-      className="border p-1 rounded"
-      disabled={row.payment_status === "paid"} // disable if payment done
-    >
-      <option value="pending">Scheduled</option>
-      <option value="confirmed">Confirmed</option>
-      <option value="completed">Completed</option>
-      <option value="cancelled">Cancelled</option>
-    </select>
-  ),
-},
-{
-  header: "Billing",
-  render: (row) => (
-    <button
-      onClick={() => handleBilling(row)}
-      className={`px-3 py-1 text-sm text-white rounded ${
-        row.payment_status === "paid"
-          ? "bg-gray-400 cursor-not-allowed"
-          : "bg-blue-600 hover:bg-blue-700"
-      }`}
-      disabled={row.payment_status === "paid"} // disable if already paid
-    >
-      {row.payment_status === "paid" ? "Paid" : "Make Bill"}
-    </button>
-  ),
-}
+      header: "Status",
+      render: (row) => (
+        <select
+          value={row.status} // show actual status from DB
+          onChange={(e) => updateStatus(row.id, e.target.value)}
+          className="border p-1 rounded"
+          disabled={row.payment_status === "paid"} // disable if payment done
+        >
+          <option value="pending">Scheduled</option>
+          <option value="confirmed">Confirmed</option>
+          <option value="completed">Completed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+      ),
+    },
+    {
+      header: "Billing",
+      render: (row) => (
+
+        <button
+          onClick={() => handleBilling(row)}
+          className={`py-1 text-sm text-white rounded w-24 
+    ${row.payment_status === "paid"
+              ? "bg-green-500 cursor-not-allowed"
+              : row.status === "confirmed" ||
+                row.status === "cancelled" ||
+                row.status === "completed"
+                ? "bg-gray-400 cursor-not-allowed opacity-70"
+                : "bg-blue-600 hover:bg-blue-700"
+            }`}
+          disabled={
+            row.payment_status === "paid" ||
+            row.status === "confirmed" ||
+            row.status === "cancelled" ||
+            row.status === "completed"
+          }
+          title={
+            row.payment_status === "paid"
+              ? "Payment already made"
+              : row.status === "confirmed"
+                ? "Appointment confirmed"
+                : row.status === "cancelled"
+                  ? "Appointment cancelled"
+                  : row.status === "completed"
+                    ? "Appointment completed"
+                    : "Create a bill"
+          }
+        >
+          {row.payment_status === "paid" ? "Paid" : "Make Bill"}
+        </button>
+
+      ),
+    }
 
   ];
 

@@ -104,7 +104,7 @@ const AppointmentForm = () => {
     }
 
     try {
-      const response = await fetch("http://localhost:5000/api/v1/create-appointments", {
+      const response = await fetch("http://localhost:5000/api/v1/appointments", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
