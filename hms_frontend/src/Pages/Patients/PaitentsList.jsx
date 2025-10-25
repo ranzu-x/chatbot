@@ -4,6 +4,8 @@ import { useNavigate, Link } from "react-router";
 import Swal from "sweetalert2";
 import DataTable from "../../Components/Table Components/DataTable";
 import TableActions from "../../Components/Table Components/TableActionButtons";
+// import FcCalendar from 'react-icons/fc';
+import { FaCalendarAlt } from 'react-icons/fa';
 
 
 function PatientsList() {
@@ -124,8 +126,8 @@ function PatientsList() {
                                 key: "appointment",
                                 label: "Appointment",
                                 // small emoji or component icon allowed
-                                icon: <>📅</>,
-                                onClick: (it) => navigate(`/appointments/new?patientId=${it.id}`),
+                                icon: <FaCalendarAlt className="text-violet-800" />,  //<>📅</>
+                                onClick: (it) => navigate(`/prescription/new?patientId=${it.id}`),
                             },
                         ]} />
                 )} />

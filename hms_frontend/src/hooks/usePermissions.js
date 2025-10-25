@@ -1,0 +1,55 @@
+// hooks/usePermissions.js
+import { useAuth } from '../Provider/AuthContexProvider';
+
+export const usePermissions = () => {
+  const { user } = useAuth();
+  
+  // Check if user can perform action on resource
+  const can = (resource, action) => {
+    if (!user?.permissions) return false;
+    return user.permissions[resource]?.includes(action);
+  };
+  
+  // Check if user can do any action on resource
+  const canAccess = (resource) => {
+    if (!user?.permissions) return false;
+    return !!user.permissions[resource]?.length;
+  };
+  
+  // Get all actions user can perform on a resource
+  const getAllowedActions = (resource) => {
+    if (!user?.permissions) return [];
+    return user.permissions[resource] || [];
+  };
+  
+  // Check if user has specific role
+  const hasRole = (role) => {
+    return user?.roles?.includes(role);
+  };
+  
+  // Check if user has any of the given roles
+  const hasAnyRole = (roles) => {
+    return user?.roles?.some(role => roles.includes(role));
+  };
+
+  return {
+    // Permission checks
+    can,
+    canAccess,
+    getAllowedActions,
+    
+    // Role checks
+    hasRole,
+    hasAnyRole,
+    
+    // Common shortcuts
+    isDoctor: hasRole('doctor'),
+    isNurse: hasRole('nurse'),
+    isReceptionist: hasRole('receptionist'),
+    
+    // User info
+    user,
+    userRoles: user?.roles || [],
+    userPermissions: user?.permissions || {},
+  };
+};

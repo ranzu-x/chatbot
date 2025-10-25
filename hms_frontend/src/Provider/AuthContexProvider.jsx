@@ -19,12 +19,14 @@ export const AuthContexProvider = ({ children }) => {
     const data = await res.json();
     console.log(data);
     if (res.ok && data?.user) {
-      console.log("Rupos Data:", data);
+      console.log("user Data:", data);
       setUser(data.user);
       return true;
     }
     return false;
   };
+
+
 
   // Fetch Medicines
   // useEffect(() => {
