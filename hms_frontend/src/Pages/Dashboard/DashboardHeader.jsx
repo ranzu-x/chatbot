@@ -69,13 +69,54 @@ const DashboardHeader = () => {
                     </div>
                     {dropdownOpen && (
                         <div
-                            ref={dropdown}
-                            className="origin-top-right absolute right-0 mt-2 w-48 rounded-md shadow-lg py-1 bg-white ring-1 ring-gray-200 ring-opacity-5 z-10"
-                        >
-                            <a className="block px-4 py-2 text-sm font-bold text-gray-700"> {user?.hospital_name}e</a>
-                            <a href="/profile" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Your Profile</a>
-                            <a onClick={logout} className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Log Out</a>
-                        </div>
+    ref={dropdown}
+    className="origin-top-right absolute right-0 mt-3 w-56 rounded-xl shadow-xl py-2 bg-white border border-gray-100 backdrop-blur-sm bg-white/95 z-50"
+    style={{
+        boxShadow: '0 10px 40px -10px rgba(0, 0, 0, 0.1), 0 0 1px 1px rgba(0, 0, 0, 0.02)'
+    }}
+>
+    {/* Header with hospital info */}
+    <div className="px-4 py-3 border-b border-gray-100">
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">Hospital</p>
+        <p className="text-sm font-semibold text-gray-900 truncate">
+            {user?.hospital_name}
+        </p>
+        <p className="text-xs text-gray-500 mt-1 truncate">{user?.email}</p>
+    </div>
+
+    {/* Menu Items */}
+    <div className="py-2">
+        <a 
+            href="/profile" 
+            className="flex items-center px-4 py-2.5 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition-all duration-200 group"
+        >
+            <svg className="w-4 h-4 mr-3 text-gray-400 group-hover:text-blue-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+            Your Profile
+        </a>
+        
+        <a 
+            onClick={logout}
+            className="flex items-center px-4 py-2.5 text-sm text-gray-700 hover:bg-red-50 hover:text-red-600 transition-all duration-200 group cursor-pointer"
+        >
+            <svg className="w-4 h-4 mr-3 text-gray-400 group-hover:text-red-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+            Log Out
+        </a>
+    </div>
+
+    {/* Footer with role info */}
+    <div className="px-4 py-2 border-t border-gray-100 bg-gray-50/50">
+        <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-500">Role</span>
+            <span className="text-xs font-medium text-blue-600 bg-blue-100 px-2 py-1 rounded-full">
+                {user?.roles?.[0] || 'User'}
+            </span>
+        </div>
+    </div>
+</div>
                     )}
                 </div>
             </div>
