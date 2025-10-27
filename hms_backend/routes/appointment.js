@@ -1,13 +1,14 @@
 import express from "express";
 import pool from "../db.js";
 import { authMiddleWare } from "../middleware/authmiddleware.js";
+import { requireRole } from "../middleware/roleMiddleware.js";
 
 const router = express.Router();
 
 
 
 // ✅ Create new appointment
-router.post("/appointments", authMiddleWare, async (req, res) => {
+router.post("/appointments", authMiddleWare, requireRole(['hospital_admin']), async (req, res) => {
     const {doctor_id, patient_id, appointment_date, appointment_time, reason} = req.body;
     const {hospital_id, id: user_id} = req.user;
 

@@ -1,5 +1,6 @@
 import { CalendarDaysIcon, ChartBarIcon, RectangleStackIcon, UsersIcon, ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
-import React, { useState } from 'react';
+import { FaRegMoneyBillAlt, FaFilePrescription } from 'react-icons/fa';
+import { useState } from 'react';
 import { Link, useLocation } from 'react-router';
 
 const Sidebar = () => {
@@ -40,7 +41,7 @@ const Sidebar = () => {
                         <UsersIcon className="h-5 w-5 mr-3" /> Patients
                     </Link>
                     <Link to={'/prescription'} className={getLinkClass('/prescription')}>
-                        <UsersIcon className="h-5 w-5 mr-3" /> Prescription
+                        <FaFilePrescription className="h-5 w-5 mr-3" /> Prescription
                     </Link>
 
                     {/* Appointments Dropdown */}
@@ -78,7 +79,7 @@ const Sidebar = () => {
                     </div>
 
                     <Link to={'/billing'} className={getLinkClass('/billing')}>
-                        <CalendarDaysIcon className="h-5 w-5 mr-3" /> Billing
+                        <FaRegMoneyBillAlt className="h-5 w-5 mr-3" /> Billing
                     </Link>
                     <Link to={'/departments'} className={getLinkClass('/departments')}>
                         <RectangleStackIcon className="h-5 w-5 mr-3" /> Departments

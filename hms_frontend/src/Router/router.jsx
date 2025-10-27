@@ -17,6 +17,9 @@ import BillingForm from "../Pages/Billing/BillingForm";
 import AppointmentList from "../Pages/Appointment/AppointmentList";
 import BillingList from "../Pages/Billing/BillingList";
 import Home2 from "../Components/Common/Home2/Home2";
+import RouterGuard from "../Components/Common/RouteGuard";
+import Unauthorized from "../Pages/Unauthorized";
+
 
 const router = createBrowserRouter([
   {
@@ -43,6 +46,14 @@ const router = createBrowserRouter([
     path: "/",
     Component: DashboardLayout,
     children: [
+      {
+        path: "/unauthorized",
+        Component: () => {
+          return (
+            <Unauthorized></Unauthorized>
+          );
+        }
+      },
       {
         path: "/dashboard",
         Component: () => {
@@ -95,7 +106,15 @@ const router = createBrowserRouter([
         path: "/appointments",
         Component: () => {
           return (
-            <PrivateRoute><AppointmentList></AppointmentList></PrivateRoute>
+            <PrivateRoute>
+              <RouterGuard
+                requiredRole="hospital_admin"
+                requiredPermission={{ resource: 'hospital_admin_settings', action: 'create'}}  //Currently not working, need to fix this
+                fallbackPath="/unauthorized"
+              >
+                <AppointmentList></AppointmentList>
+              </RouterGuard>
+            </PrivateRoute>
           );
         }
       },

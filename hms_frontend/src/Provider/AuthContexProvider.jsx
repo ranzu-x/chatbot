@@ -77,7 +77,7 @@ export const AuthContexProvider = ({ children }) => {
       })
 
       .then((data) => {
-        console.log("check-auth data:", data);
+        console.log("User data:", data);
         if (data?.user)
           setUser(data.user);
       })

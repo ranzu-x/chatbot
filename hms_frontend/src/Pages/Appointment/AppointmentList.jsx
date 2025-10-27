@@ -19,7 +19,7 @@ const AppointmentList = () => {
   const [error, setError] = useState(null);
   const [updating, setUpdating] = useState(null);
 
-  const { hasRole } = usePermissions();
+  const { hasRole, can } = usePermissions();
 
   // ✅ Fetch appointments
   const fetchAppointments = async () => {
@@ -236,7 +236,7 @@ const AppointmentList = () => {
             onEdit={handleEdit}
             onDelete={handleDelete}
             extraActions={[
-              ...(hasRole('doctor') ? [{
+              ...(hasRole('doctor') && can('prescriptions', 'create') ? [{
               
                 key: "prescription",
                 label: "Create Prescription",
