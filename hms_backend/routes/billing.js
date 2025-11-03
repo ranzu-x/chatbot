@@ -47,25 +47,52 @@ router.post("/bills", authMiddleWare, async (req, res) => {
 
 
 
-// ✅ Get all bills for hospital
+// ✅ Get all bills with pagination + search
 router.get("/bills", authMiddleWare, async (req, res) => {
   const hospital_id = req.user.hospital_id;
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const search = req.query.search ? `%${req.query.search}%` : "%";
+  const offset = (page - 1) * limit;
 
   try {
+    // ✅ Count total
+    const [[{ count }]] = await pool.query(
+      `SELECT COUNT(*) AS count
+       FROM billing b
+       LEFT JOIN patients p ON b.patient_id = p.id
+       WHERE b.hospital_id = ?
+       AND (p.first_name LIKE ? OR p.last_name LIKE ? OR b.payment_status LIKE ?)`,
+      [hospital_id, search, search, search]
+    );
+
+    // ✅ Fetch paginated data
     const [rows] = await pool.query(
       `SELECT 
         b.*, 
-        CONCAT(p.first_name, ' ', p.last_name) AS patient_name
+        CONCAT(p.first_name, ' ', p.last_name) AS patient_name,
+        CONCAT(u.first_name, ' ', u.last_name) AS doctor_name
       FROM billing b
       LEFT JOIN patients p ON b.patient_id = p.id
+      LEFT JOIN users u ON b.doctor_id = u.id
       WHERE b.hospital_id = ?
-      ORDER BY b.created_at DESC`,
-      [hospital_id]
+      AND (p.first_name LIKE ? OR p.last_name LIKE ? OR b.payment_status LIKE ?)
+      ORDER BY b.created_at DESC
+      LIMIT ? OFFSET ?`,
+      [hospital_id, search, search, search, limit, offset]
     );
-    res.json(rows);
+
+    res.json({
+      bills: rows,
+      pagination: {
+        totalBills: count,
+        totalPages: Math.ceil(count / limit),
+        currentPage: page,
+      },
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Billing fetch error:", error);
+    res.status(500).json({ error: "Failed to load billing data" });
   }
 });
-
 export default router;

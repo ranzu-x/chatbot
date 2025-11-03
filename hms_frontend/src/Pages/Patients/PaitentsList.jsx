@@ -1,138 +1,150 @@
-// src/pages/Patients/PatientsList.jsx
-import React, { useEffect, useState } from "react";
-import { useNavigate, Link } from "react-router";
+import React, { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "react-router";
 import Swal from "sweetalert2";
 import DataTable from "../../Components/Table Components/DataTable";
 import TableActions from "../../Components/Table Components/TableActionButtons";
-// import FcCalendar from 'react-icons/fc';
-import { FaCalendarAlt } from 'react-icons/fa';
-
+import { FaCalendarAlt } from "react-icons/fa";
 
 function PatientsList() {
-    const [patients, setPatients] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [search, setSearch] = useState("");
-    const [currentPage, setCurrentPage] = useState(1);
-    const patientsPerPage = 10;
-    const navigate = useNavigate();
+  const [patients, setPatients] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [patientsPerPage, setPatientsPerPage] = useState(10);
+  const [totalPatients, setTotalPatients] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const navigate = useNavigate();
 
-    useEffect(() => {
-        fetch("http://localhost:5000/api/v1/patients", { credentials: "include" })
-            .then((res) => {
-                if (!res.ok) throw new Error("Fetch error");
-                return res.json();
-            })
-            .then((data) => {
-                console.log(data);
-                setPatients(data);
-            })
-            .catch((err) => {
-                console.error(err);
-                Swal.fire("Error", "Failed to load patients", "error");
-            })
-            .finally(() => setLoading(false));
-    }, []);
+  // ✅ Stable fetch function (no dependencies that change often)
+  const fetchPatients = useCallback(async (page, limit, searchTerm) => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        page: page.toString(),
+        limit: limit.toString(),
+        ...(searchTerm && { search: searchTerm }),
+      });
 
-    const handleDelete = async (item) => {
-        // you already have a sweetalert flow in your original file; call it here
-        const id = item.id;
-        const result = await Swal.fire({
-            title: "Are you sure?",
-            text: "This action cannot be undone.",
-            icon: "warning",
-            showCancelButton: true,
-            confirmButtonText: "Yes, delete",
-        });
+      const response = await fetch(
+        `http://localhost:5000/api/v1/patients?${params}`,
+        { credentials: "include" }
+      );
 
-        if (!result.isConfirmed) return;
+      if (!response.ok) throw new Error("Fetch error");
 
-        // call API and update UI
-        try {
-            const res = await fetch(`http://localhost:5000/patients/${id}`, {
-                method: "DELETE",
-            });
-            if (!res.ok) {
-                const errBody = await res.json().catch(() => ({}));
-                throw new Error(errBody.message || "Delete failed");
-            }
-            setPatients((prev) => prev.filter((p) => p.id !== id));
-            Swal.fire("Deleted", "Patient record deleted.", "success");
-        } catch (err) {
-            console.error(err);
-            Swal.fire("Error", err.message || "Could not delete", "error");
-        }
-    };
+      const data = await response.json();
+      console.log("✅ Patients fetched:", data);
 
-    const handleView = (item) => {
-        // you can open your modal or navigate
-        navigate(`/patients/view/${item.id}`);
-    };
+      setPatients(data.patients);
+      setTotalPatients(data.pagination.totalPatients);
+      setTotalPages(data.pagination.totalPages);
+      setCurrentPage(data.pagination.currentPage);
+    } catch (err) {
+      console.error(err);
+      Swal.fire("Error", "Failed to load patients", "error");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-    const handleEdit = (item) => {
-        navigate(`/patients/edit/${item.id}`);
-    };
+  // ✅ Single effect to handle all changes (page, limit, search)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchPatients(currentPage, patientsPerPage, search);
+    }, 400);
 
-    // Search only by phone number
-    // const filtered = patients.filter((p) => {
-    //     const contact = p.phone ? p.phone.toString().toLowerCase() : "";
-    //     const term = search.toLowerCase();
-    //     return contact.includes(term);
-    // });
+    return () => clearTimeout(timer);
+  }, [currentPage, patientsPerPage, search, fetchPatients]);
 
-// Search by first, last name and phone numbers.
-    const filtered = patients.filter((p) => {
-        if (!search.trim()) return true; // ✅ show all if search is empty
-        const term = search.toLowerCase();
-        return (
-            p.first_name?.toLowerCase().includes(term) ||
-            p.last_name?.toLowerCase().includes(term) ||
-            p.phone?.toString().toLowerCase().includes(term)
-        );
+  const handlePageChange = (page) => {
+    setCurrentPage(page);
+  };
+
+  const handlePatientsPerPageChange = (newSize) => {
+    setPatientsPerPage(parseInt(newSize));
+    setCurrentPage(1);
+  };
+
+  const handleDelete = async (item) => {
+    const id = item.id;
+    const result = await Swal.fire({
+      title: "Are you sure?",
+      text: "This action cannot be undone.",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonText: "Yes, delete",
     });
 
-    const totalPages = Math.max(1, Math.ceil(filtered.length / patientsPerPage));
-    const currentData = filtered.slice((currentPage - 1) * patientsPerPage, currentPage * patientsPerPage);
+    if (!result.isConfirmed) return;
 
-    const columns = [
-        { header: "#", render: (row, index) => (currentPage - 1) * patientsPerPage + index + 1 },
-        { header: "First Name", accessor: "first_name" },
-        { header: "Last Name", accessor: "last_name" },
-        { header: "Age", accessor: "age" },
-        { header: "Gender", accessor: "gender" },
-        { header: "Contact", accessor: "phone" },
-    ];
+    try {
+      const res = await fetch(`http://localhost:5000/patients/${id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody.message || "Delete failed");
+      }
 
-    return (
-        <div className="p-4 sm:p-8 font-poppins">
-            <DataTable
-                title="Patient"
-                columns={columns}
-                data={currentData}
-                loading={loading}
-                searchTerm={search}
-                setSearchTerm={setSearch}
-                onAddNew={() => navigate("/addpatient")}
-                currentPage={currentPage}
-                totalPages={totalPages}
-                onPageChange={(p) => setCurrentPage(p)}
-                actions={(item) => (
-                    <TableActions
-                        item={item}
-                        onView={handleView}
-                        onEdit={handleEdit}
-                        onDelete={handleDelete}
-                        extraActions={[
-                            {
-                                key: "appointment",
-                                label: "Appointment",
-                                // small emoji or component icon allowed
-                                icon: <FaCalendarAlt className="text-violet-800" />,  //<>📅</>
-                                onClick: (it) => navigate(`/prescription/new?patientId=${it.id}`),
-                            },
-                        ]} />
-                )} />
-        </div>
-    );
+      fetchPatients(currentPage, patientsPerPage, search);
+      Swal.fire("Deleted", "Patient record deleted.", "success");
+    } catch (err) {
+      console.error(err);
+      Swal.fire("Error", err.message || "Could not delete", "error");
+    }
+  };
+
+  const handleView = (item) => navigate(`/patients/view/${item.id}`);
+  const handleEdit = (item) => navigate(`/patients/edit/${item.id}`);
+
+  const columns = [
+    {
+      header: "#",
+      render: (row, index) => (currentPage - 1) * patientsPerPage + index + 1,
+    },
+    { header: "First Name", accessor: "first_name" },
+    { header: "Last Name", accessor: "last_name" },
+    { header: "Age", accessor: "age" },
+    { header: "Gender", accessor: "gender" },
+    { header: "Contact", accessor: "phone" },
+  ];
+
+  return (
+    <div className="p-4 sm:p-8 font-poppins">
+      <DataTable
+        title="Patient"
+        columns={columns}
+        data={patients}
+        loading={loading}
+        searchTerm={search}
+        setSearchTerm={setSearch}
+        onAddNew={() => navigate("/addpatient")}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        totalItems={totalPatients}
+        itemsPerPage={patientsPerPage}
+        onItemsPerPageChange={handlePatientsPerPageChange}
+        onPageChange={handlePageChange}
+        actions={(item) => (
+          <TableActions
+            item={item}
+            onView={handleView}
+            onEdit={handleEdit}
+            onDelete={handleDelete}
+            extraActions={[
+              {
+                key: "appointment",
+                label: "Appointment",
+                icon: <FaCalendarAlt className="text-violet-800" />,
+                onClick: (it) =>
+                  navigate(`/appointments/new?patientId=${it.id}`),
+              },
+            ]}
+          />
+        )}
+      />
+    </div>
+  );
 }
 
 export default PatientsList;

@@ -5,62 +5,52 @@ import { generatePatientCode } from "../utility/generatePatientCode.js";
 
 const router = express.Router();
 
-// ✅ Get patients with pagination
+// ✅ Get all patients
 router.get("/patients", authMiddleWare, async (req, res) => {
   try {
     const hospitalId = req.user.hospital_id;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const search = req.query.search || '';
-    const offset = (page - 1) * limit;
-
-    let query = `
-      SELECT * FROM patients 
-      WHERE hospital_id = ?
-    `;
-    let countQuery = `
-      SELECT COUNT(*) as total FROM patients 
-      WHERE hospital_id = ?
-    `;
-    let queryParams = [hospitalId];
-    let countParams = [hospitalId];
-
-    // Add search filter if provided
-    if (search) {
-      const searchTerm = `%${search}%`;
-      query += ` AND (first_name LIKE ? OR last_name LIKE ? OR phone LIKE ?)`;
-      countQuery += ` AND (first_name LIKE ? OR last_name LIKE ? OR phone LIKE ?)`;
-      queryParams.push(searchTerm, searchTerm, searchTerm);
-      countParams.push(searchTerm, searchTerm, searchTerm);
-    }
-
-    // Add pagination
-    query += ` LIMIT ? OFFSET ?`;
-    queryParams.push(limit, offset);
-
-    // Execute both queries in parallel
-    const [patients] = await pool.query(query, queryParams);
-    const [countResult] = await pool.query(countQuery, countParams);
-    
-    const totalPatients = countResult[0].total;
-    const totalPages = Math.ceil(totalPatients / limit);
-
-    res.json({
-      patients,
-      pagination: {
-        currentPage: page,
-        totalPages,
-        totalPatients,
-        hasNext: page < totalPages,
-        hasPrev: page > 1,
-        limit
-      }
-    });
+    const [rows] = await pool.query(
+      "SELECT * FROM patients WHERE hospital_id = ?",
+      [hospitalId]
+    );
+    res.json(rows);
   } catch (err) {
-    console.error("Error fetching patients:", err);
     res.status(500).json({ error: err.message });
   }
-})
+});
+
+// Get patients by sarch
+router.get("/patients/search", authMiddleWare, async (req, res) => {
+    const { q } = req.query; // Search query
+    const { hospital_id } = req.user;
+
+    if (!q || q.length < 2) {
+        return res.status(400).json({ error: "Search query must be at least 2 characters" });
+    }
+
+    try {
+        const searchTerm = `%${q}%`;
+        
+        const [rows] = await pool.query(
+            `SELECT id, patient_id, first_name, last_name, phone, email
+             FROM patients
+             WHERE hospital_id = ?
+               AND (
+                   first_name LIKE ? 
+                   OR last_name LIKE ? 
+                   OR patient_id LIKE ?
+                   OR phone LIKE ?
+               )
+             LIMIT 20`,
+            [hospital_id, searchTerm, searchTerm, searchTerm, searchTerm]
+        );
+
+        res.json(rows);
+    } catch (error) {
+        console.error("Error searching patients:", error);
+        res.status(500).json({ error: "Failed to search patients" });
+    }
+});
 
 // Make sure this route comes BEFORE /patients/:id to avoid conflicts
 

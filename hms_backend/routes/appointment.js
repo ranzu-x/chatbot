@@ -31,30 +31,54 @@ router.post("/appointments", authMiddleWare, requireRole(['hospital_admin']), as
 });
 
 
-// ✅ Get all appointments for hospital
+// ✅ GET All Appointments (Paginated + Search)
 router.get("/appointments", authMiddleWare, async (req, res) => {
   const hospital_id = req.user.hospital_id;
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const search = req.query.search ? `%${req.query.search}%` : "%%";
+  const offset = (page - 1) * limit;
 
   try {
     const [rows] = await pool.query(
-      `SELECT a.id, a.status, a.reason, DATE_FORMAT(a.appointment_date, '%Y-%m-%d') AS appointment_date, a.appointment_time, a.payment_status,
+      `SELECT a.id, a.status, a.reason,
+              DATE_FORMAT(a.appointment_date, '%Y-%m-%d') AS appointment_date,
+              a.appointment_time, a.payment_status,
               CONCAT(p.first_name, ' ', p.last_name) AS patient_name,
               CONCAT(d.first_name, ' ', d.last_name) AS doctor_name
        FROM appointments a
        JOIN patients p ON a.patient_id = p.id
        JOIN users d ON a.doctor_id = d.id
        WHERE a.hospital_id = ?
-       ORDER BY a.appointment_date DESC, a.appointment_time ASC`,
-      [hospital_id]
+       AND (p.first_name LIKE ? OR p.last_name LIKE ? OR d.first_name LIKE ? OR d.last_name LIKE ?)
+       ORDER BY a.appointment_date DESC, a.appointment_time ASC
+       LIMIT ? OFFSET ?`,
+      [hospital_id, search, search, search, search, limit, offset]
     );
 
-    res.json(rows);
+    const [[{ total }]] = await pool.query(
+      `SELECT COUNT(*) AS total
+       FROM appointments a
+       JOIN patients p ON a.patient_id = p.id
+       JOIN users d ON a.doctor_id = d.id
+       WHERE a.hospital_id = ?
+       AND (p.first_name LIKE ? OR p.last_name LIKE ? OR d.first_name LIKE ? OR d.last_name LIKE ?)`,
+      [hospital_id, search, search, search, search]
+    );
+
+    res.json({
+      appointments: rows,
+      pagination: {
+        totalAppointments: total,
+        totalPages: Math.ceil(total / limit),
+        currentPage: page,
+      },
+    });
   } catch (error) {
-    console.error(error);
+    console.error("[Appointments] Fetch Error:", error);
     res.status(500).json({ error: error.message });
   }
 });
-
 
 // ✅ Update appointment status
 router.put("/appointments/:id/status", authMiddleWare, async (req, res) => {
