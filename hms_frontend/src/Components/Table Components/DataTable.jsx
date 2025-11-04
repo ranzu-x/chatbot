@@ -92,7 +92,7 @@ const DataTable = ({
               </tr>
             ) : data.length === 0 ? (
               <tr>
-                <td colSpan={columns.length + 1} className="px-6 py-4 text-center text-gray-500">
+                <td colSpan={columns.length + 1} className="px-6 py-2 text-center text-gray-500">
                   No {title.toLowerCase()} found.
                 </td>
               </tr>
@@ -104,7 +104,7 @@ const DataTable = ({
                       {col.render ? col.render(row, index) : row[col.accessor]}
                     </td>
                   ))}
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{actions && actions(row)}</td>
+                  <td className="px-6 py-2 whitespace-nowrap text-sm font-medium">{actions && actions(row)}</td>
                 </tr>
               ))
             )}

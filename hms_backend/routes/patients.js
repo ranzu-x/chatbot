@@ -34,6 +34,12 @@ router.get("/patients", authMiddleWare, async (req, res) => {
       countParams.push(searchTerm, searchTerm, searchTerm);
     }
 
+     // ✅ ADD ORDER BY - Choose one of these options:
+    query += ` ORDER BY id DESC`;  // Most recent first (recommended)
+    // query += ` ORDER BY created_at DESC`;  // If you have created_at column
+    // query += ` ORDER BY first_name ASC, last_name ASC`;  // Alphabetical
+    // query += ` ORDER BY id ASC`;  // Oldest first
+
     // Add pagination
     query += ` LIMIT ? OFFSET ?`;
     queryParams.push(limit, offset);

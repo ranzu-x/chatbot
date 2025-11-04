@@ -107,6 +107,8 @@ function PatientsList() {
     { header: "Age", accessor: "age" },
     { header: "Gender", accessor: "gender" },
     { header: "Contact", accessor: "phone" },
+    { header: "Email", accessor: "email" },
+    { header: "Blood Group", accessor: "blood_group" },
   ];
 
   return (
