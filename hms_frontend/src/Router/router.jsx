@@ -3,7 +3,6 @@ import HomeLayout from "../Layout/HomeLayout";
 import Home from "../Pages/Home/Home";
 import LogIn from "../Pages/LogIn/LogIn";
 import Register from "../Pages/Register/Register";
-import AddPatient from "../Pages/Patients/AddPatient"
 import Dashboard from "../Pages/Dashboard/Dashboard";
 import PrivateRoute from "./PrivateRoute";
 import PatientsList from "../Pages/Patients/PaitentsList";
@@ -19,6 +18,7 @@ import BillingList from "../Pages/Billing/BillingList";
 import Home2 from "../Components/Common/Home2/Home2";
 import RouterGuard from "../Components/Common/RouteGuard";
 import Unauthorized from "../Pages/Unauthorized";
+import PatientsForm from "../Pages/Patients/PatientsForm";
 
 
 const router = createBrowserRouter([
@@ -71,13 +71,22 @@ const router = createBrowserRouter([
         }
       },
       {
-        path: "/addpatient",
+        path: "/patients/add",
         Component: () => {
           return (
-            <PrivateRoute><AddPatient></AddPatient></PrivateRoute>
+            <PrivateRoute><PatientsForm></PatientsForm></PrivateRoute>
           );
         }
       },
+
+      {
+    path: "/patients/edit/:id",
+    Component: () => (
+        <PrivateRoute>
+            <PatientsForm />
+        </PrivateRoute>
+    )
+},
       {
         path: "/prescription",
         Component: () => {

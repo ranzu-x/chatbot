@@ -93,48 +93,109 @@ router.get("/patients/:id", authMiddleWare, async (req, res) => {
 });
 
 // ✅ Add a patient
-router.post("/add_patients", authMiddleWare, async (req, res) => {
-  const {
-    firstName, lastName, gender, age, phoneNumber, presentAddress,
-    fathersName, motherName, nid, bloodGroup, email,
-    emergencyContactName, emergencyContactRelation, emergencyContactPhone,
-    department, consultantDoctor, admissionDate, ward, bedNumber,
-    pastConditions, currentMedications, allergies
-  } = req.body;
-
+router.post("/patients", authMiddleWare, async (req, res) => {
   try {
+    const {
+      // Patient Information
+      firstName, lastName, dateOfBirth, age, gender, bloodGroup,
+      fathersName, spouseName, nid, maritalStatus, occupation,
+      
+      // Contact Information
+      phoneNumber, email, emergencyContactName, emergencyContactRelation, emergencyContactPhone,
+      
+      // Present Address
+      presentAddress, presentCity, presentState, presentZip, presentCountry,
+      
+      // Permanent Address
+      permanentAddress, permanentCity, permanentState, permanentZip, permanentCountry,
+      
+      // Medical History
+      allergies, currentMedications, pastConditions, chronicDiseases, surgicalHistory,
+      
+      // Insurance
+      insuranceProvider, insuranceNumber
+    } = req.body;
+
     const hospitalId = req.user.hospital_id;
 
-    // Check if the phone number is already exists for this hospital
+    // Validation for required fields
+    if (!firstName || !lastName || !phoneNumber || !email) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "First name, last name, phone number, and email are required" 
+      });
+    }
+
+    // Check if the phone number already exists for this hospital
     const [existingPatient] = await pool.query(
       `SELECT id FROM patients WHERE hospital_id = ? AND phone = ?`,
       [hospitalId, phoneNumber]
     );
 
     if (existingPatient.length > 0) {
-      return res
-        .status(400)
-        .json({ success: false, message: "This phone number is already registered for this hospital." });
+      return res.status(400).json({ 
+        success: false, 
+        message: "This phone number is already registered for this hospital." 
+      });
     }
 
-    //  Generate patient code (custom function)
+    // Generate patient code (custom function)
     const patient_id = await generatePatientCode(hospitalId);
 
-    const [result] = await pool.query(
-      `INSERT INTO patients (
-        hospital_id, patient_id, first_name, last_name, email, phone, age, gender, address
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        hospitalId, patient_id, firstName, lastName, email,
-        phoneNumber, age, gender, presentAddress
-      ]
-    );
+    // Insert patient with all fields
+const [result] = await pool.query(
+  `INSERT INTO patients (
+    hospital_id, patient_id, first_name, last_name, date_of_birth, age, gender, 
+    blood_group, national_id, marital_status, occupation,
+    phone, email, emergency_contact_name, emergency_contact_relation, emergency_contact_phone,
+    address, state_or_div, city, zip_code, country, allergies, current_medications, past_conditions, chronic_diseases, surgical_history,
+    insurance_provider, insurance_number
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  [
+    hospitalId,
+    patient_id || null,
+    firstName || null,
+    lastName || null,
+    dateOfBirth || null,
+    age ? parseInt(age) : null,
+    gender || null,
+    bloodGroup || null,
+    nid || null,
+    maritalStatus || null,
+    occupation || null,
+    phoneNumber || null,
+    email || null,
+    emergencyContactName || null,
+    emergencyContactRelation || null,
+    emergencyContactPhone || null,
+    presentAddress || null,
+    presentState || null,
+    presentCity || null,
+    presentZip || null,
+    presentCountry || null,
+    allergies || null,
+    currentMedications || null,
+    pastConditions || null,
+    chronicDiseases || null,
+    surgicalHistory || null,
+    insuranceProvider || null,
+    insuranceNumber || null,
+  ]
+);
 
-    res.json({ success: true, message: "Patient added successfully", patient_id, insertId: result.insertId });
-  }
 
-  catch (err) {
-    res.status(500).json({ error: err.message });
+    res.json({ 
+      success: true, 
+      message: "Patient added successfully", 
+      patient_id, 
+      insertId: result.insertId 
+    });
+  } catch (err) {
+    console.error("Error creating patient:", err);
+    res.status(500).json({ 
+      success: false, 
+      error: err.message 
+    });
   }
 });
 

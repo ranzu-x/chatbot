@@ -120,7 +120,7 @@ function PatientsList() {
         loading={loading}
         searchTerm={search}
         setSearchTerm={setSearch}
-        onAddNew={() => navigate("/addpatient")}
+        onAddNew={() => navigate("/patients/add")}
         currentPage={currentPage}
         totalPages={totalPages}
         totalItems={totalPatients}
