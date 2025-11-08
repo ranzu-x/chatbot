@@ -3,10 +3,13 @@ import { useNavigate } from "react-router";
 import Swal from "sweetalert2";
 import DataTable from "../../Components/Table Components/DataTable";
 import TableActions from "../../Components/Table Components/TableActionButtons";
+import PatientViewModal from "./PatientViewModal";
 import { FaCalendarAlt } from "react-icons/fa";
 
 function PatientsList() {
   const [patients, setPatients] = useState([]);
+  const [selectedPatient, setSelectedPatient] = useState(null);
+  const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
@@ -78,8 +81,9 @@ function PatientsList() {
     if (!result.isConfirmed) return;
 
     try {
-      const res = await fetch(`http://localhost:5000/patients/${id}`, {
+      const res = await fetch(`http://localhost:5000/api/v1/patients/${id}`, {
         method: "DELETE",
+        credentials: "include",
       });
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
@@ -94,7 +98,30 @@ function PatientsList() {
     }
   };
 
-  const handleView = (item) => navigate(`/patients/view/${item.id}`);
+      // Fetch patient data for viewing
+    const handleView = async (item) => {
+        try {
+            const response = await fetch(`http://localhost:5000/api/v1/patients/${item.id}`, {
+                credentials: "include"
+            });
+            
+            if (!response.ok) throw new Error("Failed to fetch patient details");
+            
+            const patientData = await response.json();
+            setSelectedPatient(patientData);
+            setIsViewModalOpen(true);
+        } catch (error) {
+            console.error("Error fetching patient details:", error);
+            Swal.fire("Error", "Failed to load patient details", "error");
+        }
+    };
+
+    const closeViewModal = () => {
+        setIsViewModalOpen(false);
+        setSelectedPatient(null);
+    };
+
+  // const handleView = (item) => navigate(`/patients/view/${item.id}`);
   const handleEdit = (item) => navigate(`/patients/edit/${item.id}`);
 
   const columns = [
@@ -145,6 +172,11 @@ function PatientsList() {
           />
         )}
       />
+      <PatientViewModal
+                patient={selectedPatient}
+                isOpen={isViewModalOpen}
+                onClose={closeViewModal}
+            />
     </div>
   );
 }

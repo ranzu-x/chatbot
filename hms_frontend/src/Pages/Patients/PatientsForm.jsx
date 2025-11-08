@@ -1,5 +1,5 @@
 // src/pages/Patients/PatientsForm.jsx
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import Swal from "sweetalert2";
 import { 
@@ -77,6 +77,7 @@ const PatientsForm = () => {
             if (!response.ok) throw new Error("Failed to fetch patient data");
             
             const patient = await response.json();
+            console.log("Fetched patient data:", patient);
             
             setFormData({
                 firstName: patient.first_name || '',
@@ -85,9 +86,7 @@ const PatientsForm = () => {
                 age: patient.age?.toString() || '',
                 gender: patient.gender || '',
                 bloodGroup: patient.blood_group || '',
-                fathersName: patient.fathers_name || '',
-                spouseName: patient.spouse_name || '',
-                nid: patient.nid || '',
+                nid: patient.national_id || '',
                 maritalStatus: patient.marital_status || '',
                 occupation: patient.occupation || '',
                 
@@ -97,11 +96,11 @@ const PatientsForm = () => {
                 emergencyContactRelation: patient.emergency_contact_relation || '',
                 emergencyContactPhone: patient.emergency_contact_phone || '',
                 
-                presentAddress: patient.present_address || '',
-                presentCity: patient.present_city || '',
-                presentState: patient.present_state || '',
-                presentZip: patient.present_zip || '',
-                presentCountry: patient.present_country || '',
+                presentAddress: patient.address || '',
+                presentCity: patient.city || '',
+                presentState: patient.state_or_div || '',
+                presentZip: patient.zip_code || '',
+                presentCountry: patient.country || '',
                 
                 
                 allergies: patient.allergies || '',
@@ -113,6 +112,7 @@ const PatientsForm = () => {
                 insuranceProvider: patient.insurance_provider || '',
                 insuranceNumber: patient.insurance_number || ''
             });
+
             
         } catch (error) {
             console.error("Error fetching patient:", error);
@@ -125,7 +125,7 @@ const PatientsForm = () => {
 
     const handleChange = (e) => {
         const { name, value } = e.target;
-        setFormData(prev => ({ ...prev, [name]: value }));
+        setFormData(prev => ({ ...prev, [name]: value === "" ? null : value, })); // 👈 convert empty string to null
         
         if (errors[name]) {
             setErrors(prev => ({ ...prev, [name]: '' }));
@@ -181,6 +181,8 @@ const PatientsForm = () => {
         if (!formData.phoneNumber.trim()) newErrors.phoneNumber = "Phone number is required";
         if (!formData.email.trim()) newErrors.email = "Email is required";
         if (!formData.emergencyContactName.trim()) newErrors.emergencyContactName = "Emergency contact name is required";
+        if (!formData.emergencyContactPhone.trim()) newErrors.emergencyContactPhone = "Emergency contact phone is required";
+
         
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (formData.email && !emailRegex.test(formData.email)) {
@@ -214,8 +216,6 @@ const PatientsForm = () => {
             age: parseInt(formData.age),
             gender: formData.gender,
             bloodGroup: formData.bloodGroup,
-            fathersName: formData.fathersName,
-            spouseName: formData.spouseName,
             nid: formData.nid,
             maritalStatus: formData.maritalStatus,
             occupation: formData.occupation,
@@ -246,8 +246,6 @@ const PatientsForm = () => {
             insuranceProvider: formData.insuranceProvider,
             insuranceNumber: formData.insuranceNumber
             };
-
-            console.log(apiData)
 
             const url = isEditMode 
                 ? `http://localhost:5000/api/v1/patients/${id}`
@@ -366,7 +364,7 @@ const PatientsForm = () => {
                                 <div>
                                     <label className="block text-xs font-medium text-gray-600 mb-1">Date of Birth *</label>
                                     <input 
-                                        value={formData.dateOfBirth} 
+                                        value={formData.dateOfBirth ? new Date(formData.dateOfBirth).toISOString().split('T')[0] : ''} 
                                         type="date" 
                                         name="dateOfBirth" 
                                         onChange={handleDateOfBirthChange} 
@@ -412,9 +410,9 @@ const PatientsForm = () => {
                                         <option value="">Select...</option>
                                         <option>Single</option>
                                         <option>Married</option>
-                                        <option>Divorced</option>
-                                        <option>Widowed</option>
-                                        <option>Separated</option>
+                                        <option>Divorcee</option>
+                                        <option>Widow</option>
+                                        <option>Others</option>
                                     </select>
                                 </div>
                                 <div>
@@ -428,14 +426,7 @@ const PatientsForm = () => {
                                         placeholder="e.g., Teacher, Engineer, Business"
                                     />
                                 </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-gray-600 mb-1">Father's Name</label>
-                                    <input value={formData.fathersName} type="text" name="fathersName" onChange={handleChange} className={compactInputStyle} />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-gray-600 mb-1">Spouse Name</label>
-                                    <input value={formData.spouseName} type="text" name="spouseName" onChange={handleChange} className={compactInputStyle} />
-                                </div>
+
                                 <div>
                                     <label className="block text-xs font-medium text-gray-600 mb-1">NID/Passport</label>
                                     <input value={formData.nid} type="text" name="nid" onChange={handleChange} className={compactInputStyle} />
@@ -480,7 +471,7 @@ const PatientsForm = () => {
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-medium text-gray-600 mb-1">Emergency Phone</label>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">Emergency Phone *</label>
                                     <input 
                                         type="tel" 
                                         value={formData.emergencyContactPhone} 
@@ -488,6 +479,7 @@ const PatientsForm = () => {
                                         onChange={handleChange} 
                                         className={compactInputStyle} 
                                     />
+                                    {errors.emergencyContactPhone && <p className="text-red-500 text-xs mt-1">{errors.emergencyContactPhone}</p>}
                                 </div>
                             </div>
                         </div>
