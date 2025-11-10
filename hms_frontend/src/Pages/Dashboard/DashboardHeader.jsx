@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../../Provider/AuthContexProvider';
 import { BellIcon, UserCircleIcon } from '@heroicons/react/24/outline';
 
@@ -46,7 +46,6 @@ const DashboardHeader = () => {
             <div className="flex items-center space-x-4">
                 {user ? <h1>Welcome {user?.email} Your Hospital Name:<b> {user?.hospital_name}</b></h1> : <h1>Please login</h1>}
                 <BellIcon className="h-6 w-6 text-gray-500 hover:text-gray-700 cursor-pointer" />
-                <UserCircleIcon className="h-8 w-8 text-gray-500 hover:text-gray-700 cursor-pointer" />
 
                 {/* <!-- Profile dropdown --> */}
                 <div className="ml-3 relative">
@@ -62,7 +61,7 @@ const DashboardHeader = () => {
                             {/* <span className="sr-only">Open user menu</span> */}
                             <img
                                 className="h-8 w-8 rounded-full"
-                                src="https://via.placeholder.com/150"
+                                src="http://localhost:5000/uploads/profile/1759865227029-422954656-IMG_1703.jpg"
                                 alt="User profile"
                             />
                         </button>

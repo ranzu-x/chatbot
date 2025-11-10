@@ -24,6 +24,7 @@ app.use(cors({
 app.use(cookieParser());
 
 // ✅ Routes
+app.use('/uploads', express.static('uploads'));  // Serve static files from uploads directory
 app.use("/api/v1", authRoutes);
 app.use("/api/v1", patientRoutes);
 app.use("/api/v1", medicines);
