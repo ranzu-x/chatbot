@@ -19,6 +19,7 @@ import Home2 from "../Components/Common/Home2/Home2";
 import RouterGuard from "../Components/Common/RouteGuard";
 import Unauthorized from "../Pages/Unauthorized";
 import PatientsForm from "../Pages/Patients/PatientsForm";
+import ProfilePage from "../Pages/Profile/ProfilePage";
 
 
 const router = createBrowserRouter([
@@ -59,6 +60,14 @@ const router = createBrowserRouter([
         Component: () => {
           return (
             <PrivateRoute><Dashboard></Dashboard></PrivateRoute>
+          );
+        }
+      },
+      {
+        path: "user/profile",
+        Component: () => {
+          return (
+            <PrivateRoute><ProfilePage></ProfilePage></PrivateRoute>
           );
         }
       },

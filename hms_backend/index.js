@@ -6,8 +6,7 @@ import authRoutes from "./routes/auth.js";
 import patientRoutes from "./routes/patients.js";
 import medicines from "./routes/medicines.js";
 import hospitalAdminSignUpRoutes from "./routes/hospitalAdminSignUp.js";
-import createUsersRoutes from "./routes/createUsers.js";
-import teamMemberRoutes from "./routes/teamMembers.js";
+import usersRoutes from "./routes/users.js";
 import appointmentRoutes from "./routes/appointment.js";
 import billingRoutes from "./routes/billing.js"
 
@@ -29,10 +28,8 @@ app.use("/api/v1", authRoutes);
 app.use("/api/v1", patientRoutes);
 app.use("/api/v1", medicines);
 app.use("/api/v1", hospitalAdminSignUpRoutes)
-app.use("/api/v1", createUsersRoutes)
-app.use("/api/v1", teamMemberRoutes)
+app.use("/api/v1", usersRoutes)
 app.use("/api/v1", appointmentRoutes)
-app.use("/api/v1", teamMemberRoutes)
 app.use("/api/v1", billingRoutes)
 
 // ✅ Server

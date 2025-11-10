@@ -30,9 +30,11 @@ const Sidebar = () => {
         <div>
             {/* Sidebar Navigation */}
             <aside className="w-64 bg-white flex flex-col">
-                <Link to={"/"} className="p-6 text-2xl font-bold text-indigo-600 border-b">
+                <div className='h-20 flex items-center justify-center border-b border-gray-200'>
+                    <Link to={"/"} className="text-2xl font-bold text-indigo-600">
                     Hospital MS
                 </Link>
+                </div>
                 <nav className="flex-1 p-4 space-y-2">
                     <Link to={'/dashboard'} className={getLinkClass('/dashboard')}>
                         <ChartBarIcon className="h-5 w-5 mr-3" /> Dashboard

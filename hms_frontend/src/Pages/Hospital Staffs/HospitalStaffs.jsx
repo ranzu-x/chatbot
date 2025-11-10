@@ -3,13 +3,13 @@ import { useNavigate } from "react-router";
 import Swal from "sweetalert2";
 import DataTable from "../../Components/Table Components/DataTable";
 import TableActions from "../../Components/Table Components/TableActionButtons";
-import { useAuth } from "../../Provider/AuthContexProvider";
+// import { useAuth } from "../../Provider/AuthContexProvider";
 
 const HospitalStaffs = () => {
   const [teamMembers, setTeamMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
-  const { user } = useAuth();
+  // const { user } = useAuth();
 
   // ✅ Fetch all team members
   const fetchTeamMembers = useCallback(async () => {
