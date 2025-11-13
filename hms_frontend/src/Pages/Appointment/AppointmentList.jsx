@@ -74,7 +74,7 @@ function AppointmentList() {
       setUpdating(id);
       const payload = { status: newStatus };
       if (reason) payload.cancellation_reason = reason;
-      
+
       await axios.put(
         `http://localhost:5000/api/v1/appointments/${id}/status`,
         payload,
@@ -110,7 +110,7 @@ function AppointmentList() {
         confirmButtonText: "Process Payment",
         cancelButtonText: "Cancel"
       });
-      
+
       if (result.isConfirmed) {
         navigate(`/billing/new?appointment_id=${appointment.id}`);
       }
@@ -136,7 +136,7 @@ function AppointmentList() {
         input: 'select',
         inputOptions: {
           'patient_request': 'Patient Request',
-          'doctor_unavailable': 'Doctor Unavailable', 
+          'doctor_unavailable': 'Doctor Unavailable',
           'emergency': 'Emergency',
           'rescheduled': 'Rescheduled',
           'other': 'Other'
@@ -196,12 +196,14 @@ function AppointmentList() {
             break;
           case "completed":
             disabled = !hasRole("doctor") || appointment.payment_status !== "paid";
-            disabledReason = disabled ? 
-              (appointment.payment_status !== "paid" ? "Payment required" : "Only doctors can complete") 
+            disabledReason = disabled ?
+              (appointment.payment_status !== "paid" ? "Payment required" : "Only doctors can complete")
               : "";
             break;
           case "scheduled":
-            disabled = appointment.status === "completed" || appointment.status === "cancelled";
+            disabled = appointment.status === "completed" ||
+              appointment.status === "cancelled" ||
+              appointment.status === "confirmed";
             disabledReason = disabled ? "Cannot revert to scheduled" : "";
             break;
         }
@@ -215,10 +217,10 @@ function AppointmentList() {
   const shouldShowStatusDropdown = (appointment) => {
     // Hospital admin can always change status
     if (hasRole("hospital_admin")) return true;
-    
+
     // No one can change completed appointments except hospital_admin
     if (appointment.status === "completed") return false;
-    
+
     // Doctors can change to completed, others can change to other statuses
     return true;
   };
@@ -239,7 +241,7 @@ function AppointmentList() {
 
   const handleView = (item) => navigate(`/appointments/view/${item.id}`);
   const handleEdit = (item) => navigate(`/appointments/edit/${item.id}`);
-  
+
   const handleDelete = async (item) => {
     const result = await Swal.fire({
       title: "Are you sure?",
@@ -278,41 +280,39 @@ function AppointmentList() {
     { header: "Doctor", accessor: "doctor_name" },
     { header: "Date", accessor: "appointment_date" },
     { header: "Time", accessor: "appointment_time" },
-{
-  header: "Payment",
-  render: (row) => (
-    <div className="flex flex-col gap-2 items-center">
-      
-      {/* Single Payment Button */}
-      <button 
-        onClick={() => row.payment_status !== 'paid' && navigate(`/billing/new?appointment_id=${row.id}`)}
-        disabled={row.payment_status === 'paid'}
-        className={`w-24 text-xs px-2 py-1 rounded transition-colors ${
-          row.payment_status === 'paid' 
-            ? 'bg-green-200 text-gray-500 cursor-not-allowed' 
-            : 'bg-blue-100 text-blue-700 hover:bg-blue-200 border border-blue-200'
-        }`}
-      >
-        {row.payment_status === 'paid' ? 'Paid' : 'Make Payment'}
-      </button>
-    </div>
-  ),
-},
+    {
+      header: "Payment",
+      render: (row) => (
+        <div className="flex flex-col gap-2 items-center">
+
+          {/* Single Payment Button */}
+          <button
+            onClick={() => row.payment_status !== 'paid' && navigate(`/billing/new?appointment_id=${row.id}`)}
+            disabled={row.payment_status === 'paid'}
+            className={`w-24 text-xs px-2 py-1 rounded transition-colors ${row.payment_status === 'paid'
+              ? 'bg-green-200 text-gray-500 cursor-not-allowed'
+              : 'bg-blue-100 text-blue-700 hover:bg-blue-200 border border-blue-200'
+              }`}
+          >
+            {row.payment_status === 'paid' ? 'Paid' : 'Make Payment'}
+          </button>
+        </div>
+      ),
+    },
     {
       header: "Status",
       render: (row) => (
         <div className="flex flex-col gap-2">
           {/* Current Status Badge */}
-          <span className={`text-xs font-medium px-2 py-1 rounded text-center ${
-            row.status === 'scheduled' ? 'bg-yellow-100 text-yellow-800 border border-yellow-200' :
+          <span className={`text-xs font-medium px-2 py-1 rounded text-center ${row.status === 'scheduled' ? 'bg-yellow-100 text-yellow-800 border border-yellow-200' :
             row.status === 'confirmed' ? 'bg-green-100 text-green-800 border border-green-200' :
-            row.status === 'completed' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
-            row.status === 'cancelled' ? 'bg-red-100 text-red-800 border border-red-200' :
-            'bg-gray-100 text-gray-800 border border-gray-200'
-          }`}>
+              row.status === 'completed' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
+                row.status === 'cancelled' ? 'bg-red-100 text-red-800 border border-red-200' :
+                  'bg-gray-100 text-gray-800 border border-gray-200'
+            }`}>
             {row.status.toUpperCase()}
           </span>
-          
+
           {/* Smart Status Dropdown - Conditionally rendered */}
           {updating === row.id ? (
             <div className="flex items-center justify-center">
@@ -325,8 +325,8 @@ function AppointmentList() {
               className="text-xs border border-gray-300 rounded p-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
               {getStatusOptions(row).map(option => (
-                <option 
-                  key={option.value} 
+                <option
+                  key={option.value}
                   value={option.value}
                   disabled={option.disabled}
                   title={option.disabledReason}
@@ -381,7 +381,7 @@ function AppointmentList() {
                   onClick: (it) => handleRescheduleFromCancelled(it)
                 }
               ] : []),
-              
+
               // Prescription for doctors - only for non-cancelled appointments
               ...(hasRole("doctor") && can("prescriptions", "create") && item.status !== 'cancelled' ? [
                 {
