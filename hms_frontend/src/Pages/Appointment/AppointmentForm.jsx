@@ -129,6 +129,7 @@ const AppointmentForm = () => {
         reason: "",
       });
       setSelectedPatient(patientIdFromUrl ? selectedPatient : null);
+      navigation.navigate("/appointments");
     } catch (error) {
       console.error("Error:", error);
       alert(error.message || "Failed to create appointment");

@@ -1,9 +1,9 @@
-import { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router";
 import Swal from "sweetalert2";
 import DataTable from "../../Components/Table Components/DataTable";
 import TableActions from "../../Components/Table Components/TableActionButtons";
-import { FaFilePrescription, FaCalendarPlus, FaInfoCircle } from "react-icons/fa";
+import { FaFilePrescription, FaCalendarPlus } from "react-icons/fa";
 import { MdOutlineSmsFailed } from "react-icons/md";
 import toast from "react-hot-toast";
 import axios from "axios";
@@ -92,135 +92,37 @@ function AppointmentList() {
     }
   };
 
-  // ✅ Smart status change handler
-  const handleStatusChange = async (appointment, newStatus) => {
-    // Block status changes for completed appointments (except hospital_admin)
-    if (appointment.status === "completed" && !hasRole("hospital_admin")) {
-      toast.error("Cannot change status of completed appointment");
-      return;
-    }
-
-    // Payment required for confirmation
-    if (newStatus === "confirmed" && appointment.payment_status !== "paid") {
-      const result = await Swal.fire({
-        title: "Payment Required",
-        text: "Appointment confirmation requires payment. Process payment now?",
-        icon: "question",
-        showCancelButton: true,
-        confirmButtonText: "Process Payment",
-        cancelButtonText: "Cancel"
-      });
-      
-      if (result.isConfirmed) {
-        navigate(`/billing/new?appointment_id=${appointment.id}`);
-      }
-      return;
-    }
-
-    // Only doctors can mark as completed
-    if (newStatus === "completed" && !hasRole("doctor")) {
-      toast.error("Only doctors can complete appointments");
-      return;
-    }
-
-    // Payment check for completion
-    if (newStatus === "completed" && appointment.payment_status !== "paid") {
-      toast.error("Cannot complete appointment without payment");
-      return;
-    }
-
-    // Cancellation with reason
-    if (newStatus === "cancelled") {
-      const { value: reason } = await Swal.fire({
-        title: 'Cancel Appointment',
-        input: 'select',
-        inputOptions: {
-          'patient_request': 'Patient Request',
-          'doctor_unavailable': 'Doctor Unavailable', 
-          'emergency': 'Emergency',
-          'rescheduled': 'Rescheduled',
-          'other': 'Other'
-        },
-        inputPlaceholder: 'Select cancellation reason',
-        showCancelButton: true,
-        confirmButtonText: 'Cancel Appointment',
-        confirmButtonColor: '#d33',
-      });
-
-      if (reason) {
-        if (appointment.payment_status === 'paid') {
-          Swal.fire({
-            title: 'Payment Refund',
-            text: 'This appointment has been paid. Refund process will be initiated.',
-            icon: 'warning',
-            confirmButtonText: 'Proceed with Cancellation'
-          });
-        }
-        await updateStatus(appointment.id, newStatus, reason);
-      }
-      return;
-    }
-
-    // Direct status update for other cases
-    await updateStatus(appointment.id, newStatus);
-  };
-
-  // ✅ Get status options with disabled states and reasons
-  const getStatusOptions = (appointment) => {
-    const baseOptions = [
-      { value: "scheduled", label: "Scheduled" },
-      { value: "confirmed", label: "Confirmed" },
-      { value: "completed", label: "Completed" },
-      { value: "cancelled", label: "Cancelled" }
-    ];
-
-    return baseOptions.map(option => {
-      let disabled = false;
-      let disabledReason = "";
-
-      // Hospital admin can change any status
-      if (hasRole("hospital_admin")) {
-        disabled = false;
-      }
-      // For completed appointments - no one can change except hospital_admin
-      else if (appointment.status === "completed") {
-        disabled = true;
-        disabledReason = "Completed appointments cannot be modified";
-      }
-      // Regular logic for other users
-      else {
-        switch (option.value) {
-          case "confirmed":
-            disabled = appointment.payment_status !== "paid";
-            disabledReason = disabled ? "Payment required" : "";
-            break;
-          case "completed":
-            disabled = !hasRole("doctor") || appointment.payment_status !== "paid";
-            disabledReason = disabled ? 
-              (appointment.payment_status !== "paid" ? "Payment required" : "Only doctors can complete") 
-              : "";
-            break;
-          case "scheduled":
-            disabled = appointment.status === "completed" || appointment.status === "cancelled";
-            disabledReason = disabled ? "Cannot revert to scheduled" : "";
-            break;
-        }
-      }
-
-      return { ...option, disabled, disabledReason };
+  // ✅ Enhanced cancellation with reason
+  const handleCancel = async (appointment) => {
+    const { value: reason } = await Swal.fire({
+      title: 'Cancel Appointment',
+      input: 'select',
+      inputOptions: {
+        'patient_request': 'Patient Request',
+        'doctor_unavailable': 'Doctor Unavailable', 
+        'emergency': 'Emergency',
+        'rescheduled': 'Rescheduled',
+        'other': 'Other'
+      },
+      inputPlaceholder: 'Select cancellation reason',
+      showCancelButton: true,
+      confirmButtonText: 'Cancel Appointment',
+      confirmButtonColor: '#d33',
     });
-  };
 
-  // ✅ Check if status dropdown should be shown
-  const shouldShowStatusDropdown = (appointment) => {
-    // Hospital admin can always change status
-    if (hasRole("hospital_admin")) return true;
-    
-    // No one can change completed appointments except hospital_admin
-    if (appointment.status === "completed") return false;
-    
-    // Doctors can change to completed, others can change to other statuses
-    return true;
+    if (reason) {
+      // Check if payment was made for refund logic
+      if (appointment.payment_status === 'paid') {
+        Swal.fire({
+          title: 'Payment Refund',
+          text: 'This appointment has been paid. Refund process will be initiated.',
+          icon: 'warning',
+          confirmButtonText: 'Proceed with Cancellation'
+        });
+      }
+      
+      await updateStatus(appointment.id, 'cancelled', reason);
+    }
   };
 
   // ✅ Reschedule from cancelled appointment
@@ -232,14 +134,29 @@ function AppointmentList() {
         prefillData: {
           patient_name: cancelledAppointment.patient_name,
           doctor_name: cancelledAppointment.doctor_name,
+          // Carry over other relevant details
         }
       }
     });
   };
 
+  // ✅ Process payment for scheduled appointments
+  const handleProcessPayment = (appointment) => {
+    navigate(`/billing/new?appointment_id=${appointment.id}`);
+  };
+
+  // ✅ Mark as completed (only if paid)
+  const handleComplete = async (appointment) => {
+    if (appointment.payment_status !== 'paid') {
+      toast.error('Cannot complete appointment without payment');
+      return;
+    }
+    
+    await updateStatus(appointment.id, 'completed');
+  };
+
   const handleView = (item) => navigate(`/appointments/view/${item.id}`);
   const handleEdit = (item) => navigate(`/appointments/edit/${item.id}`);
-  
   const handleDelete = async (item) => {
     const result = await Swal.fire({
       title: "Are you sure?",
@@ -278,31 +195,22 @@ function AppointmentList() {
     { header: "Doctor", accessor: "doctor_name" },
     { header: "Date", accessor: "appointment_date" },
     { header: "Time", accessor: "appointment_time" },
-{
-  header: "Payment",
-  render: (row) => (
-    <div className="flex flex-col gap-2 items-center">
-      
-      {/* Single Payment Button */}
-      <button 
-        onClick={() => row.payment_status !== 'paid' && navigate(`/billing/new?appointment_id=${row.id}`)}
-        disabled={row.payment_status === 'paid'}
-        className={`w-24 text-xs px-2 py-1 rounded transition-colors ${
-          row.payment_status === 'paid' 
-            ? 'bg-green-200 text-gray-500 cursor-not-allowed' 
-            : 'bg-blue-100 text-blue-700 hover:bg-blue-200 border border-blue-200'
-        }`}
-      >
-        {row.payment_status === 'paid' ? 'Paid' : 'Make Payment'}
-      </button>
-    </div>
-  ),
-},
+    {
+      header: "Payment",
+      render: (row) => (
+        <span className={`px-2 py-1 rounded text-xs font-medium ${
+          row.payment_status === 'paid' ? 'bg-green-100 text-green-800' :
+          row.payment_status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+          'bg-gray-100 text-gray-800'
+        }`}>
+          {row.payment_status?.toUpperCase() || 'UNPAID'}
+        </span>
+      ),
+    },
     {
       header: "Status",
       render: (row) => (
-        <div className="flex flex-col gap-2">
-          {/* Current Status Badge */}
+        <div className="flex flex-col gap-1 min-w-[120px]">
           <span className={`text-xs font-medium px-2 py-1 rounded text-center ${
             row.status === 'scheduled' ? 'bg-yellow-100 text-yellow-800 border border-yellow-200' :
             row.status === 'confirmed' ? 'bg-green-100 text-green-800 border border-green-200' :
@@ -313,36 +221,50 @@ function AppointmentList() {
             {row.status.toUpperCase()}
           </span>
           
-          {/* Smart Status Dropdown - Conditionally rendered */}
-          {updating === row.id ? (
-            <div className="flex items-center justify-center">
-              <div className="animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full"></div>
-            </div>
-          ) : shouldShowStatusDropdown(row) ? (
-            <select
-              value={row.status}
-              onChange={(e) => handleStatusChange(row, e.target.value)}
-              className="text-xs border border-gray-300 rounded p-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          {/* Action buttons based on status */}
+          {row.status === 'scheduled' && (
+            <button 
+              onClick={() => handleProcessPayment(row)}
+              className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700 transition-colors"
             >
-              {getStatusOptions(row).map(option => (
-                <option 
-                  key={option.value} 
-                  value={option.value}
-                  disabled={option.disabled}
-                  title={option.disabledReason}
-                  className={option.disabled ? 'text-gray-400' : ''}
-                >
-                  {option.label} {option.disabled && option.disabledReason && ` (${option.disabledReason})`}
-                </option>
-              ))}
-            </select>
-          ) : (
-            // Show locked message for completed appointments
-            row.status === "completed" && (
-              <span className="text-xs text-gray-500 text-center">
-                Status Locked
-              </span>
-            )
+              Process Payment
+            </button>
+          )}
+          
+          {row.status === 'confirmed' && (
+            <button 
+              onClick={() => handleComplete(row)}
+              disabled={updating === row.id}
+              className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >
+              {updating === row.id ? '...' : 'Mark Completed'}
+            </button>
+          )}
+        </div>
+      ),
+    },
+    {
+      header: "Actions",
+      render: (row) => (
+        <div className="flex flex-col gap-1">
+          {/* Cancel button for active appointments */}
+          {(row.status === 'scheduled' || row.status === 'confirmed') && (
+            <button 
+              onClick={() => handleCancel(row)}
+              className="text-xs bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700 transition-colors"
+            >
+              Cancel
+            </button>
+          )}
+          
+          {/* Reschedule for scheduled appointments */}
+          {row.status === 'scheduled' && (
+            <button 
+              onClick={() => navigate(`/appointments/edit/${row.id}`)}
+              className="text-xs bg-purple-600 text-white px-2 py-1 rounded hover:bg-purple-700 transition-colors"
+            >
+              Reschedule
+            </button>
           )}
         </div>
       ),
@@ -382,7 +304,7 @@ function AppointmentList() {
                 }
               ] : []),
               
-              // Prescription for doctors - only for non-cancelled appointments
+              // Prescription for doctors
               ...(hasRole("doctor") && can("prescriptions", "create") && item.status !== 'cancelled' ? [
                 {
                   key: "prescription",
@@ -390,7 +312,11 @@ function AppointmentList() {
                   icon: <FaFilePrescription className="text-purple-600" />,
                   onClick: (it) => navigate(`/prescription/new?patientId=${it.patient_id}&appointmentId=${it.id}`),
                 },
-              ] : []),
+              ] : [
+                {
+                  icon: <MdOutlineSmsFailed className="text-gray-400" />,
+                },
+              ]),
             ]}
           />
         )}

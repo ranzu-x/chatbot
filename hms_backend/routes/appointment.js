@@ -8,7 +8,7 @@ const router = express.Router();
 
 
 // ✅ Create new appointment
-router.post("/appointments", authMiddleWare, requireRole(['hospital_admin']), async (req, res) => {
+router.post("/appointments", authMiddleWare, requireRole(['hospital_admin', 'doctor']), async (req, res) => {
     const {doctor_id, patient_id, appointment_date, appointment_time, reason} = req.body;
     const {hospital_id, id: user_id} = req.user;
 
@@ -51,7 +51,7 @@ router.get("/appointments", authMiddleWare, async (req, res) => {
        JOIN users d ON a.doctor_id = d.id
        WHERE a.hospital_id = ?
        AND (p.first_name LIKE ? OR p.last_name LIKE ? OR d.first_name LIKE ? OR d.last_name LIKE ?)
-       ORDER BY a.appointment_date DESC, a.appointment_time ASC
+       ORDER BY a.created_at DESC, a.appointment_time ASC
        LIMIT ? OFFSET ?`,
       [hospital_id, search, search, search, search, limit, offset]
     );

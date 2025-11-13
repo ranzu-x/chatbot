@@ -90,6 +90,7 @@ const DashboardHeader = () => {
                             <div className="py-2">
                                 {/* Profile Link */}
                                 <Link to="/user/profile"
+                                    onClick={() => setDropdownOpen(false)} // 👈 closes dropdown
                                     className="flex items-center px-4 py-2.5 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition-all duration-200 group"
                                 >
                                     <svg

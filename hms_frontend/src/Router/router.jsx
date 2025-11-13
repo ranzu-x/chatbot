@@ -120,22 +120,24 @@ const router = createBrowserRouter([
           );
         }
       },
-      {
-        path: "/appointments",
-        Component: () => {
-          return (
-            <PrivateRoute>
-              <RouterGuard
-                requiredRole="hospital_admin"
-                requiredPermission={{ resource: 'hospital_admin_settings', action: 'create'}}  //Currently not working, need to fix this
-                fallbackPath="/unauthorized"
-              >
-                <AppointmentList></AppointmentList>
-              </RouterGuard>
-            </PrivateRoute>
-          );
-        }
-      },
+{
+  path: "/appointments",
+  Component: () => {
+    return (
+      <PrivateRoute>
+        <RouterGuard
+          // Multiple roles - user needs at least one
+          requiredRole={["hospital_admin", "receptionist", "doctor"]}
+          // Single permission
+          requiredPermission={{ resource: 'appointments', action: 'view' }}
+          fallbackPath="/unauthorized"
+        >
+          <AppointmentList></AppointmentList>
+        </RouterGuard>
+      </PrivateRoute>
+    );
+  }
+},
       {
         path: "/appointments/new",
         Component: () => {

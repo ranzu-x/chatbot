@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router";
 import Swal from "sweetalert2";
 import DataTable from "../../Components/Table Components/DataTable";
@@ -94,12 +94,6 @@ function AppointmentList() {
 
   // ✅ Smart status change handler
   const handleStatusChange = async (appointment, newStatus) => {
-    // Block status changes for completed appointments (except hospital_admin)
-    if (appointment.status === "completed" && !hasRole("hospital_admin")) {
-      toast.error("Cannot change status of completed appointment");
-      return;
-    }
-
     // Payment required for confirmation
     if (newStatus === "confirmed" && appointment.payment_status !== "paid") {
       const result = await Swal.fire({
@@ -114,12 +108,6 @@ function AppointmentList() {
       if (result.isConfirmed) {
         navigate(`/billing/new?appointment_id=${appointment.id}`);
       }
-      return;
-    }
-
-    // Only doctors can mark as completed
-    if (newStatus === "completed" && !hasRole("doctor")) {
-      toast.error("Only doctors can complete appointments");
       return;
     }
 
@@ -178,49 +166,23 @@ function AppointmentList() {
       let disabled = false;
       let disabledReason = "";
 
-      // Hospital admin can change any status
-      if (hasRole("hospital_admin")) {
-        disabled = false;
-      }
-      // For completed appointments - no one can change except hospital_admin
-      else if (appointment.status === "completed") {
-        disabled = true;
-        disabledReason = "Completed appointments cannot be modified";
-      }
-      // Regular logic for other users
-      else {
-        switch (option.value) {
-          case "confirmed":
-            disabled = appointment.payment_status !== "paid";
-            disabledReason = disabled ? "Payment required" : "";
-            break;
-          case "completed":
-            disabled = !hasRole("doctor") || appointment.payment_status !== "paid";
-            disabledReason = disabled ? 
-              (appointment.payment_status !== "paid" ? "Payment required" : "Only doctors can complete") 
-              : "";
-            break;
-          case "scheduled":
-            disabled = appointment.status === "completed" || appointment.status === "cancelled";
-            disabledReason = disabled ? "Cannot revert to scheduled" : "";
-            break;
-        }
+      switch (option.value) {
+        case "confirmed":
+          disabled = appointment.payment_status !== "paid";
+          disabledReason = disabled ? "Payment required" : "";
+          break;
+        case "completed":
+          disabled = appointment.payment_status !== "paid";
+          disabledReason = disabled ? "Payment required" : "";
+          break;
+        case "scheduled":
+          disabled = appointment.status === "completed" || appointment.status === "cancelled";
+          disabledReason = disabled ? "Cannot revert to scheduled" : "";
+          break;
       }
 
       return { ...option, disabled, disabledReason };
     });
-  };
-
-  // ✅ Check if status dropdown should be shown
-  const shouldShowStatusDropdown = (appointment) => {
-    // Hospital admin can always change status
-    if (hasRole("hospital_admin")) return true;
-    
-    // No one can change completed appointments except hospital_admin
-    if (appointment.status === "completed") return false;
-    
-    // Doctors can change to completed, others can change to other statuses
-    return true;
   };
 
   // ✅ Reschedule from cancelled appointment
@@ -278,26 +240,18 @@ function AppointmentList() {
     { header: "Doctor", accessor: "doctor_name" },
     { header: "Date", accessor: "appointment_date" },
     { header: "Time", accessor: "appointment_time" },
-{
-  header: "Payment",
-  render: (row) => (
-    <div className="flex flex-col gap-2 items-center">
-      
-      {/* Single Payment Button */}
-      <button 
-        onClick={() => row.payment_status !== 'paid' && navigate(`/billing/new?appointment_id=${row.id}`)}
-        disabled={row.payment_status === 'paid'}
-        className={`w-24 text-xs px-2 py-1 rounded transition-colors ${
-          row.payment_status === 'paid' 
-            ? 'bg-green-200 text-gray-500 cursor-not-allowed' 
-            : 'bg-blue-100 text-blue-700 hover:bg-blue-200 border border-blue-200'
-        }`}
-      >
-        {row.payment_status === 'paid' ? 'Paid' : 'Make Payment'}
-      </button>
-    </div>
-  ),
-},
+    {
+      header: "Payment",
+      render: (row) => (
+        <span className={`px-2 py-1 rounded text-xs font-medium ${
+          row.payment_status === 'paid' ? 'bg-green-100 text-green-800' :
+          row.payment_status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+          'bg-gray-100 text-gray-800'
+        }`}>
+          {row.payment_status?.toUpperCase() || 'UNPAID'}
+        </span>
+      ),
+    },
     {
       header: "Status",
       render: (row) => (
@@ -313,12 +267,12 @@ function AppointmentList() {
             {row.status.toUpperCase()}
           </span>
           
-          {/* Smart Status Dropdown - Conditionally rendered */}
+          {/* Smart Status Dropdown */}
           {updating === row.id ? (
             <div className="flex items-center justify-center">
               <div className="animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full"></div>
             </div>
-          ) : shouldShowStatusDropdown(row) ? (
+          ) : (
             <select
               value={row.status}
               onChange={(e) => handleStatusChange(row, e.target.value)}
@@ -332,17 +286,20 @@ function AppointmentList() {
                   title={option.disabledReason}
                   className={option.disabled ? 'text-gray-400' : ''}
                 >
-                  {option.label} {option.disabled && option.disabledReason && ` (${option.disabledReason})`}
+                  {option.label} {option.disabled && ' (Payment Required)'}
                 </option>
               ))}
             </select>
-          ) : (
-            // Show locked message for completed appointments
-            row.status === "completed" && (
-              <span className="text-xs text-gray-500 text-center">
-                Status Locked
-              </span>
-            )
+          )}
+          
+          {/* Quick Payment Button for Scheduled */}
+          {row.status === 'scheduled' && (
+            <button 
+              onClick={() => navigate(`/billing/new?appointment_id=${row.id}`)}
+              className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700 transition-colors"
+            >
+              Quick Payment
+            </button>
           )}
         </div>
       ),
@@ -382,7 +339,7 @@ function AppointmentList() {
                 }
               ] : []),
               
-              // Prescription for doctors - only for non-cancelled appointments
+              // Prescription for doctors
               ...(hasRole("doctor") && can("prescriptions", "create") && item.status !== 'cancelled' ? [
                 {
                   key: "prescription",
@@ -390,7 +347,11 @@ function AppointmentList() {
                   icon: <FaFilePrescription className="text-purple-600" />,
                   onClick: (it) => navigate(`/prescription/new?patientId=${it.patient_id}&appointmentId=${it.id}`),
                 },
-              ] : []),
+              ] : [
+                {
+                  icon: <MdOutlineSmsFailed className="text-gray-400" />,
+                },
+              ]),
             ]}
           />
         )}
