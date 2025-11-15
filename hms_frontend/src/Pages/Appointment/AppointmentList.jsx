@@ -288,9 +288,11 @@ function AppointmentList() {
           {/* Single Payment Button */}
           <button
             onClick={() => row.payment_status !== 'paid' && navigate(`/billing/new?appointment_id=${row.id}`)}
-            disabled={row.payment_status === 'paid'}
+            disabled={row.payment_status === 'paid' || row.status === 'cancelled'}
             className={`w-24 text-xs px-2 py-1 rounded transition-colors ${row.payment_status === 'paid'
               ? 'bg-green-200 text-gray-500 cursor-not-allowed'
+              : row.status === 'cancelled'
+              ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
               : 'bg-blue-100 text-blue-700 hover:bg-blue-200 border border-blue-200'
               }`}
           >

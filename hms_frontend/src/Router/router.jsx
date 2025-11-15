@@ -20,6 +20,7 @@ import RouterGuard from "../Components/Common/RouteGuard";
 import Unauthorized from "../Pages/Unauthorized";
 import PatientsForm from "../Pages/Patients/PatientsForm";
 import ProfilePage from "../Pages/Profile/ProfilePage";
+import SlotManager from "../Pages/Appointment/SlotManager";
 
 
 const router = createBrowserRouter([
@@ -89,13 +90,13 @@ const router = createBrowserRouter([
       },
 
       {
-    path: "/patients/edit/:id",
-    Component: () => (
-        <PrivateRoute>
+        path: "/patients/edit/:id",
+        Component: () => (
+          <PrivateRoute>
             <PatientsForm />
-        </PrivateRoute>
-    )
-},
+          </PrivateRoute>
+        )
+      },
       {
         path: "/prescription",
         Component: () => {
@@ -120,24 +121,24 @@ const router = createBrowserRouter([
           );
         }
       },
-{
-  path: "/appointments",
-  Component: () => {
-    return (
-      <PrivateRoute>
-        <RouterGuard
-          // Multiple roles - user needs at least one
-          requiredRole={["hospital_admin", "receptionist", "doctor"]}
-          // Single permission
-          requiredPermission={{ resource: 'appointments', action: 'view' }}
-          fallbackPath="/unauthorized"
-        >
-          <AppointmentList></AppointmentList>
-        </RouterGuard>
-      </PrivateRoute>
-    );
-  }
-},
+      {
+        path: "/appointments",
+        Component: () => {
+          return (
+            <PrivateRoute>
+              <RouterGuard
+                // Multiple roles - user needs at least one
+                requiredRole={["hospital_admin", "receptionist", "doctor"]}
+                // Single permission
+                requiredPermission={{ resource: 'appointments', action: 'view' }}
+                fallbackPath="/unauthorized"
+              >
+                <AppointmentList></AppointmentList>
+              </RouterGuard>
+            </PrivateRoute>
+          );
+        }
+      },
       {
         path: "/appointments/new",
         Component: () => {
@@ -145,6 +146,24 @@ const router = createBrowserRouter([
             <PrivateRoute><AppointmentForm></AppointmentForm></PrivateRoute>
           );
         }
+      },
+      {
+        path: "/appointments/walk-in",
+        Component: () => (
+          <PrivateRoute>
+            <WalkInAppointment />
+          </PrivateRoute>
+        )
+      },
+      {
+        path: "/slots/manage",
+        Component: () => (
+          <PrivateRoute>
+            <RouterGuard requiredRole={['hospital_admin', 'doctor']}>
+              <SlotManager />
+            </RouterGuard>
+          </PrivateRoute>
+        )
       },
       {
         path: "/billing",
