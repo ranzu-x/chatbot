@@ -49,6 +49,10 @@ const Sidebar = () => {
                     <Link to={'/adduser'} className={getLinkClass('/adduser')}>
                         <RectangleStackIcon className="h-5 w-5 mr-3" /> Add User
                     </Link>
+                    <Link to={'/slots/manage'} className={getLinkClass('/adduser')}>
+                        <RectangleStackIcon className="h-5 w-5 mr-3" /> Manage Slots
+                    </Link>
+
                 </nav>
             </aside>
         </div>

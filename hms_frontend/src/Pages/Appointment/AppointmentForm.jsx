@@ -16,6 +16,7 @@ const AppointmentForm = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [availableSlots, setAvailableSlots] = useState([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
+  const [appointmentType, setAppointmentType] = useState("scheduled"); // "scheduled" or "walk_in"
   
   const [formData, setFormData] = useState({
     doctor_id: "",
@@ -36,13 +37,13 @@ const AppointmentForm = () => {
 
   // Fetch available slots when doctor and date are selected
   useEffect(() => {
-    if (formData.doctor_id && formData.appointment_date) {
+    if (formData.doctor_id && formData.appointment_date && appointmentType === "scheduled") {
       fetchAvailableSlots(formData.doctor_id, formData.appointment_date);
     } else {
       setAvailableSlots([]);
       setFormData(prev => ({ ...prev, slot_id: "" }));
     }
-  }, [formData.doctor_id, formData.appointment_date]);
+  }, [formData.doctor_id, formData.appointment_date, appointmentType]);
 
   // Debounced patient search
   useEffect(() => {
@@ -85,10 +86,26 @@ const AppointmentForm = () => {
     setLoadingSlots(true);
     try {
       const res = await axios.get(
-        `http://localhost:5000/api/v1/slots/available?doctor_id=${doctorId}&slot_date=${date}`,
+        `http://localhost:5000/api/v1/appointments/available-slots?doctor_id=${doctorId}&date=${date}`,
         { withCredentials: true }
       );
-      setAvailableSlots(res.data);
+      
+      // Handle different response formats
+      const slots = res.data.slots || res.data || [];
+      setAvailableSlots(slots);
+      
+      console.log("Available slots response:", res.data); // Debug log
+      
+      // If no slots available, suggest walk-in
+      if (slots.length === 0) {
+        toast.error(
+          <div>
+            <div className="font-semibold">No slots available</div>
+            <div className="text-sm">Would you like to register as a walk-in instead?</div>
+          </div>,
+          { duration: 4000 }
+        );
+      }
     } catch (error) {
       console.error("Error fetching slots:", error);
       toast.error("Failed to load available slots");
@@ -137,13 +154,27 @@ const AppointmentForm = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!formData.patient_id || !formData.slot_id) {
-      toast.error("Please select a patient and time slot");
+    if (!formData.patient_id) {
+      toast.error("Please select a patient");
+      return;
+    }
+
+    if (appointmentType === "scheduled" && !formData.slot_id) {
+      toast.error("Please select a time slot");
+      return;
+    }
+
+    if (appointmentType === "walk_in" && !formData.doctor_id) {
+      toast.error("Please select a doctor");
       return;
     }
 
     try {
-      const response = await fetch("http://localhost:5000/api/v1/appointments", {
+      const endpoint = appointmentType === "walk_in" 
+        ? "http://localhost:5000/api/v1/appointments/walk-in"
+        : "http://localhost:5000/api/v1/appointments";
+
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -154,11 +185,26 @@ const AppointmentForm = () => {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.message || "Failed to create appointment");
+        throw new Error(errorData.message || errorData.error || "Failed to create appointment");
       }
 
       const result = await response.json();
-      toast.success("Appointment created successfully!");
+      
+      if (appointmentType === "walk_in") {
+        toast.success(
+          <div>
+            <div className="font-semibold">Walk-in appointment created!</div>
+            <div className="text-sm">
+              Reference: <strong>{result.walkin_reference}</strong><br/>
+              Queue Position: <strong>#{result.walk_in_sequence}</strong><br/>
+              Estimated Wait: <strong>{result.estimated_wait_time} minutes</strong>
+            </div>
+          </div>,
+          { duration: 5000 }
+        );
+      } else {
+        toast.success("Appointment created successfully!");
+      }
 
       // Reset form
       setFormData({
@@ -171,6 +217,7 @@ const AppointmentForm = () => {
       setSelectedPatient(patientIdFromUrl ? selectedPatient : null);
       setStep(1);
       setAvailableSlots([]);
+      setAppointmentType("scheduled");
       
       navigate("/appointments");
     } catch (error) {
@@ -195,35 +242,78 @@ const AppointmentForm = () => {
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-4xl mx-auto px-4">
         <div className="bg-white rounded-2xl shadow-lg p-6 md:p-8">
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Schedule New Appointment</h2>
-          <p className="text-gray-600 mb-6">Book a scheduled appointment with your preferred doctor</p>
-          
-          {/* Progress Steps */}
-          <div className="flex mb-8 bg-gray-100 rounded-lg p-1">
-            <div className={`flex-1 text-center py-3 rounded-lg transition-all ${
-              step >= 1 ? 'bg-white shadow border border-blue-200 text-blue-700 font-semibold' : 'text-gray-500'
-            }`}>
-              Step 1: Select Doctor & Date
+          {/* Appointment Type Selector */}
+          <div className="text-center mb-6">
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Book Appointment</h2>
+            <div className="flex gap-4 justify-center mb-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setAppointmentType("scheduled");
+                  setStep(1);
+                  setFormData(prev => ({ ...prev, slot_id: "" }));
+                }}
+                className={`px-6 py-3 rounded-lg font-semibold transition-all ${
+                  appointmentType === "scheduled"
+                    ? "bg-blue-600 text-white shadow-md"
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                }`}
+              >
+                📅 Scheduled Appointment
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAppointmentType("walk_in");
+                  setStep(1);
+                  setFormData(prev => ({ ...prev, slot_id: "", appointment_date: "" }));
+                }}
+                className={`px-6 py-3 rounded-lg font-semibold transition-all ${
+                  appointmentType === "walk_in"
+                    ? "bg-orange-600 text-white shadow-md"
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                }`}
+              >
+                🚶 Walk-in Appointment
+              </button>
             </div>
-            <div className={`flex-1 text-center py-3 rounded-lg transition-all ${
-              step >= 2 ? 'bg-white shadow border border-blue-200 text-blue-700 font-semibold' : 'text-gray-500'
-            }`}>
-              Step 2: Choose Time Slot
-            </div>
-            <div className={`flex-1 text-center py-3 rounded-lg transition-all ${
-              step >= 3 ? 'bg-white shadow border border-blue-200 text-blue-700 font-semibold' : 'text-gray-500'
-            }`}>
-              Step 3: Confirm
-            </div>
+            <p className="text-gray-600 text-sm">
+              {appointmentType === "scheduled" 
+                ? "Book a scheduled appointment with your preferred doctor"
+                : "Quick registration for same-day appointments"}
+            </p>
           </div>
+          
+          {/* Progress Steps - Only for Scheduled */}
+          {appointmentType === "scheduled" && (
+            <div className="flex mb-8 bg-gray-100 rounded-lg p-1">
+              <div className={`flex-1 text-center py-3 rounded-lg transition-all ${
+                step >= 1 ? 'bg-white shadow border border-blue-200 text-blue-700 font-semibold' : 'text-gray-500'
+              }`}>
+                Step 1: Select Doctor & Date
+              </div>
+              <div className={`flex-1 text-center py-3 rounded-lg transition-all ${
+                step >= 2 ? 'bg-white shadow border border-blue-200 text-blue-700 font-semibold' : 'text-gray-500'
+              }`}>
+                Step 2: Choose Time Slot
+              </div>
+              <div className={`flex-1 text-center py-3 rounded-lg transition-all ${
+                step >= 3 ? 'bg-white shadow border border-blue-200 text-blue-700 font-semibold' : 'text-gray-500'
+              }`}>
+                Step 3: Confirm
+              </div>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Step 1: Doctor, Patient, and Date Selection */}
+            {/* Step 1: Patient, Doctor, and Date Selection */}
             {step === 1 && (
               <>
                 {/* Patient Selection */}
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <label className="block text-sm font-semibold text-gray-700 mb-3">Patient Information</label>
+                <div className={`${appointmentType === "walk_in" ? "bg-orange-50 border-orange-200" : "bg-gray-50"} p-4 rounded-lg`}>
+                  <label className={`block text-sm font-semibold mb-3 ${appointmentType === "walk_in" ? "text-orange-800" : "text-gray-700"}`}>
+                    Patient Information
+                  </label>
                   {patientIdFromUrl ? (
                     <div className="w-full border-2 border-green-200 bg-green-50 p-4 rounded-lg">
                       {selectedPatient ? (
@@ -281,13 +371,17 @@ const AppointmentForm = () => {
                             placeholder="Search patient by name, phone, or patient ID..."
                             value={patientSearch}
                             onChange={(e) => setPatientSearch(e.target.value)}
-                            className="w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            className={`w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:border-transparent ${
+                              appointmentType === "walk_in" ? "focus:ring-orange-500" : "focus:ring-blue-500"
+                            }`}
                           />
                           
                           {isSearching && (
                             <div className="absolute w-full mt-2 p-4 bg-white border border-gray-300 rounded-lg shadow-lg z-10">
                               <div className="flex items-center text-gray-500">
-                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-3"></div>
+                                <div className={`animate-spin rounded-full h-4 w-4 border-b-2 mr-3 ${
+                                  appointmentType === "walk_in" ? "border-orange-600" : "border-blue-600"
+                                }`}></div>
                                 Searching patients...
                               </div>
                             </div>
@@ -299,9 +393,11 @@ const AppointmentForm = () => {
                                 <div
                                   key={patient.id}
                                   onClick={() => handlePatientSelect(patient)}
-                                  className="p-3 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-b-0 transition-colors"
+                                  className={`p-3 cursor-pointer border-b border-gray-100 last:border-b-0 transition-colors ${
+                                    appointmentType === "walk_in" ? "hover:bg-orange-50" : "hover:bg-blue-50"
+                                  }`}
                                 >
-                                  <div className="font-semibold text-blue-700">
+                                  <div className={`font-semibold ${appointmentType === "walk_in" ? "text-orange-700" : "text-blue-700"}`}>
                                     #{patient.patient_code || patient.id}
                                   </div>
                                   <div className="text-gray-800 font-medium">
@@ -330,12 +426,16 @@ const AppointmentForm = () => {
 
                 {/* Doctor Selection */}
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Select Doctor</label>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Select Doctor {appointmentType === "walk_in" && "for Walk-in"}
+                  </label>
                   <select
                     name="doctor_id"
                     value={formData.doctor_id}
                     onChange={handleChange}
-                    className="w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className={`w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:border-transparent ${
+                      appointmentType === "walk_in" ? "focus:ring-orange-500" : "focus:ring-blue-500"
+                    }`}
                     required
                   >
                     <option value="">Choose a doctor...</option>
@@ -348,33 +448,39 @@ const AppointmentForm = () => {
                   </select>
                 </div>
 
-                {/* Date Selection */}
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Appointment Date</label>
-                  <input
-                    type="date"
-                    name="appointment_date"
-                    value={formData.appointment_date}
-                    onChange={handleChange}
-                    min={new Date().toISOString().split('T')[0]}
-                    className="w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    required
-                  />
-                </div>
+                {/* Date Selection - Only for Scheduled */}
+                {appointmentType === "scheduled" && (
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Appointment Date</label>
+                    <input
+                      type="date"
+                      name="appointment_date"
+                      value={formData.appointment_date}
+                      onChange={handleChange}
+                      min={new Date().toISOString().split('T')[0]}
+                      className="w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      required
+                    />
+                  </div>
+                )}
 
                 <button
                   type="button"
-                  onClick={() => setStep(2)}
-                  disabled={!formData.doctor_id || !formData.appointment_date || !formData.patient_id}
-                  className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-semibold"
+                  onClick={() => appointmentType === "scheduled" ? setStep(2) : setStep(3)}
+                  disabled={!formData.doctor_id || !formData.patient_id || (appointmentType === "scheduled" && !formData.appointment_date)}
+                  className={`w-full text-white p-3 rounded-lg disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-semibold ${
+                    appointmentType === "walk_in" 
+                      ? "bg-orange-600 hover:bg-orange-700" 
+                      : "bg-blue-600 hover:bg-blue-700"
+                  }`}
                 >
-                  Next: Choose Time Slot
+                  {appointmentType === "scheduled" ? "Next: Choose Time Slot" : "Next: Confirm Walk-in"}
                 </button>
               </>
             )}
 
-            {/* Step 2: Time Slot Selection */}
-            {step === 2 && (
+            {/* Step 2: Time Slot Selection - Only for Scheduled */}
+            {step === 2 && appointmentType === "scheduled" && (
               <>
                 <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
                   <h3 className="font-semibold text-blue-800 mb-2">Appointment Details</h3>
@@ -428,13 +534,26 @@ const AppointmentForm = () => {
                       <div className="text-gray-400 mb-2">📅</div>
                       <p className="text-gray-500 font-medium">No available slots for selected date</p>
                       <p className="text-gray-400 text-sm mt-1">Please choose a different date or doctor</p>
-                      <button
-                        type="button"
-                        onClick={() => setStep(1)}
-                        className="mt-4 text-blue-600 hover:text-blue-800 font-medium"
-                      >
-                        ← Back to Date Selection
-                      </button>
+                      <div className="flex gap-3 justify-center mt-4">
+                        <button
+                          type="button"
+                          onClick={() => setStep(1)}
+                          className="text-blue-600 hover:text-blue-800 font-medium"
+                        >
+                          ← Back to Date Selection
+                        </button>
+                        <span className="text-gray-400">or</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAppointmentType("walk_in");
+                            setStep(3);
+                          }}
+                          className="text-orange-600 hover:text-orange-800 font-medium"
+                        >
+                          Register as Walk-in →
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -454,10 +573,18 @@ const AppointmentForm = () => {
             {/* Step 3: Confirmation */}
             {step === 3 && (
               <>
-                <div className="bg-green-50 p-6 rounded-lg border border-green-200">
-                  <h3 className="font-bold text-green-800 text-lg mb-4 flex items-center">
-                    <span className="bg-green-200 rounded-full p-1 mr-2">✓</span>
-                    Appointment Summary
+                <div className={`p-6 rounded-lg border ${
+                  appointmentType === "walk_in" 
+                    ? "bg-orange-50 border-orange-200" 
+                    : "bg-green-50 border-green-200"
+                }`}>
+                  <h3 className={`font-bold text-lg mb-4 flex items-center ${
+                    appointmentType === "walk_in" ? "text-orange-800" : "text-green-800"
+                  }`}>
+                    <span className={`rounded-full p-1 mr-2 ${
+                      appointmentType === "walk_in" ? "bg-orange-200" : "bg-green-200"
+                    }`}>✓</span>
+                    {appointmentType === "walk_in" ? "Walk-in" : "Appointment"} Summary
                   </h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                     <div className="space-y-2">
@@ -471,47 +598,83 @@ const AppointmentForm = () => {
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <div>
-                        <span className="font-semibold text-gray-600">Date:</span>
-                        <div className="text-gray-800">{formData.appointment_date}</div>
-                      </div>
-                      <div>
-                        <span className="font-semibold text-gray-600">Time:</span>
-                        <div className="text-gray-800 font-bold">{formatTime(formData.appointment_time)}</div>
-                      </div>
+                      {appointmentType === "scheduled" ? (
+                        <>
+                          <div>
+                            <span className="font-semibold text-gray-600">Date:</span>
+                            <div className="text-gray-800">{formData.appointment_date}</div>
+                          </div>
+                          <div>
+                            <span className="font-semibold text-gray-600">Time:</span>
+                            <div className="text-gray-800 font-bold">{formatTime(formData.appointment_time)}</div>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div>
+                            <span className="font-semibold text-gray-600">Type:</span>
+                            <div className="text-gray-800 font-bold">Walk-in (Same Day)</div>
+                          </div>
+                          <div>
+                            <span className="font-semibold text-gray-600">Status:</span>
+                            <div className="text-orange-600 font-bold">Queue Position Assigned After Booking</div>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
 
+                {/* Information Box for Walk-in */}
+                {appointmentType === "walk_in" && (
+                  <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                    <h4 className="font-semibold text-blue-800 mb-2">About Walk-in Appointments</h4>
+                    <ul className="text-sm text-blue-700 space-y-1">
+                      <li>• First-come, first-served basis</li>
+                      <li>• Estimated wait times provided upon registration</li>
+                      <li>• You'll receive a queue number and walk-in reference</li>
+                      <li>• Emergency cases will be prioritized</li>
+                    </ul>
+                  </div>
+                )}
+
                 {/* Reason */}
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Reason for Appointment
+                    Reason for {appointmentType === "walk_in" ? "Visit" : "Appointment"}
                     <span className="text-gray-400 font-normal ml-1">(Optional)</span>
                   </label>
                   <textarea
                     name="reason"
                     value={formData.reason}
                     onChange={handleChange}
-                    className="w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className={`w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:border-transparent ${
+                      appointmentType === "walk_in" ? "focus:ring-orange-500" : "focus:ring-blue-500"
+                    }`}
                     rows="3"
-                    placeholder="Brief reason for appointment (symptoms, follow-up, consultation, etc.)"
+                    placeholder={appointmentType === "walk_in" 
+                      ? "Brief reason for walk-in visit..." 
+                      : "Brief reason for appointment (symptoms, follow-up, consultation, etc.)"}
                   />
                 </div>
 
                 <div className="flex gap-3 pt-4 border-t border-gray-200">
                   <button
                     type="button"
-                    onClick={() => setStep(2)}
+                    onClick={() => appointmentType === "scheduled" ? setStep(2) : setStep(1)}
                     className="flex-1 bg-gray-500 text-white p-3 rounded-lg hover:bg-gray-600 transition-colors font-medium"
                   >
-                    ← Back to Time Slots
+                    ← Back
                   </button>
                   <button
                     type="submit"
-                    className="flex-1 bg-green-600 text-white p-3 rounded-lg hover:bg-green-700 transition-colors font-medium"
+                    className={`flex-1 text-white p-3 rounded-lg transition-colors font-medium ${
+                      appointmentType === "walk_in"
+                        ? "bg-orange-600 hover:bg-orange-700"
+                        : "bg-green-600 hover:bg-green-700"
+                    }`}
                   >
-                    Confirm & Book Appointment
+                    Confirm & Book {appointmentType === "walk_in" ? "Walk-in" : "Appointment"}
                   </button>
                 </div>
               </>
