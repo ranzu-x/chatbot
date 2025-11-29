@@ -1,69 +1,66 @@
 // routes/slots.js
 import express from "express";
 import pool from "../db.js";
+import cron from "node-cron";
 import { authMiddleWare } from "../middleware/authmiddleware.js";
+import generateSlots from "../utility/generateSlots.js";
+
 
 const router = express.Router();
 
 // Create doctor slot
 router.post("/slots", authMiddleWare, async (req, res) => {
-  try {
+try {
     const {
       doctor_id,
       slot_date,
       start_time,
       end_time,
-      slot_duration = 30,
-      max_patients = 1
+      slot_duration,
+      max_patients,
+      break_start,
+      break_end
     } = req.body;
 
-    const hospitalId = req.user.hospital_id;
+    const hospital_id = req.user.hospital_id; 
 
-    // Validate required fields
     if (!doctor_id || !slot_date || !start_time || !end_time) {
-      return res.status(400).json({ error: "Doctor, date, start time, and end time are required" });
+      return res.status(400).json({ error: "Missing required fields" });
     }
 
-    // Check if slot already exists for this doctor and date
-    const [existingSlots] = await pool.query(
-      `SELECT id FROM doctor_slots 
-       WHERE doctor_id = ? AND slot_date = ? AND hospital_id = ?`,
-      [doctor_id, slot_date, hospitalId]
-    );
+    // Generate time slots
+    const slots = generateSlots(start_time, end_time, slot_duration, break_start, break_end);
 
-    if (existingSlots.length > 0) {
-      return res.status(400).json({ 
-        error: "Slots already exist for this doctor on the selected date" 
-      });
+    if (!slots.length) {
+      return res.status(400).json({ error: "No slots generated" });
     }
 
-    // Create single slot
-    const [result] = await pool.query(
-      `INSERT INTO doctor_slots (
-        hospital_id, doctor_id, slot_date, start_time, end_time,
-        slot_duration, max_patients
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        hospitalId, doctor_id, slot_date, start_time, end_time,
-        slot_duration, max_patients
-      ]
-    );
+    // Insert each slot
+    const values = slots.map(s => [
+      doctor_id,
+      hospital_id, // assuming hospital_id from middleware
+      slot_date,
+      s.start_time,
+      s.end_time,
+      slot_duration,
+      max_patients
+    ]);
+
+    const query = `
+      INSERT INTO doctor_slots 
+      (doctor_id, hospital_id, slot_date, start_time, end_time, slot_duration, max_patients)
+      VALUES ?
+    `;
+
+    await pool.query(query, [values]);
 
     res.json({
-      message: "Appointment slot created successfully",
-      slot: {
-        id: result.insertId,
-        slot_date,
-        start_time,
-        end_time,
-        slot_duration,
-        max_patients
-      }
+      message: `${slots.length} slots created successfully`,
+      slots_created: slots.length
     });
-
   } catch (error) {
-    console.error("Error creating slot:", error);
-    res.status(500).json({ error: "Failed to create slot" });
+    console.error("Slot creation error:", error);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
@@ -286,5 +283,17 @@ router.delete("/slots/:id", authMiddleWare, async (req, res) => {
     res.status(500).json({ error: "Failed to delete slot" });
   }
 });
+
+// Cron to delete past slots
+
+cron.schedule("0 1 * * *", async () => {
+  // Runs every night at 2 AM
+  await pool.query(`
+    DELETE FROM doctor_slots
+    WHERE slot_date < CURDATE()
+  `);
+  console.log("⏳ Auto-cleaned old slots");
+});
+
 
 export default router;

@@ -31,37 +31,37 @@ const SlotManager = () => {
     }
   };
 
-const handleCreateSlots = async (e) => {
-  e.preventDefault();
-  
-  if (!selectedDoctor) {
-    toast.error("Please select a doctor");
-    return;
-  }
+  const handleCreateSlots = async (e) => {
+    e.preventDefault();
 
-  setLoading(true);
-  try {
-    const res = await axios.post("http://localhost:5000/api/v1/slots", {
-      doctor_id: selectedDoctor,
-      ...slotData
-    }, { withCredentials: true });
+    if (!selectedDoctor) {
+      toast.error("Please select a doctor");
+      return;
+    }
 
-    toast.success(res.data.message);
-    setSlotData({
-      slot_date: '',
-      start_time: '09:00',
-      end_time: '17:00',
-      slot_duration: 30,
-      max_patients: 1
-    });
-    setSelectedDoctor('');
-    
-  } catch (error) {
-    toast.error(error.response?.data?.error || "Failed to create slots");
-  } finally {
-    setLoading(false);
-  }
-};
+    setLoading(true);
+    try {
+      const res = await axios.post("http://localhost:5000/api/v1/slots", {
+        doctor_id: selectedDoctor,
+        ...slotData
+      }, { withCredentials: true });
+
+      toast.success(res.data.message);
+      setSlotData({
+        slot_date: '',
+        start_time: '09:00',
+        end_time: '17:00',
+        slot_duration: 30,
+        max_patients: 1
+      });
+      setSelectedDoctor('');
+
+    } catch (error) {
+      toast.error(error.response?.data?.error || "Failed to create slots");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const getSelectedDoctorName = () => {
     const doctor = doctors.find(d => d.id == selectedDoctor);
@@ -117,7 +117,10 @@ const handleCreateSlots = async (e) => {
                   onChange={(e) => setSlotData({ ...slotData, slot_duration: parseInt(e.target.value) })}
                   className="w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
+                  <option value={5}>5 minutes</option>
+                  <option value={10}>10 minutes</option>
                   <option value={15}>15 minutes</option>
+                  <option value={20}>20 minutes</option>
                   <option value={30}>30 minutes</option>
                   <option value={45}>45 minutes</option>
                   <option value={60}>60 minutes</option>
@@ -150,6 +153,32 @@ const handleCreateSlots = async (e) => {
                 />
               </div>
             </div>
+
+            {/* Break Times */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Break Start (optional)
+              </label>
+              <input
+                type="time"
+                onChange={(e) => setSlotData({ ...slotData, break_start: e.target.value })}
+                className="w-full border p-3 rounded-lg"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Break End (optional)
+              </label>
+              <input
+                type="time"
+                onChange={(e) => setSlotData({ ...slotData, break_end: e.target.value })}
+                className="w-full border p-3 rounded-lg"
+              />
+            </div>
+            </div>
+
 
             {/* Max Patients */}
             <div>
