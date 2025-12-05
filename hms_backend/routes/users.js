@@ -24,15 +24,16 @@ const upload = multer({ storage });
 router.post(
   "/users/create-users",
   authMiddleWare,
-  upload.single("profileImage"),
+  upload.single("profile_image"), // Match the column name in the DB
   async (req, res) => {
-    const connection = await pool.getConnection(); // ✅ Use connection for transaction
+    const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
 
       const currentUser = req.user;
       const hospital_id = currentUser.hospital_id;
-      
+
+      // --- Destructure all potential fields from the request body ---
       const {
         firstName,
         lastName,
@@ -41,14 +42,16 @@ router.post(
         phone,
         gender,
         dateOfBirth,
-        age,
+        address,
+        // Staff-specific fields
         department,
         qualification,
-        specialization,
-        address,
         emergencyContact,
+        // Doctor-specific field
+        specialization,
       } = req.body;
 
+      // --- Authorization Check (Unchanged) ---
       const userRoles = currentUser.roles || [];
       const isSuperAdmin = userRoles.includes("super_admin");
       const isHospitalAdmin = userRoles.includes("hospital_admin");
@@ -57,33 +60,21 @@ router.post(
         return res.status(403).json({ message: "You are not authorized to create users." });
       }
 
-
+      // --- Data Preparation (Unchanged) ---
       const profileImage = req.file ? req.file.filename : null;
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      // ==============================
-      // Insert into Users Table
-      // ==============================
+      // ==========================================================
+      // Step 1: Insert into the lean 'users' table
+      // This table now only contains core identity and auth info.
+      // ==========================================================
       const [userResult] = await connection.query(
         `
         INSERT INTO users (
-          hospital_id,
-          first_name,
-          last_name,
-          email,
-          password,
-          phone,
-          gender,
-          date_of_birth,
-          age,
-          department,
-          qualification,
-          specialization,
-          address,
-          emergency_contact,
-          profile_image
+          hospital_id, first_name, last_name, email, password,
+          phone, gender, date_of_birth, address, profile_image, created_by
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           hospital_id,
@@ -94,91 +85,142 @@ router.post(
           phone,
           gender,
           dateOfBirth,
-          age,
-          department,
-          qualification,
-          specialization,
           address,
-          emergencyContact,
           profileImage,
+          currentUser.id // Log who created this user
         ]
       );
 
       const userId = userResult.insertId;
 
-      // ==============================
-      // Assign Role Based on Department
-      // ==============================
-      let role_id = null;
-      switch (department?.toLowerCase()) {
-        case "doctor":
-          role_id = 3;
-          break;
-        case "nurse":
-          role_id = 4;
-          break;
-        case "receptionist":
-          role_id = 5;
-          break;
-        case "lab technician":
-          role_id = 6;
-          break;
-        case "pharmacist":
-          role_id = 7;
-          break;
-        default:
-          role_id = null;
+      // ==========================================================
+      // Step 2: If it's a staff member, insert into 'staff_profiles'
+      // We determine this by the presence of a 'department'.
+      // ==========================================================
+      if (department) {
+        await connection.query(
+          `
+          INSERT INTO staff_profiles (
+            user_id, department, qualification, emergency_contact
+          )
+          VALUES (?, ?, ?, ?)
+          `,
+          [userId, department, qualification, emergencyContact]
+        );
       }
+
+      // ==========================================================
+      // Step 3: Assign a role based on the department
+      // (This logic remains largely the same)
+      // ==========================================================
+      let role_id = null;
+      // Define roles in a clearer way
+      const roleMap = {
+          "doctor": 3,
+          "nurse": 4,
+          "receptionist": 5,
+          "lab technician": 6,
+          "pharmacist": 7,
+      };
+      
+      role_id = roleMap[department?.toLowerCase()];
 
       if (role_id) {
         await connection.query(
           `INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)`,
           [userId, role_id]
         );
-
-        // ==============================
-        // Assign Doctor Permissions
-        // ==============================
-        if (role_id === 3) {
-          const permissionId = 3; // "write prescription"
-          const [exists] = await connection.query(
-            `SELECT * FROM role_permissions WHERE role_id = ? AND permission_id = ?`,
-            [role_id, permissionId]
-          );
-
-          if (exists.length === 0) {
-            await connection.query(
-              `INSERT INTO role_permissions (role_id, permission_id) VALUES (?, ?)`,
-              [role_id, permissionId]
-            );
-          }
-        }
       }
 
-      // ✅ Commit transaction
+      // ==========================================================
+      // Step 4: If the role is a doctor, insert into 'doctor_details'
+      // This provides doctor-specific information like specialization.
+      // ==========================================================
+      if (role_id === 3) { // 3 is the role_id for 'Doctor'
+        await connection.query(
+          `
+          INSERT INTO doctor_details (user_id, specialization)
+          VALUES (?, ?)
+          `,
+          [userId, specialization]
+        );
+
+        // // Optional: Assign doctor-specific permissions (your logic was fine)
+        // const permissionId = 3; // "write prescription"
+        // const [exists] = await connection.query(
+        //   `SELECT 1 FROM role_permissions WHERE role_id = ? AND permission_id = ?`,
+        //   [role_id, permissionId]
+        // );
+
+        // if (exists.length === 0) {
+        //   await connection.query(
+        //     `INSERT INTO role_permissions (role_id, permission_id) VALUES (?, ?)`,
+        //     [role_id, permissionId]
+        //   );
+        // }
+      }
+
+      // --- If all queries succeed, commit the transaction ---
       await connection.commit();
 
       res.status(201).json({
-        message: "User created successfully",
+        message: "User and profiles created successfully",
         userId,
       });
     } catch (error) {
+      // --- If any query fails, roll back all previous queries ---
       await connection.rollback();
       console.error("❌ Error creating user:", error);
+
+      // Check for a specific duplicate entry error
+      if (error.code === 'ER_DUP_ENTRY') {
+        return res.status(409).json({ message: 'A user with this email or username already exists for this hospital.' });
+      }
+
       res.status(500).json({
         message: "Server error while creating user",
         error: error.message,
       });
     } finally {
-      connection.release();
+      // --- Always release the connection back to the pool ---
+      if (connection) connection.release();
     }
   }
 );
 
-// ✅ Get all team members (exclude hospital_admin)
+
 router.get("/team-members", authMiddleWare, async (req, res) => {
   try {
     const hospitalId = req.user.hospital_id;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const search = req.query.search || "";
+    const offset = (page - 1) * limit;
+
+    const like = `%${search}%`;
+
+    const [[countResult]] = await pool.query(
+      `
+      SELECT COUNT(*) AS totalStaffs
+      FROM users u
+      LEFT JOIN staff_profiles sp ON u.id = sp.user_id
+      LEFT JOIN user_roles ur ON u.id = ur.user_id
+      LEFT JOIN roles r ON r.id = ur.role_id
+      WHERE u.hospital_id = ?
+      AND (r.name IS NULL OR r.name != 'hospital_admin')
+      AND (
+        u.first_name LIKE ? OR
+        u.last_name LIKE ? OR
+        u.email LIKE ? OR
+        u.phone LIKE ? OR
+        sp.department LIKE ?
+      )
+      `,
+      [hospitalId, like, like, like, like, like]
+    );
+
+    const totalStaffs = countResult.totalStaffs;
+    const totalPages = Math.ceil(totalStaffs / limit);
 
     const [rows] = await pool.query(
       `
@@ -186,45 +228,71 @@ router.get("/team-members", authMiddleWare, async (req, res) => {
         u.id,
         u.first_name,
         u.last_name,
-        u.age,
         u.gender,
         u.phone,
         u.email,
+        sp.department,
         r.name AS role_name
       FROM users u
+      LEFT JOIN staff_profiles sp ON u.id = sp.user_id
       LEFT JOIN user_roles ur ON u.id = ur.user_id
-      LEFT JOIN roles r ON ur.role_id = r.id
+      LEFT JOIN roles r ON r.id = ur.role_id
       WHERE u.hospital_id = ?
-        AND (r.name IS NULL OR r.name != 'hospital_admin')
-      ORDER BY u.created_at DESC;
+      AND (r.name IS NULL OR r.name != 'hospital_admin')
+      AND (
+        u.first_name LIKE ? OR
+        u.last_name LIKE ? OR
+        u.email LIKE ? OR
+        u.phone LIKE ? OR
+        sp.department LIKE ?
+      )
+      ORDER BY u.created_at DESC
+      LIMIT ? OFFSET ?
       `,
-      [hospitalId]
+      [hospitalId, like, like, like, like, like, limit, offset]
     );
 
-    console.log("✅ Hospital ID:", hospitalId);
-    console.log(`✅ Found ${rows.length} staff members.`);
-
-    res.json(rows);
+    res.json({
+      staffMembers: rows,
+      pagination: {
+        totalStaffs,
+        totalPages,
+        currentPage: page,
+      },
+    });
   } catch (err) {
-    console.error("❌ Error fetching team members:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
 
-// Get all doctors
-
+// Get all doctors with their full, joined profile information
 router.get("/doctors", authMiddleWare, async (req, res) => {
     try {
         const hospitalId = req.user.hospital_id;
 
         const [rows] = await pool.query(
-            `SELECT DISTINCT u.*
-             FROM users u
-             JOIN user_roles ur ON u.id = ur.user_id
-             JOIN roles r ON ur.role_id = r.id
-             WHERE u.hospital_id = ?
-               AND r.name = 'doctor'`,
+            `
+            SELECT 
+                u.id,
+                u.first_name,
+                u.last_name,
+                u.email,
+                u.phone,
+                u.profile_image,
+                sp.department,         -- <<< ADDED: Get department from staff_profiles
+                dd.specialization,     -- <<< ADDED: Get specialization from doctor_details
+                sp.qualification       -- <<< ADDED: Get qualification from staff_profiles
+            FROM users u
+            -- The JOIN to user_roles and roles is still the best way to identify doctors
+            INNER JOIN user_roles ur ON u.id = ur.user_id
+            INNER JOIN roles r ON ur.role_id = r.id
+            -- Now, join the other tables to get the rest of their profile
+            INNER JOIN staff_profiles sp ON u.id = sp.user_id
+            INNER JOIN doctor_details dd ON u.id = dd.user_id
+            WHERE u.hospital_id = ?
+              AND r.name = 'doctor'
+            `,
             [hospitalId]
         );
 
@@ -236,5 +304,4 @@ router.get("/doctors", authMiddleWare, async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-
 export default router;

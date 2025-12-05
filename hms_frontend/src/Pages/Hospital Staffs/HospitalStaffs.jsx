@@ -3,54 +3,90 @@ import { useNavigate } from "react-router";
 import Swal from "sweetalert2";
 import DataTable from "../../Components/Table Components/DataTable";
 import TableActions from "../../Components/Table Components/TableActionButtons";
-// import { useAuth } from "../../Provider/AuthContexProvider";
 
 const HospitalStaffs = () => {
   const [teamMembers, setTeamMembers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [staffsPerPage, setStaffsPerPage] = useState(10);
+  const [totalStaffs, setTotalStaffs] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const navigate = useNavigate();
-  // const { user } = useAuth();
 
-  // ✅ Fetch all team members
-  const fetchTeamMembers = useCallback(async () => {
+  // ✅ Fetch users with pagination
+  const fetchTeamMembers = useCallback(async (page, limit, searchTerm) => {
+    setLoading(true);
+
     try {
-      const res = await fetch("http://localhost:5000/api/v1/team-members", {
-        credentials: "include",
+      const params = new URLSearchParams({
+        page: page.toString(),
+        limit: limit.toString(),
+        ...(searchTerm && { search: searchTerm }),
       });
+
+      const res = await fetch(
+        `http://localhost:5000/api/v1/team-members?${params}`,
+        { credentials: "include" }
+      );
+
       if (!res.ok) throw new Error("Failed to load staff data");
+
       const data = await res.json();
-      setTeamMembers(data);
+
+      console.log("Staff members fetched:", data);
+
+      // 🔥 Backend returns { staffMembers, pagination }
+      setTeamMembers(data.staffMembers || []);
+      setTotalStaffs(data.pagination?.totalStaffs || 0);
+      setTotalPages(data.pagination?.totalPages || 1);
+      setCurrentPage(data.pagination?.currentPage || 1);
+
     } catch (err) {
       console.error(err);
-      Swal.fire("Error", "Failed to fetch team members.", "error");
+      Swal.fire("Error", "Failed to fetch staff members.", "error");
     } finally {
       setLoading(false);
     }
   }, []);
 
+  // 🔄 Run fetch when page, limit or search changes
   useEffect(() => {
-    fetchTeamMembers();
-  }, [fetchTeamMembers]);
+    const timer = setTimeout(() => {
+      fetchTeamMembers(currentPage, staffsPerPage, search);
+    }, 400);
 
-  // ✅ Handle delete
+    return () => clearTimeout(timer);
+  }, [currentPage, staffsPerPage, search, fetchTeamMembers]);
+
+  const handlePageChange = (page) => {
+    setCurrentPage(page);
+  };
+
+  const handleStaffsPerPageChange = (newSize) => {
+    setStaffsPerPage(parseInt(newSize));
+    setCurrentPage(1);
+  };
+
   const handleDelete = async (item) => {
-    const result = await Swal.fire({
+    const confirm = await Swal.fire({
       title: "Are you sure?",
       text: "This staff member will be permanently deleted.",
       icon: "warning",
       showCancelButton: true,
-      confirmButtonText: "Yes, delete",
-      confirmButtonColor: "#EF4444",
+      confirmButtonText: "Delete",
     });
 
-    if (!result.isConfirmed) return;
+    if (!confirm.isConfirmed) return;
 
     try {
       await fetch(`http://localhost:5000/api/v1/team-members/${item.id}`, {
         method: "DELETE",
         credentials: "include",
       });
-      setTeamMembers((prev) => prev.filter((p) => p.id !== item.id));
+
+      fetchTeamMembers(currentPage, staffsPerPage, search);
+
       Swal.fire("Deleted!", "Staff member deleted successfully.", "success");
     } catch (err) {
       console.error(err);
@@ -58,20 +94,22 @@ const HospitalStaffs = () => {
     }
   };
 
-  // ✅ Handle navigation
   const handleEdit = (item) => navigate(`/teamMembers/edit/${item.id}`);
   const handleView = (item) => navigate(`/teamMembers/view/${item.id}`);
 
-  // ✅ DataTable columns
   const columns = [
-    { header: "#", render: (_, index) => index + 1 },
+    {
+      header: "#",
+      render: (_, index) =>
+        (currentPage - 1) * staffsPerPage + index + 1,
+    },
     { header: "First Name", accessor: "first_name" },
     { header: "Last Name", accessor: "last_name" },
-    { header: "Age", accessor: "age" },
     { header: "Gender", accessor: "gender" },
-    { header: "Contact", accessor: "phone" },
+    { header: "Phone", accessor: "phone" },
     { header: "Email", accessor: "email" },
     { header: "Role", accessor: "role_name" },
+    { header: "Department", accessor: "department" },
   ];
 
   return (
@@ -81,7 +119,15 @@ const HospitalStaffs = () => {
         columns={columns}
         data={teamMembers}
         loading={loading}
+        searchTerm={search}
+        setSearchTerm={setSearch}
         onAddNew={() => navigate("/adduser")}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        totalItems={totalStaffs}
+        itemsPerPage={staffsPerPage}
+        onItemsPerPageChange={handleStaffsPerPageChange}
+        onPageChange={handlePageChange}
         actions={(item) => (
           <TableActions
             item={item}
