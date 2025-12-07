@@ -21,11 +21,7 @@ const upload = multer({ storage });
 // ==============================
 // Create User Route
 // ==============================
-router.post(
-  "/users/create-users",
-  authMiddleWare,
-  upload.single("profile_image"), // Match the column name in the DB
-  async (req, res) => {
+router.post("/users/create-users", authMiddleWare, upload.single("profile_image"), async (req, res) => {
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
@@ -33,7 +29,7 @@ router.post(
       const currentUser = req.user;
       const hospital_id = currentUser.hospital_id;
 
-      // --- Destructure all potential fields from the request body ---
+      // Destructure all potential fields from the request body
       const {
         firstName,
         lastName,
@@ -43,12 +39,11 @@ router.post(
         gender,
         dateOfBirth,
         address,
-        // Staff-specific fields
-        department,
+        role,       // This is the Role (Doctor, Nurse, etc.)
         qualification,
         emergencyContact,
-        // Doctor-specific field
         specialization,
+        services          // This will be a JSON string from the FormData
       } = req.body;
 
       // --- Authorization Check (Unchanged) ---
@@ -65,8 +60,7 @@ router.post(
       const hashedPassword = await bcrypt.hash(password, 10);
 
       // ==========================================================
-      // Step 1: Insert into the lean 'users' table
-      // This table now only contains core identity and auth info.
+      // Step 1: Insert into the 'users' table (Unchanged)
       // ==========================================================
       const [userResult] = await connection.query(
         `
@@ -77,27 +71,17 @@ router.post(
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
-          hospital_id,
-          firstName,
-          lastName,
-          email,
-          hashedPassword,
-          phone,
-          gender,
-          dateOfBirth,
-          address,
-          profileImage,
-          currentUser.id // Log who created this user
+          hospital_id, firstName, lastName, email, hashedPassword,
+          phone, gender, dateOfBirth, address, profileImage, currentUser.id
         ]
       );
 
       const userId = userResult.insertId;
 
       // ==========================================================
-      // Step 2: If it's a staff member, insert into 'staff_profiles'
-      // We determine this by the presence of a 'department'.
+      // Step 2: Insert into 'staff_profiles' (Unchanged)
       // ==========================================================
-      if (department) {
+      if (role) {
         await connection.query(
           `
           INSERT INTO staff_profiles (
@@ -105,25 +89,23 @@ router.post(
           )
           VALUES (?, ?, ?, ?)
           `,
-          [userId, department, qualification, emergencyContact]
+          [userId, role, qualification, emergencyContact]
         );
       }
 
       // ==========================================================
-      // Step 3: Assign a role based on the department
-      // (This logic remains largely the same)
+      // Step 3: Assign Role (Unchanged)
       // ==========================================================
-      let role_id = null;
-      // Define roles in a clearer way
       const roleMap = {
           "doctor": 3,
-          "nurse": 4,
-          "receptionist": 5,
-          "lab technician": 6,
-          "pharmacist": 7,
+          "junior_nurse": 4,
+          "senior_nurse": 5,
+          "receptionist": 6,
+          "lab technician": 7,
+          "pharmacist": 8,
       };
-      
-      role_id = roleMap[department?.toLowerCase()];
+      const role_id = roleMap[role?.toLowerCase()];
+      console.log("Assigned role_id:", role_id);
 
       if (role_id) {
         await connection.query(
@@ -133,10 +115,10 @@ router.post(
       }
 
       // ==========================================================
-      // Step 4: If the role is a doctor, insert into 'doctor_details'
-      // This provides doctor-specific information like specialization.
+      // Step 4: Handle All Doctor-Specific Details
       // ==========================================================
       if (role_id === 3) { // 3 is the role_id for 'Doctor'
+        // Insert specialization into doctor_details
         await connection.query(
           `
           INSERT INTO doctor_details (user_id, specialization)
@@ -145,26 +127,34 @@ router.post(
           [userId, specialization]
         );
 
-        // // Optional: Assign doctor-specific permissions (your logic was fine)
-        // const permissionId = 3; // "write prescription"
-        // const [exists] = await connection.query(
-        //   `SELECT 1 FROM role_permissions WHERE role_id = ? AND permission_id = ?`,
-        //   [role_id, permissionId]
-        // );
 
-        // if (exists.length === 0) {
-        //   await connection.query(
-        //     `INSERT INTO role_permissions (role_id, permission_id) VALUES (?, ?)`,
-        //     [role_id, permissionId]
-        //   );
-        // }
+        // Parse and save the doctor's service fees
+        if (services) {
+          let parsedServices = [];
+          try {
+            parsedServices = JSON.parse(services);
+          } catch (parseError) {
+            throw new Error("Invalid format for service fees.");
+          }
+
+          if (Array.isArray(parsedServices) && parsedServices.length > 0) {
+            for (const service of parsedServices) {
+              if (service.service_id && typeof service.fee === 'number' && service.fee >= 0) {
+                await connection.query(
+                  `INSERT INTO doctor_services (user_id, service_id, fee) VALUES (?, ?, ?)`,
+                  [userId, service.service_id, service.fee]
+                );
+              }
+            }
+          }
+        }
       }
 
       // --- If all queries succeed, commit the transaction ---
       await connection.commit();
 
       res.status(201).json({
-        message: "User and profiles created successfully",
+        message: "User, profiles, permissions, and fees created successfully",
         userId,
       });
     } catch (error) {
@@ -172,7 +162,6 @@ router.post(
       await connection.rollback();
       console.error("❌ Error creating user:", error);
 
-      // Check for a specific duplicate entry error
       if (error.code === 'ER_DUP_ENTRY') {
         return res.status(409).json({ message: 'A user with this email or username already exists for this hospital.' });
       }
@@ -195,35 +184,44 @@ router.get("/team-members", authMiddleWare, async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const search = req.query.search || "";
+    const role = req.query.role || ""; // 1. Get role from query
     const offset = (page - 1) * limit;
 
-    const like = `%${search}%`;
-
-    const [[countResult]] = await pool.query(
-      `
-      SELECT COUNT(*) AS totalStaffs
+    // Base Query
+    let baseQuery = `
       FROM users u
       LEFT JOIN staff_profiles sp ON u.id = sp.user_id
       LEFT JOIN user_roles ur ON u.id = ur.user_id
       LEFT JOIN roles r ON r.id = ur.role_id
       WHERE u.hospital_id = ?
       AND (r.name IS NULL OR r.name != 'hospital_admin')
-      AND (
-        u.first_name LIKE ? OR
-        u.last_name LIKE ? OR
-        u.email LIKE ? OR
-        u.phone LIKE ? OR
-        sp.department LIKE ?
-      )
-      `,
-      [hospitalId, like, like, like, like, like]
-    );
+    `;
 
-    const totalStaffs = countResult.totalStaffs;
-    const totalPages = Math.ceil(totalStaffs / limit);
+    let queryParams = [hospitalId];
 
-    const [rows] = await pool.query(
-      `
+    // 2. Add Role Filter Logic
+    if (role && role !== "all") {
+      baseQuery += ` AND r.name = ?`;
+      queryParams.push(role);
+    }
+
+    // 3. Add Search Filter Logic (Existing)
+    if (search) {
+      const searchTerm = `%${search}%`;
+      baseQuery += ` 
+        AND (
+          u.first_name LIKE ? OR
+          u.last_name LIKE ? OR
+          u.email LIKE ? OR
+          u.phone LIKE ? OR
+          sp.department LIKE ?
+        )
+      `;
+      queryParams.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
+    }
+
+    // Main Data Query
+    const dataQuery = `
       SELECT 
         u.id,
         u.first_name,
@@ -233,24 +231,21 @@ router.get("/team-members", authMiddleWare, async (req, res) => {
         u.email,
         sp.department,
         r.name AS role_name
-      FROM users u
-      LEFT JOIN staff_profiles sp ON u.id = sp.user_id
-      LEFT JOIN user_roles ur ON u.id = ur.user_id
-      LEFT JOIN roles r ON r.id = ur.role_id
-      WHERE u.hospital_id = ?
-      AND (r.name IS NULL OR r.name != 'hospital_admin')
-      AND (
-        u.first_name LIKE ? OR
-        u.last_name LIKE ? OR
-        u.email LIKE ? OR
-        u.phone LIKE ? OR
-        sp.department LIKE ?
-      )
+      ${baseQuery}
       ORDER BY u.created_at DESC
       LIMIT ? OFFSET ?
-      `,
-      [hospitalId, like, like, like, like, like, limit, offset]
-    );
+    `;
+
+    // Count Query
+    const countQuery = `SELECT COUNT(*) AS totalStaffs ${baseQuery}`;
+
+    // Execute
+    const dataParams = [...queryParams, limit, offset];
+    const [rows] = await pool.query(dataQuery, dataParams);
+    const [[countResult]] = await pool.query(countQuery, queryParams);
+
+    const totalStaffs = countResult.totalStaffs || 0;
+    const totalPages = Math.ceil(totalStaffs / limit);
 
     res.json({
       staffMembers: rows,
@@ -261,6 +256,7 @@ router.get("/team-members", authMiddleWare, async (req, res) => {
       },
     });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });

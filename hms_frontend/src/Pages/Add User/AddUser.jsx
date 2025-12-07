@@ -18,7 +18,7 @@ const UserCreationForm = () => {
     gender: '',
     dateOfBirth: '',
     age: '',
-    department: '', // This represents the Role (Doctor, Nurse, etc.)
+    role: '', // This represents the Role (Doctor, Nurse, etc.)
     qualification: '',
     specialization: '',
     address: '',
@@ -39,7 +39,7 @@ const UserCreationForm = () => {
     'General Medicine', 'Surgery', 'Radiology', 'Laboratory', 'Pharmacy',
     'Administration', 'ICU', 'Oncology', 'Dermatology', 'Psychiatry'
   ];
-  const roles = ['Doctor', 'Nurse', 'Receptionist', 'Lab Technician', 'Pharmacist'];
+  const roles = ['Doctor', 'Junior Nurse', 'Senior Nurse', 'Receptionist', 'Lab Technician', 'Pharmacist'];
   const specializations = {
     'Doctor': ['General Practitioner', 'Cardiologist', 'Neurologist', 'Orthopedic Surgeon', 'Pediatrician', 'Radiologist', 'Anesthesiologist', 'Emergency Medicine', 'Internal Medicine'],
     'Nurse': ['Registered Nurse', 'ICU Nurse', 'Emergency Nurse', 'Pediatric Nurse', 'Surgical Nurse', 'Oncology Nurse'],
@@ -108,7 +108,7 @@ const UserCreationForm = () => {
     else if (!phoneRegex.test(formData.phone)) { newErrors.phone = 'Please enter a valid phone number'; }
     if (!formData.gender) newErrors.gender = 'Gender is required';
     if (!formData.dateOfBirth && !formData.age) newErrors.dateOfBirth = 'Date of birth or age is required';
-    if (!formData.department) newErrors.department = 'Role is required';
+    if (!formData.role) newErrors.role = 'Role is required';
     if (!formData.qualification.trim()) newErrors.qualification = 'Qualification is required';
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -121,7 +121,7 @@ const UserCreationForm = () => {
       setPasswordStrength(checkPasswordStrength(value));
     }
     // Clear fees if the role is changed to something other than "Doctor"
-    if (name === 'department' && value !== 'Doctor') {
+    if (name === 'role' && value !== 'Doctor') {
         setFormData(prev => ({ ...prev, services: [] }));
     }
     if (name === 'age' && value) {
@@ -164,6 +164,7 @@ const UserCreationForm = () => {
         }
       });
       submitData.append('hospital_id', user?.hospital_id);
+      console.log("submitted Data", submitData);
 
       const response = await fetch('http://localhost:5000/api/v1/users/create-users', {
         method: 'POST',
@@ -180,7 +181,7 @@ const UserCreationForm = () => {
 
       setFormData({
         firstName: '', lastName: '', email: '', password: '', confirmPassword: '',
-        phone: '', gender: '', dateOfBirth: '', age: '', department: '',
+        phone: '', gender: '', dateOfBirth: '', age: '', role: '',
         qualification: '', specialization: '', address: '', emergencyContact: '',
         profileImage: null,
         services: [] // Reset services
@@ -357,13 +358,13 @@ const UserCreationForm = () => {
               <div className="grid md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2"><Briefcase className="w-4 h-4 inline mr-2" />Role/Position *</label>
-                  <select name="department" value={formData.department} onChange={handleInputChange} className={`w-full px-4 py-3 border rounded-lg ${errors.department ? 'border-red-500' : 'border-gray-300'}`}>
+                  <select name="role" value={formData.role} onChange={handleInputChange} className={`w-full px-4 py-3 border rounded-lg ${errors.role ? 'border-red-500' : 'border-gray-300'}`}>
                     <option value="">Select Role</option>
                     {roles.map(role => (<option key={role} value={role}>{role}</option>))}
                   </select>
-                  {errors.department && <p className="text-red-500 text-sm mt-1 flex items-center gap-1"><X className="w-4 h-4" />{errors.department}</p>}
+                  {errors.role && <p className="text-red-500 text-sm mt-1 flex items-center gap-1"><X className="w-4 h-4" />{errors.role}</p>}
                 </div>
-                {formData.department === 'Doctor' && (
+                {formData.role === 'Doctor' && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2"><Stethoscope className="w-4 h-4 inline mr-2" />Specialization</label>
                     <select name="specialization" value={formData.specialization} onChange={handleInputChange} className="w-full px-4 py-3 border border-gray-300 rounded-lg">
@@ -375,7 +376,7 @@ const UserCreationForm = () => {
               </div>
               
               {/* Conditionally Rendered Doctor's Fees Section */}
-              {formData.department === 'Doctor' && (
+              {formData.role === 'Doctor' && (
                 <div className="p-4 bg-gray-50 rounded-lg border border-gray-200 space-y-4">
                     <h3 className="text-lg font-semibold text-gray-700">Consultation Fees</h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
