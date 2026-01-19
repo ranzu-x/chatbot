@@ -11,19 +11,25 @@ const AppointmentForm = () => {
 
   const [doctors, setDoctors] = useState([]);
   const [patients, setPatients] = useState([]);
+  const [services, setServices] = useState([]);
+  const [selectedService, setSelectedService] = useState("");
+  const [serviceFee, setServiceFee] = useState(0);
+  const [loadingFee, setLoadingFee] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState(null);
   const [patientSearch, setPatientSearch] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [availableSlots, setAvailableSlots] = useState([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [appointmentType, setAppointmentType] = useState("scheduled"); // "scheduled" or "walk_in"
-  
+
   const [formData, setFormData] = useState({
     doctor_id: "",
     patient_id: patientIdFromUrl || "",
     slot_id: "",
     appointment_date: "",
     reason: "",
+    // service_id: "",
+    appointment_fee: 0,
   });
 
   const [step, setStep] = useState(1); // 1: Select Doctor, 2: Select Slot, 3: Confirm
@@ -34,6 +40,16 @@ const AppointmentForm = () => {
       fetchSinglePatient(patientIdFromUrl);
     }
   }, [patientIdFromUrl]);
+
+  useEffect(() => {
+    if (formData.doctor_id) {
+      fetchDoctorServices(formData.doctor_id);
+    } else {
+      setServices([]);
+      setSelectedService("");
+      setServiceFee(0);
+    }
+  }, [formData.doctor_id]);
 
   // Fetch available slots when doctor and date are selected
   useEffect(() => {
@@ -57,6 +73,54 @@ const AppointmentForm = () => {
     }
   }, [patientSearch, patientIdFromUrl]);
 
+
+  useEffect(() => {
+    if (formData.doctor_id && selectedService) {
+      fetchDoctorFee(formData.doctor_id, selectedService);
+    }
+  }, [selectedService, formData.doctor_id]);
+
+
+  const fetchDoctorServices = async (doctorId) => {
+    try {
+      const res = await axios.get(
+        `http://localhost:5000/api/v1/doctor-services?doctor_id=${doctorId}`,
+        { withCredentials: true }
+      );
+      setServices(res.data || []);
+    } catch (error) {
+      console.error("Error fetching services:", error);
+      toast.error("Failed to load doctor services");
+    }
+  };
+
+  const fetchDoctorFee = async (doctorId, serviceId) => {
+    setLoadingFee(true);
+    try {
+      const res = await axios.get(
+        `http://localhost:5000/api/v1/doctor-fees?doctor_id=${doctorId}&service_id=${serviceId}`,
+        { withCredentials: true }
+      );
+
+      const fee = res.data?.fee || 0;
+
+      setServiceFee(fee);
+      setFormData(prev => ({
+        ...prev,
+        appointment_fee: fee,
+        service_id: serviceId
+      }));
+    } catch (error) {
+      console.error("Error fetching fee:", error);
+      toast.error("Failed to load service fee");
+      setServiceFee(0);
+    } finally {
+      setLoadingFee(false);
+    }
+  };
+
+
+
   const fetchDoctors = async () => {
     try {
       const res = await axios.get("http://localhost:5000/api/v1/doctors", {
@@ -74,6 +138,8 @@ const AppointmentForm = () => {
       const res = await axios.get(`http://localhost:5000/api/v1/patients/${id}`, {
         withCredentials: true,
       });
+      console.log(res.data);
+
       setSelectedPatient(res.data);
       setFormData(prev => ({ ...prev, patient_id: id }));
     } catch (error) {
@@ -89,13 +155,13 @@ const AppointmentForm = () => {
         `http://localhost:5000/api/v1/appointments/available-slots?doctor_id=${doctorId}&date=${date}`,
         { withCredentials: true }
       );
-      
+
       // Handle different response formats
       const slots = res.data.slots || res.data || [];
       setAvailableSlots(slots);
-      
+
       console.log("Available slots response:", res.data); // Debug log
-      
+
       // If no slots available, suggest walk-in
       if (slots.length === 0) {
         toast.error(
@@ -143,8 +209,8 @@ const AppointmentForm = () => {
   };
 
   const handleSlotSelect = (slot) => {
-    setFormData(prev => ({ 
-      ...prev, 
+    setFormData(prev => ({
+      ...prev,
       slot_id: slot.id,
       appointment_time: slot.start_time
     }));
@@ -170,7 +236,7 @@ const AppointmentForm = () => {
     }
 
     try {
-      const endpoint = appointmentType === "walk_in" 
+      const endpoint = appointmentType === "walk_in"
         ? "http://localhost:5000/api/v1/appointments/walk-in"
         : "http://localhost:5000/api/v1/appointments";
 
@@ -189,14 +255,14 @@ const AppointmentForm = () => {
       }
 
       const result = await response.json();
-      
+
       if (appointmentType === "walk_in") {
         toast.success(
           <div>
             <div className="font-semibold">Walk-in appointment created!</div>
             <div className="text-sm">
-              Reference: <strong>{result.walkin_reference}</strong><br/>
-              Queue Position: <strong>#{result.walk_in_sequence}</strong><br/>
+              Reference: <strong>{result.walkin_reference}</strong><br />
+              Queue Position: <strong>#{result.walk_in_sequence}</strong><br />
               Estimated Wait: <strong>{result.estimated_wait_time} minutes</strong>
             </div>
           </div>,
@@ -218,7 +284,7 @@ const AppointmentForm = () => {
       setStep(1);
       setAvailableSlots([]);
       setAppointmentType("scheduled");
-      
+
       navigate("/appointments");
     } catch (error) {
       console.error("Error:", error);
@@ -253,11 +319,10 @@ const AppointmentForm = () => {
                   setStep(1);
                   setFormData(prev => ({ ...prev, slot_id: "" }));
                 }}
-                className={`px-6 py-3 rounded-lg font-semibold transition-all ${
-                  appointmentType === "scheduled"
-                    ? "bg-blue-600 text-white shadow-md"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                }`}
+                className={`px-6 py-3 rounded-lg font-semibold transition-all ${appointmentType === "scheduled"
+                  ? "bg-blue-600 text-white shadow-md"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  }`}
               >
                 📅 Scheduled Appointment
               </button>
@@ -268,38 +333,34 @@ const AppointmentForm = () => {
                   setStep(1);
                   setFormData(prev => ({ ...prev, slot_id: "", appointment_date: "" }));
                 }}
-                className={`px-6 py-3 rounded-lg font-semibold transition-all ${
-                  appointmentType === "walk_in"
-                    ? "bg-orange-600 text-white shadow-md"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                }`}
+                className={`px-6 py-3 rounded-lg font-semibold transition-all ${appointmentType === "walk_in"
+                  ? "bg-orange-600 text-white shadow-md"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  }`}
               >
                 🚶 Walk-in Appointment
               </button>
             </div>
             <p className="text-gray-600 text-sm">
-              {appointmentType === "scheduled" 
+              {appointmentType === "scheduled"
                 ? "Book a scheduled appointment with your preferred doctor"
                 : "Quick registration for same-day appointments"}
             </p>
           </div>
-          
+
           {/* Progress Steps - Only for Scheduled */}
           {appointmentType === "scheduled" && (
             <div className="flex mb-8 bg-gray-100 rounded-lg p-1">
-              <div className={`flex-1 text-center py-3 rounded-lg transition-all ${
-                step >= 1 ? 'bg-white shadow border border-blue-200 text-blue-700 font-semibold' : 'text-gray-500'
-              }`}>
+              <div className={`flex-1 text-center py-3 rounded-lg transition-all ${step >= 1 ? 'bg-white shadow border border-blue-200 text-blue-700 font-semibold' : 'text-gray-500'
+                }`}>
                 Step 1: Select Doctor & Date
               </div>
-              <div className={`flex-1 text-center py-3 rounded-lg transition-all ${
-                step >= 2 ? 'bg-white shadow border border-blue-200 text-blue-700 font-semibold' : 'text-gray-500'
-              }`}>
+              <div className={`flex-1 text-center py-3 rounded-lg transition-all ${step >= 2 ? 'bg-white shadow border border-blue-200 text-blue-700 font-semibold' : 'text-gray-500'
+                }`}>
                 Step 2: Choose Time Slot
               </div>
-              <div className={`flex-1 text-center py-3 rounded-lg transition-all ${
-                step >= 3 ? 'bg-white shadow border border-blue-200 text-blue-700 font-semibold' : 'text-gray-500'
-              }`}>
+              <div className={`flex-1 text-center py-3 rounded-lg transition-all ${step >= 3 ? 'bg-white shadow border border-blue-200 text-blue-700 font-semibold' : 'text-gray-500'
+                }`}>
                 Step 3: Confirm
               </div>
             </div>
@@ -371,31 +432,28 @@ const AppointmentForm = () => {
                             placeholder="Search patient by name, phone, or patient ID..."
                             value={patientSearch}
                             onChange={(e) => setPatientSearch(e.target.value)}
-                            className={`w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:border-transparent ${
-                              appointmentType === "walk_in" ? "focus:ring-orange-500" : "focus:ring-blue-500"
-                            }`}
+                            className={`w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:border-transparent ${appointmentType === "walk_in" ? "focus:ring-orange-500" : "focus:ring-blue-500"
+                              }`}
                           />
-                          
+
                           {isSearching && (
                             <div className="absolute w-full mt-2 p-4 bg-white border border-gray-300 rounded-lg shadow-lg z-10">
                               <div className="flex items-center text-gray-500">
-                                <div className={`animate-spin rounded-full h-4 w-4 border-b-2 mr-3 ${
-                                  appointmentType === "walk_in" ? "border-orange-600" : "border-blue-600"
-                                }`}></div>
+                                <div className={`animate-spin rounded-full h-4 w-4 border-b-2 mr-3 ${appointmentType === "walk_in" ? "border-orange-600" : "border-blue-600"
+                                  }`}></div>
                                 Searching patients...
                               </div>
                             </div>
                           )}
-                          
+
                           {patients.length > 0 && (
                             <div className="absolute w-full mt-2 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto z-10">
                               {patients.map((patient) => (
                                 <div
                                   key={patient.id}
                                   onClick={() => handlePatientSelect(patient)}
-                                  className={`p-3 cursor-pointer border-b border-gray-100 last:border-b-0 transition-colors ${
-                                    appointmentType === "walk_in" ? "hover:bg-orange-50" : "hover:bg-blue-50"
-                                  }`}
+                                  className={`p-3 cursor-pointer border-b border-gray-100 last:border-b-0 transition-colors ${appointmentType === "walk_in" ? "hover:bg-orange-50" : "hover:bg-blue-50"
+                                    }`}
                                 >
                                   <div className={`font-semibold ${appointmentType === "walk_in" ? "text-orange-700" : "text-blue-700"}`}>
                                     #{patient.patient_code || patient.id}
@@ -412,7 +470,7 @@ const AppointmentForm = () => {
                               ))}
                             </div>
                           )}
-                          
+
                           {patientSearch.length >= 2 && patients.length === 0 && !isSearching && (
                             <div className="absolute w-full mt-2 p-4 bg-white border border-gray-300 rounded-lg shadow-lg text-gray-500 z-10">
                               No patients found for "{patientSearch}"
@@ -433,20 +491,56 @@ const AppointmentForm = () => {
                     name="doctor_id"
                     value={formData.doctor_id}
                     onChange={handleChange}
-                    className={`w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:border-transparent ${
-                      appointmentType === "walk_in" ? "focus:ring-orange-500" : "focus:ring-blue-500"
-                    }`}
+                    className={`w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:border-transparent ${appointmentType === "walk_in" ? "focus:ring-orange-500" : "focus:ring-blue-500"
+                      }`}
                     required
                   >
                     <option value="">Choose a doctor...</option>
                     {doctors.map((doc) => (
                       <option key={doc.id} value={doc.id}>
-                        Dr. {doc.first_name} {doc.last_name} 
+                        Dr. {doc.first_name} {doc.last_name}
                         {doc.specialization && ` - ${doc.specialization}`}
                       </option>
                     ))}
                   </select>
                 </div>
+
+                {/* Doctor Service Selection */}
+                {services.length > 0 && (
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Select Service
+                    </label>
+
+                    <select
+                      value={selectedService}
+                      onChange={(e) => setSelectedService(e.target.value)}
+                      className="w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      required
+                    >
+                      <option value="">Choose a service...</option>
+                      {services.map(service => (
+                        <option key={service.id} value={service.id}>
+                          {service.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+
+                {selectedService && (
+                  <div className="bg-green-50 border border-green-200 p-4 rounded-lg">
+                    <div className="flex justify-between items-center">
+                      <span className="font-semibold text-green-800">
+                        Service Fee
+                      </span>
+                      <span className="text-xl font-bold text-green-700">
+                        {loadingFee ? "Loading..." : `৳ ${serviceFee}`}
+                      </span>
+                    </div>
+                  </div>
+                )}
 
                 {/* Date Selection - Only for Scheduled */}
                 {appointmentType === "scheduled" && (
@@ -467,12 +561,11 @@ const AppointmentForm = () => {
                 <button
                   type="button"
                   onClick={() => appointmentType === "scheduled" ? setStep(2) : setStep(3)}
-                  disabled={!formData.doctor_id || !formData.patient_id || (appointmentType === "scheduled" && !formData.appointment_date)}
-                  className={`w-full text-white p-3 rounded-lg disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-semibold ${
-                    appointmentType === "walk_in" 
-                      ? "bg-orange-600 hover:bg-orange-700" 
-                      : "bg-blue-600 hover:bg-blue-700"
-                  }`}
+                  disabled={!formData.doctor_id || !formData.patient_id || !selectedService || (appointmentType === "scheduled" && !formData.appointment_date)}
+                  className={`w-full text-white p-3 rounded-lg disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-semibold ${appointmentType === "walk_in"
+                    ? "bg-orange-600 hover:bg-orange-700"
+                    : "bg-blue-600 hover:bg-blue-700"
+                    }`}
                 >
                   {appointmentType === "scheduled" ? "Next: Choose Time Slot" : "Next: Confirm Walk-in"}
                 </button>
@@ -502,7 +595,7 @@ const AppointmentForm = () => {
 
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-3">Available Time Slots</label>
-                  
+
                   {loadingSlots ? (
                     <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
                       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
@@ -573,17 +666,14 @@ const AppointmentForm = () => {
             {/* Step 3: Confirmation */}
             {step === 3 && (
               <>
-                <div className={`p-6 rounded-lg border ${
-                  appointmentType === "walk_in" 
-                    ? "bg-orange-50 border-orange-200" 
-                    : "bg-green-50 border-green-200"
-                }`}>
-                  <h3 className={`font-bold text-lg mb-4 flex items-center ${
-                    appointmentType === "walk_in" ? "text-orange-800" : "text-green-800"
+                <div className={`p-6 rounded-lg border ${appointmentType === "walk_in"
+                  ? "bg-orange-50 border-orange-200"
+                  : "bg-green-50 border-green-200"
                   }`}>
-                    <span className={`rounded-full p-1 mr-2 ${
-                      appointmentType === "walk_in" ? "bg-orange-200" : "bg-green-200"
-                    }`}>✓</span>
+                  <h3 className={`font-bold text-lg mb-4 flex items-center ${appointmentType === "walk_in" ? "text-orange-800" : "text-green-800"
+                    }`}>
+                    <span className={`rounded-full p-1 mr-2 ${appointmentType === "walk_in" ? "bg-orange-200" : "bg-green-200"
+                      }`}>✓</span>
                     {appointmentType === "walk_in" ? "Walk-in" : "Appointment"} Summary
                   </h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
@@ -648,12 +738,11 @@ const AppointmentForm = () => {
                     name="reason"
                     value={formData.reason}
                     onChange={handleChange}
-                    className={`w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:border-transparent ${
-                      appointmentType === "walk_in" ? "focus:ring-orange-500" : "focus:ring-blue-500"
-                    }`}
+                    className={`w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:border-transparent ${appointmentType === "walk_in" ? "focus:ring-orange-500" : "focus:ring-blue-500"
+                      }`}
                     rows="3"
-                    placeholder={appointmentType === "walk_in" 
-                      ? "Brief reason for walk-in visit..." 
+                    placeholder={appointmentType === "walk_in"
+                      ? "Brief reason for walk-in visit..."
                       : "Brief reason for appointment (symptoms, follow-up, consultation, etc.)"}
                   />
                 </div>
@@ -668,11 +757,10 @@ const AppointmentForm = () => {
                   </button>
                   <button
                     type="submit"
-                    className={`flex-1 text-white p-3 rounded-lg transition-colors font-medium ${
-                      appointmentType === "walk_in"
-                        ? "bg-orange-600 hover:bg-orange-700"
-                        : "bg-green-600 hover:bg-green-700"
-                    }`}
+                    className={`flex-1 text-white p-3 rounded-lg transition-colors font-medium ${appointmentType === "walk_in"
+                      ? "bg-orange-600 hover:bg-orange-700"
+                      : "bg-green-600 hover:bg-green-700"
+                      }`}
                   >
                     Confirm & Book {appointmentType === "walk_in" ? "Walk-in" : "Appointment"}
                   </button>

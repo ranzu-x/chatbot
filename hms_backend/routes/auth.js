@@ -9,8 +9,10 @@ const router = express.Router();
 // ✅ Super Admin Login
 router.post("/superadmin/login", async (req, res) => {
     const { email, password } = req.body;
+    console.log(email,password);
+    
 
-    try {
+    try {       
         const [rows] = await pool.execute(
             `SELECT 
         u.id AS user_id,

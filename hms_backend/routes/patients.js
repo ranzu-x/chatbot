@@ -5,6 +5,56 @@ import { generatePatientCode } from "../utility/generatePatientCode.js";
 
 const router = express.Router();
 
+// ✅ Live patient search (for appointment form)
+router.get("/patients/search", authMiddleWare, async (req, res) => {
+  try {
+    const hospitalId = req.user.hospital_id;
+    const searchText = req.query.q;
+
+    // Safety check
+    if (!searchText || searchText.trim().length < 2) {
+      return res.status(200).json([]);
+    }
+
+    const likeQuery = `%${searchText}%`;
+
+    const sql = `
+      SELECT 
+        id,
+        patient_id AS patient_code,
+        first_name,
+        last_name,
+        phone
+      FROM patients
+      WHERE hospital_id = ?
+        AND (
+          first_name LIKE ?
+          OR last_name LIKE ?
+          OR phone LIKE ?
+          OR patient_id LIKE ?
+        )
+      ORDER BY first_name ASC
+      LIMIT 10
+    `;
+
+    const [rows] = await pool.query(sql, [
+      hospitalId,
+      likeQuery,
+      likeQuery,
+      likeQuery,
+      likeQuery,
+    ]);
+
+    return res.status(200).json(rows);
+  } catch (error) {
+    console.error("❌ Patient search error:", error);
+    res.status(500).json({
+      message: "Failed to search patients",
+    });
+  }
+});
+
+
 // ✅ Get patients with pagination
 router.get("/patients", authMiddleWare, async (req, res) => {
   try {
@@ -74,6 +124,7 @@ router.get("/patients", authMiddleWare, async (req, res) => {
 router.get("/patients/:id", authMiddleWare, async (req, res) => {
   const { id } = req.params;
   const { hospital_id } = req.user;
+      // console.log('Hello bro',id);
 
   try {
     const [rows] = await pool.query(
@@ -202,6 +253,7 @@ router.put("/patients/:id", authMiddleWare, async (req, res) => {
   try {
     const patientId = req.params.id;
     const hospitalId = req.user.hospital_id;
+ 
 
     const {
       // Patient Information

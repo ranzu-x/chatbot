@@ -11,11 +11,12 @@ import appointmentRoutes from "./routes/appointment.js";
 import billingRoutes from "./routes/billing.js";
 import slotsRoutes from "./routes/slots.js";
 import servicesRoutes from "./routes/services.js";
+import pool from "./db.js";
 
 dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
-
+console.log("DB HOST:", process.env.DB_HOST);
 // ✅ Middleware
 app.use(express.json());
 app.use(cors({
@@ -23,6 +24,15 @@ app.use(cors({
   credentials: true,
 }));
 app.use(cookieParser());
+
+
+try {
+  const conn = await pool.getConnection();
+  console.log("✅ DB Connected Successfully");
+  conn.release();
+} catch (err) {
+  console.error("❌ DB Connection Failed:", err);
+}
 
 // ✅ Routes
 app.use('/uploads', express.static('uploads'));  // Serve static files from uploads directory
@@ -35,6 +45,7 @@ app.use("/api/v1", appointmentRoutes)
 app.use("/api/v1", billingRoutes)
 app.use("/api/v1", slotsRoutes)
 app.use("/api/v1", servicesRoutes);
+
 
 // ✅ Server
 app.listen(port, () => {

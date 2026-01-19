@@ -6,119 +6,196 @@ import { requireRole } from "../middleware/roleMiddleware.js";
 const router = express.Router();
 
 // ✅ Create appointment with dynamic slot availability check
-router.post("/appointments", authMiddleWare, requireRole(['hospital_admin', 'doctor']), async (req, res) => {
-    const { doctor_id, patient_id, slot_id, reason, appointment_date, appointment_time } = req.body;
-    const { hospital_id, id: user_id } = req.user;
+router.post("/appointments",authMiddleWare, requireRole(["hospital_admin", "doctor"]), async (req, res) => {
+    const { doctor_id, patient_id, slot_id, appointment_time, reason } = req.body;
+    const { hospital_id } = req.user;
 
     try {
-        // Check slot availability using dynamic calculation
-        const [slotAvailability] = await pool.query(
-            `SELECT 
-                ds.id,
-                ds.slot_date,
-                ds.start_time,
-                ds.end_time,
-                ds.max_patients,
-                COUNT(a.id) as booked_count,
-                (ds.max_patients - COUNT(a.id)) as available_slots
-             FROM doctor_slots ds
-             LEFT JOIN appointments a ON ds.id = a.slot_id 
-               AND a.status NOT IN ('cancelled', 'completed')
-             WHERE ds.id = ? AND ds.doctor_id = ? AND ds.hospital_id = ?
-             GROUP BY ds.id
-             HAVING available_slots > 0`,
-            [slot_id, doctor_id, hospital_id]
-        );
+      // 1️⃣ Get slot info + availability
+      const [slots] = await pool.query(
+        `SELECT 
+            ds.id,
+            ds.slot_date,
+            ds.start_time,
+            ds.max_patients,
+            COUNT(a.id) AS booked_count,
+            (ds.max_patients - COUNT(a.id)) AS available_slots
+         FROM doctor_slots ds
+         LEFT JOIN appointments a 
+           ON ds.id = a.slot_id 
+           AND a.status NOT IN ('cancelled','completed')
+         WHERE ds.id = ? 
+           AND ds.doctor_id = ? 
+           AND ds.hospital_id = ?
+         GROUP BY ds.id
+         HAVING available_slots > 0`,
+        [slot_id, doctor_id, hospital_id]
+      );
 
-        if (slotAvailability.length === 0) {
-            return res.status(400).json({ error: "Selected slot is not available or fully booked" });
-        }
+      if (!slots.length) {
+        return res.status(400).json({ error: "Slot not available" });
+      }
 
-        const slot = slotAvailability[0];
+      const slot = slots[0];
 
-        // Start transaction
-        await pool.query('START TRANSACTION');
+      // 2️⃣ Fetch doctor appointment fee
+      const [[feeRow]] = await pool.query(
+        `SELECT fee as consultation_fee
+         FROM doctor_services 
+         WHERE user_id = ? LIMIT 1`,
+        [doctor_id]
+      );
 
-        try {
-            // Create appointment
-            const [result] = await pool.query(
-                `INSERT INTO appointments (hospital_id, doctor_id, patient_id, slot_id, 
-                 appointment_date, appointment_time, reason, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'scheduled')`,
-                [hospital_id, doctor_id, patient_id, slot_id, 
-                 slot.slot_date, appointment_time || slot.start_time, reason]
-            );
+      if (!feeRow) {
+        return res.status(400).json({ error: "Doctor fee not configured" });
+      }
 
-            await pool.query('COMMIT');
-            
-            res.json({ 
-                success: true,
-                message: "Appointment scheduled successfully",
-                appointment_id: result.insertId,
-                appointment_date: slot.slot_date,
-                appointment_time: appointment_time || slot.start_time,
-                available_slots: slot.available_slots - 1 // After booking
-            });
+      const appointment_fee = feeRow.consultation_fee;
 
-        } catch (error) {
-            await pool.query('ROLLBACK');
-            throw error;
-        }
+      // 3️⃣ Insert appointment (TRANSACTION SAFE)
+      await pool.query("START TRANSACTION");
+
+      const [result] = await pool.query(
+        `INSERT INTO appointments (
+          hospital_id,
+          doctor_id,
+          patient_id,
+          slot_id,
+          appointment_date,
+          appointment_time,
+          appointment_type,
+          appointment_fee,
+          reason,
+          status
+        ) VALUES (?, ?, ?, ?, ?, ?, 'scheduled', ?, ?, 'scheduled')`,
+        [
+          hospital_id,
+          doctor_id,
+          patient_id,
+          slot_id,
+          slot.slot_date,
+          appointment_time || slot.start_time,
+          appointment_fee,
+          reason,
+        ]
+      );
+
+      await pool.query("COMMIT");
+
+      res.json({
+        success: true,
+        appointment_id: result.insertId,
+        appointment_fee,
+        appointment_date: slot.slot_date,
+        appointment_time: appointment_time || slot.start_time,
+        remaining_slots: slot.available_slots - 1,
+      });
 
     } catch (error) {
-        console.error("Create appointment error:", error);
-        res.status(500).json({ error: error.message });
+      await pool.query("ROLLBACK");
+      console.error("[CREATE APPOINTMENT]", error);
+      res.status(500).json({ error: error.message });
     }
-});
+  }
+);
+
 
 // ✅ Create walk-in appointment (no slots required)
-router.post("/appointments/walk-in", authMiddleWare, requireRole(['hospital_admin', 'doctor', 'receptionist']), async (req, res) => {
+router.post(
+  "/appointments/walk-in",
+  authMiddleWare,
+  requireRole(["hospital_admin", "doctor", "receptionist"]),
+  async (req, res) => {
     const { doctor_id, patient_id, reason } = req.body;
     const { hospital_id } = req.user;
-    const today = new Date().toISOString().split('T')[0];
+
+    const today = new Date().toISOString().split("T")[0];
     const currentTime = new Date().toTimeString().slice(0, 5);
 
     try {
-        // Get current walk-in queue count for the doctor today
-        const [queueCount] = await pool.query(
-            `SELECT COUNT(*) as queue_length
-             FROM appointments 
-             WHERE doctor_id = ? 
-             AND hospital_id = ?
-             AND DATE(created_at) = ?
-             AND appointment_type = 'walk_in'
-             AND status IN ('scheduled', 'confirmed')`,
-            [doctor_id, hospital_id, today]
-        );
+      // 1️⃣ Get current walk-in queue count
+      const [[queueRow]] = await pool.query(
+        `SELECT COUNT(*) AS queue_length
+         FROM appointments
+         WHERE doctor_id = ?
+           AND hospital_id = ?
+           AND DATE(created_at) = ?
+           AND appointment_type = 'walk_in'
+           AND status IN ('scheduled', 'confirmed')`,
+        [doctor_id, hospital_id, today]
+      );
 
-        const queueLength = queueCount[0].queue_length;
-        const estimatedWaitTime = (queueLength + 1) * 15; // 15 minutes per patient
+      const queueLength = queueRow.queue_length;
+      const estimatedWaitTime = (queueLength + 1) * 15;
 
-        // Create walk-in appointment without slot association
-        const [result] = await pool.query(
-            `INSERT INTO appointments (hospital_id, doctor_id, patient_id, 
-             appointment_date, appointment_time, reason, status, appointment_type, 
-             walk_in_sequence, estimated_wait_time, check_in_time)
-            VALUES (?, ?, ?, ?, ?, ?, 'scheduled', 'walk_in', ?, ?, NOW())`,
-            [hospital_id, doctor_id, patient_id, 
-             today, currentTime, reason, queueLength + 1, estimatedWaitTime]
-        );
+      // 2️⃣ Fetch doctor consultation fee (SAME AS SCHEDULED)
+      const [[feeRow]] = await pool.query(
+        `SELECT fee AS consultation_fee
+         FROM doctor_services
+         WHERE user_id = ?
+         LIMIT 1`,
+        [doctor_id]
+      );
 
-        res.json({ 
-            success: true,
-            message: "Walk-in appointment created successfully",
-            appointment_id: result.insertId,
-            appointment_type: 'walk_in',
-            walk_in_sequence: queueLength + 1,
-            estimated_wait_time: estimatedWaitTime,
-            current_queue_length: queueLength
-        });
+      if (!feeRow) {
+        return res.status(400).json({ error: "Doctor fee not configured" });
+      }
+
+      const appointment_fee = feeRow.consultation_fee;
+
+      // 3️⃣ Transaction start
+      await pool.query("START TRANSACTION");
+
+      // 4️⃣ Insert walk-in appointment WITH FEE
+      const [result] = await pool.query(
+        `INSERT INTO appointments (
+          hospital_id,
+          doctor_id,
+          patient_id,
+          appointment_date,
+          appointment_time,
+          appointment_type,
+          appointment_fee,
+          reason,
+          status,
+          walk_in_sequence,
+          estimated_wait_time,
+          check_in_time
+        ) VALUES (?, ?, ?, ?, ?, 'walk_in', ?, ?, 'scheduled', ?, ?, NOW())`,
+        [
+          hospital_id,
+          doctor_id,
+          patient_id,
+          today,
+          currentTime,
+          appointment_fee,
+          reason,
+          queueLength + 1,
+          estimatedWaitTime,
+        ]
+      );
+
+      await pool.query("COMMIT");
+
+      res.json({
+        success: true,
+        message: "Walk-in appointment created successfully",
+        appointment_id: result.insertId,
+        appointment_type: "walk_in",
+        appointment_fee,
+        walk_in_sequence: queueLength + 1,
+        estimated_wait_time: estimatedWaitTime,
+        current_queue_length: queueLength,
+      });
 
     } catch (error) {
-        console.error("Create walk-in appointment error:", error);
-        res.status(500).json({ error: error.message });
+      await pool.query("ROLLBACK");
+      console.error("[CREATE WALK-IN APPOINTMENT]", error);
+      res.status(500).json({ error: error.message });
     }
-});
+  }
+);
+
 
 // ✅ Get walk-in queue for a doctor
 router.get("/appointments/walk-in/queue/:doctor_id", authMiddleWare, async (req, res) => {
@@ -370,6 +447,53 @@ router.get("/appointments/available-slots", authMiddleWare, async (req, res) => 
     }
 });
 
+// ✅ Get List of service details for generating appointment. 
+router.get("/doctor-services", authMiddleWare, async (req, res) => {
+
+    try {
+      const [services] = await pool.query(
+        `SELECT 
+            id,
+            service_name AS name
+         FROM services`
+      );
+
+      res.json(services);
+    } catch (error) {
+      console.error("[DOCTOR SERVICES]", error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+// ✅ Get service fees for generating appointment. 
+router.get("/doctor-fees", authMiddleWare, async (req, res) => {
+  const { doctor_id, service_id } = req.query;
+  const hospital_id = req.user.hospital_id;
+
+  try {
+    const [[row]] = await pool.query(
+      `SELECT fee
+       FROM doctor_services
+       WHERE user_id = ?
+         AND service_id = ?
+
+       LIMIT 1`,
+      [doctor_id, service_id]
+    );
+
+    if (!row) {
+      return res.status(404).json({ error: "Fee not configured for this service" });
+    }
+
+    res.json({ fee: row.fee });
+  } catch (error) {
+    console.error("[DOCTOR FEES]", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
 // ✅ Get appointment details with patient and doctor info for generating appointment bill. 
 router.get("/appointments/:id", authMiddleWare, async (req, res) => {
   const { id } = req.params;
@@ -392,10 +516,11 @@ router.get("/appointments/:id", authMiddleWare, async (req, res) => {
         p.phone AS patient_phone,
         p.address AS patient_address,
         CONCAT(u.first_name, ' ', u.last_name) AS doctor_name,
-        u.specialization AS doctor_specialization
+        d.specialization AS doctor_specialization
       FROM appointments a
       LEFT JOIN patients p ON a.patient_id = p.id
       LEFT JOIN users u ON a.doctor_id = u.id
+      LEFT JOIN doctor_details d ON a.doctor_id = d.user_id
       WHERE a.id = ? AND a.hospital_id = ?`,
       [id, hospital_id]
     );

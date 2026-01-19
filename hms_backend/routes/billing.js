@@ -6,45 +6,124 @@ const router = express.Router();
 
 // ✅ Generate bill after appointment
 router.post("/bills", authMiddleWare, async (req, res) => {
-  const { appointmentId, patientId, doctorId, subtotal, grandTotal, discount, paymentMode, billType } = req.body;
-  const hospital_id = req.user.hospital_id;
-
   const conn = await pool.getConnection();
   await conn.beginTransaction();
 
   try {
-    console.log("Bill data:", { appointmentId, doctorId, hospital_id, grandTotal, discount, subtotal, paymentMode, billType });
+    const {
+      appointment_id,
+      patient_id,
+      doctor_id,
+      bill_type,
+      subtotal,
+      discount_amount,
+      tax_amount,
+      grand_total,
+      paid_amount,
+      payment_method,
+      payment_status,
+      remarks,
+      items
+    } = req.body;
 
-    // 1️⃣ Insert into billing table
-    await conn.query(
-      `INSERT INTO billing 
-        (appointment_id, patient_id, doctor_id, hospital_id, grand_total, discount_amount, total_amount, payment_status, payment_method, bill_date, bill_type)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'paid', ?, NOW(), ?)`,
-      [appointmentId, patientId, doctorId, hospital_id, grandTotal, discount, subtotal, paymentMode, billType]
+    const hospital_id = req.user.hospital_id;
+    const created_by = req.user.id;
+
+    // 1️⃣ Insert billing
+    const [billResult] = await conn.query(
+      `INSERT INTO billing
+      (hospital_id, patient_id, doctor_id, appointment_id, bill_type, bill_date,
+       total_amount, discount_amount, tax_amount, grand_total,
+       paid_amount, payment_status, payment_method, created_by)
+      VALUES (?, ?, ?, ?, ?, CURDATE(), ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        hospital_id,
+        patient_id,
+        doctor_id,
+        appointment_id,
+        bill_type,
+        subtotal,
+        discount_amount,
+        tax_amount,
+        grand_total,
+        paid_amount,
+        payment_status,
+        payment_method,
+        created_by
+      ]
     );
 
-    // 2️⃣ Update appointment only if this is a doctor bill
-    if (billType === "doctor" && appointmentId) {
-      const [result] = await conn.query(
-        `UPDATE appointments 
-         SET status = 'confirmed', payment_status = 'paid'
-         WHERE id = ?`,
-        [appointmentId]
+    const billing_id = billResult.insertId;
+
+    // 2️⃣ Insert billing items
+    for (const item of items) {
+      await conn.query(
+        `INSERT INTO billing_items
+        (billing_id, service_name, quantity, unit_price, total_price)
+        VALUES (?, ?, ?, ?, ?)`,
+        [
+          billing_id,
+          item.service_name,
+          item.quantity,
+          item.unit_price,
+          item.total
+        ]
       );
-      console.log("Appointment updated:", result);
+    }
+
+    // 3️⃣ Update appointment if exists
+    if (appointment_id) {
+      await conn.query(
+        `UPDATE appointments
+         SET payment_status = 'paid'
+         WHERE id = ?`,
+        [appointment_id]
+      );
     }
 
     await conn.commit();
-    res.json({ message: "Bill generated successfully and appointment confirmed." });
-  } catch (error) {
+    res.json({ message: "Bill saved successfully", billing_id });
+
+  } catch (err) {
     await conn.rollback();
-    console.error("Error saving bill:", error);
-    res.status(500).json({ error: error.message });
+    console.error("Billing error:", err);
+    res.status(500).json({ message: "Billing failed" });
   } finally {
     conn.release();
   }
 });
 
+
+
+// ✅ Invoice print data
+router.get("/bills/:id", authMiddleWare, async (req, res) => {
+  const billId = req.params.id;
+  const hospital_id = req.user.hospital_id;
+
+  const [[bill]] = await pool.query(
+    `SELECT 
+      b.*,
+      CONCAT(p.first_name,' ',p.last_name) AS patient_name,
+      p.phone,
+      CONCAT(u.first_name,' ',u.last_name) AS doctor_name
+     FROM billing b
+     LEFT JOIN patients p ON b.patient_id = p.id
+     LEFT JOIN users u ON b.doctor_id = u.id
+     WHERE b.id = ? AND b.hospital_id = ?`,
+    [billId, hospital_id]
+  );
+
+  const [items] = await pool.query(
+    `SELECT * FROM billing_items WHERE billing_id = ?`,
+    [billId]
+  );
+
+  res.json({
+    bill,
+    items,
+    invoice_no: `INV-${new Date(bill.bill_date).getFullYear()}-${String(bill.id).padStart(6, "0")}`,
+  });
+});
 
 
 // ✅ Get all bills with pagination + search

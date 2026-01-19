@@ -7,8 +7,9 @@ export const AuthContexProvider = ({ children }) => {
   const [loading, setLoading] = useState(true); // Wait for check auth
 
   const login = async (email, password) => {
-    const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/v1/superadmin/login`, {
-      method: "POST",
+    // const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/v1/superadmin/login`, {
+    const res = await fetch("http://localhost:5000/api/v1/superadmin/login", {
+    method: "POST",
       headers: {
         "Content-Type": "application/json"
       },

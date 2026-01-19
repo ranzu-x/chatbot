@@ -9,6 +9,7 @@ const router = express.Router();
 // ✅ Hospital Admin Signup (Auto-login)
 router.post("/hospital-admin/signup", async (req, res) => {
   const { firstname, lastname, email, password } = req.body;
+   
 
   try {
     // 1️⃣ Check if email already exists
