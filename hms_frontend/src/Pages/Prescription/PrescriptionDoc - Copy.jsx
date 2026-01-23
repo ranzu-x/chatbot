@@ -1,49 +1,21 @@
-const PrescriptionDoc = ({ doctorId, patientId }) => {
+import React, { useState } from 'react';
 
-  const [prescribedMedicines, setPrescribedMedicines] = useState([]);
+const PrescriptionDoc = () => {
 
-  const [doctorDetails, setDoctorDetails] = useState({
-    name: "",
-    clinic: "",
-    contact: "",
-  });
-
-  const [patientDetails, setPatientDetails] = useState({
-    name: "",
-    age: "",
-    gender: "",
-    date: new Date().toISOString().slice(0, 10),
-  });
-
-  useEffect(() => {
-    fetchDoctor();
-    fetchPatient();
-  }, []);
-
-  const fetchDoctor = async () => {
-    try {
-      const res = await axios.get(
-        `http://localhost:5000/api/v1/doctors/${doctorId}`
-      );
-      setDoctorDetails(res.data);
-    } catch (error) {
-      console.error("Doctor fetch error", error);
-    }
-  };
-
-  const fetchPatient = async () => {
-    try {
-      const res = await axios.get(
-        `http://localhost:5000/api/v1/patients/${patientId}`
-      );
-      setPatientDetails((prev) => ({
-        ...prev,
-        ...res.data,
-      }));
-    } catch (error) {
-      console.error("Patient fetch error", error);
-    }
-  };
+      const [prescribedMedicines, setPrescribedMedicines] = useState([]);
+      // --- State for Doctor and Patient Details ---
+      const [doctorDetails, setDoctorDetails] = useState({
+        name: 'Dr. Emily Carter',
+        clinic: 'Community Health Clinic',
+        contact: 'contact@healthclinic.com',
+      });
+    
+      const [patientDetails, setPatientDetails] = useState({
+        name: '',
+        age: '',
+        gender: 'Male',
+        date: new Date().toISOString().slice(0, 10), // Default to today
+      });
     
     return (
                 <div>

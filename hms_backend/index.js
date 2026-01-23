@@ -11,6 +11,7 @@ import appointmentRoutes from "./routes/appointment.js";
 import billingRoutes from "./routes/billing.js";
 import slotsRoutes from "./routes/slots.js";
 import servicesRoutes from "./routes/services.js";
+import prescriptionRoutes from "./routes/prescriptions.js";
 import pool from "./db.js";
 
 dotenv.config();
@@ -45,6 +46,8 @@ app.use("/api/v1", appointmentRoutes)
 app.use("/api/v1", billingRoutes)
 app.use("/api/v1", slotsRoutes)
 app.use("/api/v1", servicesRoutes);
+app.use("/api/v1", prescriptionRoutes);
+
 
 
 // ✅ Server

@@ -12,7 +12,7 @@ router.get("/patients/search", authMiddleWare, async (req, res) => {
     const searchText = req.query.q;
 
     // Safety check
-    if (!searchText || searchText.trim().length < 2) {
+    if (!searchText || searchText.trim().length < 1) {
       return res.status(200).json([]);
     }
 
@@ -24,7 +24,10 @@ router.get("/patients/search", authMiddleWare, async (req, res) => {
         patient_id AS patient_code,
         first_name,
         last_name,
-        phone
+        phone,
+        age,
+        gender
+        
       FROM patients
       WHERE hospital_id = ?
         AND (

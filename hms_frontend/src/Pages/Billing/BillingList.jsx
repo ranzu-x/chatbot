@@ -4,6 +4,7 @@ import Swal from "sweetalert2";
 import DataTable from "../../Components/Table Components/DataTable";
 import TableActions from "../../Components/Table Components/TableActionButtons";
 import axios from "axios";
+import { FaPrint } from "react-icons/fa";
 
 function BillingList() {
   const [billings, setBillings] = useState([]);
@@ -108,9 +109,9 @@ function BillingList() {
     },
     { header: "Patient", accessor: "patient_name" },
     { header: "Doctor", accessor: "doctor_name" },
+    { header: "Invoice Number", accessor: "invoice_no" },
     {
-      header: "Amount",
-      accessor: "paid_amount",
+      header: "Amount", accessor: "paid_amount",
       render: (row) => `$${row.paid_amount || 0}`,
     },
     {
@@ -151,6 +152,14 @@ function BillingList() {
             onView={handleView}
             onEdit={handleEdit}
             onDelete={handleDelete}
+            extraActions={[
+              {
+                key: "print",
+                label: "Print",
+                icon: <FaPrint className="text-gray-700" />,
+                onClick: (bill) => navigate(`/billing/print/${bill.id}`),
+              },
+            ]}
           />
         )}
       />

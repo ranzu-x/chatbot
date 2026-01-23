@@ -29,33 +29,94 @@ router.post("/bills", authMiddleWare, async (req, res) => {
     const hospital_id = req.user.hospital_id;
     const created_by = req.user.id;
 
-    // 1️⃣ Insert billing
-    const [billResult] = await conn.query(
-      `INSERT INTO billing
-      (hospital_id, patient_id, doctor_id, appointment_id, bill_type, bill_date,
-       total_amount, discount_amount, tax_amount, grand_total,
-       paid_amount, payment_status, payment_method, created_by)
-      VALUES (?, ?, ?, ?, ?, CURDATE(), ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        hospital_id,
-        patient_id,
-        doctor_id,
-        appointment_id,
-        bill_type,
-        subtotal,
-        discount_amount,
-        tax_amount,
-        grand_total,
-        paid_amount,
-        payment_status,
-        payment_method,
-        created_by
-      ]
+    // 1️⃣ Check if bill already exists for this appointment
+    const [existingBill] = await conn.query(
+      `SELECT id FROM billing
+       WHERE hospital_id = ? AND appointment_id = ?
+       LIMIT 1`,
+      [hospital_id, appointment_id]
     );
 
-    const billing_id = billResult.insertId;
+    let billing_id;
 
-    // 2️⃣ Insert billing items
+    if (existingBill.length > 0) {
+      // ================= UPDATE BILL =================
+      billing_id = existingBill[0].id;
+
+      await conn.query(
+        `UPDATE billing SET
+          patient_id = ?,
+          doctor_id = ?,
+          bill_type = ?,
+          total_amount = ?,
+          discount_amount = ?,
+          tax_amount = ?,
+          grand_total = ?,
+          paid_amount = ?,
+          payment_status = ?,
+          payment_method = ?,
+          remarks = ?
+        WHERE id = ?`,
+        [
+          patient_id,
+          doctor_id,
+          bill_type,
+          subtotal,
+          discount_amount,
+          tax_amount,
+          grand_total,
+          paid_amount,
+          payment_status,
+          payment_method,
+          remarks,
+          billing_id
+        ]
+      );
+
+      // Remove old items
+      await conn.query(
+        `DELETE FROM billing_items WHERE billing_id = ?`,
+        [billing_id]
+      );
+
+    } else {
+  // ================= INSERT BILL =================
+  const [billResult] = await conn.query(
+    `INSERT INTO billing
+    (hospital_id, patient_id, doctor_id, appointment_id, bill_type, bill_date,
+     total_amount, discount_amount, tax_amount, grand_total,
+     paid_amount, payment_status, payment_method, remarks, created_by)
+    VALUES (?, ?, ?, ?, ?, CURDATE(), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      hospital_id,
+      patient_id,
+      doctor_id,
+      appointment_id,
+      bill_type,
+      subtotal,
+      discount_amount,
+      tax_amount,
+      grand_total,
+      paid_amount,
+      payment_status,
+      payment_method,
+      remarks,
+      created_by
+    ]
+  );
+
+  billing_id = billResult.insertId;
+
+  // 🔐 Generate invoice number ONCE
+  const invoice_no = `INV-${String(billing_id).padStart(6, "0")}`;
+
+  await conn.query(
+    `UPDATE billing SET invoice_no = ? WHERE id = ?`,
+    [invoice_no, billing_id]
+  );
+}
+
+    // 2️⃣ Insert billing items (fresh)
     for (const item of items) {
       await conn.query(
         `INSERT INTO billing_items
@@ -71,18 +132,22 @@ router.post("/bills", authMiddleWare, async (req, res) => {
       );
     }
 
-    // 3️⃣ Update appointment if exists
+    // 3️⃣ Update appointment payment status
     if (appointment_id) {
       await conn.query(
         `UPDATE appointments
-         SET payment_status = 'paid'
+         SET payment_status = ?
          WHERE id = ?`,
-        [appointment_id]
+        [payment_status, appointment_id]
       );
     }
 
     await conn.commit();
-    res.json({ message: "Bill saved successfully", billing_id });
+
+    res.json({
+      message: existingBill.length ? "Bill updated successfully" : "Bill created successfully",
+      billing_id
+    });
 
   } catch (err) {
     await conn.rollback();

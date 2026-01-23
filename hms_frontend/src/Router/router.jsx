@@ -21,6 +21,7 @@ import Unauthorized from "../Pages/Unauthorized";
 import PatientsForm from "../Pages/Patients/PatientsForm";
 import ProfilePage from "../Pages/Profile/ProfilePage";
 import SlotManager from "../Pages/Appointment/SlotManager";
+import BillingPrint from "../Pages/Billing/BillingPrint";
 
 
 const router = createBrowserRouter([
@@ -170,6 +171,14 @@ const router = createBrowserRouter([
         Component: () => {
           return (
             <PrivateRoute><BillingList></BillingList></PrivateRoute>
+          );
+        }
+      },
+      {
+        path: "/billing/print/:id",
+        Component: () => {
+          return (
+            <PrivateRoute><BillingPrint></BillingPrint></PrivateRoute>
           );
         }
       },
