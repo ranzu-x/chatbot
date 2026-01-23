@@ -86,8 +86,11 @@ const BillingPrint = () => {
         tax={Number(bill.tax_amount)}
         grandTotal={Number(bill.grand_total)}
         invoiceNo={invoice_no}
+        showActions={true}
       />
+      
     </div>
+    
   );
 };
 
