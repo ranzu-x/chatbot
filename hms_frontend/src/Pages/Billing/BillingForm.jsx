@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Plus, Trash2, Printer, Save, Search, User } from 'lucide-react';
 import axios from 'axios';
 import { useSearchParams } from 'react-router';
+import InvoiceLayout from './InvoiceLayout';
 
 const HospitalBillingSystem = () => {
   const [billType, setBillType] = useState('doctor');
@@ -21,7 +22,7 @@ const HospitalBillingSystem = () => {
   const [appointmentData, setAppointmentData] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  const printRef = useRef();
+  // const printRef = useRef();
 
   useEffect(() => {
     if (appointmentId) {
@@ -168,14 +169,14 @@ const HospitalBillingSystem = () => {
   //       <title>Hospital Invoice - ${invoiceNumber}</title>
   //       <style>
   //         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-          
+
   //         * {
   //           margin: 0;
   //           padding: 0;
   //           box-sizing: border-box;
   //           font-family: 'Inter', sans-serif;
   //         }
-          
+
   //         body {
   //           background: white;
   //           color: #333;
@@ -183,34 +184,34 @@ const HospitalBillingSystem = () => {
   //           max-width: 800px;
   //           margin: 0 auto;
   //         }
-          
+
   //         .invoice-container {
   //           border: 2px solid #2563eb;
   //           border-radius: 12px;
   //           overflow: hidden;
   //           box-shadow: 0 4px 20px rgba(0,0,0,0.1);
   //         }
-          
+
   //         .invoice-header {
   //           background: linear-gradient(135deg, #2563eb, #1d4ed8);
   //           color: white;
   //           padding: 30px;
   //           text-align: center;
   //         }
-          
+
   //         .hospital-name {
   //           font-size: 32px;
   //           font-weight: 700;
   //           margin-bottom: 8px;
   //           letter-spacing: 1px;
   //         }
-          
+
   //         .hospital-tagline {
   //           font-size: 16px;
   //           opacity: 0.9;
   //           margin-bottom: 20px;
   //         }
-          
+
   //         .invoice-title {
   //           font-size: 28px;
   //           font-weight: 600;
@@ -218,7 +219,7 @@ const HospitalBillingSystem = () => {
   //           text-transform: uppercase;
   //           letter-spacing: 2px;
   //         }
-          
+
   //         .invoice-info {
   //           background: #f8fafc;
   //           padding: 20px 30px;
@@ -227,7 +228,7 @@ const HospitalBillingSystem = () => {
   //           gap: 20px;
   //           border-bottom: 1px solid #e2e8f0;
   //         }
-          
+
   //         .info-group h4 {
   //           color: #64748b;
   //           font-size: 12px;
@@ -235,19 +236,19 @@ const HospitalBillingSystem = () => {
   //           letter-spacing: 1px;
   //           margin-bottom: 8px;
   //         }
-          
+
   //         .info-group p {
   //           font-size: 16px;
   //           font-weight: 500;
   //           color: #1e293b;
   //         }
-          
+
   //         .patient-details {
   //           background: white;
   //           padding: 25px 30px;
   //           border-bottom: 2px solid #e2e8f0;
   //         }
-          
+
   //         .section-title {
   //           color: #2563eb;
   //           font-size: 18px;
@@ -257,37 +258,37 @@ const HospitalBillingSystem = () => {
   //           border-bottom: 2px solid #2563eb;
   //           display: inline-block;
   //         }
-          
+
   //         .patient-grid {
   //           display: grid;
   //           grid-template-columns: repeat(3, 1fr);
   //           gap: 15px;
   //         }
-          
+
   //         .patient-item label {
   //           display: block;
   //           color: #64748b;
   //           font-size: 14px;
   //           margin-bottom: 5px;
   //         }
-          
+
   //         .patient-item p {
   //           font-size: 15px;
   //           font-weight: 500;
   //           color: #1e293b;
   //         }
-          
+
   //         .items-table {
   //           width: 100%;
   //           border-collapse: collapse;
   //           margin: 25px 0;
   //         }
-          
+
   //         .items-table thead {
   //           background: #2563eb;
   //           color: white;
   //         }
-          
+
   //         .items-table th {
   //           padding: 15px;
   //           text-align: left;
@@ -296,39 +297,39 @@ const HospitalBillingSystem = () => {
   //           font-size: 13px;
   //           letter-spacing: 0.5px;
   //         }
-          
+
   //         .items-table tbody tr {
   //           border-bottom: 1px solid #e2e8f0;
   //         }
-          
+
   //         .items-table tbody tr:nth-child(even) {
   //           background: #f8fafc;
   //         }
-          
+
   //         .items-table td {
   //           padding: 12px 15px;
   //           font-size: 14px;
   //         }
-          
+
   //         .items-table .text-right {
   //           text-align: right;
   //         }
-          
+
   //         .items-table .text-center {
   //           text-align: center;
   //         }
-          
+
   //         .amount {
   //           font-weight: 600;
   //           color: #1e293b;
   //         }
-          
+
   //         .bill-summary {
   //           background: white;
   //           padding: 25px 30px;
   //           border-top: 2px solid #e2e8f0;
   //         }
-          
+
   //         .summary-grid {
   //           display: grid;
   //           grid-template-columns: 1fr 1fr;
@@ -336,55 +337,55 @@ const HospitalBillingSystem = () => {
   //           max-width: 500px;
   //           margin-left: auto;
   //         }
-          
+
   //         .summary-row {
   //           display: flex;
   //           justify-content: space-between;
   //           padding: 10px 0;
   //           border-bottom: 1px dashed #cbd5e1;
   //         }
-          
+
   //         .summary-label {
   //           color: #64748b;
   //           font-size: 15px;
   //         }
-          
+
   //         .summary-value {
   //           font-weight: 500;
   //           color: #1e293b;
   //         }
-          
+
   //         .total-row {
   //           border-top: 2px solid #2563eb;
   //           border-bottom: none;
   //           margin-top: 10px;
   //           padding-top: 15px;
   //         }
-          
+
   //         .total-label {
   //           font-size: 18px;
   //           font-weight: 700;
   //           color: #2563eb;
   //         }
-          
+
   //         .total-value {
   //           font-size: 24px;
   //           font-weight: 700;
   //           color: #2563eb;
   //         }
-          
+
   //         .payment-info {
   //           margin-top: 20px;
   //           padding-top: 20px;
   //           border-top: 1px solid #e2e8f0;
   //         }
-          
+
   //         .payment-grid {
   //           display: grid;
   //           grid-template-columns: repeat(2, 1fr);
   //           gap: 15px;
   //         }
-          
+
   //         .footer {
   //           text-align: center;
   //           padding: 25px 30px;
@@ -393,19 +394,19 @@ const HospitalBillingSystem = () => {
   //           color: #64748b;
   //           font-size: 13px;
   //         }
-          
+
   //         .thank-you {
   //           color: #2563eb;
   //           font-weight: 600;
   //           font-size: 16px;
   //           margin-bottom: 10px;
   //         }
-          
+
   //         .hospital-contact {
   //           margin-top: 10px;
   //           font-size: 12px;
   //         }
-          
+
   //         .watermark {
   //           position: fixed;
   //           top: 50%;
@@ -418,7 +419,7 @@ const HospitalBillingSystem = () => {
   //           white-space: nowrap;
   //           pointer-events: none;
   //         }
-          
+
   //         .bill-type-badge {
   //           display: inline-block;
   //           background: #dcfce7;
@@ -430,17 +431,17 @@ const HospitalBillingSystem = () => {
   //           margin-left: 10px;
   //           text-transform: uppercase;
   //         }
-          
+
   //         @media print {
   //           body {
   //             padding: 0;
   //           }
-            
+
   //           .invoice-container {
   //             border: none;
   //             box-shadow: none;
   //           }
-            
+
   //           .no-print {
   //             display: none;
   //           }
@@ -449,7 +450,7 @@ const HospitalBillingSystem = () => {
   //     </head>
   //     <body>
   //       <div class="watermark">${billType === 'doctor' ? 'MEDICAL CONSULTATION' : billType === 'lab' ? 'LABORATORY TEST' : 'PHARMACY'}</div>
-        
+
   //       <div class="invoice-container">
   //         <div class="invoice-header">
   //           <div class="hospital-name">CITY HOSPITAL & DIAGNOSTICS</div>
@@ -459,7 +460,7 @@ const HospitalBillingSystem = () => {
   //             123 Medical Street, Health City, HC 12345 | Phone: (555) 123-4567
   //           </div>
   //         </div>
-          
+
   //         <div class="invoice-info">
   //           <div class="info-group">
   //             <h4>Invoice Number</h4>
@@ -480,7 +481,7 @@ const HospitalBillingSystem = () => {
   //             <p>${paymentMode.charAt(0).toUpperCase() + paymentMode.slice(1)}</p>
   //           </div>
   //         </div>
-          
+
   //         <div class="patient-details">
   //           <div class="section-title">Patient Information</div>
   //           <div class="patient-grid">
@@ -510,7 +511,7 @@ const HospitalBillingSystem = () => {
   //             </div>
   //           </div>
   //         </div>
-          
+
   //         <div style="padding: 25px 30px;">
   //           <div class="section-title">Bill Details</div>
   //           <table class="items-table">
@@ -540,7 +541,7 @@ const HospitalBillingSystem = () => {
   //                   <td class="text-right amount">$${Number(item.amount).toFixed(2)}</td>
   //                 </tr>
   //               `).join('') : ''}
-                
+
   //               ${billType === 'lab' ? labItems.map(item => `
   //                 <tr>
   //                   <td>${item.testName || 'Test'}</td>
@@ -549,7 +550,7 @@ const HospitalBillingSystem = () => {
   //                   <td class="text-right amount">$${Number(item.amount).toFixed(2)}</td>
   //                 </tr>
   //               `).join('') : ''}
-                
+
   //               ${billType === 'medicine' ? medicineItems.map(item => `
   //                 <tr>
   //                   <td>${item.medicineName || 'Medicine'}</td>
@@ -562,7 +563,7 @@ const HospitalBillingSystem = () => {
   //             </tbody>
   //           </table>
   //         </div>
-          
+
   //         <div class="bill-summary">
   //           <div class="section-title">Bill Summary</div>
   //           <div class="summary-grid">
@@ -583,7 +584,7 @@ const HospitalBillingSystem = () => {
   //               <span class="total-value">$${grandTotal.toFixed(2)}</span>
   //             </div>
   //           </div>
-            
+
   //           <div class="payment-info">
   //             <div class="section-title">Payment Information</div>
   //             <div class="payment-grid">
@@ -608,7 +609,7 @@ const HospitalBillingSystem = () => {
   //   })}</p>
   //               </div>
   //             </div>
-              
+
   //             ${remarks ? `
   //               <div style="margin-top: 20px;">
   //                 <div style="color: #64748b; font-size: 14px; margin-bottom: 5px;">Remarks:</div>
@@ -619,7 +620,7 @@ const HospitalBillingSystem = () => {
   //             ` : ''}
   //           </div>
   //         </div>
-          
+
   //         <div class="footer">
   //           <div class="thank-you">Thank you for choosing City Hospital!</div>
   //           <div>This is a computer generated invoice and does not require a physical signature.</div>
@@ -632,7 +633,7 @@ const HospitalBillingSystem = () => {
   //           </div>
   //         </div>
   //       </div>
-        
+
   //       <script>
   //         window.onload = function() {
   //           window.print();
@@ -1061,129 +1062,25 @@ const HospitalBillingSystem = () => {
           </div>
         )}
 
-        {/* Billing Summary */}
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+          {/* Billing Summary starts */}
           <div className="lg:col-span-2">
-            <div ref={printRef} className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-              <div className="border-b border-gray-200 pb-4 mb-4">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h3 className="text-xl font-bold text-gray-800">Invoice Preview</h3>
-                    <p className="text-sm text-gray-600">Professional bill format</p>
-                  </div>
-                  <div className="text-right">
-                    {/* <div className="text-lg font-semibold text-blue-600">{invoiceNumber}</div> */}
-                    <div className="text-sm text-gray-500">Invoice #</div>
-                  </div>
-                </div>
-              </div>
+<InvoiceLayout
+  billType={billType}
+  patientInfo={patientInfo}
+  doctorItems={doctorItems}
+  labItems={labItems}
+  medicineItems={medicineItems}
+  subtotal={subtotal}
+  discountAmount={discountAmount}
+  tax={tax}
+  grandTotal={grandTotal}
+  // invoiceNo={invoiceNumber}
+/>
 
-              <div className="grid grid-cols-2 gap-6 mb-6">
-                <div>
-                  <h4 className="font-medium text-gray-700 mb-2">Bill From</h4>
-                  <div className="text-sm">
-                    <p className="font-semibold text-gray-900">City Hospital & Diagnostics</p>
-                    <p className="text-gray-600">123 Medical Street</p>
-                    <p className="text-gray-600">Health City, HC 12345</p>
-                    <p className="text-gray-600">Phone: (555) 123-4567</p>
-                  </div>
-                </div>
-                <div>
-                  <h4 className="font-medium text-gray-700 mb-2">Bill To</h4>
-                  <div className="text-sm">
-                    <p className="font-semibold text-gray-900">{patientInfo.patientName || 'Patient Name'}</p>
-                    <p className="text-gray-600">ID: {patientInfo.patientId || 'N/A'}</p>
-                    <p className="text-gray-600">{patientInfo.address || 'Address'}</p>
-                    <p className="text-gray-600">Phone: {patientInfo.phone || 'N/A'}</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      {billType === 'doctor' && (
-                        <>
-                          <th className="py-3 px-4 text-left font-semibold text-gray-700">Service Description</th>
-                          <th className="py-3 px-4 text-right font-semibold text-gray-700">Amount</th>
-                        </>
-                      )}
-                      {billType === 'lab' && (
-                        <>
-                          <th className="py-3 px-4 text-left font-semibold text-gray-700">Test Name</th>
-                          <th className="py-3 px-4 text-center font-semibold text-gray-700">Qty</th>
-                          <th className="py-3 px-4 text-right font-semibold text-gray-700">Unit Price</th>
-                          <th className="py-3 px-4 text-right font-semibold text-gray-700">Amount</th>
-                        </>
-                      )}
-                      {billType === 'medicine' && (
-                        <>
-                          <th className="py-3 px-4 text-left font-semibold text-gray-700">Medicine Name</th>
-                          <th className="py-3 px-4 text-center font-semibold text-gray-700">Qty</th>
-                          <th className="py-3 px-4 text-right font-semibold text-gray-700">Unit Price</th>
-                          <th className="py-3 px-4 text-right font-semibold text-gray-700">Discount</th>
-                          <th className="py-3 px-4 text-right font-semibold text-gray-700">Amount</th>
-                        </>
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {billType === 'doctor' && doctorItems.map((item) => (
-                      <tr key={item.id}>
-                        <td className="py-3 px-4">{item.service || 'Consultation'}</td>
-                        <td className="py-3 px-4 text-right font-medium">${Number(item.amount).toFixed(2)}</td>
-                      </tr>
-                    ))}
-                    {billType === 'lab' && labItems.map((item) => (
-                      <tr key={item.id}>
-                        <td className="py-3 px-4">{item.testName || 'Test'}</td>
-                        <td className="py-3 px-4 text-center">{item.quantity}</td>
-                        <td className="py-3 px-4 text-right">${Number(item.rate).toFixed(2)}</td>
-                        <td className="py-3 px-4 text-right font-medium">${Number(item.amount).toFixed(2)}</td>
-                      </tr>
-                    ))}
-                    {billType === 'medicine' && medicineItems.map((item) => (
-                      <tr key={item.id}>
-                        <td className="py-3 px-4">{item.medicineName || 'Medicine'}</td>
-                        <td className="py-3 px-4 text-center">{item.quantity}</td>
-                        <td className="py-3 px-4 text-right">${Number(item.rate).toFixed(2)}</td>
-                        <td className="py-3 px-4 text-right text-red-600">-${Number(item.discount).toFixed(2)}</td>
-                        <td className="py-3 px-4 text-right font-medium">${Number(item.amount).toFixed(2)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="mt-8 border-t border-gray-200 pt-6">
-                <div className="max-w-xs ml-auto">
-                  <div className="flex justify-between py-2">
-                    <span className="text-gray-600">Subtotal:</span>
-                    <span className="font-medium">${subtotal.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between py-2">
-                    <span className="text-gray-600">Discount:</span>
-                    <span className="font-medium text-red-600">-${discountAmount.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between py-2">
-                    <span className="text-gray-600">Tax (5%):</span>
-                    <span className="font-medium">${tax.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between py-3 mt-2 border-t border-gray-200">
-                    <span className="font-bold text-lg text-gray-800">Total:</span>
-                    <span className="font-bold text-xl text-blue-600">${grandTotal.toFixed(2)}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-6 text-center text-sm text-gray-500">
-                <p>Thank you for your business!</p>
-                <p className="mt-1">This invoice is computer generated and valid without signature.</p>
-              </div>
-            </div>
           </div>
-
+          {/* Billing Summary Ends */}
           <div className="space-y-6">
             <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
               <h3 className="text-lg font-semibold text-gray-800 mb-4">Payment Details</h3>

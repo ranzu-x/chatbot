@@ -34,7 +34,7 @@ const Sidebar = () => {
                     <Link to={'/prescription'} className={getLinkClass('/prescription')}>
                         <FaFilePrescription className="h-5 w-5 mr-3" /> Prescription
                     </Link>
-                    <Link to={'/appointments'} className={getLinkClass('/billing')}>
+                    <Link to={'/appointments'} className={getLinkClass('/appointments')}>
                         <CalendarDaysIcon className="h-5 w-5 mr-3" /> Appointments
                     </Link>
                     <Link to={'/billing'} className={getLinkClass('/billing')}>
@@ -49,7 +49,7 @@ const Sidebar = () => {
                     <Link to={'/adduser'} className={getLinkClass('/adduser')}>
                         <RectangleStackIcon className="h-5 w-5 mr-3" /> Add User
                     </Link>
-                    <Link to={'/slots/manage'} className={getLinkClass('/adduser')}>
+                    <Link to={'/slots/manage'} className={getLinkClass('/slots/manage')}>
                         <RectangleStackIcon className="h-5 w-5 mr-3" /> Manage Slots
                     </Link>
 
