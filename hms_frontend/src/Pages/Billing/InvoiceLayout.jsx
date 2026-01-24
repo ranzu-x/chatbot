@@ -279,38 +279,140 @@ const InvoiceLayout = ({
     };
 
     // PDF Download function
-    const handleDownloadPDF = async () => {
-        if (!invoiceRef.current) return;
+const handleDownloadPDF = async () => {
+    try {
+        // Create a temporary div for the printable content
+        const printContent = document.createElement('div');
+        printContent.innerHTML = `
+            <div style="font-family: Arial, sans-serif; padding: 20px;">
+                <div style="text-align: center; margin-bottom: 30px;">
+                    <h1 style="color: #2563eb; margin: 0;">MEDICAL INVOICE</h1>
+                    <h2 style="color: #4b5563; margin: 5px 0 0 0;">City Hospital</h2>
+                </div>
+                
+                <div style="margin-bottom: 20px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                        <div>
+                            <strong>Invoice No:</strong> INV-${Date.now().toString().slice(-6)}
+                        </div>
+                        <div>
+                            <strong>Date:</strong> ${new Date().toLocaleDateString()}
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="margin-bottom: 20px;">
+                    <h3 style="color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 5px;">
+                        Patient Information
+                    </h3>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                        <div><strong>Patient ID:</strong> ${patientInfo.patientId || 'N/A'}</div>
+                        <div><strong>Name:</strong> ${patientInfo.patientName || 'N/A'}</div>
+                        <div><strong>Age/Gender:</strong> ${patientInfo.age || 'N/A'} / ${patientInfo.gender || 'N/A'}</div>
+                        <div><strong>Contact:</strong> ${patientInfo.phone || 'N/A'}</div>
+                        <div><strong>Doctor:</strong> ${patientInfo.doctorName || 'N/A'}</div>
+                    </div>
+                </div>
+                
+                <div style="margin-bottom: 20px;">
+                    <h3 style="color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 5px;">
+                        Bill Details
+                    </h3>
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="background-color: #2563eb; color: white;">
+                                <th style="padding: 10px; text-align: left;">Description</th>
+                                <th style="padding: 10px; text-align: right;">Amount ($)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${billType === 'doctor' ? doctorItems.map(item => `
+                                <tr style="border-bottom: 1px solid #e5e7eb;">
+                                    <td style="padding: 10px;">${item.service || 'Service'}</td>
+                                    <td style="padding: 10px; text-align: right;">$${Number(item.amount).toFixed(2)}</td>
+                                </tr>
+                            `).join('') : ''}
+                            
+                            ${billType === 'lab' ? labItems.map(item => `
+                                <tr style="border-bottom: 1px solid #e5e7eb;">
+                                    <td style="padding: 10px;">${item.testName || 'Test'}</td>
+                                    <td style="padding: 10px; text-align: right;">$${Number(item.amount).toFixed(2)}</td>
+                                </tr>
+                            `).join('') : ''}
+                            
+                            ${billType === 'medicine' ? medicineItems.map(item => `
+                                <tr style="border-bottom: 1px solid #e5e7eb;">
+                                    <td style="padding: 10px;">${item.medicineName || 'Medicine'}</td>
+                                    <td style="padding: 10px; text-align: right;">$${Number(item.amount).toFixed(2)}</td>
+                                </tr>
+                            `).join('') : ''}
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div style="margin-bottom: 20px;">
+                    <h3 style="color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 5px;">
+                        Bill Summary
+                    </h3>
+                    <div style="max-width: 300px; margin-left: auto;">
+                        <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed #cbd5e1;">
+                            <span>Subtotal:</span>
+                            <span>$${subtotal.toFixed(2)}</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed #cbd5e1;">
+                            <span>Discount:</span>
+                            <span style="color: #dc2626;">-$${discountAmount.toFixed(2)}</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed #cbd5e1;">
+                            <span>Tax (5%):</span>
+                            <span>$${tax.toFixed(2)}</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; padding: 12px 0; border-top: 2px solid #2563eb; margin-top: 8px;">
+                            <span style="font-weight: bold;">Grand Total:</span>
+                            <span style="font-weight: bold; color: #2563eb;">$${grandTotal.toFixed(2)}</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; text-align: center; color: #6b7280;">
+                    <p>Thank you for choosing City Hospital!</p>
+                    <p style="font-size: 12px;">This is a computer generated invoice</p>
+                </div>
+            </div>
+        `;
 
-        try {
-            // Create canvas from the invoice component
-            const canvas = await html2canvas(invoiceRef.current, {
-                scale: 2, // Higher quality
-                useCORS: true,
-                backgroundColor: '#ffffff'
-            });
+        // Append to body (hidden)
+        document.body.appendChild(printContent);
 
-            // Convert canvas to image
-            const imgData = canvas.toDataURL('image/png');
-            
-            // Create PDF
-            const pdf = new jsPDF({
-                orientation: 'portrait',
-                unit: 'mm',
-                format: 'a4'
-            });
+        // Create canvas from the content
+        const canvas = await html2canvas(printContent, {
+            scale: 2,
+            backgroundColor: '#ffffff',
+            logging: false,
+            useCORS: true
+        });
 
-            const imgWidth = 190; // A4 width in mm
-            const imgHeight = (canvas.height * imgWidth) / canvas.width;
-            
-            pdf.addImage(imgData, 'PNG', 10, 10, imgWidth, imgHeight);
-            pdf.save(`${invoiceNo || 'invoice'}.pdf`);
-            
-        } catch (error) {
-            console.error('Error generating PDF:', error);
-            alert('Failed to generate PDF. Please try again.');
-        }
-    };
+        // Remove the temporary element
+        document.body.removeChild(printContent);
+
+        // Create PDF
+        const pdf = new jsPDF({
+            orientation: 'portrait',
+            unit: 'mm',
+            format: 'a4'
+        });
+
+        const imgWidth = 190; // A4 width in mm
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+        
+        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 10, 10, imgWidth, imgHeight);
+        pdf.save(`invoice-${Date.now().toString().slice(-6)}.pdf`);
+        
+    } catch (error) {
+        console.error('Error generating PDF:', error);
+        alert('Failed to generate PDF. Please try again.');
+    }
+};
 
     return (
         <div>
