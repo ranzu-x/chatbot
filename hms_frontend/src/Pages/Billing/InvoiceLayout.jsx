@@ -4,6 +4,7 @@ import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 
 const InvoiceLayout = ({
+    hospitalInfo,
     billType,
     patientInfo,
     doctorItems,
@@ -134,8 +135,18 @@ const InvoiceLayout = ({
                 <div class="invoice-print">
                     <div class="header">
                         <h1>MEDICAL INVOICE</h1>
-                        <p>City Hospital & Diagnostics</p>
-                        <p style="margin-top: 5px; font-size: 12px;">123 Medical Street | Phone: (555) 123-4567</p>
+                        <p>${hospitalInfo?.hospital_name || ''}</p>
+                    <p style="margin-top: 5px; font-size: 12px;">
+                    ${hospitalInfo?.address || ''}, 
+                    ${hospitalInfo?.city || ''}, 
+                    ${hospitalInfo?.state || ''} 
+                    ${hospitalInfo?.zip_code || ''}
+                    </p>
+                    <p style="font-size: 12px;">
+                        Phone: ${hospitalInfo?.phone || 'N/A'} | 
+                        Email: ${hospitalInfo?.email || 'N/A'}
+                    </p>
+
                     </div>
                     
                     <div class="info-section">
@@ -145,10 +156,10 @@ const InvoiceLayout = ({
                                 <p>${invoiceNo}</p>
                                 <h4 style="margin-top: 10px;">Date</h4>
                                 <p>${new Date().toLocaleDateString('en-US', {
-                                    year: 'numeric',
-                                    month: 'long',
-                                    day: 'numeric'
-                                })}</p>
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        })}</p>
                             </div>
                             <div class="info-group">
                                 <h4>Bill Type</h4>
@@ -279,15 +290,26 @@ const InvoiceLayout = ({
     };
 
     // PDF Download function
-const handleDownloadPDF = async () => {
-    try {
-        // Create a temporary div for the printable content
-        const printContent = document.createElement('div');
-        printContent.innerHTML = `
+    const handleDownloadPDF = async () => {
+        try {
+            // Create a temporary div for the printable content
+            const printContent = document.createElement('div');
+            printContent.innerHTML = `
             <div style="font-family: Arial, sans-serif; padding: 20px;">
                 <div style="text-align: center; margin-bottom: 30px;">
                     <h1 style="color: #2563eb; margin: 0;">MEDICAL INVOICE</h1>
-                    <h2 style="color: #4b5563; margin: 5px 0 0 0;">City Hospital</h2>
+                   <h2 style="color: #4b5563; margin: 5px 0 0 0;">
+    ${hospitalInfo?.hospitalName || ''}
+</h2>
+<p>
+    ${hospitalInfo?.address || ''},
+    ${hospitalInfo?.city || ''},
+    ${hospitalInfo?.state || ''} ${hospitalInfo?.zipCode || ''}
+</p>
+<p>
+    Phone: ${hospitalInfo?.phone || 'N/A'}
+</p>
+
                 </div>
                 
                 <div style="margin-bottom: 20px;">
@@ -381,38 +403,40 @@ const handleDownloadPDF = async () => {
             </div>
         `;
 
-        // Append to body (hidden)
-        document.body.appendChild(printContent);
+            // Append to body (hidden)
+            document.body.appendChild(printContent);
 
-        // Create canvas from the content
-        const canvas = await html2canvas(printContent, {
-            scale: 2,
-            backgroundColor: '#ffffff',
-            logging: false,
-            useCORS: true
-        });
+            // Create canvas from the content
+            const canvas = await html2canvas(printContent, {
+                scale: 2,
+                backgroundColor: '#ffffff',
+                logging: false,
+                useCORS: true
+            });
 
-        // Remove the temporary element
-        document.body.removeChild(printContent);
+            // Remove the temporary element
+            document.body.removeChild(printContent);
 
-        // Create PDF
-        const pdf = new jsPDF({
-            orientation: 'portrait',
-            unit: 'mm',
-            format: 'a4'
-        });
+            // Create PDF
+            const pdf = new jsPDF({
+                orientation: 'portrait',
+                unit: 'mm',
+                format: 'a4'
+            });
 
-        const imgWidth = 190; // A4 width in mm
-        const imgHeight = (canvas.height * imgWidth) / canvas.width;
-        
-        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 10, 10, imgWidth, imgHeight);
-        pdf.save(`invoice-${Date.now().toString().slice(-6)}.pdf`);
-        
-    } catch (error) {
-        console.error('Error generating PDF:', error);
-        alert('Failed to generate PDF. Please try again.');
-    }
-};
+            const imgWidth = 190; // A4 width in mm
+            const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+            pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 10, 10, imgWidth, imgHeight);
+            pdf.save(`invoice-${Date.now().toString().slice(-6)}.pdf`);
+
+        } catch (error) {
+            console.error('Error generating PDF:', error);
+            alert('Failed to generate PDF. Please try again.');
+        }
+
+        console.log("Patients Information:", patientInfo);
+    };
 
     return (
         <div>
@@ -420,21 +444,21 @@ const handleDownloadPDF = async () => {
             <div className="flex justify-end gap-3 mb-4">
                 {showActions && (
                     <>
-                    <button
-                    onClick={handlePrint}
-                    className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition font-medium text-sm"
-                >
-                    <Printer size={16} />
-                    Print
-                </button>
-                <button
-                    onClick={handleDownloadPDF}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium text-sm"
-                >
-                    <Download size={16} />
-                    Download PDF
-                </button>
-                </>)}
+                        <button
+                            onClick={handlePrint}
+                            className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition font-medium text-sm"
+                        >
+                            <Printer size={16} />
+                            Print
+                        </button>
+                        <button
+                            onClick={handleDownloadPDF}
+                            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium text-sm"
+                        >
+                            <Download size={16} />
+                            Download PDF
+                        </button>
+                    </>)}
             </div>
 
             {/* Invoice Component with ref */}
@@ -456,10 +480,22 @@ const handleDownloadPDF = async () => {
                     <div>
                         <h4 className="font-medium text-gray-700 mb-2">Bill From</h4>
                         <div className="text-sm">
-                            <p className="font-semibold text-gray-900">City Hospital & Diagnostics</p>
-                            <p className="text-gray-600">123 Medical Street</p>
-                            <p className="text-gray-600">Health City, HC 12345</p>
-                            <p className="text-gray-600">Phone: (555) 123-4567</p>
+                            <p className="font-semibold text-gray-900">
+                                {hospitalInfo?.hospital_name || "Hospital Name"}
+                            </p>
+                            <p className="text-gray-600">
+                                {hospitalInfo?.address || "Address"}
+                            </p>
+                            <p className="text-gray-600">
+                                {hospitalInfo?.city}, {hospitalInfo?.state} {hospitalInfo?.zipCode}
+                            </p>
+                            <p className="text-gray-600">
+                                Phone: {hospitalInfo?.phone || "N/A"}
+                            </p>
+                            <p className="text-gray-600">
+                                Email: {hospitalInfo?.email || "N/A"}
+                            </p>
+
                         </div>
                     </div>
                     <div>

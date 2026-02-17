@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, use } from 'react';
 import { Plus, Trash2, Printer, Save, Search, User } from 'lucide-react';
 import axios from 'axios';
 import { useSearchParams } from 'react-router';
 import InvoiceLayout from './InvoiceLayout';
+import { useAuth } from '../../Provider/AuthContexProvider';
 
 const HospitalBillingSystem = () => {
   const [billType, setBillType] = useState('doctor');
@@ -17,10 +18,15 @@ const HospitalBillingSystem = () => {
     date: new Date().toISOString().split('T')[0]
   });
 
+const { user } = useAuth();
+console.log("Logged in user:", user);
+
+
   const [searchParams] = useSearchParams();
   const appointmentId = searchParams.get("appointment_id");
   const [appointmentData, setAppointmentData] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
+
 
   useEffect(() => {
     if (appointmentId) {
@@ -576,6 +582,7 @@ const HospitalBillingSystem = () => {
           {/* Billing Summary starts */}
           <div className="lg:col-span-2">
             <InvoiceLayout
+              hospitalInfo={user}
               billType={billType}
               patientInfo={patientInfo}
               doctorItems={doctorItems}
