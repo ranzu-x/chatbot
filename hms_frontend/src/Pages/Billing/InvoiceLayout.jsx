@@ -6,6 +6,7 @@ import jsPDF from 'jspdf';
 const InvoiceLayout = ({
     hospitalInfo,
     billType,
+    bill,
     patientInfo,
     doctorItems,
     labItems,
@@ -475,40 +476,94 @@ const InvoiceLayout = ({
                         </div>
                     </div>
                 </div>
+<div className="grid grid-cols-2 gap-10 mb-6 text-sm">
 
-                <div className="grid grid-cols-2 gap-6 mb-6">
-                    <div>
-                        <h4 className="font-medium text-gray-700 mb-2">Bill From</h4>
-                        <div className="text-sm">
-                            <p className="font-semibold text-gray-900">
-                                {hospitalInfo?.hospital_name || "Hospital Name"}
-                            </p>
-                            <p className="text-gray-600">
-                                {hospitalInfo?.address || "Address"}
-                            </p>
-                            <p className="text-gray-600">
-                                {hospitalInfo?.city}, {hospitalInfo?.state} {hospitalInfo?.zipCode}
-                            </p>
-                            <p className="text-gray-600">
-                                Phone: {hospitalInfo?.phone || "N/A"}
-                            </p>
-                            <p className="text-gray-600">
-                                Email: {hospitalInfo?.email || "N/A"}
-                            </p>
+  {/* LEFT SIDE */}
+  <div className="space-y-1">
 
-                        </div>
-                    </div>
-                    <div>
-                        <h4 className="font-medium text-gray-700 mb-2">Bill To</h4>
-                        <div className="text-sm">
-                            <p className="font-semibold text-gray-900">{patientInfo.patientName || 'Patient Name'}</p>
-                            <p className="text-gray-600">ID: {patientInfo.patientId || 'N/A'}</p>
-                            <p className="text-gray-600">{patientInfo.address || 'Address'}</p>
-                            <p className="text-gray-600">Phone: {patientInfo.phone || 'N/A'}</p>
-                        </div>
-                    </div>
-                </div>
+    {/* Hospital Name */}
+    <p className="font-semibold text-gray-900 mb-2">
+      {hospitalInfo?.hospital_name || "Hospital Name"}
+    </p>
 
+    <div className="grid grid-cols-[170px_10px_1fr]">
+      <span className="font-bold">Bill No</span>
+      <span>:</span>
+      <span className="font-bold">{invoiceNo}</span>
+    </div>
+
+    <div className="grid grid-cols-[170px_10px_1fr]">
+      <span className="font-bold">UHID</span>
+      <span>:</span>
+      <span className="font-bold">{patientInfo.patientId || "N/A"}</span>
+    </div>
+
+    <div className="grid grid-cols-[170px_10px_1fr]">
+      <span className="font-bold">Patient Name</span>
+      <span>:</span>
+      <span className="font-bold">{patientInfo.patientName || "N/A"}</span>
+    </div>
+
+    <div className="grid grid-cols-[170px_10px_1fr]">
+      <span>Referred By/Doctor</span>
+      <span>:</span>
+      <span>{patientInfo.referredDoctor || "N/A"}</span>
+    </div>
+
+    <div className="grid grid-cols-[170px_10px_1fr]">
+      <span>Sponsor</span>
+      <span>:</span>
+      <span>{patientInfo.patientType || "Cash Patient"}</span>
+    </div>
+
+    <div className="grid grid-cols-[170px_10px_1fr]">
+      <span>Department</span>
+      <span>:</span>
+      <span>{patientInfo.department || "N/A"}</span>
+    </div>
+
+  </div>
+
+
+  {/* RIGHT SIDE */}
+  <div className="space-y-1">
+
+    {/* Spacer to match hospital name height */}
+    <div className="h-[28px]" />
+
+    <div className="grid grid-cols-[170px_10px_1fr]">
+      <span>Bill Date/Time</span>
+      <span>:</span>
+      <span>{bill || "N/A"}</span>
+    </div>
+
+    <div className="grid grid-cols-[170px_10px_1fr]">
+      <span>Gender</span>
+      <span>:</span>
+      <span>{patientInfo.gender || "N/A"}</span>
+    </div>
+
+    <div className="grid grid-cols-[170px_10px_1fr]">
+      <span>Age</span>
+      <span>:</span>
+      <span>{patientInfo.age || "N/A"}</span>
+    </div>
+
+    <div className="grid grid-cols-[170px_10px_1fr]">
+      <span>Phone</span>
+      <span>:</span>
+      <span>{patientInfo.phone || "N/A"}</span>
+    </div>
+
+    <div className="grid grid-cols-[170px_10px_1fr]">
+      <span>App Date & Time</span>
+      <span>:</span>
+      <span>{patientInfo.appointmentDate || "N/A"}</span>
+    </div>
+
+  </div>
+
+</div>
                 <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead className="bg-gray-50">
