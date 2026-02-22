@@ -1,4 +1,4 @@
-import { useState, useEffect, use } from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, Trash2, Printer, Save, Search, User } from 'lucide-react';
 import axios from 'axios';
 import { useSearchParams } from 'react-router';
@@ -18,14 +18,15 @@ const HospitalBillingSystem = () => {
     date: new Date().toISOString().split('T')[0]
   });
 
-const { user } = useAuth();
-console.log("Logged in user:", user);
+  const { user } = useAuth();
+  console.log("Logged in user:", user);
 
 
   const [searchParams] = useSearchParams();
   const appointmentId = searchParams.get("appointment_id");
   const [appointmentData, setAppointmentData] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [paidAmount, setPaidAmount] = useState(0);
 
 
   useEffect(() => {
@@ -95,6 +96,8 @@ console.log("Logged in user:", user);
     : discount;
   const tax = (subtotal - discountAmount) * 0.05;
   const grandTotal = subtotal - discountAmount + tax;
+
+  const dueAmount = Math.max(grandTotal - paidAmount, 0);
 
   // Doctor fee handlers
   const addDoctorItem = () => {
@@ -190,6 +193,13 @@ console.log("Logged in user:", user);
     }));
   };
 
+  const paymentStatus =
+    dueAmount === 0
+      ? "paid"
+      : paidAmount === 0
+        ? "unpaid"
+        : "partial";
+
   const handleSave = async () => {
     if (isSaving) return; // Prevent multiple submissions
 
@@ -204,9 +214,10 @@ console.log("Logged in user:", user);
         discount_amount: discountAmount,
         tax_amount: tax,
         grand_total: grandTotal,
-        paid_amount: grandTotal,
+        paid_amount: paidAmount,
+        due_amount: dueAmount,
         payment_method: paymentMode,
-        payment_status: "paid",
+        payment_status: paymentStatus,
         remarks,
         items: buildBillingItems()
       };
@@ -585,6 +596,7 @@ console.log("Logged in user:", user);
               hospitalInfo={user}
               billType={billType}
               patientInfo={patientInfo}
+              appointmentInfo={appointmentData}
               doctorItems={doctorItems}
               labItems={labItems}
               medicineItems={medicineItems}
@@ -634,6 +646,29 @@ console.log("Logged in user:", user);
                     <option value="upi">UPI</option>
                     <option value="cheque">Cheque</option>
                   </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Paid Amount
+                  </label>
+                  <input
+                    type="number"
+                    value={paidAmount}
+                    onChange={(e) =>
+                      setPaidAmount(
+                        Math.min(Number(e.target.value), grandTotal)
+                      )
+                    }
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="0"
+                  />
+                </div>
+
+                <div className="flex justify-between text-sm mt-2">
+                  <span className="text-gray-600">Due Amount:</span>
+                  <span className={`font-semibold ${dueAmount > 0 ? "text-red-600" : "text-green-600"}`}>
+                    ${dueAmount.toFixed(2)}
+                  </span>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Remarks</label>
