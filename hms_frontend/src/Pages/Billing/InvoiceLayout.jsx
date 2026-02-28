@@ -6,7 +6,6 @@ import jsPDF from 'jspdf';
 const InvoiceLayout = ({
     hospitalInfo,
     billType,
-    bill,
     patientInfo,
     appointmentInfo,
     doctorItems,
@@ -16,11 +15,12 @@ const InvoiceLayout = ({
     discountAmount,
     tax,
     grandTotal,
+    paid,
     invoiceNo,
     showActions
 }) => {
     const invoiceRef = useRef();
-
+    const formatMoney = (value) => Number(value ?? 0).toFixed(2);
     // Print function
     const handlePrint = () => {
         const printWindow = window.open('', '_blank');
@@ -251,19 +251,19 @@ const InvoiceLayout = ({
                         <div style="max-width: 300px; margin-left: auto;">
                             <div class="summary-row">
                                 <span>Subtotal:</span>
-                                <span>$${subtotal.toFixed(2)}</span>
+                                <span>$${formatMoney(subtotal)}</span>
                             </div>
                             <div class="summary-row">
                                 <span>Discount:</span>
-                                <span style="color: #dc2626;">-$${discountAmount.toFixed(2)}</span>
+                                <span style="color: #dc2626;">-$${formatMoney(discountAmount)}</span>
                             </div>
                             <div class="summary-row">
                                 <span>Tax (5%):</span>
-                                <span>$${tax.toFixed(2)}</span>
+                                <span>$${formatMoney(tax)}</span>
                             </div>
                             <div class="summary-row total-row">
                                 <span>GRAND TOTAL:</span>
-                                <span>$${grandTotal.toFixed(2)}</span>
+                                <span>$${formatMoney(grandTotal)}</span>
                             </div>
                         </div>
                     </div>
@@ -381,19 +381,19 @@ const InvoiceLayout = ({
                     <div style="max-width: 300px; margin-left: auto;">
                         <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed #cbd5e1;">
                             <span>Subtotal:</span>
-                            <span>$${subtotal.toFixed(2)}</span>
+                            <span>$${formatMoney(subtotal)}</span>
                         </div>
                         <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed #cbd5e1;">
                             <span>Discount:</span>
-                            <span style="color: #dc2626;">-$${discountAmount.toFixed(2)}</span>
+                            <span style="color: #dc2626;">-$${formatMoney(discountAmount)}</span>
                         </div>
                         <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed #cbd5e1;">
                             <span>Tax (5%):</span>
-                            <span>$${tax.toFixed(2)}</span>
+                            <span>$${formatMoney(tax)}</span>
                         </div>
                         <div style="display: flex; justify-content: space-between; padding: 12px 0; border-top: 2px solid #2563eb; margin-top: 8px;">
                             <span style="font-weight: bold;">Grand Total:</span>
-                            <span style="font-weight: bold; color: #2563eb;">$${grandTotal.toFixed(2)}</span>
+                            <span style="font-weight: bold; color: #2563eb;">$${formatMoney(grandTotal)}</span>
                         </div>
                     </div>
                 </div>
@@ -535,7 +535,7 @@ const InvoiceLayout = ({
                         <div className="grid grid-cols-[170px_10px_1fr]">
                             <span>Bill Date/Time</span>
                             <span>:</span>
-                            <span>{bill || "N/A"}</span>
+                            <span>{patientInfo.billDate ?? "N/A"}</span>
                         </div>
 
                         <div className="grid grid-cols-[170px_10px_1fr]">
@@ -560,8 +560,10 @@ const InvoiceLayout = ({
                             <span>App Date & Time</span>
                             <span>:</span>
                             <span>
-                                {appointmentInfo?.appointment_date && appointmentInfo?.appointment_time
-                                    ? `${appointmentInfo.appointment_date} ${appointmentInfo.appointment_time}`
+                                {appointmentInfo?.appointment_date
+                                    ? appointmentInfo.appointment_time
+                                        ? `${appointmentInfo.appointment_date} ${appointmentInfo.appointment_time}`
+                                        : appointmentInfo.appointment_date
                                     : "N/A"}
                             </span>
                         </div>
@@ -576,6 +578,7 @@ const InvoiceLayout = ({
                                 {billType === 'doctor' && (
                                     <>
                                         <th className="py-3 px-4 text-left font-semibold text-gray-700">Service Description</th>
+                                        <th className="py-3 px-4 text-right font-semibold text-gray-700">Units</th>
                                         <th className="py-3 px-4 text-right font-semibold text-gray-700">Amount</th>
                                     </>
                                 )}
@@ -602,6 +605,7 @@ const InvoiceLayout = ({
                             {billType === 'doctor' && doctorItems.map((item) => (
                                 <tr key={item.id}>
                                     <td className="py-3 px-4">{item.service || 'Consultation'}</td>
+                                    <td className="py-3 px-4 text-center">1</td>
                                     <td className="py-3 px-4 text-right font-medium">${Number(item.amount).toFixed(2)}</td>
                                 </tr>
                             ))}
@@ -630,20 +634,25 @@ const InvoiceLayout = ({
                     <div className="max-w-xs ml-auto">
                         <div className="flex justify-between py-2">
                             <span className="text-gray-600">Subtotal:</span>
-                            <span className="font-medium">${subtotal.toFixed(2)}</span>
+                            <span className="font-medium">${formatMoney(subtotal)}</span>
                         </div>
                         <div className="flex justify-between py-2">
                             <span className="text-gray-600">Discount:</span>
-                            <span className="font-medium text-red-600">-${discountAmount.toFixed(2)}</span>
+                            <span className="font-medium text-red-600">-${formatMoney(discountAmount)}</span>
                         </div>
                         <div className="flex justify-between py-2">
                             <span className="text-gray-600">Tax (5%):</span>
-                            <span className="font-medium">${tax.toFixed(2)}</span>
+                            <span className="font-medium">${formatMoney(tax)}</span>
                         </div>
-                        <div className="flex justify-between py-3 mt-2 border-t border-gray-200">
-                            <span className="font-bold text-lg text-gray-800">Total:</span>
-                            <span className="font-bold text-xl text-blue-600">${grandTotal.toFixed(2)}</span>
+                        <div className="flex justify-between py-2  border-t border-gray-200">
+                            <span className="font-bold  text-gray-800">Billed Amount:</span>
+                            <span className="font-bold  text-blue-600">${formatMoney(grandTotal)}</span>
                         </div>
+                        <div className="flex justify-between py-2 border-t border-gray-200">
+                            <span className="font-bold  text-gray-800">Net Amount Received:</span>
+                            <span className="font-bold  text-blue-600">${formatMoney(paid || 0)}</span>
+                        </div>
+
                     </div>
                 </div>
 

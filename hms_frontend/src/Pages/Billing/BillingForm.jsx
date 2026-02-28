@@ -604,6 +604,7 @@ const HospitalBillingSystem = () => {
               discountAmount={discountAmount}
               tax={tax}
               grandTotal={grandTotal}
+              paid={paidAmount}
             // invoiceNo={invoiceNumber}
             />
 

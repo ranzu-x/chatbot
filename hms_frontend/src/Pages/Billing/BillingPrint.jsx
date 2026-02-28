@@ -25,6 +25,8 @@ const BillingPrint = () => {
 
   const { bill, items, invoice_no } = data;
 
+  console.log("Bill Data:", bill);
+
   // ================= NORMALIZE ITEMS =================
   const doctorItems = [];
   const labItems = [];
@@ -66,18 +68,35 @@ const BillingPrint = () => {
   }
 
   // ================= PATIENT INFO =================
-  const patientInfo = {
-    patientName: bill.patient_name,
-    patientId: bill.patient_id,
-    address: bill.patient_address,
-    phone: bill.patient_phone,
-  };
+  // const patientInfo = {
+  //   patientName: bill.patient_name,
+  //   patientId: bill.patient_id,
+  //   address: bill.patient_address,
+  //   phone: bill.phone,
+  //   bill: bill.bill_date,
+  //   gender:bill.patient_gender
+  // };
 
+
+const patientInfo = {
+  patientName: bill.patient_name,
+  patientId: bill.patient_id,
+  phone: bill.phone,
+  gender: bill.gender,
+  age: bill.age,
+  doctorName: bill.doctor_name,
+  billDate: bill.formatted_bill_date,
+  appointmentDate: bill.formatted_appointment_date
+};
   return (
     <div className="max-w-5xl mx-auto p-6 bg-white">
       <InvoiceLayout
         billType={bill.bill_type}
         patientInfo={patientInfo}
+       appointmentInfo={{
+    appointment_date: bill.formatted_appointment_date,
+    appointment_time: "" // already combined in formatted_appointment_date
+  }}
         doctorItems={doctorItems}
         labItems={labItems}
         medicineItems={medicineItems}
@@ -85,6 +104,7 @@ const BillingPrint = () => {
         discountAmount={Number(bill.discount_amount)}
         tax={Number(bill.tax_amount)}
         grandTotal={Number(bill.grand_total)}
+        paid={Number(bill.paid_amount)}
         invoiceNo={invoice_no}
         showActions={true}
       />
