@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import Swal from "sweetalert2";
 import DataTable from "../../Components/Table Components/DataTable";
 import TableActions from "../../Components/Table Components/TableActionButtons";
+import api from "../../services/api";
 
 const HospitalStaffs = () => {
   const [teamMembers, setTeamMembers] = useState([]);
@@ -21,38 +22,39 @@ const HospitalStaffs = () => {
   const navigate = useNavigate();
 
   // ✅ Fetch users with pagination, search AND role
-  const fetchTeamMembers = useCallback(async (page, limit, searchTerm, roleFilter) => {
-    setLoading(true);
+const fetchTeamMembers = useCallback(async (page, limit, searchTerm, roleFilter) => {
+  setLoading(true);
 
-    try {
-      const params = new URLSearchParams({
-        page: page.toString(),
-        limit: limit.toString(),
-        ...(searchTerm && { search: searchTerm }),
-        ...(roleFilter && { role: roleFilter }), // ✅ Send role to backend
-      });
+  try {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      limit: limit.toString(),
+      ...(searchTerm && { search: searchTerm }),
+      ...(roleFilter && { role: roleFilter }),
+    });
 
-      const res = await fetch(
-        `api/v1/team-members?${params}`,
-        { credentials: "include" }
-      );
+    const res = await api.get(
+      `/api/v1/team-members?${params}`,
+      {
+        withCredentials: true,
+      }
+    );
 
-      if (!res.ok) throw new Error("Failed to load staff data");
+    // ✅ Axios response is already JSON
+    const data = res.data;
 
-      const data = await res.json();
+    setTeamMembers(data.staffMembers || []);
+    setTotalStaffs(data.pagination?.totalStaffs || 0);
+    setTotalPages(data.pagination?.totalPages || 1);
+    setCurrentPage(data.pagination?.currentPage || 1);
 
-      setTeamMembers(data.staffMembers || []);
-      setTotalStaffs(data.pagination?.totalStaffs || 0);
-      setTotalPages(data.pagination?.totalPages || 1);
-      setCurrentPage(data.pagination?.currentPage || 1);
-
-    } catch (err) {
-      console.error(err);
-      Swal.fire("Error", "Failed to fetch staff members.", "error");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  } catch (err) {
+    console.error("Staff fetch error:", err);
+    Swal.fire("Error", "Failed to fetch staff members.", "error");
+  } finally {
+    setLoading(false);
+  }
+}, []);
 
   // 🔄 Run fetch when page, limit, search OR role changes
   useEffect(() => {

@@ -5,7 +5,7 @@ export const requireRole = (roles) => {
       return res.status(401).json({ message: 'Authentication required' });
     }
 
-    const userRoles = req.user.roles || [];
+    const userRoles = (req.user.roles || []).map((r) => String(r).trim());
     const hasRequiredRole = roles.some(role => userRoles.includes(role));
     
     if (!hasRequiredRole) {

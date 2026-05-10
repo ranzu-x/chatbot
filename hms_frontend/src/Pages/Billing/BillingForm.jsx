@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Plus, Trash2, Printer, Save, Search, User } from 'lucide-react';
-import axios from 'axios';
+import api from '../../services/api';
 import { useSearchParams } from 'react-router';
 import InvoiceLayout from './InvoiceLayout';
 import { useAuth } from '../../Provider/AuthContexProvider';
+
 
 const HospitalBillingSystem = () => {
   const [billType, setBillType] = useState('doctor');
@@ -31,7 +32,7 @@ const HospitalBillingSystem = () => {
 
   useEffect(() => {
     if (appointmentId) {
-      axios.get(`/api/v1/appointments/${appointmentId}`, { withCredentials: true })
+      api.get(`/api/v1/appointments/${appointmentId}`, { withCredentials: true })
         .then((res) => {
           setAppointmentData(res.data);
           setPatientInfo({
@@ -201,42 +202,54 @@ const HospitalBillingSystem = () => {
         : "partial";
 
   const handleSave = async () => {
-    if (isSaving) return; // Prevent multiple submissions
+  if (isSaving) return;
 
-    try {
-      setIsSaving(true);
-      const billData = {
-        appointment_id: appointmentData?.id || null,
-        patient_id: patientInfo.patientId,
-        doctor_id: appointmentData?.doctor_id || null,
-        bill_type: billType,
-        subtotal,
-        discount_amount: discountAmount,
-        tax_amount: tax,
-        grand_total: grandTotal,
-        paid_amount: paidAmount,
-        due_amount: dueAmount,
-        payment_method: paymentMode,
-        payment_status: paymentStatus,
-        remarks,
-        items: buildBillingItems()
-      };
+  try {
+    setIsSaving(true);
 
-      const response = await axios.post(
-        "/api/v1/bills",
-        billData,
-        { withCredentials: true }
-      );
+    const items = buildBillingItems();
 
-      alert("Bill saved successfully!");
-      console.log(response.data);
-    } catch (error) {
-      console.error("❌ Error saving bill:", error);
-      alert("Failed to save bill");
-    } finally {
-      setIsSaving(false);
+    if (!items || items.length === 0) {
+      alert("Please add billing items");
+      return;
     }
-  };
+
+    const billData = {
+      appointment_id: appointmentData?.id || null,
+      patient_id: appointmentData?.patient_id || null, // ✅ FIXED
+      doctor_id: appointmentData?.doctor_id || null,
+      bill_type: billType,
+      subtotal,
+      discount_amount: discountAmount,
+      tax_amount: tax,
+      grand_total: grandTotal,
+      paid_amount: paidAmount,
+      due_amount: dueAmount,
+      payment_method: paymentMode,
+      payment_status: paymentStatus,
+      remarks,
+      items
+    };
+
+    const response = await api.post("/api/v1/bills", billData);
+
+    alert("Bill saved successfully!");
+    console.log(response.data);
+
+  } catch (error) {
+    console.error(
+      "❌ Error saving bill:",
+      error.response?.data || error.message
+    );
+
+    alert(
+      error.response?.data?.message ||
+      "Failed to save bill"
+    );
+  } finally {
+    setIsSaving(false);
+  }
+};
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">

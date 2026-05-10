@@ -10,6 +10,12 @@ export const authMiddleWare = (req, res, next) => {
   }
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const rawRoles = decoded.roles;
+    const roles = Array.isArray(rawRoles)
+      ? rawRoles.map((r) => String(r).trim()).filter(Boolean)
+      : typeof rawRoles === "string"
+        ? rawRoles.split(",").map((r) => r.trim()).filter(Boolean)
+        : [];
     // ✅ Make sure req.user has email/id
     req.user = {
 
@@ -19,7 +25,7 @@ export const authMiddleWare = (req, res, next) => {
       username:decoded.username,
       hospital_id:decoded.hospital_id,
       hospital_name:decoded.hospital_name,
-      roles:decoded.roles,
+      roles,
       permissions:decoded.permissions
     };
     next();

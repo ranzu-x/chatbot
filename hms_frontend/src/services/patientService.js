@@ -1,29 +1,22 @@
 import api from "./api";
 
-/**
- * Patient Service
- * Centralized API calls for patient management
- * Uses axios with global baseURL and withCredentials configuration from useFetch.js
- */
-
 const API_BASE = "/api/v1/patients";
 
 /**
  * Fetch paginated patients with optional search
- * @param {number} page - Current page number (1-indexed)
- * @param {number} limit - Items per page
- * @param {string} searchTerm - Optional search query
- * @returns {Promise<{patients, pagination}>}
  */
 export const fetchPatients = async (page = 1, limit = 10, searchTerm = "") => {
   try {
     const params = new URLSearchParams({
       page: page.toString(),
       limit: limit.toString(),
-      ...(searchTerm && { search: searchTerm }),
     });
 
-    const response = await api.get(`${API_BASE}?${params}`);
+    if (searchTerm) {
+      params.append("search", searchTerm);
+    }
+
+    const response = await api.get(`${API_BASE}?${params.toString()}`);
 
     console.log("✅ Patients fetched:", response.data);
     return response.data;
@@ -35,15 +28,10 @@ export const fetchPatients = async (page = 1, limit = 10, searchTerm = "") => {
 
 /**
  * Fetch single patient by ID
- * @param {string|number} id - Patient ID
- * @returns {Promise<patient>}
  */
 export const fetchPatientById = async (id) => {
   try {
-    const response = await api.get(`${API_BASE}/${id}`, {
-      withCredentials: true,
-    });
-
+    const response = await api.get(`${API_BASE}/${id}`);
     return response.data;
   } catch (error) {
     console.error("❌ Error fetching patient:", error);
@@ -52,15 +40,11 @@ export const fetchPatientById = async (id) => {
 };
 
 /**
- * Create a new patient
- * @param {object} patientData - Patient object
- * @returns {Promise<patient>}
+ * Create new patient
  */
 export const createPatient = async (patientData) => {
   try {
-    const response = await api.post(API_BASE, patientData, {
-      withCredentials: true,
-    });
+    const response = await api.post(API_BASE, patientData);
 
     console.log("✅ Patient created:", response.data);
     return response.data;
@@ -71,16 +55,11 @@ export const createPatient = async (patientData) => {
 };
 
 /**
- * Update a patient
- * @param {string|number} id - Patient ID
- * @param {object} patientData - Updated patient data
- * @returns {Promise<patient>}
+ * Update patient
  */
 export const updatePatient = async (id, patientData) => {
   try {
-    const response = await api.put(`${API_BASE}/${id}`, patientData, {
-      withCredentials: true,
-    });
+    const response = await api.put(`${API_BASE}/${id}`, patientData);
 
     console.log("✅ Patient updated:", response.data);
     return response.data;
@@ -91,15 +70,11 @@ export const updatePatient = async (id, patientData) => {
 };
 
 /**
- * Delete a patient by ID
- * @param {string|number} id - Patient ID
- * @returns {Promise<response>}
+ * Delete patient
  */
 export const deletePatient = async (id) => {
   try {
-    const response = await api.delete(`${API_BASE}/${id}`, {
-      withCredentials: true,
-    });
+    const response = await api.delete(`${API_BASE}/${id}`);
 
     console.log("✅ Patient deleted:", response.data);
     return response.data;
@@ -111,14 +86,12 @@ export const deletePatient = async (id) => {
 
 /**
  * Search patients
- * @param {string} query - Search query
- * @returns {Promise<patients>}
  */
 export const searchPatients = async (query) => {
   try {
-    const response = await api.get(`${API_BASE}/search?q=${encodeURIComponent(query)}`, {
-      withCredentials: true,
-    });
+    const response = await api.get(
+      `${API_BASE}/search?q=${encodeURIComponent(query)}`
+    );
 
     return response.data;
   } catch (error) {

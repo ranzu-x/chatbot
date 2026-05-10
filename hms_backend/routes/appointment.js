@@ -6,7 +6,11 @@ import { requireRole } from "../middleware/roleMiddleware.js";
 const router = express.Router();
 
 // ✅ Create appointment with dynamic slot availability check
-router.post("/appointments",authMiddleWare, requireRole(["hospital_admin", "doctor"]), async (req, res) => {
+router.post(
+  "/appointments",
+  authMiddleWare,
+  requireRole(["hospital_admin", "doctor", "receptionist"]),
+  async (req, res) => {
     const { doctor_id, patient_id, slot_id, appointment_time, reason } = req.body;
     const { hospital_id } = req.user;
 

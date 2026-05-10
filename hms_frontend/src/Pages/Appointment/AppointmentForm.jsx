@@ -1,6 +1,6 @@
 // src/pages/Appointments/AppointmentForm.jsx
 import React, { useEffect, useState } from "react";
-import axios from "axios";
+import api from "../../services/api";
 import { useSearchParams, useNavigate } from "react-router";
 import { toast } from "react-hot-toast";
 
@@ -83,7 +83,7 @@ const AppointmentForm = () => {
 
   const fetchDoctorServices = async (doctorId) => {
     try {
-      const res = await axios.get(
+      const res = await api.get(
         `/api/v1/doctor-services?doctor_id=${doctorId}`,
         { withCredentials: true }
       );
@@ -97,7 +97,7 @@ const AppointmentForm = () => {
   const fetchDoctorFee = async (doctorId, serviceId) => {
     setLoadingFee(true);
     try {
-      const res = await axios.get(
+      const res = await api.get(
         `/api/v1/doctor-fees?doctor_id=${doctorId}&service_id=${serviceId}`,
         { withCredentials: true }
       );
@@ -123,7 +123,7 @@ const AppointmentForm = () => {
 
   const fetchDoctors = async () => {
     try {
-      const res = await axios.get("/api/v1/doctors", {
+      const res = await api.get("/api/v1/doctors", {
         withCredentials: true,
       });
       setDoctors(res.data);
@@ -135,7 +135,7 @@ const AppointmentForm = () => {
 
   const fetchSinglePatient = async (id) => {
     try {
-      const res = await axios.get(`/api/v1/patients/${id}`, {
+      const res = await api.get(`/api/v1/patients/${id}`, {
         withCredentials: true,
       });
       console.log(res.data);
@@ -151,7 +151,7 @@ const AppointmentForm = () => {
   const fetchAvailableSlots = async (doctorId, date) => {
     setLoadingSlots(true);
     try {
-      const res = await axios.get(
+      const res = await api.get(
         `/api/v1/appointments/available-slots?doctor_id=${doctorId}&date=${date}`,
         { withCredentials: true }
       );
@@ -184,7 +184,7 @@ const AppointmentForm = () => {
   const searchPatients = async (query) => {
     setIsSearching(true);
     try {
-      const res = await axios.get(
+      const res = await api.get(
         `/api/v1/patients/search?q=${encodeURIComponent(query)}`,
         { withCredentials: true }
       );
@@ -240,7 +240,7 @@ const AppointmentForm = () => {
         ? "/api/v1/appointments/walk-in"
         : "/api/v1/appointments";
 
-      const response = await axios.post(endpoint, formData, {
+      const response = await api.post(endpoint, formData, {
         withCredentials: true,
       });
 
@@ -278,7 +278,13 @@ const AppointmentForm = () => {
       navigate("/appointments");
     } catch (error) {
       console.error("Error:", error);
-      const errorMessage = error.response?.data?.message || error.message || "Failed to create appointment";
+      const data = error.response?.data;
+      const errorMessage =
+        (typeof data === "string" ? data : null) ||
+        data?.message ||
+        data?.error ||
+        error.message ||
+        "Failed to create appointment";
       toast.error(errorMessage);
     }
   };

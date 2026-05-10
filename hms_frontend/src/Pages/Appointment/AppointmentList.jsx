@@ -30,6 +30,7 @@ function AppointmentList() {
     setLoading(true);
     try {
       const data = await fetchAppointmentsAPI(page, limit, searchTerm);
+
       setAppointments(data.appointments);
       setTotalAppointments(data.pagination.totalAppointments);
       setTotalPages(data.pagination.totalPages);
@@ -61,6 +62,7 @@ function AppointmentList() {
   const updateStatus = async (id, newStatus, reason = null) => {
     try {
       setUpdating(id);
+
       await updateAppointmentStatus(id, newStatus, reason);
       setAppointments((prev) =>
         prev.map((a) => (a.id === id ? { ...a, status: newStatus } : a))

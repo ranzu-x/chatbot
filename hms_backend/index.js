@@ -26,7 +26,6 @@ app.use(cors({
 }));
 app.use(cookieParser());
 
-
 try {
   const conn = await pool.getConnection();
   console.log("✅ DB Connected Successfully");
