@@ -5,6 +5,11 @@ import DataTable from "../../Components/Table Components/DataTable";
 import TableActions from "../../Components/Table Components/TableActionButtons";
 import PatientViewModal from "./PatientViewModal";
 import { FaCalendarAlt } from "react-icons/fa";
+import {
+  fetchPatients as fetchPatientsAPI,
+  fetchPatientById,
+  deletePatient,
+} from "../../services/patientService";
 
 function PatientsList() {
   const [patients, setPatients] = useState([]);
@@ -18,24 +23,11 @@ function PatientsList() {
   const [totalPages, setTotalPages] = useState(1);
   const navigate = useNavigate();
 
-  // ✅ Stable fetch function (no dependencies that change often)
+  // ✅ Stable fetch function (using patientService)
   const fetchPatients = useCallback(async (page, limit, searchTerm) => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        page: page.toString(),
-        limit: limit.toString(),
-        ...(searchTerm && { search: searchTerm }),
-      });
-
-      const response = await fetch(
-        `http://localhost:5000/api/v1/patients?${params}`,
-        { credentials: "include" }
-      );
-
-      if (!response.ok) throw new Error("Fetch error");
-
-      const data = await response.json();
+      const data = await fetchPatientsAPI(page, limit, searchTerm);
       console.log("✅ Patients fetched:", data);
 
       setPatients(data.patients);
@@ -44,7 +36,7 @@ function PatientsList() {
       setCurrentPage(data.pagination.currentPage);
     } catch (err) {
       console.error(err);
-      Swal.fire("Error", "Failed to load patients", "error");
+      Swal.fire("Error", err.response?.data?.message || "Failed to load patients", "error");
     } finally {
       setLoading(false);
     }
@@ -81,40 +73,32 @@ function PatientsList() {
     if (!result.isConfirmed) return;
 
     try {
-      const res = await fetch(`http://localhost:5000/api/v1/patients/${id}`, {
-        method: "DELETE",
-        credentials: "include",
-      });
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        throw new Error(errBody.message || "Delete failed");
-      }
-
-      fetchPatients(currentPage, patientsPerPage, search);
+      await deletePatient(id);
+      
+      // ✅ Fix pagination bug: validate current page still exists
+      const newTotal = totalPatients - 1;
+      const maxPossiblePage = Math.ceil(newTotal / patientsPerPage);
+      const pageToFetch = currentPage > maxPossiblePage && maxPossiblePage > 0 ? maxPossiblePage : currentPage;
+      
+      fetchPatients(pageToFetch, patientsPerPage, search);
       Swal.fire("Deleted", "Patient record deleted.", "success");
     } catch (err) {
       console.error(err);
-      Swal.fire("Error", err.message || "Could not delete", "error");
+      Swal.fire("Error", err.response?.data?.message || "Could not delete", "error");
     }
   };
 
-      // Fetch patient data for viewing
-    const handleView = async (item) => {
-        try {
-            const response = await fetch(`http://localhost:5000/api/v1/patients/${item.id}`, {
-                credentials: "include"
-            });
-            
-            if (!response.ok) throw new Error("Failed to fetch patient details");
-            
-            const patientData = await response.json();
-            setSelectedPatient(patientData);
-            setIsViewModalOpen(true);
-        } catch (error) {
-            console.error("Error fetching patient details:", error);
-            Swal.fire("Error", "Failed to load patient details", "error");
-        }
-    };
+  // Fetch patient data for viewing
+  const handleView = async (item) => {
+    try {
+      const patientData = await fetchPatientById(item.id);
+      setSelectedPatient(patientData);
+      setIsViewModalOpen(true);
+    } catch (error) {
+      console.error("Error fetching patient details:", error);
+      Swal.fire("Error", error.response?.data?.message || "Failed to load patient details", "error");
+    }
+  };
 
     const closeViewModal = () => {
         setIsViewModalOpen(false);

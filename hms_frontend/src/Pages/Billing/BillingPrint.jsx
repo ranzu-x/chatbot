@@ -9,7 +9,7 @@ const BillingPrint = () => {
 
   useEffect(() => {
     axios
-      .get(`http://localhost:5000/api/v1/bills/${id}`, {
+      .get(`/api/v1/bills/${id}`, {
         withCredentials: true,
       })
       .then((res) => setData(res.data));

@@ -8,7 +8,7 @@ export const AuthContexProvider = ({ children }) => {
 
   const login = async (email, password) => {
     // const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/v1/superadmin/login`, {
-    const res = await fetch("http://localhost:5000/api/v1/superadmin/login", {
+    const res = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/superadmin/login`, {
     method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -54,7 +54,7 @@ export const AuthContexProvider = ({ children }) => {
 
 
   const logout = async () => {
-    await fetch("http://localhost:5000/api/v1/logout", {
+    await fetch(`${import.meta.env.VITE_API_URL}/api/v1/logout`, {
       method: "POST",
       credentials: "include",
     });
@@ -65,7 +65,7 @@ export const AuthContexProvider = ({ children }) => {
 
   // ✅ Restore login state on refresh
   useEffect(() => {
-    fetch("http://localhost:5000/api/v1/check-auth", {
+    fetch(`${import.meta.env.VITE_API_URL}/api/v1/check-auth`, {
       credentials: "include", // ✅ must include cookies
     })
 

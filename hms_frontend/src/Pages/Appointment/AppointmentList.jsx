@@ -6,8 +6,12 @@ import TableActions from "../../Components/Table Components/TableActionButtons";
 import { FaFilePrescription, FaCalendarPlus, FaInfoCircle } from "react-icons/fa";
 import { MdOutlineSmsFailed } from "react-icons/md";
 import toast from "react-hot-toast";
-import axios from "axios";
 import { usePermissions } from "../../hooks/usePermissions";
+import {
+  fetchAppointments as fetchAppointmentsAPI,
+  updateAppointmentStatus,
+  deleteAppointment,
+} from "../../services/appointmentService";
 
 function AppointmentList() {
   const [appointments, setAppointments] = useState([]);
@@ -21,33 +25,18 @@ function AppointmentList() {
   const navigate = useNavigate();
   const { hasRole, can } = usePermissions();
 
-  // ✅ Stable fetch function with pagination + search
+  // ✅ Stable fetch function with pagination + search (using appointmentService)
   const fetchAppointments = useCallback(async (page, limit, searchTerm) => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        page: page.toString(),
-        limit: limit.toString(),
-        ...(searchTerm && { search: searchTerm }),
-      });
-
-      const response = await fetch(
-        `http://localhost:5000/api/v1/appointments?${params}`,
-        { credentials: "include" }
-      );
-
-      if (!response.ok) throw new Error("Failed to load appointments");
-
-      const data = await response.json();
-      console.log("✅ Appointments fetched:", data);
-
+      const data = await fetchAppointmentsAPI(page, limit, searchTerm);
       setAppointments(data.appointments);
       setTotalAppointments(data.pagination.totalAppointments);
       setTotalPages(data.pagination.totalPages);
       setCurrentPage(data.pagination.currentPage);
     } catch (err) {
       console.error(err);
-      Swal.fire("Error", "Failed to load appointments", "error");
+      Swal.fire("Error", err.response?.data?.message || "Failed to load appointments", "error");
     } finally {
       setLoading(false);
     }
@@ -68,25 +57,18 @@ function AppointmentList() {
     setCurrentPage(1);
   };
 
-  // ✅ Update status API
+  // ✅ Update status API (using appointmentService)
   const updateStatus = async (id, newStatus, reason = null) => {
     try {
       setUpdating(id);
-      const payload = { status: newStatus };
-      if (reason) payload.cancellation_reason = reason;
-
-      await axios.put(
-        `http://localhost:5000/api/v1/appointments/${id}/status`,
-        payload,
-        { withCredentials: true }
-      );
+      await updateAppointmentStatus(id, newStatus, reason);
       setAppointments((prev) =>
         prev.map((a) => (a.id === id ? { ...a, status: newStatus } : a))
       );
       toast.success(`Status updated to ${newStatus}`);
     } catch (error) {
       console.error(error);
-      toast.error("Failed to update status");
+      toast.error(error.response?.data?.message || "Failed to update status");
     } finally {
       setUpdating(null);
     }
@@ -255,18 +237,19 @@ function AppointmentList() {
     if (!result.isConfirmed) return;
 
     try {
-      const res = await fetch(
-        `http://localhost:5000/api/v1/appointments/${item.id}`,
-        { method: "DELETE", credentials: "include" }
-      );
-
-      if (!res.ok) throw new Error("Delete failed");
-
-      fetchAppointments(currentPage, appointmentsPerPage, search);
+      await deleteAppointment(item.id);
+      
+      // ✅ Fix pagination bug: validate current page still exists
+      // If we deleted an item, calculate max possible page and adjust if needed
+      const newTotal = totalAppointments - 1;
+      const maxPossiblePage = Math.ceil(newTotal / appointmentsPerPage);
+      const pageToFetch = currentPage > maxPossiblePage && maxPossiblePage > 0 ? maxPossiblePage : currentPage;
+      
+      fetchAppointments(pageToFetch, appointmentsPerPage, search);
       Swal.fire("Deleted!", "Appointment has been deleted.", "success");
     } catch (err) {
       console.error(err);
-      Swal.fire("Error", "Failed to delete appointment", "error");
+      Swal.fire("Error", err.response?.data?.message || "Failed to delete appointment", "error");
     }
   };
 
@@ -324,19 +307,25 @@ function AppointmentList() {
             <select
               value={row.status}
               onChange={(e) => handleStatusChange(row, e.target.value)}
-              className="text-xs border border-gray-300 rounded p-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="text-xs border border-gray-300 rounded p-1 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
             >
-              {getStatusOptions(row).map(option => (
-                <option
-                  key={option.value}
-                  value={option.value}
-                  disabled={option.disabled}
-                  title={option.disabledReason}
-                  className={option.disabled ? 'text-gray-400' : ''}
-                >
-                  {option.label} {option.disabled && option.disabledReason && ` (${option.disabledReason})`}
-                </option>
-              ))}
+              {getStatusOptions(row).map(option => {
+                // Build option label with disabled reason if applicable
+                const optionLabel = option.disabled && option.disabledReason 
+                  ? `${option.label} (${option.disabledReason})` 
+                  : option.label;
+                
+                return (
+                  <option
+                    key={option.value}
+                    value={option.value}
+                    disabled={option.disabled}
+                    title={option.disabledReason || ""}
+                  >
+                    {optionLabel}
+                  </option>
+                );
+              })}
             </select>
           ) : (
             // Show locked message for completed appointments

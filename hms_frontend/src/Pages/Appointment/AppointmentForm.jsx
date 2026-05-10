@@ -84,7 +84,7 @@ const AppointmentForm = () => {
   const fetchDoctorServices = async (doctorId) => {
     try {
       const res = await axios.get(
-        `http://localhost:5000/api/v1/doctor-services?doctor_id=${doctorId}`,
+        `/api/v1/doctor-services?doctor_id=${doctorId}`,
         { withCredentials: true }
       );
       setServices(res.data || []);
@@ -98,7 +98,7 @@ const AppointmentForm = () => {
     setLoadingFee(true);
     try {
       const res = await axios.get(
-        `http://localhost:5000/api/v1/doctor-fees?doctor_id=${doctorId}&service_id=${serviceId}`,
+        `/api/v1/doctor-fees?doctor_id=${doctorId}&service_id=${serviceId}`,
         { withCredentials: true }
       );
 
@@ -123,7 +123,7 @@ const AppointmentForm = () => {
 
   const fetchDoctors = async () => {
     try {
-      const res = await axios.get("http://localhost:5000/api/v1/doctors", {
+      const res = await axios.get("/api/v1/doctors", {
         withCredentials: true,
       });
       setDoctors(res.data);
@@ -135,7 +135,7 @@ const AppointmentForm = () => {
 
   const fetchSinglePatient = async (id) => {
     try {
-      const res = await axios.get(`http://localhost:5000/api/v1/patients/${id}`, {
+      const res = await axios.get(`/api/v1/patients/${id}`, {
         withCredentials: true,
       });
       console.log(res.data);
@@ -152,7 +152,7 @@ const AppointmentForm = () => {
     setLoadingSlots(true);
     try {
       const res = await axios.get(
-        `http://localhost:5000/api/v1/appointments/available-slots?doctor_id=${doctorId}&date=${date}`,
+        `/api/v1/appointments/available-slots?doctor_id=${doctorId}&date=${date}`,
         { withCredentials: true }
       );
 
@@ -185,7 +185,7 @@ const AppointmentForm = () => {
     setIsSearching(true);
     try {
       const res = await axios.get(
-        `http://localhost:5000/api/v1/patients/search?q=${encodeURIComponent(query)}`,
+        `/api/v1/patients/search?q=${encodeURIComponent(query)}`,
         { withCredentials: true }
       );
       setPatients(res.data);
@@ -237,24 +237,14 @@ const AppointmentForm = () => {
 
     try {
       const endpoint = appointmentType === "walk_in"
-        ? "http://localhost:5000/api/v1/appointments/walk-in"
-        : "http://localhost:5000/api/v1/appointments";
+        ? "/api/v1/appointments/walk-in"
+        : "/api/v1/appointments";
 
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(formData),
-        credentials: "include",
+      const response = await axios.post(endpoint, formData, {
+        withCredentials: true,
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || errorData.error || "Failed to create appointment");
-      }
-
-      const result = await response.json();
+      const result = response.data;
 
       if (appointmentType === "walk_in") {
         toast.success(
@@ -288,7 +278,8 @@ const AppointmentForm = () => {
       navigate("/appointments");
     } catch (error) {
       console.error("Error:", error);
-      toast.error(error.message || "Failed to create appointment");
+      const errorMessage = error.response?.data?.message || error.message || "Failed to create appointment";
+      toast.error(errorMessage);
     }
   };
 

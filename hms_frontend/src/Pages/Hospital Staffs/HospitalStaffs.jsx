@@ -33,7 +33,7 @@ const HospitalStaffs = () => {
       });
 
       const res = await fetch(
-        `http://localhost:5000/api/v1/team-members?${params}`,
+        `api/v1/team-members?${params}`,
         { credentials: "include" }
       );
 

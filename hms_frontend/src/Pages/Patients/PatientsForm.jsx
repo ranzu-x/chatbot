@@ -70,7 +70,7 @@ const PatientsForm = () => {
     const fetchPatientData = async () => {
         setLoading(true);
         try {
-            const response = await fetch(`http://localhost:5000/api/v1/patients/${id}`, {
+            const response = await fetch(`/api/v1/patients/${id}`, {
                 credentials: "include"
             });
             
@@ -248,8 +248,8 @@ const PatientsForm = () => {
             };
 
             const url = isEditMode 
-                ? `http://localhost:5000/api/v1/patients/${id}`
-                : 'http://localhost:5000/api/v1/patients';
+                ? `/api/v1/patients/${id}`
+                : '/api/v1/patients';
             
             const method = isEditMode ? 'PUT' : 'POST';
 

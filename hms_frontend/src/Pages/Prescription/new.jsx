@@ -43,8 +43,8 @@ const AddPrescription = () => {
       try {
         const doctorId = 1;
         const [doctorRes, medicineRes] = await Promise.all([
-          axios.get(`http://localhost:5000/api/v1/doctors/${doctorId}`),
-          axios.get(`http://localhost:5000/api/v1/medicines`)
+          axios.get(`/api/v1/doctors/${doctorId}`),
+          axios.get(`/api/v1/medicines`)
         ]);
         setDoctorDetails(doctorRes.data);
         setMedicationOptions(medicineRes.data);
@@ -66,7 +66,7 @@ const AddPrescription = () => {
     }
     setSearching(true);
     try {
-      const res = await axios.get(`http://localhost:5000/api/v1/patients/search?q=${query}`);
+      const res = await axios.get(`/api/v1/patients/search?q=${query}`);
       setPatientResults(res.data);
     } catch (error) {
       console.error('Patient search error:', error);

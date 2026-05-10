@@ -23,7 +23,7 @@ const PrescriptionDoc = ({ doctorId, patientId }) => {
   const fetchDoctor = async () => {
     try {
       const res = await axios.get(
-        `http://localhost:5000/api/v1/doctors/${doctorId}`
+        `/api/v1/doctors/${doctorId}`
       );
       setDoctorDetails(res.data);
     } catch (error) {
@@ -34,7 +34,7 @@ const PrescriptionDoc = ({ doctorId, patientId }) => {
   const fetchPatient = async () => {
     try {
       const res = await axios.get(
-        `http://localhost:5000/api/v1/patients/${patientId}`
+        `/api/v1/patients/${patientId}`
       );
       setPatientDetails((prev) => ({
         ...prev,

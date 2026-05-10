@@ -21,7 +21,7 @@ const SlotManager = () => {
 
   const fetchDoctors = async () => {
     try {
-      const res = await axios.get("http://localhost:5000/api/v1/doctors", {
+      const res = await axios.get("/api/v1/doctors", {
         withCredentials: true,
       });
       setDoctors(res.data);

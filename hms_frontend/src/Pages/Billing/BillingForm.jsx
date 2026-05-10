@@ -31,7 +31,7 @@ const HospitalBillingSystem = () => {
 
   useEffect(() => {
     if (appointmentId) {
-      axios.get(`http://localhost:5000/api/v1/appointments/${appointmentId}`, { withCredentials: true })
+      axios.get(`/api/v1/appointments/${appointmentId}`, { withCredentials: true })
         .then((res) => {
           setAppointmentData(res.data);
           setPatientInfo({
@@ -223,7 +223,7 @@ const HospitalBillingSystem = () => {
       };
 
       const response = await axios.post(
-        "http://localhost:5000/api/v1/bills",
+        "/api/v1/bills",
         billData,
         { withCredentials: true }
       );

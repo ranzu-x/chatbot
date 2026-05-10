@@ -3,8 +3,12 @@ import { useNavigate } from "react-router";
 import Swal from "sweetalert2";
 import DataTable from "../../Components/Table Components/DataTable";
 import TableActions from "../../Components/Table Components/TableActionButtons";
-import axios from "axios";
 import { FaPrint } from "react-icons/fa";
+import {
+  fetchBilling,
+  deleteBilling,
+  updateBilling,
+} from "../../services/billingService";
 
 function BillingList() {
   const [billings, setBillings] = useState([]);
@@ -16,29 +20,18 @@ function BillingList() {
   const [totalPages, setTotalPages] = useState(1);
   const navigate = useNavigate();
 
-  // ✅ Fetch bills with pagination + search
+  // ✅ Fetch bills with pagination + search (using billingService)
   const fetchBillings = useCallback(async (page, limit, searchTerm) => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        page: page.toString(),
-        limit: limit.toString(),
-        ...(searchTerm && { search: searchTerm }),
-      });
-
-      const response = await axios.get(
-        `http://localhost:5000/api/v1/bills?${params}`,
-        { withCredentials: true }
-      );
-
-      const data = response.data;
+      const data = await fetchBilling(page, limit, searchTerm);
       setBillings(data.bills);
       setTotalBills(data.pagination.totalBills);
       setTotalPages(data.pagination.totalPages);
       setCurrentPage(data.pagination.currentPage);
     } catch (err) {
       console.error(err);
-      Swal.fire("Error", "Failed to load billing data", "error");
+      Swal.fire("Error", err.response?.data?.message || "Failed to load billing data", "error");
     } finally {
       setLoading(false);
     }
@@ -75,29 +68,29 @@ function BillingList() {
     if (!result.isConfirmed) return;
 
     try {
-      await axios.delete(`http://localhost:5000/api/v1/bills/${item.id}`, {
-        withCredentials: true,
-      });
+      await deleteBilling(item.id);
+      
+      // ✅ Fix pagination bug: validate current page still exists
+      const newTotal = totalBills - 1;
+      const maxPossiblePage = Math.ceil(newTotal / billsPerPage);
+      const pageToFetch = currentPage > maxPossiblePage && maxPossiblePage > 0 ? maxPossiblePage : currentPage;
+      
       Swal.fire("Deleted!", "Bill deleted successfully", "success");
-      fetchBillings(currentPage, billsPerPage, search);
+      fetchBillings(pageToFetch, billsPerPage, search);
     } catch (err) {
       console.error(err);
-      Swal.fire("Error", "Failed to delete bill", "error");
+      Swal.fire("Error", err.response?.data?.message || "Failed to delete bill", "error");
     }
   };
 
   const markPaid = async (id) => {
     try {
-      await axios.put(
-        `http://localhost:5000/api/v1/bills/${id}`,
-        { status: "paid" },
-        { withCredentials: true }
-      );
+      await updateBilling(id, { status: "paid" });
       Swal.fire("Success", "Bill marked as paid!", "success");
       fetchBillings(currentPage, billsPerPage, search);
     } catch (err) {
       console.error(err);
-      Swal.fire("Error", "Failed to update bill status", "error");
+      Swal.fire("Error", err.response?.data?.message || "Failed to update bill status", "error");
     }
   };
 
