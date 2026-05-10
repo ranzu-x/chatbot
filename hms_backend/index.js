@@ -48,7 +48,6 @@ app.use("/api/v1", servicesRoutes);
 app.use("/api/v1", prescriptionRoutes);
 
 
-
 // ✅ Server
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
