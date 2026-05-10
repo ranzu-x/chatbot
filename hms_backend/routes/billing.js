@@ -132,13 +132,17 @@ router.post("/bills", authMiddleWare, async (req, res) => {
       );
     }
 
-    // 3️⃣ Update appointment payment status
+    // 3️⃣ Update appointment payment status; fully paid scheduled visits become confirmed
     if (appointment_id) {
       await conn.query(
         `UPDATE appointments
-         SET payment_status = ?
+         SET payment_status = ?,
+             status = CASE
+               WHEN ? = 'paid' AND status IN ('scheduled') THEN 'confirmed'
+               ELSE status
+             END
          WHERE id = ?`,
-        [payment_status, appointment_id]
+        [payment_status, payment_status, appointment_id]
       );
     }
 
