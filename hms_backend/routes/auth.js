@@ -90,14 +90,14 @@ router.post("/superadmin/login", async (req, res) => {
                 permissions: permissionMap, // Now using the new format
             },
             process.env.JWT_SECRET,
-            { expiresIn: "1h" }
+            { expiresIn: "8h" }
         );
 
         res.cookie("token", token, {
             httpOnly: true,
             secure: false,
             sameSite: "lax",
-            maxAge: 60 * 60 * 1000,
+            maxAge: 8 * 60 * 60 * 1000, // 8 hours
         });
 
         res.json({

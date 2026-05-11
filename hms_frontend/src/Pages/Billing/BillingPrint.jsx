@@ -1,17 +1,17 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router";
-import axios from "axios";
+import api from "../../services/api";
 import InvoiceLayout from './InvoiceLayout';
+import { useAuth } from "../../Provider/AuthContexProvider";
 
 const BillingPrint = () => {
   const { id } = useParams();
   const [data, setData] = useState(null);
+  const { user } = useAuth();
 
   useEffect(() => {
-    axios
-      .get(`/api/v1/bills/${id}`, {
-        withCredentials: true,
-      })
+    api
+      .get(`/api/v1/bills/${id}`)
       .then((res) => setData(res.data));
   }, [id]);
 
@@ -91,6 +91,7 @@ const patientInfo = {
   return (
     <div className="max-w-5xl mx-auto p-6 bg-white">
       <InvoiceLayout
+        hospitalInfo={user}
         billType={bill.bill_type}
         patientInfo={patientInfo}
        appointmentInfo={{
@@ -113,5 +114,6 @@ const patientInfo = {
     
   );
 };
+
 
 export default BillingPrint;

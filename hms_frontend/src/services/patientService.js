@@ -31,7 +31,10 @@ export const fetchPatients = async (page = 1, limit = 10, searchTerm = "") => {
  */
 export const fetchPatientById = async (id) => {
   try {
+    console.log("Fetching:", `${API_BASE}/${id}`);
+
     const response = await api.get(`${API_BASE}/${id}`);
+
     return response.data;
   } catch (error) {
     console.error("❌ Error fetching patient:", error);

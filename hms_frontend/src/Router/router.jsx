@@ -22,6 +22,7 @@ import PatientsForm from "../Pages/Patients/PatientsForm";
 import ProfilePage from "../Pages/Profile/ProfilePage";
 import SlotManager from "../Pages/Appointment/SlotManager";
 import BillingPrint from "../Pages/Billing/BillingPrint";
+import Departments from "../Pages/Departments/Departments";
 
 
 const router = createBrowserRouter([
@@ -183,10 +184,34 @@ const router = createBrowserRouter([
         }
       },
       {
-        path: "/billing/new",
+        path: "/billing/view/:id",
+        Component: () => {
+          return (
+            <PrivateRoute><BillingPrint /></PrivateRoute>
+          );
+        }
+      },
+      {
+        path: "/billing/edit/:id",
         Component: () => {
           return (
             <PrivateRoute><BillingForm></BillingForm></PrivateRoute>
+          );
+        }
+      },
+      {
+        path: "/billing/new",
+        Component: () => {
+          return (
+            <PrivateRoute><BillingForm /></PrivateRoute>
+          );
+        }
+      },
+      {
+        path: "/departments",
+        Component: () => {
+          return (
+            <PrivateRoute><Departments /></PrivateRoute>
           );
         }
       },

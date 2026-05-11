@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Plus, Trash2, Printer, Save, Search, User } from 'lucide-react';
 import api from '../../services/api';
-import { useSearchParams } from 'react-router';
+import { useSearchParams, useParams } from 'react-router';
 import InvoiceLayout from './InvoiceLayout';
 import { useAuth } from '../../Provider/AuthContexProvider';
 
@@ -24,6 +24,7 @@ const HospitalBillingSystem = () => {
 
 
   const [searchParams] = useSearchParams();
+  const { id } = useParams();
   const appointmentId = searchParams.get("appointment_id");
   const [appointmentData, setAppointmentData] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -31,7 +32,39 @@ const HospitalBillingSystem = () => {
 
 
   useEffect(() => {
-    if (appointmentId) {
+    if (id) {
+      // Fetch existing bill for editing
+      api.get(`/api/v1/bills/${id}`)
+        .then((res) => {
+          const { bill, items, invoice_no } = res.data;
+          setBillType(bill.bill_type);
+          setPatientInfo({
+            patientId: bill.patient_id || '',
+            patientName: bill.patient_name || '',
+            age: bill.age || '',
+            gender: bill.gender || '',
+            phone: bill.phone || '',
+            address: bill.address || '',
+            doctorName: bill.doctor_name || '',
+            date: bill.bill_date ? new Date(bill.bill_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
+          });
+          setPaidAmount(Number(bill.paid_amount) || 0);
+          setDiscount(Number(bill.discount_amount) || 0);
+          setDiscountType('fixed');
+          setPaymentMode(bill.payment_method || 'cash');
+          setRemarks(bill.remarks || '');
+
+          // Populate items
+          if (bill.bill_type === 'doctor') {
+            setDoctorItems(items.map(i => ({ id: i.id, service: i.service_name, amount: i.total_price })));
+          } else if (bill.bill_type === 'lab') {
+            setLabItems(items.map(i => ({ id: i.id, testName: i.service_name, quantity: i.quantity, rate: i.unit_price, amount: i.total_price })));
+          } else if (bill.bill_type === 'medicine') {
+            setMedicineItems(items.map(i => ({ id: i.id, medicineName: i.service_name, quantity: i.quantity, rate: i.unit_price, discount: i.discount || 0, amount: i.total_price })));
+          }
+        })
+        .catch(err => console.error("Error fetching bill:", err));
+    } else if (appointmentId) {
       api.get(`/api/v1/appointments/${appointmentId}`, { withCredentials: true })
         .then((res) => {
           setAppointmentData(res.data);
@@ -60,7 +93,7 @@ const HospitalBillingSystem = () => {
           alert("Failed to load appointment details");
         });
     }
-  }, [appointmentId]);
+  }, [id, appointmentId]);
 
   const [doctorItems, setDoctorItems] = useState([
     { id: 1, service: '', amount: 0 }
@@ -78,7 +111,7 @@ const HospitalBillingSystem = () => {
   const [discountType, setDiscountType] = useState('percentage');
   const [paymentMode, setPaymentMode] = useState('cash');
   const [remarks, setRemarks] = useState('');
-  // const [invoiceNumber] = useState(`INV-${Date.now().toString().slice(-6)}`);
+  const [invoiceNumber] = useState(`INV-${Date.now().toString().slice(-6)}`);
 
   // Calculate subtotal based on bill type
   const calculateSubtotal = () => {
@@ -231,9 +264,11 @@ const HospitalBillingSystem = () => {
       items
     };
 
-    const response = await api.post("/api/v1/bills", billData);
+    const response = id 
+      ? await api.put(`/api/v1/bills/${id}`, billData)
+      : await api.post("/api/v1/bills", billData);
 
-    alert("Bill saved successfully!");
+    alert(id ? "Bill updated successfully!" : "Bill saved successfully!");
     console.log(response.data);
 
   } catch (error) {
@@ -618,7 +653,8 @@ const HospitalBillingSystem = () => {
               tax={tax}
               grandTotal={grandTotal}
               paid={paidAmount}
-            // invoiceNo={invoiceNumber}
+              invoiceNo={invoiceNumber}
+              showActions={true}
             />
 
           </div>

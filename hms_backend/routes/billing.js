@@ -298,4 +298,77 @@ router.get("/bills", authMiddleWare, async (req, res) => {
     res.status(500).json({ error: "Failed to load billing data" });
   }
 });
+// ✅ Update bill status or data
+router.put("/bills/:id", authMiddleWare, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const hospital_id = req.user.hospital_id;
+    const updateData = req.body;
+
+    // Mapping frontend fields to backend columns if necessary
+    // If it's just status update:
+    if (updateData.status) {
+      await pool.query(
+        "UPDATE billing SET payment_status = ? WHERE id = ? AND hospital_id = ?",
+        [updateData.status, id, hospital_id]
+      );
+    } else {
+      // General update
+      await pool.query(
+        `UPDATE billing SET 
+          bill_type = ?, 
+          total_amount = ?, 
+          discount_amount = ?, 
+          tax_amount = ?, 
+          grand_total = ?, 
+          paid_amount = ?, 
+          payment_status = ?, 
+          payment_method = ?, 
+          remarks = ?
+        WHERE id = ? AND hospital_id = ?`,
+        [
+          updateData.bill_type,
+          updateData.subtotal,
+          updateData.discount_amount,
+          updateData.tax_amount,
+          updateData.grand_total,
+          updateData.paid_amount,
+          updateData.payment_status,
+          updateData.payment_method,
+          updateData.remarks,
+          id,
+          hospital_id
+        ]
+      );
+    }
+
+    res.json({ message: "Bill updated successfully" });
+  } catch (error) {
+    console.error("Update bill error:", error);
+    res.status(500).json({ message: "Failed to update bill" });
+  }
+});
+
+// ✅ Delete bill
+router.delete("/bills/:id", authMiddleWare, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const hospital_id = req.user.hospital_id;
+
+    // Delete items first
+    await pool.query("DELETE FROM billing_items WHERE billing_id = ?", [id]);
+    // Delete the bill
+    const [result] = await pool.query("DELETE FROM billing WHERE id = ? AND hospital_id = ?", [id, hospital_id]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Bill not found" });
+    }
+
+    res.json({ message: "Bill deleted successfully" });
+  } catch (error) {
+    console.error("Delete bill error:", error);
+    res.status(500).json({ message: "Failed to delete bill" });
+  }
+});
+
 export default router;

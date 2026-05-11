@@ -12,6 +12,7 @@ import {
     HeartIcon,
     BriefcaseIcon
 } from "@heroicons/react/24/outline";
+import api from "../../services/api";
 
 const PatientsForm = () => {
     const { id } = useParams();
@@ -70,13 +71,11 @@ const PatientsForm = () => {
     const fetchPatientData = async () => {
         setLoading(true);
         try {
-            const response = await fetch(`/api/v1/patients/${id}`, {
-                credentials: "include"
-            });
+            const response = await api.get(`/api/v1/patients/${id}`, {
+               withCredentials: true,
+            });         
             
-            if (!response.ok) throw new Error("Failed to fetch patient data");
-            
-            const patient = await response.json();
+            const patient = await response.data;
             console.log("Fetched patient data:", patient);
             
             setFormData({
@@ -198,89 +197,88 @@ const PatientsForm = () => {
         return Object.keys(newErrors).length === 0;
     };
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        
-        if (!validateForm()) {
-            Swal.fire("Validation Error", "Please fix the errors in the form", "error");
-            return;
-        }
+const handleSubmit = async (e) => {
+  e.preventDefault();
 
-        setLoading(true);
-        try {
-            const apiData = {
-            // Patient Information
-            firstName: formData.firstName,
-            lastName: formData.lastName,
-            dateOfBirth: formData.dateOfBirth,
-            age: parseInt(formData.age),
-            gender: formData.gender,
-            bloodGroup: formData.bloodGroup,
-            nid: formData.nid,
-            maritalStatus: formData.maritalStatus,
-            occupation: formData.occupation,
-            
-            // Contact Information
-            phoneNumber: formData.phoneNumber,
-            email: formData.email,
-            emergencyContactName: formData.emergencyContactName,
-            emergencyContactRelation: formData.emergencyContactRelation,
-            emergencyContactPhone: formData.emergencyContactPhone,
-            
-            // Present Address
-            presentAddress: formData.presentAddress,
-            presentCity: formData.presentCity,
-            presentState: formData.presentState,
-            presentZip: formData.presentZip,
-            presentCountry: formData.presentCountry,
-            
-            
-            // Medical History
-            allergies: formData.allergies,
-            currentMedications: formData.currentMedications,
-            pastConditions: formData.pastConditions,
-            chronicDiseases: formData.chronicDiseases,
-            surgicalHistory: formData.surgicalHistory,
-            
-            // Insurance
-            insuranceProvider: formData.insuranceProvider,
-            insuranceNumber: formData.insuranceNumber
-            };
+  if (!validateForm()) {
+    Swal.fire("Validation Error", "Please fix the errors in the form", "error");
+    return;
+  }
 
-            const url = isEditMode 
-                ? `/api/v1/patients/${id}`
-                : '/api/v1/patients';
-            
-            const method = isEditMode ? 'PUT' : 'POST';
+  setLoading(true);
 
-            const response = await fetch(url, {
-                method: method,
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                credentials: "include",
-                body: JSON.stringify(apiData)
-            });
+  try {
+    const apiData = {
+      // Patient Information
+      firstName: formData.firstName,
+      lastName: formData.lastName,
+      dateOfBirth: formData.dateOfBirth,
+      age: parseInt(formData.age),
+      gender: formData.gender,
+      bloodGroup: formData.bloodGroup,
+      nid: formData.nid,
+      maritalStatus: formData.maritalStatus,
+      occupation: formData.occupation,
 
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || `Failed to ${isEditMode ? 'update' : 'create'} patient`);
-            }
+      // Contact Information
+      phoneNumber: formData.phoneNumber,
+      email: formData.email,
+      emergencyContactName: formData.emergencyContactName,
+      emergencyContactRelation: formData.emergencyContactRelation,
+      emergencyContactPhone: formData.emergencyContactPhone,
 
-            const successMessage = isEditMode 
-                ? "Patient updated successfully!" 
-                : "Patient created successfully!";
-            
-            await Swal.fire("Success", successMessage, "success");
-            navigate("/patients");
+      // Present Address
+      presentAddress: formData.presentAddress,
+      presentCity: formData.presentCity,
+      presentState: formData.presentState,
+      presentZip: formData.presentZip,
+      presentCountry: formData.presentCountry,
 
-        } catch (error) {
-            console.error("Error saving patient:", error);
-            Swal.fire("Error", error.message, "error");
-        } finally {
-            setLoading(false);
-        }
+      // Medical History
+      allergies: formData.allergies,
+      currentMedications: formData.currentMedications,
+      pastConditions: formData.pastConditions,
+      chronicDiseases: formData.chronicDiseases,
+      surgicalHistory: formData.surgicalHistory,
+
+      // Insurance
+      insuranceProvider: formData.insuranceProvider,
+      insuranceNumber: formData.insuranceNumber,
     };
+
+    const url = isEditMode
+      ? `/api/v1/patients/${id}`
+      : "/api/v1/patients";
+
+    await api({
+      method: isEditMode ? "put" : "post",
+      url,
+      data: apiData,
+      withCredentials: true,
+    });
+
+    await Swal.fire(
+      "Success",
+      isEditMode
+        ? "Patient updated successfully!"
+        : "Patient created successfully!",
+      "success"
+    );
+
+    navigate("/patients");
+
+  } catch (error) {
+    console.error("Error saving patient:", error);
+
+    Swal.fire(
+      "Error",
+      error.response?.data?.message || "Something went wrong",
+      "error"
+    );
+  } finally {
+    setLoading(false);
+  }
+};
 
     const handleCancel = () => {
         navigate("/patients");

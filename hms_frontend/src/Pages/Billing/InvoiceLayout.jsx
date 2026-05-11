@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { Printer, Download } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
+import { useReactToPrint } from 'react-to-print';
 
 const InvoiceLayout = ({
     hospitalInfo,
@@ -21,424 +22,41 @@ const InvoiceLayout = ({
 }) => {
     const invoiceRef = useRef();
     const formatMoney = (value) => Number(value ?? 0).toFixed(2);
-    // Print function
-    const handlePrint = () => {
-        const printWindow = window.open('', '_blank');
-        printWindow.document.write(`
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Invoice - ${invoiceNo}</title>
-                <style>
-                    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-                    * {
-                        margin: 0;
-                        padding: 0;
-                        box-sizing: border-box;
-                        font-family: 'Inter', sans-serif;
-                    }
-                    body {
-                        padding: 20px;
-                        background: white;
-                    }
-                    .invoice-print {
-                        max-width: 800px;
-                        margin: 0 auto;
-                        border: 1px solid #e5e7eb;
-                        border-radius: 8px;
-                        overflow: hidden;
-                    }
-                    .header {
-                        background: linear-gradient(135deg, #1e40af, #1e3a8a);
-                        color: white;
-                        padding: 20px;
-                        text-align: center;
-                    }
-                    .header h1 {
-                        font-size: 24px;
-                        font-weight: bold;
-                        margin-bottom: 5px;
-                    }
-                    .header p {
-                        font-size: 14px;
-                        opacity: 0.9;
-                    }
-                    .info-section {
-                        padding: 20px;
-                        border-bottom: 1px solid #e5e7eb;
-                    }
-                    .grid-2 {
-                        display: grid;
-                        grid-template-columns: 1fr 1fr;
-                        gap: 20px;
-                    }
-                    .info-group h4 {
-                        color: #6b7280;
-                        font-size: 12px;
-                        text-transform: uppercase;
-                        margin-bottom: 5px;
-                    }
-                    .info-group p {
-                        font-weight: 500;
-                    }
-                    .items-table {
-                        width: 100%;
-                        border-collapse: collapse;
-                        margin: 20px 0;
-                    }
-                    .items-table th {
-                        background: #f3f4f6;
-                        padding: 12px;
-                        text-align: left;
-                        font-weight: 600;
-                        font-size: 12px;
-                        color: #374151;
-                        border-bottom: 2px solid #e5e7eb;
-                    }
-                    .items-table td {
-                        padding: 12px;
-                        border-bottom: 1px solid #e5e7eb;
-                    }
-                    .text-right { text-align: right; }
-                    .text-center { text-align: center; }
-                    .summary {
-                        padding: 20px;
-                        border-top: 2px solid #e5e7eb;
-                    }
-                    .summary-row {
-                        display: flex;
-                        justify-content: space-between;
-                        padding: 8px 0;
-                        border-bottom: 1px dashed #d1d5db;
-                    }
-                    .total-row {
-                        border-top: 2px solid #1e40af;
-                        margin-top: 10px;
-                        padding-top: 15px;
-                        font-weight: bold;
-                        font-size: 18px;
-                        color: #1e40af;
-                    }
-                    .footer {
-                        text-align: center;
-                        padding: 20px;
-                        color: #6b7280;
-                        font-size: 12px;
-                        border-top: 1px solid #e5e7eb;
-                    }
-                    @media print {
-                        body { padding: 0; }
-                        .invoice-print { border: none; }
-                        button { display: none; }
-                    }
-                </style>
-            </head>
-            <body>
-                <div class="invoice-print">
-                    <div class="header">
-                        <h1>MEDICAL INVOICE</h1>
-                        <p>${hospitalInfo?.hospital_name || ''}</p>
-                    <p style="margin-top: 5px; font-size: 12px;">
-                    ${hospitalInfo?.address || ''}, 
-                    ${hospitalInfo?.city || ''}, 
-                    ${hospitalInfo?.state || ''} 
-                    ${hospitalInfo?.zip_code || ''}
-                    </p>
-                    <p style="font-size: 12px;">
-                        Phone: ${hospitalInfo?.phone || 'N/A'} | 
-                        Email: ${hospitalInfo?.email || 'N/A'}
-                    </p>
 
-                    </div>
-                    
-                    <div class="info-section">
-                        <div class="grid-2">
-                            <div class="info-group">
-                                <h4>Invoice Number</h4>
-                                <p>${invoiceNo}</p>
-                                <h4 style="margin-top: 10px;">Date</h4>
-                                <p>${new Date().toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        })}</p>
-                            </div>
-                            <div class="info-group">
-                                <h4>Bill Type</h4>
-                                <p>${billType.charAt(0).toUpperCase() + billType.slice(1)}</p>
-                                <h4 style="margin-top: 10px;">Patient ID</h4>
-                                <p>${patientInfo.patientId || 'N/A'}</p>
-                            </div>
-                        </div>
-                        
-                        <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
-                            <h4 style="color: #6b7280; font-size: 12px; margin-bottom: 10px;">Patient Information</h4>
-                            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
-                                <div>
-                                    <div style="font-size: 11px; color: #6b7280;">Name</div>
-                                    <div style="font-weight: 500;">${patientInfo.patientName || 'N/A'}</div>
-                                </div>
-                                <div>
-                                    <div style="font-size: 11px; color: #6b7280;">Age / Gender</div>
-                                    <div style="font-weight: 500;">${patientInfo.age || 'N/A'} / ${patientInfo.gender || 'N/A'}</div>
-                                </div>
-                                <div>
-                                    <div style="font-size: 11px; color: #6b7280;">Phone</div>
-                                    <div style="font-weight: 500;">${patientInfo.phone || 'N/A'}</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div style="padding: 0 20px;">
-                        <h4 style="color: #1e40af; font-size: 16px; margin-bottom: 15px; padding-bottom: 5px; border-bottom: 2px solid #1e40af;">
-                            Service Details
-                        </h4>
-                        <table class="items-table">
-                            <thead>
-                                <tr>
-                                    ${billType === 'doctor' ? `
-                                        <th>Description</th>
-                                        <th class="text-right">Amount ($)</th>
-                                    ` : billType === 'lab' ? `
-                                        <th>Test Name</th>
-                                        <th class="text-center">Qty</th>
-                                        <th class="text-right">Unit Price</th>
-                                        <th class="text-right">Amount ($)</th>
-                                    ` : `
-                                        <th>Medicine Name</th>
-                                        <th class="text-center">Qty</th>
-                                        <th class="text-right">Unit Price</th>
-                                        <th class="text-right">Discount</th>
-                                        <th class="text-right">Amount ($)</th>
-                                    `}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${billType === 'doctor' ? doctorItems.map(item => `
-                                    <tr>
-                                        <td>${item.service || 'Service'}</td>
-                                        <td class="text-right">$${Number(item.amount).toFixed(2)}</td>
-                                    </tr>
-                                `).join('') : ''}
-                                
-                                ${billType === 'lab' ? labItems.map(item => `
-                                    <tr>
-                                        <td>${item.testName || 'Test'}</td>
-                                        <td class="text-center">${item.quantity}</td>
-                                        <td class="text-right">$${Number(item.rate).toFixed(2)}</td>
-                                        <td class="text-right">$${Number(item.amount).toFixed(2)}</td>
-                                    </tr>
-                                `).join('') : ''}
-                                
-                                ${billType === 'medicine' ? medicineItems.map(item => `
-                                    <tr>
-                                        <td>${item.medicineName || 'Medicine'}</td>
-                                        <td class="text-center">${item.quantity}</td>
-                                        <td class="text-right">$${Number(item.rate).toFixed(2)}</td>
-                                        <td class="text-right">$${Number(item.discount).toFixed(2)}</td>
-                                        <td class="text-right">$${Number(item.amount).toFixed(2)}</td>
-                                    </tr>
-                                `).join('') : ''}
-                            </tbody>
-                        </table>
-                    </div>
-                    
-                    <div class="summary">
-                        <h4 style="color: #1e40af; font-size: 16px; margin-bottom: 15px; padding-bottom: 5px; border-bottom: 2px solid #1e40af;">
-                            Bill Summary
-                        </h4>
-                        <div style="max-width: 300px; margin-left: auto;">
-                            <div class="summary-row">
-                                <span>Subtotal:</span>
-                                <span>$${formatMoney(subtotal)}</span>
-                            </div>
-                            <div class="summary-row">
-                                <span>Discount:</span>
-                                <span style="color: #dc2626;">-$${formatMoney(discountAmount)}</span>
-                            </div>
-                            <div class="summary-row">
-                                <span>Tax (5%):</span>
-                                <span>$${formatMoney(tax)}</span>
-                            </div>
-                            <div class="summary-row total-row">
-                                <span>GRAND TOTAL:</span>
-                                <span>$${formatMoney(grandTotal)}</span>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="footer">
-                        <div style="color: #1e40af; font-weight: 600; margin-bottom: 5px;">
-                            Thank you for choosing City Hospital!
-                        </div>
-                        <div>This is a computer generated invoice and does not require a physical signature.</div>
-                        <div style="margin-top: 10px; font-size: 10px;">
-                            Email: billing@cityhospital.com | Website: www.cityhospital.com
-                        </div>
-                    </div>
-                </div>
-                
-                <script>
-                    window.onload = function() {
-                        window.print();
-                        setTimeout(() => window.close(), 1000);
-                    }
-                </script>
-            </body>
-            </html>
-        `);
-        printWindow.document.close();
-    };
+    // Improved Print function using react-to-print
+    const handlePrint = useReactToPrint({
+        contentRef: invoiceRef,
+        documentTitle: `Invoice-${invoiceNo}`,
+    });
 
     // PDF Download function
     const handleDownloadPDF = async () => {
         try {
-            // Create a temporary div for the printable content
-            const printContent = document.createElement('div');
-            printContent.innerHTML = `
-            <div style="font-family: Arial, sans-serif; padding: 20px;">
-                <div style="text-align: center; margin-bottom: 30px;">
-                    <h1 style="color: #2563eb; margin: 0;">MEDICAL INVOICE</h1>
-                   <h2 style="color: #4b5563; margin: 5px 0 0 0;">
-    ${hospitalInfo?.hospitalName || ''}
-</h2>
-<p>
-    ${hospitalInfo?.address || ''},
-    ${hospitalInfo?.city || ''},
-    ${hospitalInfo?.state || ''} ${hospitalInfo?.zipCode || ''}
-</p>
-<p>
-    Phone: ${hospitalInfo?.phone || 'N/A'}
-</p>
+            if (!invoiceRef.current) return;
 
-                </div>
-                
-                <div style="margin-bottom: 20px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
-                        <div>
-                            <strong>Invoice No:</strong> INV-${Date.now().toString().slice(-6)}
-                        </div>
-                        <div>
-                            <strong>Date:</strong> ${new Date().toLocaleDateString()}
-                        </div>
-                    </div>
-                </div>
-                
-                <div style="margin-bottom: 20px;">
-                    <h3 style="color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 5px;">
-                        Patient Information
-                    </h3>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-                        <div><strong>Patient ID:</strong> ${patientInfo.patientId || 'N/A'}</div>
-                        <div><strong>Name:</strong> ${patientInfo.patientName || 'N/A'}</div>
-                        <div><strong>Age/Gender:</strong> ${patientInfo.age || 'N/A'} / ${patientInfo.gender || 'N/A'}</div>
-                        <div><strong>Contact:</strong> ${patientInfo.phone || 'N/A'}</div>
-                        <div><strong>Doctor:</strong> ${patientInfo.doctorName || 'N/A'}</div>
-                    </div>
-                </div>
-                
-                <div style="margin-bottom: 20px;">
-                    <h3 style="color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 5px;">
-                        Bill Details
-                    </h3>
-                    <table style="width: 100%; border-collapse: collapse;">
-                        <thead>
-                            <tr style="background-color: #2563eb; color: white;">
-                                <th style="padding: 10px; text-align: left;">Description</th>
-                                <th style="padding: 10px; text-align: right;">Amount ($)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${billType === 'doctor' ? doctorItems.map(item => `
-                                <tr style="border-bottom: 1px solid #e5e7eb;">
-                                    <td style="padding: 10px;">${item.service || 'Service'}</td>
-                                    <td style="padding: 10px; text-align: right;">$${Number(item.amount).toFixed(2)}</td>
-                                </tr>
-                            `).join('') : ''}
-                            
-                            ${billType === 'lab' ? labItems.map(item => `
-                                <tr style="border-bottom: 1px solid #e5e7eb;">
-                                    <td style="padding: 10px;">${item.testName || 'Test'}</td>
-                                    <td style="padding: 10px; text-align: right;">$${Number(item.amount).toFixed(2)}</td>
-                                </tr>
-                            `).join('') : ''}
-                            
-                            ${billType === 'medicine' ? medicineItems.map(item => `
-                                <tr style="border-bottom: 1px solid #e5e7eb;">
-                                    <td style="padding: 10px;">${item.medicineName || 'Medicine'}</td>
-                                    <td style="padding: 10px; text-align: right;">$${Number(item.amount).toFixed(2)}</td>
-                                </tr>
-                            `).join('') : ''}
-                        </tbody>
-                    </table>
-                </div>
-                
-                <div style="margin-bottom: 20px;">
-                    <h3 style="color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 5px;">
-                        Bill Summary
-                    </h3>
-                    <div style="max-width: 300px; margin-left: auto;">
-                        <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed #cbd5e1;">
-                            <span>Subtotal:</span>
-                            <span>$${formatMoney(subtotal)}</span>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed #cbd5e1;">
-                            <span>Discount:</span>
-                            <span style="color: #dc2626;">-$${formatMoney(discountAmount)}</span>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed #cbd5e1;">
-                            <span>Tax (5%):</span>
-                            <span>$${formatMoney(tax)}</span>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; padding: 12px 0; border-top: 2px solid #2563eb; margin-top: 8px;">
-                            <span style="font-weight: bold;">Grand Total:</span>
-                            <span style="font-weight: bold; color: #2563eb;">$${formatMoney(grandTotal)}</span>
-                        </div>
-                    </div>
-                </div>
-                
-                <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; text-align: center; color: #6b7280;">
-                    <p>Thank you for choosing City Hospital!</p>
-                    <p style="font-size: 12px;">This is a computer generated invoice</p>
-                </div>
-            </div>
-        `;
-
-            // Append to body (hidden)
-            document.body.appendChild(printContent);
-
-            // Create canvas from the content
-            const canvas = await html2canvas(printContent, {
+            // Capture the element with html2canvas
+            const canvas = await html2canvas(invoiceRef.current, {
                 scale: 2,
-                backgroundColor: '#ffffff',
+                useCORS: true,
                 logging: false,
-                useCORS: true
+                backgroundColor: "#ffffff",
             });
 
-            // Remove the temporary element
-            document.body.removeChild(printContent);
-
-            // Create PDF
-            const pdf = new jsPDF({
-                orientation: 'portrait',
-                unit: 'mm',
-                format: 'a4'
-            });
-
-            const imgWidth = 190; // A4 width in mm
+            const imgData = canvas.toDataURL("image/jpeg", 1.0);
+            const pdf = new jsPDF('p', 'mm', 'a4');
+            
+            const imgWidth = 190; 
             const imgHeight = (canvas.height * imgWidth) / canvas.width;
-
-            pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 10, 10, imgWidth, imgHeight);
-            pdf.save(`invoice-${Date.now().toString().slice(-6)}.pdf`);
+            
+            pdf.addImage(imgData, 'JPEG', 10, 10, imgWidth, imgHeight);
+            pdf.save(`Bill-${invoiceNo || "Receipt"}.pdf`);
 
         } catch (error) {
-            console.error('Error generating PDF:', error);
-            alert('Failed to generate PDF. Please try again.');
+            console.error("PDF Generation Error:", error);
+            alert("Failed to generate PDF. Please try the 'Print' button as an alternative.");
         }
-
-        console.log("Patients Information:", patientInfo);
     };
+
 
     return (
         <div>
