@@ -24,6 +24,8 @@ const AddPrescription = () => {
       doctor: doctorDetails,
       patient: patientDetails,
       medicines: prescribedMedicines,
+      vitals,
+      tests,
     };
 
     try {
@@ -103,6 +105,24 @@ const AddPrescription = () => {
     gender: 'Male',
     date: new Date().toISOString().slice(0, 10),
   });
+
+  // Vitals state
+  const [vitals, setVitals] = useState({
+    bp: '', pulse: '', temperature: '', spo2: '',
+    weight: '', height: '', chief_complaint: '', diagnosis: '', advice: '', follow_up: '',
+  });
+
+  // Tests / Investigations
+  const [tests, setTests] = useState([]);
+  const [testInput, setTestInput] = useState('');
+
+  const handleAddTest = () => {
+    if (testInput.trim()) {
+      setTests(prev => [...prev, testInput.trim()]);
+      setTestInput('');
+    }
+  };
+  const handleRemoveTest = (idx) => setTests(prev => prev.filter((_, i) => i !== idx));
 
   const [medicationOptions, setMedicationOptions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -323,6 +343,93 @@ const AddPrescription = () => {
             </div>
           </div>
         </div>
+
+        {/* Vitals & Investigations Card */}
+        <div className="bg-white p-6 rounded-2xl mb-8 transition-all duration-300">
+          <h2 className="text-xl font-semibold text-gray-800 mb-4 border-b-2 border-gray-100 pb-3">
+            🩺 Vitals & Clinical Info
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+            {[
+              { label: 'Blood Pressure', key: 'bp', placeholder: '120/80 mmHg' },
+              { label: 'Pulse', key: 'pulse', placeholder: '72 bpm' },
+              { label: 'Temperature', key: 'temperature', placeholder: '98.6°F' },
+              { label: 'SpO₂', key: 'spo2', placeholder: '98%' },
+              { label: 'Weight (kg)', key: 'weight', placeholder: '70' },
+              { label: 'Height (cm)', key: 'height', placeholder: '170' },
+            ].map(v => (
+              <div key={v.key}>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{v.label}</label>
+                <input
+                  type="text"
+                  value={vitals[v.key]}
+                  onChange={(e) => setVitals(prev => ({ ...prev, [v.key]: e.target.value }))}
+                  placeholder={v.placeholder}
+                  className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Chief Complaint</label>
+              <textarea
+                value={vitals.chief_complaint}
+                onChange={(e) => setVitals(prev => ({ ...prev, chief_complaint: e.target.value }))}
+                rows="2"
+                placeholder="Patient's primary complaint..."
+                className="w-full p-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Diagnosis</label>
+              <textarea
+                value={vitals.diagnosis}
+                onChange={(e) => setVitals(prev => ({ ...prev, diagnosis: e.target.value }))}
+                rows="2"
+                placeholder="Provisional diagnosis..."
+                className="w-full p-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Advice</label>
+              <input type="text" value={vitals.advice} onChange={(e) => setVitals(prev => ({ ...prev, advice: e.target.value }))} placeholder="Dietary/lifestyle advice..." className="w-full p-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Follow-up</label>
+              <input type="text" value={vitals.follow_up} onChange={(e) => setVitals(prev => ({ ...prev, follow_up: e.target.value }))} placeholder="e.g., After 7 days" className="w-full p-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+
+          {/* Tests / Investigations */}
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">🔬 Tests / Investigations</h3>
+          <div className="flex gap-2 mb-3">
+            <input
+              type="text"
+              value={testInput}
+              onChange={(e) => setTestInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddTest())}
+              placeholder="e.g., CBC, Blood Sugar, X-Ray Chest..."
+              className="flex-1 p-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+            />
+            <button type="button" onClick={handleAddTest} className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-sm font-medium transition">
+              Add
+            </button>
+          </div>
+          {tests.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {tests.map((t, i) => (
+                <span key={i} className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 px-3 py-1.5 rounded-full text-sm font-medium">
+                  {t}
+                  <button type="button" onClick={() => handleRemoveTest(i)} className="text-blue-400 hover:text-red-500 transition">×</button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Medication Entry Form Card */}
         <div className="bg-white p-6 rounded-2xl mb-8 transition-all duration-300">
           <h2 className="text-xl font-semibold text-gray-800 mb-4 border-b-2 border-gray-100 pb-3 flex items-center gap-3">

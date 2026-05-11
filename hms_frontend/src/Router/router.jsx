@@ -10,6 +10,8 @@ import DashboardLayout from "../Layout/DashboardLayout";
 import Prescription from "../Pages/Prescription/Prescription";
 import AddUserForm from "../Pages/Add User/AddUser";
 import AddPrescription from "../Pages/Prescription/Prescription";
+import PrescriptionList from "../Pages/Prescription/PrescriptionList";
+import PrescriptionView from "../Pages/Prescription/PrescriptionView";
 import HospitalStaffs from "../Pages/Hospital Staffs/HospitalStaffs";
 import AppointmentForm from "../Pages/Appointment/AppointmentForm";
 import BillingForm from "../Pages/Billing/BillingForm";
@@ -101,11 +103,27 @@ const router = createBrowserRouter([
       },
       {
         path: "/prescription",
-        Component: () => {
-          return (
-            <PrivateRoute><AddPrescription></AddPrescription></PrivateRoute>
-          );
-        }
+        Component: () => (
+          <PrivateRoute><PrescriptionList /></PrivateRoute>
+        )
+      },
+      {
+        path: "/prescription/new",
+        Component: () => (
+          <PrivateRoute><AddPrescription /></PrivateRoute>
+        )
+      },
+      {
+        path: "/prescription/view/:id",
+        Component: () => (
+          <PrivateRoute><PrescriptionView /></PrivateRoute>
+        )
+      },
+      {
+        path: "/prescription/print/:id",
+        Component: () => (
+          <PrivateRoute><PrescriptionView /></PrivateRoute>
+        )
       },
       {
         path: "/adduser",
