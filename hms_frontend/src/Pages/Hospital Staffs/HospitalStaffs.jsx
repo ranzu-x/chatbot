@@ -4,6 +4,7 @@ import Swal from "sweetalert2";
 import DataTable from "../../Components/Table Components/DataTable";
 import TableActions from "../../Components/Table Components/TableActionButtons";
 import api from "../../services/api";
+import StaffViewModal from "../../Components/StaffViewModal";
 
 const HospitalStaffs = () => {
   const [teamMembers, setTeamMembers] = useState([]);
@@ -18,6 +19,10 @@ const HospitalStaffs = () => {
   const [staffsPerPage, setStaffsPerPage] = useState(10);
   const [totalStaffs, setTotalStaffs] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
+
+  // Modal State
+  const [isViewModalOpen, setIsViewModalOpen] = useState(false);
+  const [selectedStaffId, setSelectedStaffId] = useState(null);
   
   const navigate = useNavigate();
 
@@ -81,12 +86,34 @@ const fetchTeamMembers = useCallback(async (page, limit, searchTerm, roleFilter)
     setCurrentPage(1); // Reset to page 1 when filter changes
   };
 
-  // ... (Keep handleDelete, handleEdit, handleView exactly as they were) ...
   const handleDelete = async (item) => {
-     // ... your existing delete logic
+    const result = await Swal.fire({
+      title: "Are you sure?",
+      text: `You are about to delete ${item.first_name} ${item.last_name}. This action cannot be undone!`,
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#d33",
+      cancelButtonColor: "#3085d6",
+      confirmButtonText: "Yes, delete it!",
+    });
+
+    if (result.isConfirmed) {
+      try {
+        await api.delete(`/api/v1/users/${item.id}`, { withCredentials: true });
+        Swal.fire("Deleted!", "Staff member has been deleted.", "success");
+        fetchTeamMembers(currentPage, staffsPerPage, search, selectedRole);
+      } catch (err) {
+        console.error("Delete error:", err);
+        Swal.fire("Error", "Failed to delete staff member.", "error");
+      }
+    }
   };
-  const handleEdit = (item) => navigate(`/teamMembers/edit/${item.id}`);
-  const handleView = (item) => navigate(`/teamMembers/view/${item.id}`);
+
+  const handleEdit = (item) => navigate(`/users/edit/${item.id}`);
+  const handleView = (item) => {
+    setSelectedStaffId(item.id);
+    setIsViewModalOpen(true);
+  };
 
   const columns = [
     {
@@ -95,6 +122,7 @@ const fetchTeamMembers = useCallback(async (page, limit, searchTerm, roleFilter)
     },
     { header: "First Name", accessor: "first_name" },
     { header: "Last Name", accessor: "last_name" },
+    { header: "Email", accessor: "email" },
     { header: "Gender", accessor: "gender" },
     { header: "Phone", accessor: "phone" },
     { header: "Role", accessor: "role_name" },
@@ -119,10 +147,10 @@ const fetchTeamMembers = useCallback(async (page, limit, searchTerm, roleFilter)
             <option value="">All Roles</option>
             <option value="doctor">Doctor</option>
             <option value="junior nurse">Junior Nurse</option>
+            <option value="senior nurse">Senior Nurse</option>
             <option value="receptionist">Receptionist</option>
             <option value="pharmacist">Pharmacist</option>
             <option value="laboratorist">Laboratorist</option>
-            <option value="accountant">Accountant</option>
           </select>
         </div>
       </div>
@@ -149,6 +177,12 @@ const fetchTeamMembers = useCallback(async (page, limit, searchTerm, roleFilter)
             onDelete={handleDelete}
           />
         )}
+      />
+
+      <StaffViewModal 
+        isOpen={isViewModalOpen} 
+        onClose={() => setIsViewModalOpen(false)} 
+        staffId={selectedStaffId} 
       />
     </div>
   );

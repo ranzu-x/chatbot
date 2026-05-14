@@ -1,9 +1,11 @@
 import React, { useContext, useEffect, useState } from 'react';
-import axios from 'axios';
-import { FaTrash, FaEdit, FaPlus, FaCapsules } from 'react-icons/fa';
+import { FaTrash, FaEdit, FaPlus, FaCapsules, FaTimes } from 'react-icons/fa';
+import { useNavigate } from 'react-router';
+import api from '../../services/api';
 import { useAuth } from '../../Provider/AuthContexProvider';
 
 const AddPrescription = () => {
+  const navigate = useNavigate();
   const allMedicines = [
     { id: 1, name: 'Paracetamol 500mg' },
     { id: 2, name: 'Amoxicillin 250mg' },
@@ -31,14 +33,14 @@ const AddPrescription = () => {
     try {
       console.log("Prescription data:", prescriptionData);
 
-      const res = await axios.post(
-        `http://localhost:5000/api/v1/prescriptions`,
-        prescriptionData,
-        { withCredentials: true }
+      const res = await api.post(
+        `/api/v1/prescriptions`,
+        prescriptionData
       );
       alert('Prescription saved successfully!');
       // Optionally reset the form
       setPatientDetails({
+        patient_id: '',
         name: '',
         age: '',
         gender: 'Male',
@@ -58,27 +60,6 @@ const AddPrescription = () => {
       window.print();
     }, 100);
   };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
   const fetchMedicinesFromDB = () => {
@@ -165,9 +146,8 @@ const AddPrescription = () => {
     }
     setSearching(true);
     try {
-      const res = await axios.get(
-        `api/v1/patients/search?q=${encodeURIComponent(query)}`,
-        { withCredentials: true }
+      const res = await api.get(
+        `/api/v1/patients/search?q=${encodeURIComponent(query)}`
       );
 
       setPatientResults(res.data);
@@ -263,6 +243,30 @@ const AddPrescription = () => {
   /* ======================
      UI (Added Patient Search)
   ====================== */
+  const isDoctor = user?.roles?.some(role => role.toLowerCase() === 'doctor');
+
+  if (!isDoctor) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
+          <div className="w-20 h-20 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
+            <FaTimes className="w-10 h-10" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-800 mb-2">Access Denied</h2>
+          <p className="text-gray-600 mb-8">
+            Only doctors are authorized to create or edit prescriptions.
+          </p>
+          <button
+            onClick={() => navigate('/prescription')}
+            className="w-full py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition shadow-lg"
+          >
+            Back to Prescriptions
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-gray-100 min-h-screen font-sans">
       <div className="container mx-auto p-4 sm:p-6 lg:p-8">

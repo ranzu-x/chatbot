@@ -9,7 +9,6 @@ const router = express.Router();
 // ✅ Super Admin Login
 router.post("/superadmin/login", async (req, res) => {
     const { email, password } = req.body;
-    console.log(email,password);
     
 
     try {       
@@ -95,7 +94,7 @@ router.post("/superadmin/login", async (req, res) => {
 
         res.cookie("token", token, {
             httpOnly: true,
-            secure: false,
+            secure: process.env.NODE_ENV === 'production',
             sameSite: "lax",
             maxAge: 8 * 60 * 60 * 1000, // 8 hours
         });

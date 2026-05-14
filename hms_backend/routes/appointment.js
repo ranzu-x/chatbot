@@ -98,7 +98,7 @@ router.post(
     } catch (error) {
       await pool.query("ROLLBACK");
       console.error("[CREATE APPOINTMENT]", error);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: "Failed to create appointment" });
     }
   }
 );
@@ -195,7 +195,7 @@ router.post(
     } catch (error) {
       await pool.query("ROLLBACK");
       console.error("[CREATE WALK-IN APPOINTMENT]", error);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: "Failed to create walk-in appointment" });
     }
   }
 );
@@ -233,7 +233,7 @@ router.get("/appointments/walk-in/queue/:doctor_id", authMiddleWare, async (req,
         res.json(queue);
     } catch (error) {
         console.error("Get walk-in queue error:", error);
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: "Failed to fetch walk-in queue" });
     }
 });
 
@@ -261,8 +261,8 @@ router.put("/appointments/:id/status", authMiddleWare, async (req, res) => {
             `UPDATE appointments SET status = ?, 
              ${status === 'confirmed' && appt.appointment_type === 'walk_in' ? 'called_time = NOW(),' : ''}
              updated_at = NOW()
-             WHERE id = ?`,
-            [status, id]
+             WHERE id = ? AND hospital_id = ?`,
+            [status, id, hospital_id]
         );
 
         res.json({ 
@@ -273,7 +273,7 @@ router.put("/appointments/:id/status", authMiddleWare, async (req, res) => {
 
     } catch (error) {
         console.error("Update appointment status error:", error);
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: "Failed to update appointment status" });
     }
 });
 
@@ -327,7 +327,7 @@ router.put("/appointments/:id/cancel", authMiddleWare, async (req, res) => {
 
     } catch (error) {
         console.error("Cancel appointment error:", error);
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: "Failed to cancel appointment" });
     }
 });
 
@@ -412,7 +412,7 @@ router.get("/appointments", authMiddleWare, async (req, res) => {
         });
     } catch (error) {
         console.error("[Appointments] Fetch Error:", error);
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: "Failed to fetch appointments" });
     }
 });
 
@@ -447,7 +447,7 @@ router.get("/appointments/available-slots", authMiddleWare, async (req, res) => 
         res.json(slots);
     } catch (error) {
         console.error("Get available slots error:", error);
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: "Failed to fetch available slots" });
     }
 });
 
@@ -465,7 +465,7 @@ router.get("/doctor-services", authMiddleWare, async (req, res) => {
       res.json(services);
     } catch (error) {
       console.error("[DOCTOR SERVICES]", error);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: "Failed to fetch services" });
     }
   }
 );
@@ -493,7 +493,7 @@ router.get("/doctor-fees", authMiddleWare, async (req, res) => {
     res.json({ fee: row.fee });
   } catch (error) {
     console.error("[DOCTOR FEES]", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to fetch doctor fees" });
   }
 });
 
@@ -538,7 +538,7 @@ router.get("/appointments/:id", authMiddleWare, async (req, res) => {
   
   catch (error) {
     console.error("[APPOINTMENT DETAILS] Error:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to fetch appointment details" });
   }
 });
 

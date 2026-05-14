@@ -1,9 +1,15 @@
 import { CalendarDaysIcon, ChartBarIcon, RectangleStackIcon, UsersIcon, ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
 import { FaRegMoneyBillAlt, FaFilePrescription } from 'react-icons/fa';
 import { Link, useLocation } from 'react-router';
+import { useAuth } from '../../Provider/AuthContexProvider';
+import { FaCrown, FaMicroscope, FaFlask } from 'react-icons/fa';
 
 const Sidebar = () => {
     const location = useLocation();
+    const { user } = useAuth();
+    const isSuperAdmin = user?.roles?.some(role => role.toLowerCase() === 'super_admin');
+    const isHospitalAdmin = user?.roles?.some(role => role.toLowerCase() === 'hospital_admin');
+    const isLabTech = user?.roles?.some(role => role.toLowerCase() === 'lab technician');
     const isActive = (path) => location.pathname === path;
 
 
@@ -52,6 +58,21 @@ const Sidebar = () => {
                     <Link to={'/slots/manage'} className={getLinkClass('/slots/manage')}>
                         <RectangleStackIcon className="h-5 w-5 mr-3" /> Manage Slots
                     </Link>
+                    {isHospitalAdmin && (
+                        <Link to={'/services'} className={getLinkClass('/services')}>
+                            <FaMicroscope className="h-5 w-5 mr-3" /> Tests & Services
+                        </Link>
+                    )}
+                    {(isLabTech || isHospitalAdmin) && (
+                        <Link to={'/lab-dashboard'} className={getLinkClass('/lab-dashboard')}>
+                            <FaFlask className="h-5 w-5 mr-3" /> Laboratory
+                        </Link>
+                    )}
+                    {isSuperAdmin && (
+                        <Link to={'/superadmin/hospitals'} className={getLinkClass('/superadmin/hospitals')}>
+                            <FaCrown className="h-5 w-5 mr-3 text-amber-500" /> Hospitals (SaaS)
+                        </Link>
+                    )}
 
                 </nav>
             </aside>

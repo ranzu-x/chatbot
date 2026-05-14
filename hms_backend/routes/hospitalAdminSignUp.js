@@ -9,7 +9,18 @@ const router = express.Router();
 // ✅ Hospital Admin Signup (Auto-login)
 router.post("/hospital-admin/signup", async (req, res) => {
   const { firstname, lastname, email, password } = req.body;
-   
+
+  // Input validation
+  if (!firstname || !lastname || !email || !password) {
+    return res.status(400).json({ message: "All fields are required." });
+  }
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: "Invalid email format." });
+  }
+  if (password.length < 8) {
+    return res.status(400).json({ message: "Password must be at least 8 characters." });
+  }
 
   try {
     // 1️⃣ Check if email already exists
@@ -87,14 +98,14 @@ router.post("/hospital-admin/signup", async (req, res) => {
       permissions: user.permissions ? user.permissions.split(",") : [],
     };
 
-    const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn: "1h" });
+    const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn: "8h" });
 
     // 8️⃣ Set cookie for auto-login
     res.cookie("token", token, {
       httpOnly: true,
-      secure: false, // change to true if using HTTPS
+      secure: process.env.NODE_ENV === 'production',
       sameSite: "lax",
-      maxAge: 60 * 60 * 1000, // 1 hour
+      maxAge: 8 * 60 * 60 * 1000, // 8 hours
     });
 
     // 9️⃣ Send response (same as login)

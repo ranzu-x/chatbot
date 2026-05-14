@@ -39,11 +39,13 @@ router.post("/users/create-users", authMiddleWare, upload.single("profile_image"
         gender,
         dateOfBirth,
         address,
-        role,       // This is the Role (Doctor, Nurse, etc.)
+        role,
+        departmentName,
         qualification,
         emergencyContact,
         specialization,
-        services          // This will be a JSON string from the FormData
+        consultationFee,
+        services
       } = req.body;
 
       // --- Authorization Check (Unchanged) ---
@@ -89,7 +91,7 @@ router.post("/users/create-users", authMiddleWare, upload.single("profile_image"
           )
           VALUES (?, ?, ?, ?)
           `,
-          [userId, role, qualification, emergencyContact]
+          [userId, departmentName || role, qualification, emergencyContact]
         );
       }
 
@@ -98,11 +100,11 @@ router.post("/users/create-users", authMiddleWare, upload.single("profile_image"
       // ==========================================================
       const roleMap = {
           "doctor": 3,
-          "junior_nurse": 4,
-          "senior_nurse": 5,
-          "receptionist": 6,
-          "lab technician": 7,
-          "pharmacist": 8,
+          "junior nurse": 6,
+          "senior nurse": 7,
+          "receptionist": 8,
+          "pharmacist": 8, // Fallback if pharmacist isn't in DB yet
+          "laboratorist": 8,
       };
       const role_id = roleMap[role?.toLowerCase()];
       console.log("Assigned role_id:", role_id);
@@ -121,10 +123,10 @@ router.post("/users/create-users", authMiddleWare, upload.single("profile_image"
         // Insert specialization into doctor_details
         await connection.query(
           `
-          INSERT INTO doctor_details (user_id, specialization)
-          VALUES (?, ?)
+          INSERT INTO doctor_details (user_id, specialization, consultation_fee)
+          VALUES (?, ?, ?)
           `,
-          [userId, specialization]
+          [userId, specialization, consultationFee || 0]
         );
 
 
@@ -200,7 +202,7 @@ router.get("/team-members", authMiddleWare, async (req, res) => {
     let queryParams = [hospitalId];
 
     // 2. Add Role Filter Logic
-    if (role && role !== "all") {
+    if (role && role !== "" && role !== "all") {
       baseQuery += ` AND r.name = ?`;
       queryParams.push(role);
     }
@@ -232,7 +234,7 @@ router.get("/team-members", authMiddleWare, async (req, res) => {
         sp.department,
         r.name AS role_name
       ${baseQuery}
-      ORDER BY u.created_at DESC
+      ORDER BY r.name ASC, u.created_at DESC
       LIMIT ? OFFSET ?
     `;
 
@@ -300,4 +302,176 @@ router.get("/doctors", authMiddleWare, async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+// ==============================
+// Get Individual User details
+// ==============================
+router.get("/users/:id", authMiddleWare, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const hospitalId = req.user.hospital_id;
+
+    const [rows] = await pool.query(
+      `
+      SELECT 
+        u.*, 
+        sp.department, sp.qualification, sp.emergency_contact,
+        dd.specialization, dd.consultation_fee,
+        r.name AS role_name
+      FROM users u
+      LEFT JOIN staff_profiles sp ON u.id = sp.user_id
+      LEFT JOIN doctor_details dd ON u.id = dd.user_id
+      LEFT JOIN user_roles ur ON u.id = ur.user_id
+      LEFT JOIN roles r ON ur.role_id = r.id
+      WHERE u.id = ? AND u.hospital_id = ?
+      `,
+      [id, hospitalId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Also fetch doctor services if it's a doctor
+    const user = rows[0];
+    if (user.role_name === 'doctor') {
+      const [services] = await pool.query(
+        `SELECT service_id, fee FROM doctor_services WHERE user_id = ?`,
+        [id]
+      );
+      user.services = services;
+    }
+
+    res.json(user);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==============================
+// Delete User
+// ==============================
+router.delete("/users/:id", authMiddleWare, async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const { id } = req.params;
+    const hospitalId = req.user.hospital_id;
+
+    // Check if user exists and belongs to the hospital
+    const [user] = await connection.query(
+      "SELECT id FROM users WHERE id = ? AND hospital_id = ?",
+      [id, hospitalId]
+    );
+
+    if (user.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Delete from associated tables
+    await connection.query("DELETE FROM doctor_services WHERE user_id = ?", [id]);
+    await connection.query("DELETE FROM doctor_details WHERE user_id = ?", [id]);
+    await connection.query("DELETE FROM staff_profiles WHERE user_id = ?", [id]);
+    await connection.query("DELETE FROM user_roles WHERE user_id = ?", [id]);
+    await connection.query("DELETE FROM users WHERE id = ?", [id]);
+
+    await connection.commit();
+    res.json({ message: "User deleted successfully" });
+  } catch (err) {
+    await connection.rollback();
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    connection.release();
+  }
+});
+
+// ==============================
+// Update User
+// ==============================
+router.put("/users/:id", authMiddleWare, upload.single("profile_image"), async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const { id } = req.params;
+    const hospitalId = req.user.hospital_id;
+    const {
+      firstName, lastName, email, phone, gender, dateOfBirth, address,
+      role, departmentName, qualification, emergencyContact, specialization, consultationFee, services
+    } = req.body;
+
+    // Check if user exists
+    const [targetUser] = await connection.query(
+      "SELECT id FROM users WHERE id = ? AND hospital_id = ?",
+      [id, hospitalId]
+    );
+    if (targetUser.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Update users table
+    let updateFields = "first_name = ?, last_name = ?, email = ?, phone = ?, gender = ?, date_of_birth = ?, address = ?";
+    let updateParams = [firstName, lastName, email, phone, gender, dateOfBirth, address];
+
+    if (req.file) {
+      updateFields += ", profile_image = ?";
+      updateParams.push(req.file.filename);
+    }
+
+    updateParams.push(id);
+    await connection.query(`UPDATE users SET ${updateFields} WHERE id = ?`, updateParams);
+
+    // Update staff_profiles
+    await connection.query(
+      `UPDATE staff_profiles SET department = ?, qualification = ?, emergency_contact = ? WHERE user_id = ?`,
+      [departmentName || role, qualification, emergencyContact, id]
+    );
+
+    // Update role in user_roles
+    const roleMap = {
+        "doctor": 3,
+        "junior nurse": 6,
+        "senior nurse": 7,
+        "receptionist": 8,
+    };
+    const newRoleId = roleMap[role?.toLowerCase()];
+    if (newRoleId) {
+      // Use DELETE and INSERT to ensure only one role exists
+      await connection.query("DELETE FROM user_roles WHERE user_id = ?", [id]);
+      await connection.query(
+        "INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)",
+        [id, newRoleId]
+      );
+    }
+
+    // Update doctor_details and services if it's a doctor
+    if (role?.toLowerCase() === 'doctor') {
+      await connection.query(
+        "UPDATE doctor_details SET specialization = ?, consultation_fee = ? WHERE user_id = ?",
+        [specialization, consultationFee || 0, id]
+      );
+
+      if (services) {
+        const parsedServices = JSON.parse(services);
+        await connection.query("DELETE FROM doctor_services WHERE user_id = ?", [id]);
+        for (const service of parsedServices) {
+          await connection.query(
+            "INSERT INTO doctor_services (user_id, service_id, fee) VALUES (?, ?, ?)",
+            [id, service.service_id, service.fee]
+          );
+        }
+      }
+    }
+
+    await connection.commit();
+    res.json({ message: "User updated successfully" });
+  } catch (err) {
+    await connection.rollback();
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    connection.release();
+  }
+});
+
 export default router;

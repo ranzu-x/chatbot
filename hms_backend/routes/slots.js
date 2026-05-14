@@ -3,13 +3,14 @@ import express from "express";
 import pool from "../db.js";
 import cron from "node-cron";
 import { authMiddleWare } from "../middleware/authmiddleware.js";
+import { requireRole } from "../middleware/roleMiddleware.js";
 import generateSlots from "../utility/generateSlots.js";
 
 
 const router = express.Router();
 
 // Create doctor slot
-router.post("/slots", authMiddleWare, async (req, res) => {
+router.post("/slots", authMiddleWare, requireRole(["hospital_admin", "doctor"]), async (req, res) => {
 try {
     const {
       doctor_id,
@@ -249,7 +250,7 @@ router.put("/slots/:id", authMiddleWare, async (req, res) => {
 });
 
 // Delete slot (only if no active appointments)
-router.delete("/slots/:id", authMiddleWare, async (req, res) => {
+router.delete("/slots/:id", authMiddleWare, requireRole(["hospital_admin", "doctor"]), async (req, res) => {
   try {
     const slotId = req.params.id;
     const hospitalId = req.user.hospital_id;

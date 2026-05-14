@@ -25,6 +25,9 @@ import ProfilePage from "../Pages/Profile/ProfilePage";
 import SlotManager from "../Pages/Appointment/SlotManager";
 import BillingPrint from "../Pages/Billing/BillingPrint";
 import Departments from "../Pages/Departments/Departments";
+import HospitalManagement from "../Pages/SuperAdmin/HospitalManagement";
+import ServicesList from "../Pages/Services/ServicesList";
+import LabDashboard from "../Pages/Lab/LabDashboard";
 
 
 const router = createBrowserRouter([
@@ -142,6 +145,18 @@ const router = createBrowserRouter([
         }
       },
       {
+        path: "/users/edit/:id",
+        Component: () => (
+          <PrivateRoute><AddUserForm /></PrivateRoute>
+        )
+      },
+      {
+        path: "/users/view/:id",
+        Component: () => (
+          <PrivateRoute><AddUserForm isReadOnly={true} /></PrivateRoute>
+        )
+      },
+      {
         path: "/appointments",
         Component: () => {
           return (
@@ -232,6 +247,36 @@ const router = createBrowserRouter([
             <PrivateRoute><Departments /></PrivateRoute>
           );
         }
+      },
+      {
+        path: "/superadmin/hospitals",
+        Component: () => (
+          <PrivateRoute>
+            <RouterGuard requiredRole={['super_admin']}>
+              <HospitalManagement />
+            </RouterGuard>
+          </PrivateRoute>
+        )
+      },
+      {
+        path: "/services",
+        Component: () => (
+          <PrivateRoute>
+            <RouterGuard requiredRole={['hospital_admin']}>
+              <ServicesList />
+            </RouterGuard>
+          </PrivateRoute>
+        )
+      },
+      {
+        path: "/lab-dashboard",
+        Component: () => (
+          <PrivateRoute>
+            <RouterGuard requiredRole={['lab technician', 'hospital_admin']}>
+              <LabDashboard />
+            </RouterGuard>
+          </PrivateRoute>
+        )
       },
 
     ]

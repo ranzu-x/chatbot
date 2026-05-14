@@ -1,6 +1,7 @@
 import express from "express";
 import pool from "../db.js";
 import { authMiddleWare } from "../middleware/authmiddleware.js";
+import { logAudit } from "../utils/logger.js";
 
 const router = express.Router();
 
@@ -41,15 +42,17 @@ router.get("/prescriptions/:id", authMiddleWare, async (req, res) => {
               CONCAT(pt.first_name, ' ', pt.last_name) AS patient_name,
               pt.age AS patient_age, pt.gender AS patient_gender,
               CONCAT(u.first_name, ' ', u.last_name) AS doctor_name,
-              u.specialization AS doctor_specialization
+              dd.specialization AS doctor_specialization
        FROM prescriptions p
        LEFT JOIN patients pt ON p.patient_id = pt.id
        LEFT JOIN users u ON p.doctor_user_id = u.id
+       LEFT JOIN doctor_details dd ON u.id = dd.user_id
        WHERE p.id = ? AND p.hospital_id = ?`,
       [id, hospital_id]
     );
 
     if (prescRows.length === 0) {
+      console.warn(`Prescription not found: ID ${id}, Hospital ID ${hospital_id}`);
       return res.status(404).json({ message: "Prescription not found" });
     }
 
@@ -109,7 +112,7 @@ router.get("/prescriptions/:id", authMiddleWare, async (req, res) => {
       })),
     });
   } catch (error) {
-    console.error(error);
+    console.error("Error in GET /prescriptions/:id:", error);
     res.status(500).json({ message: "Error fetching prescription" });
   }
 });
@@ -119,11 +122,18 @@ router.post("/prescriptions", authMiddleWare, async (req, res) => {
   const { patient, doctor, medicines, vitals, tests } = req.body;
   const prescriptionDate = new Date().toISOString().split('T')[0];
   const patientId = patient.patient_id;
-  const doctorId = doctor.id;
-  const hospitalId = doctor.clinic_id;
+  const doctorId = req.user.id; // Use ID from session
+  const hospitalId = req.user.hospital_id; // Use ID from session
 
   if (!patientId || !doctorId || !hospitalId || !medicines || medicines.length === 0) {
+    console.error("Missing data for prescription:", { patientId, doctorId, hospitalId, medicinesCount: medicines?.length });
     return res.status(400).json({ message: "Incomplete prescription data" });
+  }
+
+  // Check if user is a doctor
+  const isDoctor = req.user.roles.some(role => role.toLowerCase() === 'doctor');
+  if (!isDoctor) {
+    return res.status(403).json({ message: "Only doctors are allowed to create prescriptions" });
   }
 
   const conn = await pool.getConnection();
@@ -159,7 +169,57 @@ router.post("/prescriptions", authMiddleWare, async (req, res) => {
       );
     }
 
+    // ==========================================
+    // NEW: Automated Billing & Lab Reports
+    // ==========================================
+    
+    // 1. Get Doctor's Consultation Fee
+    const [doctorInfo] = await conn.query("SELECT consultation_fee FROM doctor_details WHERE user_id = ?", [doctorId]);
+    const consultationFee = doctorInfo[0]?.consultation_fee || 0;
+    
+    let totalBillAmount = parseFloat(consultationFee);
+    let billedServices = [{ name: 'Consultation Fee', price: consultationFee }];
+
+    // 2. Process Tests
+    if (tests && tests.length > 0) {
+      for (const testName of tests) {
+        // Try to find the test in services table to get its price and ID
+        const [serviceInfo] = await conn.query("SELECT id, price FROM services WHERE service_name = ? AND is_active = 1", [testName]);
+        
+        const testPrice = serviceInfo[0]?.price || 0;
+        const testId = serviceInfo[0]?.id || null;
+        
+        totalBillAmount += parseFloat(testPrice);
+        billedServices.push({ name: testName, price: testPrice, service_id: testId });
+
+        // Create Pending Lab Report
+        await conn.query(
+          `INSERT INTO lab_reports (patient_id, doctor_id, prescription_id, test_id, status, hospital_id) 
+           VALUES (?, ?, ?, ?, 'pending', ?)`,
+          [patientId, doctorId, prescriptionId, testId, hospitalId]
+        );
+      }
+    }
+
+    // 3. Create Automated Bill
+    await conn.query(
+      `INSERT INTO billing (patient_id, doctor_id, hospital_id, bill_date, total_amount, paid_amount, status, services) 
+       VALUES (?, ?, ?, NOW(), ?, 0, 'unpaid', ?)`,
+      [patientId, doctorId, hospitalId, totalBillAmount, JSON.stringify(billedServices)]
+    );
+
     await conn.commit();
+
+    // Audit Log
+    await logAudit({
+      userId: doctorId,
+      action: 'CREATE_PRESCRIPTION',
+      tableName: 'prescriptions',
+      recordId: prescriptionId,
+      newValues: { patientId, medicinesCount: medicines.length },
+      hospitalId
+    });
+
     res.status(201).json({ message: "Prescription saved successfully", prescriptionId });
   } catch (error) {
     await conn.rollback();
@@ -175,6 +235,12 @@ router.delete("/prescriptions/:id", authMiddleWare, async (req, res) => {
   const { id } = req.params;
   const hospital_id = req.user.hospital_id;
 
+  // Check if user is a doctor
+  const isDoctor = req.user.roles.some(role => role.toLowerCase() === 'doctor');
+  if (!isDoctor) {
+    return res.status(403).json({ message: "Only doctors are allowed to delete prescriptions" });
+  }
+
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -189,6 +255,16 @@ router.delete("/prescriptions/:id", authMiddleWare, async (req, res) => {
       return res.status(404).json({ message: "Prescription not found" });
     }
     await conn.commit();
+
+    // Audit Log
+    await logAudit({
+      userId: req.user.id,
+      action: 'DELETE_PRESCRIPTION',
+      tableName: 'prescriptions',
+      recordId: id,
+      hospitalId: hospital_id
+    });
+
     res.json({ message: "Prescription deleted successfully" });
   } catch (error) {
     await conn.rollback();

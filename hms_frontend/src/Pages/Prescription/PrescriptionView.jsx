@@ -25,10 +25,12 @@ const PrescriptionView = () => {
 
   const fetchPrescription = async () => {
     try {
+      setLoading(true);
       const res = await api.get(`/api/v1/prescriptions/${id}`);
       setPrescription(res.data);
     } catch (error) {
       console.error('Error fetching prescription:', error);
+      setPrescription(null);
     } finally {
       setLoading(false);
     }

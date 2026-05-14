@@ -1,6 +1,7 @@
 import express from "express";
 import pool from "../db.js";
 import { authMiddleWare } from "../middleware/authmiddleware.js";
+import { requireRole } from "../middleware/roleMiddleware.js";
 
 const router = express.Router();
 
@@ -350,7 +351,7 @@ router.put("/bills/:id", authMiddleWare, async (req, res) => {
 });
 
 // ✅ Delete bill
-router.delete("/bills/:id", authMiddleWare, async (req, res) => {
+router.delete("/bills/:id", authMiddleWare, requireRole(["hospital_admin"]), async (req, res) => {
   try {
     const { id } = req.params;
     const hospital_id = req.user.hospital_id;
