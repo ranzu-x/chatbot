@@ -63,7 +63,11 @@ const UserCreationForm = ({ isReadOnly = false }) => {
         });
         if (!response.ok) throw new Error('Failed to fetch services');
         const data = await response.json();
-        setAvailableServices(data);
+        const consultationTerms = ['consultation', 'report review'];
+        const filteredServices = data.filter(s => 
+          consultationTerms.some(term => (s.service_name || '').toLowerCase().includes(term))
+        );
+        setAvailableServices(filteredServices);
       } catch (error) {
         console.error("Error fetching services:", error);
       }

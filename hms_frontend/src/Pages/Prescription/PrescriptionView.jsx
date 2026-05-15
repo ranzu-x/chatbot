@@ -55,7 +55,7 @@ const PrescriptionView = () => {
         </div>
       </div>
     );
-  }
+  } and 
 
   const { doctor, patient, vitals, tests, medicines, prescription_date } = prescription;
 

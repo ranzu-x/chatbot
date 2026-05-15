@@ -1,36 +1,48 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router';
+import { useAuth } from '../../Provider/AuthContexProvider';
 
 const NavBar = () => {
     const [isOpen, setIsOpen] = useState(false);
+    const { user } = useAuth();
 
     return (
         <nav className="bg-white shadow-sm sticky top-0 z-50">
-            {/* <div className="max-w-7xl container mx-auto flex justify-between items-center"> */}
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center py-4">
                
                 {/* Left Side - Logo */}
                 <div className="text-blue-700 text-2xl font-bold">
-                    <Link to="/">HMS</Link> {/* Replaced <a> with <Link> */}
+                    <Link to="/" className="flex items-center gap-2">
+                        <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+                            <span className="text-white font-bold text-xl">H</span>
+                        </div>
+                        <span className="text-xl font-bold bg-gradient-to-r from-indigo-600 to-indigo-800 bg-clip-text text-transparent">
+                            CareSync
+                        </span>
+                    </Link>
                 </div>
 
                 {/* Center - Menu Items (Hidden on small screens) */}
                 <div className="hidden md:flex space-x-8">
                     <Link to="/" className="text-gray-600 hover:text-indigo-600 font-medium transition duration-300">Home</Link>
-                    {/* <Link to="/about" className="text-gray-600 hover:text-indigo-600 font-medium transition duration-300">About</Link>
-                    <Link to="/contact" className="text-gray-600 hover:text-indigo-600 font-medium transition duration-300">Contact</Link>
-                    <Link to="/menu" className="text-gray-600 hover:text-indigo-600 font-medium transition duration-300">Menu</Link> */}
-                    <Link to="/addpatient" className="text-gray-600 hover:text-indigo-600 font-medium transition duration-300">Add Patient</Link>
-                    <Link to="/paitentsList" className="text-gray-600 hover:text-indigo-600 font-medium transition duration-300">Patient list</Link>
-                    <Link to="/dashboard" className="text-gray-600 hover:text-indigo-600 font-medium transition duration-300">Dashboard</Link>
+                    <a href="#services" className="text-gray-600 hover:text-indigo-600 font-medium transition duration-300">Services</a>
+                    <a href="#about" className="text-gray-600 hover:text-indigo-600 font-medium transition duration-300">About</a>
                 </div>
 
                 {/* Right Side - Buttons (Hidden on small screens) */}
                 <div className="hidden md:flex space-x-4 items-center">
-                    <Link to="/register" className="text-gray-600 hover:text-indigo-600 font-medium transition duration-300">Register</Link>
-                    <Link to='/login' className="bg-indigo-600 text-white font-bold py-2 px-4 rounded-md hover:bg-indigo-700 transition">
-                        Login
-                    </Link>
+                    {user ? (
+                        <Link to="/dashboard" className="bg-indigo-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-indigo-700 transition shadow-md shadow-indigo-100">
+                            Dashboard
+                        </Link>
+                    ) : (
+                        <>
+                            <Link to="/register" className="text-gray-600 hover:text-indigo-600 font-medium transition duration-300">Register</Link>
+                            <Link to='/login' className="bg-indigo-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-indigo-700 transition shadow-md shadow-indigo-100">
+                                Login
+                            </Link>
+                        </>
+                    )}
                 </div>
 
                 {/* Mobile Menu Button */}
@@ -65,16 +77,39 @@ const NavBar = () => {
 
             {/* Mobile Menu (Toggles based on isOpen state) */}
             {isOpen && (
-                <div className="md:hidden bg-white mt-2 space-y-3 p-4 rounded-md">
-                    <Link to="/" className="block text-gray-600 hover:text-indigo-600 font-medium transition duration-300">Home</Link>
-                    {/* <Link to="/about" className="block text-gray-600 hover:text-indigo-600 font-medium transition duration-300">About</Link>
-                    <Link to="/contact" className="block text-gray-600 hover:text-indigo-600 font-medium transition duration-300">Contact</Link>
-                    <Link to="/menu" className="block text-gray-600 hover:text-indigo-600 font-medium transition duration-300">Menu</Link> */}
-                    <Link to="/addpatient" className="block text-gray-600 hover:text-indigo-600 font-medium transition duration-300">Add Patient</Link>
-                    <Link to="/register" className="block text-gray-600 hover:text-indigo-600 font-medium transition duration-300">Register</Link>
-                    <button className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition duration-300 mt-2">
-                        Login
-                    </button>
+                <div className="md:hidden bg-white mt-2 space-y-3 p-4 rounded-xl shadow-lg border border-slate-50">
+                    <Link to="/" className="block text-gray-600 hover:text-indigo-600 font-medium p-2">Home</Link>
+                    <a href="#services" className="block text-gray-600 hover:text-indigo-600 font-medium p-2">Services</a>
+                    <a href="#about" className="block text-gray-600 hover:text-indigo-600 font-medium p-2">About</a>
+                    
+                    <div className="pt-2 border-t border-slate-50">
+                        {user ? (
+                            <Link 
+                                to="/dashboard" 
+                                className="block w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg text-center hover:bg-indigo-700 transition"
+                                onClick={() => setIsOpen(false)}
+                            >
+                                Dashboard
+                            </Link>
+                        ) : (
+                            <div className="space-y-3">
+                                <Link 
+                                    to="/register" 
+                                    className="block text-gray-600 hover:text-indigo-600 font-medium p-2"
+                                    onClick={() => setIsOpen(false)}
+                                >
+                                    Register
+                                </Link>
+                                <Link 
+                                    to="/login" 
+                                    className="block w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg text-center hover:bg-indigo-700 transition"
+                                    onClick={() => setIsOpen(false)}
+                                >
+                                    Login
+                                </Link>
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
         </nav>

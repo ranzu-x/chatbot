@@ -1,8 +1,20 @@
-import { CalendarDaysIcon, ChartBarIcon, RectangleStackIcon, UsersIcon, ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
-import { FaRegMoneyBillAlt, FaFilePrescription } from 'react-icons/fa';
+import { 
+    LayoutDashboard, 
+    Users, 
+    ClipboardList, 
+    Calendar, 
+    CreditCard, 
+    Building2, 
+    Stethoscope, 
+    UserPlus, 
+    Clock, 
+    Microscope, 
+    FlaskConical, 
+    Crown,
+    Settings
+} from 'lucide-react';
 import { Link, useLocation } from 'react-router';
 import { useAuth } from '../../Provider/AuthContexProvider';
-import { FaCrown, FaMicroscope, FaFlask } from 'react-icons/fa';
 
 const Sidebar = () => {
     const location = useLocation();
@@ -10,71 +22,135 @@ const Sidebar = () => {
     const isSuperAdmin = user?.roles?.some(role => role.toLowerCase() === 'super_admin');
     const isHospitalAdmin = user?.roles?.some(role => role.toLowerCase() === 'hospital_admin');
     const isLabTech = user?.roles?.some(role => role.toLowerCase() === 'lab technician');
+    
     const isActive = (path) => location.pathname === path;
 
-
     const getLinkClass = (path) => {
-        return `flex items-center px-4 py-2 rounded-lg ${isActive(path)
-                ? 'text-gray-700 bg-gray-200'
-                : 'text-gray-600 hover:bg-gray-100'
-            }`;
+        const baseClass = "flex items-center px-4 py-3 rounded-xl transition-all duration-200 group mb-1";
+        return isActive(path)
+            ? `${baseClass} bg-slate-200 text-slate-900 font-bold`
+            : `${baseClass} text-slate-500 hover:bg-slate-50 hover:text-slate-800`;
     };
 
+    const iconClass = (path) => {
+        return `h-5 w-5 mr-3 transition-colors duration-200 ${
+            isActive(path) ? 'text-slate-900' : 'text-slate-400 group-hover:text-slate-600'
+        }`;
+    };
 
     return (
-        <div>
+        <div className="h-screen sticky top-0">
             {/* Sidebar Navigation */}
-            <aside className="w-64 bg-white flex flex-col">
-                <div className='h-20 flex items-center justify-center border-b border-gray-200'>
-                    <Link to={"/"} className="text-2xl font-bold text-indigo-600">
-                        Hospital MS
+            <aside className="w-64 bg-white h-full flex flex-col border-r border-slate-100 shadow-sm">
+                <div className='h-20 flex items-center px-8 border-b border-slate-50'>
+                    <Link to={"/"} className="flex items-center gap-2">
+                        <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+                            <span className="text-white font-bold text-xl">H</span>
+                        </div>
+                        <span className="text-xl font-bold bg-gradient-to-r from-indigo-600 to-indigo-800 bg-clip-text text-transparent">
+                            CareSync
+                        </span>
                     </Link>
                 </div>
-                <nav className="flex-1 p-4 space-y-2">
-                    <Link to={'/dashboard'} className={getLinkClass('/dashboard')}>
-                        <ChartBarIcon className="h-5 w-5 mr-3" /> Dashboard
-                    </Link>
-                    <Link to={'/patients'} className={getLinkClass('/patients')}>
-                        <UsersIcon className="h-5 w-5 mr-3" /> Patients
-                    </Link>
-                    <Link to={'/prescription'} className={getLinkClass('/prescription')}>
-                        <FaFilePrescription className="h-5 w-5 mr-3" /> Prescription
-                    </Link>
-                    <Link to={'/appointments'} className={getLinkClass('/appointments')}>
-                        <CalendarDaysIcon className="h-5 w-5 mr-3" /> Appointments
-                    </Link>
-                    <Link to={'/billing'} className={getLinkClass('/billing')}>
-                        <FaRegMoneyBillAlt className="h-5 w-5 mr-3" /> Billing
-                    </Link>
-                    <Link to={'/departments'} className={getLinkClass('/departments')}>
-                        <RectangleStackIcon className="h-5 w-5 mr-3" /> Departments
-                    </Link>
-                    <Link to={'/users'} className={getLinkClass('/users')}>
-                        <RectangleStackIcon className="h-5 w-5 mr-3" /> Doctors
-                    </Link>
-                    <Link to={'/adduser'} className={getLinkClass('/adduser')}>
-                        <RectangleStackIcon className="h-5 w-5 mr-3" /> Add User
-                    </Link>
-                    <Link to={'/slots/manage'} className={getLinkClass('/slots/manage')}>
-                        <RectangleStackIcon className="h-5 w-5 mr-3" /> Manage Slots
-                    </Link>
-                    {isHospitalAdmin && (
-                        <Link to={'/services'} className={getLinkClass('/services')}>
-                            <FaMicroscope className="h-5 w-5 mr-3" /> Tests & Services
-                        </Link>
-                    )}
-                    {(isLabTech || isHospitalAdmin) && (
-                        <Link to={'/lab-dashboard'} className={getLinkClass('/lab-dashboard')}>
-                            <FaFlask className="h-5 w-5 mr-3" /> Laboratory
-                        </Link>
-                    )}
-                    {isSuperAdmin && (
-                        <Link to={'/superadmin/hospitals'} className={getLinkClass('/superadmin/hospitals')}>
-                            <FaCrown className="h-5 w-5 mr-3 text-amber-500" /> Hospitals (SaaS)
-                        </Link>
-                    )}
 
-                </nav>
+                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-4 mb-4">
+                        Main Menu
+                    </div>
+                    
+                    <nav className="space-y-1">
+                        <Link to={'/dashboard'} className={getLinkClass('/dashboard')}>
+                            <LayoutDashboard className={iconClass('/dashboard')} /> 
+                            <span className="font-medium text-sm">Dashboard</span>
+                        </Link>
+                        
+                        <Link to={'/patients'} className={getLinkClass('/patients')}>
+                            <Users className={iconClass('/patients')} /> 
+                            <span className="font-medium text-sm">Patients</span>
+                        </Link>
+                        
+                        <Link to={'/prescription'} className={getLinkClass('/prescription')}>
+                            <ClipboardList className={iconClass('/prescription')} /> 
+                            <span className="font-medium text-sm">Prescriptions</span>
+                        </Link>
+                        
+                        <Link to={'/appointments'} className={getLinkClass('/appointments')}>
+                            <Calendar className={iconClass('/appointments')} /> 
+                            <span className="font-medium text-sm">Appointments</span>
+                        </Link>
+                        
+                        <Link to={'/billing'} className={getLinkClass('/billing')}>
+                            <CreditCard className={iconClass('/billing')} /> 
+                            <span className="font-medium text-sm">Billing</span>
+                        </Link>
+                        
+                        <Link to={'/departments'} className={getLinkClass('/departments')}>
+                            <Building2 className={iconClass('/departments')} /> 
+                            <span className="font-medium text-sm">Departments</span>
+                        </Link>
+
+                        <div className="pt-4 pb-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest px-4">
+                            Management
+                        </div>
+
+                        <Link to={'/users'} className={getLinkClass('/users')}>
+                            <Stethoscope className={iconClass('/users')} /> 
+                            <span className="font-medium text-sm">Medical Staff</span>
+                        </Link>
+                        
+                        <Link to={'/adduser'} className={getLinkClass('/adduser')}>
+                            <UserPlus className={iconClass('/adduser')} /> 
+                            <span className="font-medium text-sm">Add New Staff</span>
+                        </Link>
+                        
+                        <Link to={'/slots/manage'} className={getLinkClass('/slots/manage')}>
+                            <Clock className={iconClass('/slots/manage')} /> 
+                            <span className="font-medium text-sm">Manage Slots</span>
+                        </Link>
+
+                        {isHospitalAdmin && (
+                            <Link to={'/services'} className={getLinkClass('/services')}>
+                                <Microscope className={iconClass('/services')} /> 
+                                <span className="font-medium text-sm">Tests & Services</span>
+                            </Link>
+                        )}
+
+                        {(isLabTech || isHospitalAdmin) && (
+                            <Link to={'/lab-dashboard'} className={getLinkClass('/lab-dashboard')}>
+                                <FlaskConical className={iconClass('/lab-dashboard')} /> 
+                                <span className="font-medium text-sm">Laboratory</span>
+                            </Link>
+                        )}
+
+                        {isSuperAdmin && (
+                            <>
+                                <div className="pt-4 pb-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest px-4">
+                                    System Admin
+                                </div>
+                                <Link to={'/superadmin/hospitals'} className={getLinkClass('/superadmin/hospitals')}>
+                                    <Crown className={`${iconClass('/superadmin/hospitals')} ${isActive('/superadmin/hospitals') ? '' : 'text-amber-500'}`} /> 
+                                    <span className={`font-medium text-sm ${isActive('/superadmin/hospitals') ? 'text-slate-900' : 'text-amber-600'}`}>SaaS Hospitals</span>
+                                </Link>
+                            </>
+                        )}
+                    </nav>
+                </div>
+
+                <div className="p-4 border-t border-slate-50">
+                    <div className="bg-slate-50 rounded-2xl p-4 flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold">
+                            {user?.first_name?.charAt(0) || 'U'}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <p className="text-xs font-bold text-slate-800 truncate">
+                                {user?.first_name} {user?.last_name}
+                            </p>
+                            <p className="text-[10px] text-slate-500 truncate capitalize">
+                                {user?.roles?.[0] || 'User'}
+                            </p>
+                        </div>
+                    </div>
+                </div>
             </aside>
         </div>
     );

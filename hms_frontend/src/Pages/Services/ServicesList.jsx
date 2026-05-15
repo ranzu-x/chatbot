@@ -20,8 +20,12 @@ const ServicesList = () => {
     try {
       setLoading(true);
       const res = await api.get('/api/v1/services');
-      
-      let filteredData = res.data;
+      const consultationTerms = ['consultation', 'report review'];
+      const filteredTests = res.data.filter(s => 
+        !consultationTerms.some(term => (s.service_name || '').toLowerCase().includes(term))
+      );
+
+      let filteredData = filteredTests;
       if (search) {
         const term = search.toLowerCase();
         filteredData = filteredData.filter(s => 

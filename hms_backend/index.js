@@ -14,6 +14,7 @@ import servicesRoutes from "./routes/services.js";
 import prescriptionRoutes from "./routes/prescriptions.js";
 import superAdminRoutes from "./routes/superadmin.js";
 import labRoutes from "./routes/lab.js";
+import dashboardRoutes from "./routes/dashboard.js";
 import pool from "./db.js";
 
 dotenv.config();
@@ -50,6 +51,7 @@ app.use("/api/v1", servicesRoutes);
 app.use("/api/v1", prescriptionRoutes);
 app.use("/api/v1", superAdminRoutes);
 app.use("/api/v1", labRoutes);
+app.use("/api/v1/dashboard", dashboardRoutes);
 
 
 // ✅ Server

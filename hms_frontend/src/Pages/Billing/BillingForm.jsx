@@ -29,9 +29,42 @@ const HospitalBillingSystem = () => {
   const [appointmentData, setAppointmentData] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const [paidAmount, setPaidAmount] = useState(0);
+  
+  // Master data for autocomplete
+  const [masterServices, setMasterServices] = useState([]);
+  const [masterMedicines, setMasterMedicines] = useState([]);
+  const [masterPatients, setMasterPatients] = useState([]);
+  const [masterDoctors, setMasterDoctors] = useState([]);
+  const [activeSearch, setActiveSearch] = useState({ type: null, id: null, query: '' });
 
 
   useEffect(() => {
+    // Fetch master services
+    api.get('/api/v1/services')
+      .then(res => {
+        const consultationTerms = ['consultation', 'report review'];
+        const filtered = res.data.filter(s => 
+          !consultationTerms.some(term => (s.service_name || '').toLowerCase().includes(term))
+        );
+        setMasterServices(filtered);
+      })
+      .catch(err => console.error("Error fetching master services:", err));
+
+    // Fetch master medicines
+    api.get('/api/v1/medicines')
+      .then(res => setMasterMedicines(res.data))
+      .catch(err => console.error("Error fetching master medicines:", err));
+
+    // Fetch master patients
+    api.get('/api/v1/patients')
+      .then(res => setMasterPatients(res.data.patients || []))
+      .catch(err => console.error("Error fetching patients:", err));
+
+    // Fetch master doctors
+    api.get('/api/v1/doctors')
+      .then(res => setMasterDoctors(res.data || []))
+      .catch(err => console.error("Error fetching doctors:", err));
+
     if (id) {
       // Fetch existing bill for editing
       api.get(`/api/v1/bills/${id}`)
@@ -145,7 +178,7 @@ const HospitalBillingSystem = () => {
   };
 
   const updateDoctorItem = (id, field, value) => {
-    setDoctorItems(doctorItems.map(item =>
+    setDoctorItems(prev => prev.map(item =>
       item.id === id ? { ...item, [field]: value } : item
     ));
   };
@@ -162,7 +195,7 @@ const HospitalBillingSystem = () => {
   };
 
   const updateLabItem = (id, field, value) => {
-    setLabItems(labItems.map(item => {
+    setLabItems(prev => prev.map(item => {
       if (item.id === id) {
         const updated = { ...item, [field]: value };
         if (field === 'quantity' || field === 'rate') {
@@ -186,7 +219,7 @@ const HospitalBillingSystem = () => {
   };
 
   const updateMedicineItem = (id, field, value) => {
-    setMedicineItems(medicineItems.map(item => {
+    setMedicineItems(prev => prev.map(item => {
       if (item.id === id) {
         const updated = { ...item, [field]: value };
         if (field === 'quantity' || field === 'rate' || field === 'discount') {
@@ -335,43 +368,78 @@ const HospitalBillingSystem = () => {
             <User size={20} />
             Patient Information
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Patient ID</label>
+              <label className="block text-sm font-bold text-slate-700 mb-2">Patient ID</label>
               <input
                 type="text"
                 value={patientInfo.patientId}
                 onChange={(e) => setPatientInfo({ ...patientInfo, patientId: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl outline-none bg-white focus:ring-2 focus:ring-blue-500 transition-all"
                 placeholder="PID-001"
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Patient Name</label>
-              <input
-                type="text"
-                value={patientInfo.patientName}
-                onChange={(e) => setPatientInfo({ ...patientInfo, patientName: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="John Doe"
-              />
+            <div className="relative overflow-visible">
+              <label className="block text-sm font-bold text-slate-700 mb-2">Patient Name</label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={patientInfo.patientName}
+                  onChange={(e) => {
+                    setPatientInfo({ ...patientInfo, patientName: e.target.value });
+                    setActiveSearch({ type: 'patient', id: 'info', query: e.target.value });
+                  }}
+                  onFocus={() => setActiveSearch({ type: 'patient', id: 'info', query: patientInfo.patientName })}
+                  className="w-full px-4 py-3 border border-slate-200 rounded-xl outline-none bg-white focus:ring-2 focus:ring-blue-500 transition-all"
+                  placeholder="Search patient..."
+                />
+                {activeSearch.type === 'patient' && activeSearch.query && (
+                  <div className="absolute z-[110] left-0 right-0 mt-1 bg-white border border-slate-100 rounded-2xl shadow-2xl max-h-64 overflow-y-auto ring-1 ring-black ring-opacity-5">
+                    {masterPatients
+                      .filter(p => `${p.first_name} ${p.last_name}`.toLowerCase().includes(activeSearch.query.toLowerCase()))
+                      .map(p => (
+                        <div
+                          key={p.id}
+                          className="px-5 py-3 hover:bg-blue-600 hover:text-white cursor-pointer border-b border-slate-50 last:border-0 group transition-colors"
+                          onClick={() => {
+                            setPatientInfo({
+                              ...patientInfo,
+                              patientId: p.id,
+                              patientName: `${p.first_name} ${p.last_name}`,
+                              age: p.age || '',
+                              gender: p.gender || '',
+                              phone: p.phone || '',
+                              address: p.address || '',
+                            });
+                            setActiveSearch({ type: null, id: null, query: '' });
+                          }}
+                        >
+                          <div className="flex flex-col">
+                            <span className="font-bold text-sm">{p.first_name} {p.last_name}</span>
+                            <span className="text-[10px] opacity-70">PID: {p.id} | {p.phone}</span>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Age</label>
+              <label className="block text-sm font-bold text-slate-700 mb-2">Age</label>
               <input
                 type="number"
                 value={patientInfo.age}
                 onChange={(e) => setPatientInfo({ ...patientInfo, age: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl outline-none bg-white focus:ring-2 focus:ring-blue-500 transition-all"
                 placeholder="30"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Gender</label>
+              <label className="block text-sm font-bold text-slate-700 mb-2">Gender</label>
               <select
                 value={patientInfo.gender}
                 onChange={(e) => setPatientInfo({ ...patientInfo, gender: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl outline-none bg-white focus:ring-2 focus:ring-blue-500 transition-all"
               >
                 <option value="">Select</option>
                 <option value="Male">Male</option>
@@ -380,43 +448,74 @@ const HospitalBillingSystem = () => {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+              <label className="block text-sm font-bold text-slate-700 mb-2">Phone</label>
               <input
                 type="tel"
                 value={patientInfo.phone}
                 onChange={(e) => setPatientInfo({ ...patientInfo, phone: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl outline-none bg-white focus:ring-2 focus:ring-blue-500 transition-all"
                 placeholder="+1234567890"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+              <label className="block text-sm font-bold text-slate-700 mb-2">Date</label>
               <input
                 type="date"
                 value={patientInfo.date}
                 onChange={(e) => setPatientInfo({ ...patientInfo, date: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl outline-none bg-white focus:ring-2 focus:ring-blue-500 transition-all"
               />
             </div>
             <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+              <label className="block text-sm font-bold text-slate-700 mb-2">Address</label>
               <input
                 type="text"
                 value={patientInfo.address}
                 onChange={(e) => setPatientInfo({ ...patientInfo, address: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl outline-none bg-white focus:ring-2 focus:ring-blue-500 transition-all"
                 placeholder="123 Main St, City, State"
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Doctor Name</label>
-              <input
-                type="text"
-                value={patientInfo.doctorName}
-                onChange={(e) => setPatientInfo({ ...patientInfo, doctorName: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="Dr. Smith"
-              />
+            <div className="relative overflow-visible">
+              <label className="block text-sm font-bold text-slate-700 mb-2">Doctor Name</label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={patientInfo.doctorName}
+                  onChange={(e) => {
+                    setPatientInfo({ ...patientInfo, doctorName: e.target.value });
+                    setActiveSearch({ type: 'doctor', id: 'info', query: e.target.value });
+                  }}
+                  onFocus={() => setActiveSearch({ type: 'doctor', id: 'info', query: patientInfo.doctorName })}
+                  className="w-full px-4 py-3 border border-slate-200 rounded-xl outline-none bg-white focus:ring-2 focus:ring-blue-500 transition-all"
+                  placeholder="Search doctor..."
+                />
+                {activeSearch.type === 'doctor' && activeSearch.query && (
+                  <div className="absolute z-[110] left-0 right-0 mt-1 bg-white border border-slate-100 rounded-2xl shadow-2xl max-h-64 overflow-y-auto ring-1 ring-black ring-opacity-5">
+                    {masterDoctors
+                      .filter(d => `${d.first_name} ${d.last_name}`.toLowerCase().includes(activeSearch.query.toLowerCase()))
+                      .map(d => (
+                        <div
+                          key={d.id}
+                          className="px-5 py-3 hover:bg-blue-600 hover:text-white cursor-pointer border-b border-slate-50 last:border-0 group transition-colors"
+                          onClick={() => {
+                            setPatientInfo({ 
+                              ...patientInfo, 
+                              doctorName: `Dr. ${d.first_name} ${d.last_name}`,
+                              doctorId: d.id 
+                            });
+                            setActiveSearch({ type: null, id: null, query: '' });
+                          }}
+                        >
+                          <div className="flex flex-col">
+                            <span className="font-bold text-sm">Dr. {d.first_name} {d.last_name}</span>
+                            <span className="text-[10px] opacity-70">{d.specialization} | {d.department}</span>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -493,8 +592,8 @@ const HospitalBillingSystem = () => {
                 Add Test
               </button>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full">
+            <div className="overflow-visible">
+              <table className="w-full border-collapse">
                 <thead className="bg-gray-100">
                   <tr>
                     <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Test Name</th>
@@ -504,24 +603,60 @@ const HospitalBillingSystem = () => {
                     <th className="px-4 py-3 text-center text-sm font-semibold text-gray-700">Action</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-gray-200">
                   {labItems.map((item) => (
-                    <tr key={item.id} className="border-b">
-                      <td className="px-4 py-3">
-                        <input
-                          type="text"
-                          value={item.testName}
-                          onChange={(e) => updateLabItem(item.id, 'testName', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                          placeholder="CBC, X-Ray, MRI, etc."
-                        />
+                    <tr key={item.id} className={`transition-colors ${activeSearch.id === item.id ? 'z-50 relative bg-blue-50/30' : 'z-0'}`}>
+                      <td className="px-4 py-3 relative overflow-visible">
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={item.testName}
+                            onChange={(e) => {
+                              updateLabItem(item.id, 'testName', e.target.value);
+                              setActiveSearch({ type: 'lab', id: item.id, query: e.target.value });
+                            }}
+                            onFocus={() => setActiveSearch({ type: 'lab', id: item.id, query: item.testName })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
+                            placeholder="Search test..."
+                          />
+                          {/* Autocomplete Dropdown */}
+                          {activeSearch.type === 'lab' && activeSearch.id === item.id && activeSearch.query && (
+                            <div className="absolute z-[100] left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-2xl max-h-60 overflow-y-auto ring-1 ring-black ring-opacity-5 animate-in fade-in zoom-in-95 duration-100">
+                              {masterServices
+                                .filter(s => s.service_name.toLowerCase().includes(activeSearch.query.toLowerCase()))
+                                .map(s => (
+                                  <div
+                                    key={s.id}
+                                    className="px-4 py-3 hover:bg-blue-600 hover:text-white cursor-pointer border-b border-gray-50 last:border-0 group transition-colors"
+                                    onClick={() => {
+                                      updateLabItem(item.id, 'testName', s.service_name);
+                                      updateLabItem(item.id, 'rate', s.price);
+                                      setActiveSearch({ type: null, id: null, query: '' });
+                                    }}
+                                  >
+                                    <div className="flex justify-between items-center">
+                                      <span className="font-semibold text-sm">{s.service_name}</span>
+                                      <span className="text-xs font-bold bg-blue-50 text-blue-600 px-2 py-1 rounded group-hover:bg-blue-500 group-hover:text-white transition-colors">
+                                        ${parseFloat(s.price).toFixed(2)}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))}
+                                {masterServices.filter(s => s.service_name.toLowerCase().includes(activeSearch.query.toLowerCase())).length === 0 && (
+                                  <div className="px-4 py-3 text-sm text-gray-500 italic text-center">
+                                    No matching tests found
+                                  </div>
+                                )}
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <input
                           type="number"
                           value={item.quantity}
                           onChange={(e) => updateLabItem(item.id, 'quantity', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-blue-500"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-blue-500 bg-white"
                           min="1"
                         />
                       </td>
@@ -530,17 +665,17 @@ const HospitalBillingSystem = () => {
                           type="number"
                           value={item.rate}
                           onChange={(e) => updateLabItem(item.id, 'rate', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-right focus:ring-2 focus:ring-blue-500"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-right focus:ring-2 focus:ring-blue-500 bg-white"
                           placeholder="0.00"
                         />
                       </td>
-                      <td className="px-4 py-3 text-right font-semibold">
-                        ${item.amount.toFixed(2)}
+                      <td className="px-4 py-3 text-right font-bold text-gray-800">
+                        ${Number(item.amount || 0).toFixed(2)}
                       </td>
                       <td className="px-4 py-3 text-center">
                         <button
                           onClick={() => removeLabItem(item.id)}
-                          className="text-red-600 hover:text-red-800 transition"
+                          className="text-red-500 hover:text-red-700 p-2 hover:bg-red-50 rounded-full transition-colors"
                         >
                           <Trash2 size={18} />
                         </button>
@@ -566,8 +701,8 @@ const HospitalBillingSystem = () => {
                 Add Medicine
               </button>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full">
+            <div className="overflow-visible">
+              <table className="w-full border-collapse">
                 <thead className="bg-gray-100">
                   <tr>
                     <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Medicine Name</th>
@@ -578,24 +713,60 @@ const HospitalBillingSystem = () => {
                     <th className="px-4 py-3 text-center text-sm font-semibold text-gray-700">Action</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-gray-200">
                   {medicineItems.map((item) => (
-                    <tr key={item.id} className="border-b">
-                      <td className="px-4 py-3">
-                        <input
-                          type="text"
-                          value={item.medicineName}
-                          onChange={(e) => updateMedicineItem(item.id, 'medicineName', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                          placeholder="Paracetamol, Aspirin, etc."
-                        />
+                    <tr key={item.id} className={`transition-colors ${activeSearch.id === item.id ? 'z-50 relative bg-blue-50/30' : 'z-0'}`}>
+                      <td className="px-4 py-3 relative overflow-visible">
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={item.medicineName}
+                            onChange={(e) => {
+                              updateMedicineItem(item.id, 'medicineName', e.target.value);
+                              setActiveSearch({ type: 'medicine', id: item.id, query: e.target.value });
+                            }}
+                            onFocus={() => setActiveSearch({ type: 'medicine', id: item.id, query: item.medicineName })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
+                            placeholder="Search medicine..."
+                          />
+                          {/* Autocomplete Dropdown */}
+                          {activeSearch.type === 'medicine' && activeSearch.id === item.id && activeSearch.query && (
+                            <div className="absolute z-[100] left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-2xl max-h-60 overflow-y-auto ring-1 ring-black ring-opacity-5 animate-in fade-in zoom-in-95 duration-100">
+                              {masterMedicines
+                                .filter(m => (m.name || '').toLowerCase().includes(activeSearch.query.toLowerCase()))
+                                .map(m => (
+                                  <div
+                                    key={m.id}
+                                    className="px-4 py-3 hover:bg-blue-600 hover:text-white cursor-pointer border-b border-gray-50 last:border-0 group transition-colors"
+                                    onClick={() => {
+                                      updateMedicineItem(item.id, 'medicineName', m.name);
+                                      updateMedicineItem(item.id, 'rate', m.price || 0);
+                                      setActiveSearch({ type: null, id: null, query: '' });
+                                    }}
+                                  >
+                                    <div className="flex justify-between items-center">
+                                      <span className="font-semibold text-sm">{m.name}</span>
+                                      <span className="text-xs font-bold bg-blue-50 text-blue-600 px-2 py-1 rounded group-hover:bg-blue-500 group-hover:text-white transition-colors">
+                                        ${parseFloat(m.price || 0).toFixed(2)}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))}
+                                {masterMedicines.filter(m => (m.name || '').toLowerCase().includes(activeSearch.query.toLowerCase())).length === 0 && (
+                                  <div className="px-4 py-3 text-sm text-gray-500 italic text-center">
+                                    No matching medicines found
+                                  </div>
+                                )}
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <input
                           type="number"
                           value={item.quantity}
                           onChange={(e) => updateMedicineItem(item.id, 'quantity', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-blue-500"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-blue-500 bg-white"
                           min="1"
                         />
                       </td>
@@ -604,7 +775,7 @@ const HospitalBillingSystem = () => {
                           type="number"
                           value={item.rate}
                           onChange={(e) => updateMedicineItem(item.id, 'rate', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-right focus:ring-2 focus:ring-blue-500"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-right focus:ring-2 focus:ring-blue-500 bg-white"
                           placeholder="0.00"
                         />
                       </td>
@@ -613,17 +784,17 @@ const HospitalBillingSystem = () => {
                           type="number"
                           value={item.discount}
                           onChange={(e) => updateMedicineItem(item.id, 'discount', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-right focus:ring-2 focus:ring-blue-500"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-right focus:ring-2 focus:ring-blue-500 bg-white"
                           placeholder="0.00"
                         />
                       </td>
-                      <td className="px-4 py-3 text-right font-semibold">
-                        ${item.amount.toFixed(2)}
+                      <td className="px-4 py-3 text-right font-bold text-gray-800">
+                        ${Number(item.amount || 0).toFixed(2)}
                       </td>
                       <td className="px-4 py-3 text-center">
                         <button
                           onClick={() => removeMedicineItem(item.id)}
-                          className="text-red-600 hover:text-red-800 transition"
+                          className="text-red-500 hover:text-red-700 p-2 hover:bg-red-50 rounded-full transition-colors"
                         >
                           <Trash2 size={18} />
                         </button>
