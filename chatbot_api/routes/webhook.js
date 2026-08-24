@@ -26,39 +26,61 @@ router.get("/webhook/:agencyId", async (req, res) => {
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
+  console.log(`[Meta Webhook] Incoming GET verification on /webhook/${req.params.agencyId}:`, {
+    mode,
+    token,
+    challenge,
+  });
+
+  if (mode !== "subscribe" || !token) {
+    console.warn(`[Meta Webhook] Invalid request: mode=${mode}, token=${token}`);
+    return res.status(400).send("Invalid mode or missing verify token");
+  }
+
   try {
-    // Check in meta_app_settings first
+    // 1. Check in meta_app_settings for this agency
     const [metaRows] = await pool.query(
-      "SELECT verify_token FROM meta_app_settings WHERE agency_id = ? AND is_active = 1",
+      "SELECT verify_token FROM meta_app_settings WHERE agency_id = ? ORDER BY id DESC LIMIT 1",
       [req.params.agencyId]
     );
 
-    let expectedToken = metaRows[0]?.verify_token;
+    // 2. Check if token matches ANY verify_token in meta_app_settings
+    const [allMeta] = await pool.query(
+      "SELECT verify_token FROM meta_app_settings WHERE verify_token = ? LIMIT 1",
+      [token]
+    );
 
-    // Fallback: check integrations for this agency
-    if (!expectedToken) {
-      const [integRows] = await pool.query(
-        "SELECT verify_token FROM integrations WHERE agency_id = ? AND is_active = 1 LIMIT 1",
-        [req.params.agencyId]
-      );
-      expectedToken = integRows[0]?.verify_token;
+    // 3. Check if token matches ANY verify_token in integrations
+    const [allInteg] = await pool.query(
+      "SELECT verify_token FROM integrations WHERE verify_token = ? LIMIT 1",
+      [token]
+    );
+
+    const envTokens = [
+      process.env.META_WEBHOOK_VERIFY_TOKEN,
+      process.env.META_VERIFY_TOKEN,
+    ].filter(Boolean);
+
+    const validTokens = [
+      metaRows[0]?.verify_token,
+      allMeta[0]?.verify_token,
+      allInteg[0]?.verify_token,
+      ...envTokens,
+    ].filter(Boolean);
+
+    console.log(`[Meta Webhook] Received token: "${token}". Valid registered tokens:`, validTokens);
+
+    if (validTokens.includes(token)) {
+      console.log(`✅ [Meta Webhook] Verification SUCCESS for agency ${req.params.agencyId}! Returning challenge:`, challenge);
+      res.setHeader("Content-Type", "text/plain");
+      return res.status(200).send(String(challenge));
     }
 
-    if (mode === "subscribe" && token && expectedToken && token === expectedToken) {
-      console.log("✅ Meta Agency Webhook verified for agency:", req.params.agencyId);
-      return res.status(200).send(challenge);
-    }
-
-    // Also accept if mode is subscribe and token matches global env or query
-    if (mode === "subscribe" && token && token === process.env.META_VERIFY_TOKEN) {
-      console.log("✅ Meta Agency Webhook verified via global token for agency:", req.params.agencyId);
-      return res.status(200).send(challenge);
-    }
-
-    return res.sendStatus(403);
+    console.warn(`❌ [Meta Webhook] Verification FAILED: token "${token}" does not match any registered token for agency ${req.params.agencyId}`);
+    return res.status(403).send("Verification token mismatch");
   } catch (err) {
     console.error("Agency Webhook verification error:", err);
-    return res.sendStatus(500);
+    return res.status(500).send("Server error during verification");
   }
 });
 
@@ -68,22 +90,45 @@ router.get("/webhook/:agencyId/:integrationId", async (req, res) => {
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
+  console.log(`[Meta Webhook] Incoming GET verification on /webhook/${req.params.agencyId}/${req.params.integrationId}:`, {
+    mode,
+    token,
+    challenge,
+  });
+
+  if (mode !== "subscribe" || !token) {
+    return res.status(400).send("Invalid mode or missing verify token");
+  }
+
   try {
     const [rows] = await pool.query(
       "SELECT verify_token FROM integrations WHERE id = ? AND agency_id = ? AND is_active = 1",
       [req.params.integrationId, req.params.agencyId]
     );
 
-    if (!rows.length) return res.sendStatus(404);
+    const [metaRows] = await pool.query(
+      "SELECT verify_token FROM meta_app_settings WHERE agency_id = ? ORDER BY id DESC LIMIT 1",
+      [req.params.agencyId]
+    );
 
-    if (mode === "subscribe" && token === rows[0].verify_token) {
-      console.log("✅ Webhook verified for integration:", req.params.integrationId);
-      return res.status(200).send(challenge);
+    const validTokens = [
+      rows[0]?.verify_token,
+      metaRows[0]?.verify_token,
+      process.env.META_WEBHOOK_VERIFY_TOKEN,
+      process.env.META_VERIFY_TOKEN,
+    ].filter(Boolean);
+
+    if (validTokens.includes(token)) {
+      console.log(`✅ [Meta Webhook] Integration verification SUCCESS! Returning challenge:`, challenge);
+      res.setHeader("Content-Type", "text/plain");
+      return res.status(200).send(String(challenge));
     }
-    return res.sendStatus(403);
+
+    console.warn(`❌ [Meta Webhook] Integration verification FAILED for integration ${req.params.integrationId}`);
+    return res.status(403).send("Verification token mismatch");
   } catch (err) {
     console.error("Webhook verification error:", err);
-    return res.sendStatus(500);
+    return res.status(500).send("Server error during verification");
   }
 });
 
@@ -141,22 +186,6 @@ router.post("/webhook/:agencyId", async (req, res) => {
     console.error("Agency Webhook POST processing error:", err);
   }
 });
-
-// ─── RECEIVE META INCOMING MESSAGES (POST) ──────────────────────────────────
-router.post("/webhook/:agencyId/:integrationId", async (req, res) => {
-  const { agencyId, integrationId } = req.params;
-  const body = req.body;
-
-  // Always respond 200 immediately to Meta
-  res.sendStatus(200);
-
-  try {
-    const [integRows] = await pool.query(
-      "SELECT * FROM integrations WHERE id = ? AND agency_id = ? AND is_active = 1",
-      [integrationId, agencyId]
-    );
-    if (!integRows.length) return;
-    const integration = integRows[0];
 
 // ─── PAYLOAD HANDLERS ────────────────────────────────────────────────────────
 async function handleWhatsAppPayload(body, agencyId, integrationId, integration) {

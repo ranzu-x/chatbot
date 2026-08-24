@@ -16,6 +16,13 @@ async function resolveAgencyId(req) {
       [req.user?.id || 0]
     );
     if (rows.length) return Number(rows[0].id);
+
+    // If no agency exists yet, auto-create default agency for owner
+    const [ins] = await pool.query(
+      "INSERT INTO agencies (name, slug, owner_id, is_active) VALUES ('Main Workspace', 'main-workspace', ?, 1)",
+      [req.user?.id || 1]
+    );
+    return Number(ins.insertId);
   } catch (err) {
     console.error("Error resolving agencyId:", err);
   }

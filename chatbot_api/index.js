@@ -81,8 +81,12 @@ try {
   console.error("❌ DB Connection Failed:", err.message);
 }
 
-// ─── Routes ───────────────────────────────────────────────────────────────────
+// ─── Public Routes (No Auth Required) ──────────────────────────────────────────
+app.use("/api/v1", webhookRoutes);
+app.use("/api/v1", webchatRoutes);
 app.use("/api/v1", authRoutes);
+
+// ─── Protected Application Routes ─────────────────────────────────────────────
 app.use("/api/v1", adminRoutes);
 app.use("/api/v1", agencyRoutes);
 app.use("/api/v1", conversationRoutes);
@@ -90,9 +94,7 @@ app.use("/api/v1", integrationRoutes);
 app.use("/api/v1", channelRoutes);
 app.use("/api/v1", botRoutes);
 app.use("/api/v1", metaAppRoutes);
-app.use("/api/v1", webhookRoutes);
 app.use("/api/v1", flowRoutes);
-app.use("/api/v1", webchatRoutes);
 app.use("/api/v1", contactRoutes);
 app.use("/api/v1", uploadRoutes);
 app.use("/api/v1", templateRoutes);
