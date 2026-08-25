@@ -69,15 +69,14 @@ export default function App() {
           <Route path="/channels/telegram"  element={<ProtectedRoute roles={ADMIN_AGENCY}><TelegramPage /></ProtectedRoute>} />
           <Route path="/channels/webchat"   element={<ProtectedRoute roles={ADMIN_AGENCY}><WebchatPage /></ProtectedRoute>} />
 
-          {/* ── Bot Manager, Templates & Campaigns ── */}
+          {/* ── Bot Manager (Visual Flow Bots) ── */}
           <Route path="/bots" element={<ProtectedRoute roles={ALL_ROLES}><BotManagerPage /></ProtectedRoute>} />
+          <Route path="/bots/:id/edit" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
+          <Route path="/flows" element={<Navigate to="/bots" replace />} />
+          <Route path="/flows/:id/edit" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
           <Route path="/templates/whatsapp" element={<ProtectedRoute roles={ADMIN_AGENCY}><WhatsAppTemplatesPage /></ProtectedRoute>} />
           <Route path="/campaigns" element={<ProtectedRoute roles={ADMIN_AGENCY}><CampaignListPage /></ProtectedRoute>} />
           <Route path="/campaigns/sequence" element={<ProtectedRoute roles={ADMIN_AGENCY}><SequenceCampaignPage /></ProtectedRoute>} />
-
-          {/* ── Flow Builder ── */}
-          <Route path="/flows" element={<ProtectedRoute roles={ALL_ROLES}><FlowListPage /></ProtectedRoute>} />
-          <Route path="/flows/:id/edit" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
 
           {/* ── Settings ── */}
           <Route path="/settings/meta-app" element={<ProtectedRoute roles={ADMIN_AGENCY}><MetaAppPage /></ProtectedRoute>} />

@@ -10,6 +10,12 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
   const conversationId = conversation.id;
 
   try {
+    // Check if bot is paused for this conversation or contact
+    if (conversation?.bot_paused || contact?.bot_paused) {
+      console.log(`🤖 [Flow Engine] Bot/Flow is paused for conversation ${conversationId} or contact ${contact?.id}`);
+      return false;
+    }
+
     // 1. Check for active flow session
     const [sessions] = await pool.query(
       "SELECT * FROM flow_sessions WHERE conversation_id = ? AND status = 'ACTIVE' LIMIT 1",
@@ -40,25 +46,45 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
       // 2. Look for matching flow trigger
       const msgText = (incomingMsgBody || "").trim().toLowerCase();
       
-      // Match by keyword trigger or first contact
+      // Match by keyword trigger or first contact (prioritizing page/integration specific flows)
+      const integId = integration?.id || conversation?.integration_id || null;
       const [flows] = await pool.query(
         `SELECT * FROM flows 
          WHERE agency_id = ? AND platform = ? AND is_active = 1 
-         ORDER BY (trigger_type = 'KEYWORD') DESC, created_at DESC`,
-        [agencyId, platform]
+           AND (integration_id IS NULL OR integration_id = ?)
+         ORDER BY (integration_id <=> ?) DESC, (trigger_type = 'KEYWORD') DESC, created_at DESC`,
+        [agencyId, platform, integId, integId]
       );
 
       // Find first flow that matches
       for (const f of flows) {
         let isMatch = false;
-        if (f.trigger_type === "KEYWORD" && f.trigger_keyword) {
-          const keywords = f.trigger_keyword.toLowerCase().split(",").map(k => k.trim());
-          if (keywords.includes(msgText)) {
-            isMatch = true;
+        let flowNodes = [];
+        try { flowNodes = JSON.parse(f.nodes_json || "[]"); } catch { flowNodes = []; }
+        const startNode = flowNodes.find(n => n.type === "start");
+        const triggerType = (startNode?.data?.trigger_type || f.trigger_type || "KEYWORD").toUpperCase();
+
+        if (triggerType === "KEYWORD") {
+          const rawKeywords = startNode?.data?.keywords || (f.trigger_keyword ? f.trigger_keyword.split(",") : []);
+          const keywords = (Array.isArray(rawKeywords) ? rawKeywords : [rawKeywords])
+            .map(k => (typeof k === "string" ? k.trim().toLowerCase() : ""))
+            .filter(Boolean);
+
+          const matchType = (startNode?.data?.match_type || "contains").toLowerCase();
+
+          for (const kw of keywords) {
+            if (matchType === "exact") {
+              if (msgText === kw) { isMatch = true; break; }
+            } else if (matchType === "starts_with") {
+              if (msgText.startsWith(kw)) { isMatch = true; break; }
+            } else {
+              // Contains match (default)
+              if (msgText.includes(kw) || kw.includes(msgText)) { isMatch = true; break; }
+            }
           }
-        } else if (f.trigger_type === "ANY") {
+        } else if (triggerType === "ANY" || triggerType === "ANY_MESSAGE") {
           isMatch = true;
-        } else if (f.trigger_type === "FIRST_CONTACT") {
+        } else if (triggerType === "FIRST_CONTACT" || triggerType === "FIRST_MESSAGE") {
           // Check if this is the first message in the conversation
           const [msgCount] = await pool.query(
             "SELECT COUNT(*) as count FROM messages WHERE conversation_id = ?",
@@ -71,11 +97,9 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
 
         if (isMatch) {
           flow = f;
-          nodes = JSON.parse(flow.nodes_json || "[]");
+          nodes = flowNodes;
           edges = JSON.parse(flow.edges_json || "[]");
           
-          // Find start node
-          const startNode = nodes.find(n => n.type === "start");
           if (!startNode) continue; // Flow has no start node, skip
 
           // Create new session
@@ -139,24 +163,56 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
       } 
       else if (currentNode.type === "buttons") {
         const choice = (incomingMsgBody || "").trim().toLowerCase();
-        // Find if user reply matches button text/payload
         const btns = currentNode.data?.buttons || [];
-        const matchedBtn = btns.find(b => b.title.toLowerCase() === choice || (b.payload && b.payload.toLowerCase() === choice));
-        
-        if (matchedBtn) {
-          nextNodeId = getNextNodeId(currentNodeId, matchedBtn.id);
+        let matchedIdx = -1;
+        let matchedHandleId = null;
+
+        for (let i = 0; i < btns.length; i++) {
+          const btn = btns[i];
+          const title = typeof btn === "string" ? btn : (btn.title || "");
+          const payload = typeof btn === "string" ? btn : (btn.payload || "");
+          const id = typeof btn === "string" ? `btn-${i}` : (btn.id || `btn-${i}`);
+
+          if (title.toLowerCase() === choice || payload.toLowerCase() === choice || id.toLowerCase() === choice) {
+            matchedIdx = i;
+            matchedHandleId = id;
+            break;
+          }
+        }
+
+        if (matchedIdx !== -1) {
+          // Try matching edge by handle ID (btn-0, btn_0, custom ID), or fallback to default edge
+          nextNodeId = getNextNodeId(currentNodeId, matchedHandleId) ||
+                       getNextNodeId(currentNodeId, `btn-${matchedIdx}`) ||
+                       getNextNodeId(currentNodeId, `btn_${matchedIdx}`) ||
+                       getNextNodeId(currentNodeId);
         } else {
-          // If no button matched, we can either re-send the options or just follow the default edge
           nextNodeId = getNextNodeId(currentNodeId);
         }
       }
       else if (currentNode.type === "quickReplies") {
         const choice = (incomingMsgBody || "").trim().toLowerCase();
-        const replies = currentNode.data?.quickReplies || [];
-        const matchedQr = replies.find(r => r.title.toLowerCase() === choice || (r.payload && r.payload.toLowerCase() === choice));
-        
-        if (matchedQr) {
-          nextNodeId = getNextNodeId(currentNodeId, matchedQr.id);
+        const replies = currentNode.data?.quickReplies || currentNode.data?.replies || [];
+        let matchedIdx = -1;
+        let matchedHandleId = null;
+
+        for (let i = 0; i < replies.length; i++) {
+          const r = replies[i];
+          const title = typeof r === "string" ? r : (r.title || "");
+          const payload = typeof r === "string" ? r : (r.payload || "");
+          const id = typeof r === "string" ? `qr-${i}` : (r.id || `qr-${i}`);
+
+          if (title.toLowerCase() === choice || payload.toLowerCase() === choice || id.toLowerCase() === choice) {
+            matchedIdx = i;
+            matchedHandleId = id;
+            break;
+          }
+        }
+
+        if (matchedIdx !== -1) {
+          nextNodeId = getNextNodeId(currentNodeId, matchedHandleId) ||
+                       getNextNodeId(currentNodeId, `qr-${matchedIdx}`) ||
+                       getNextNodeId(currentNodeId);
         } else {
           nextNodeId = getNextNodeId(currentNodeId);
         }
@@ -183,10 +239,11 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
     while (currentNodeId && !stopFlow) {
       const node = nodes.find(n => n.id === currentNodeId);
       if (!node) {
+        console.log(`[Flow Engine] Node with id ${currentNodeId} not found. Exiting.`);
         break; // Node not found in flow, exit
       }
 
-      console.log(`Executing Flow Node: ${node.type} (${node.id})`);
+      console.log(`🤖 [Flow Engine] Executing Flow Node: ${node.type} (${node.id})`);
 
       switch (node.type) {
         case "start": {
@@ -195,23 +252,65 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         }
 
         case "text": {
-          const textBody = replaceVariables(node.data?.text || "", variables, contact);
-          await sendMsg(agencyId, conversation, textBody, "TEXT", integration);
+          const textBody = replaceVariables(node.data?.message || node.data?.text || node.data?.body || "", variables, contact);
+          if (textBody) {
+            await sendMsg(agencyId, conversation, textBody, "TEXT", integration);
+          }
+          
+          currentNodeId = getNextNodeId(node.id);
+          break;
+        }
+
+        case "image": {
+          const caption = replaceVariables(node.data?.caption || node.data?.message || node.data?.text || "", variables, contact);
+          const mediaUrl = node.data?.imageUrl || node.data?.mediaUrl || node.data?.url || "";
+          await sendMsg(agencyId, conversation, caption, "IMAGE", integration, { mediaUrl });
+          
+          currentNodeId = getNextNodeId(node.id);
+          break;
+        }
+
+        case "video": {
+          const caption = replaceVariables(node.data?.caption || node.data?.message || node.data?.text || "", variables, contact);
+          const mediaUrl = node.data?.mediaUrl || node.data?.url || "";
+          await sendMsg(agencyId, conversation, caption, "VIDEO", integration, { mediaUrl });
+          
+          currentNodeId = getNextNodeId(node.id);
+          break;
+        }
+
+        case "audio": {
+          const mediaUrl = node.data?.mediaUrl || node.data?.url || "";
+          await sendMsg(agencyId, conversation, "[Audio]", "AUDIO", integration, { mediaUrl });
+          
+          currentNodeId = getNextNodeId(node.id);
+          break;
+        }
+
+        case "file":
+        case "document": {
+          const filename = replaceVariables(node.data?.filename || node.data?.title || "Document", variables, contact);
+          const mediaUrl = node.data?.mediaUrl || node.data?.url || "";
+          await sendMsg(agencyId, conversation, filename, "DOCUMENT", integration, { mediaUrl });
           
           currentNodeId = getNextNodeId(node.id);
           break;
         }
 
         case "buttons": {
-          const textBody = replaceVariables(node.data?.text || "Select an option:", variables, contact);
+          const textBody = replaceVariables(node.data?.message || node.data?.text || "Please select an option:", variables, contact);
           const rawButtons = node.data?.buttons || [];
           
+          const formattedButtons = rawButtons.map((btn, idx) => ({
+            id: typeof btn === "string" ? `btn-${idx}` : (btn.id || `btn-${idx}`),
+            title: typeof btn === "string" ? btn : (btn.title || btn.label || `Button ${idx + 1}`),
+            payload: typeof btn === "string" ? btn : (btn.payload || btn.title || `btn_${idx}`),
+            type: typeof btn === "object" && btn.type === "URL" ? "URL" : "POSTBACK",
+            url: typeof btn === "object" ? btn.url : null,
+          }));
+
           await sendMsg(agencyId, conversation, textBody, "TEXT", integration, {
-            buttons: rawButtons.map((btn, idx) => ({
-              id: btn.id || `btn_${idx}`,
-              title: btn.title,
-              payload: btn.payload || btn.title
-            }))
+            buttons: formattedButtons
           });
 
           // Stop execution and wait for user button click/reply
@@ -220,15 +319,17 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         }
 
         case "quickReplies": {
-          const textBody = replaceVariables(node.data?.text || "Choose options:", variables, contact);
-          const rawQr = node.data?.quickReplies || [];
+          const textBody = replaceVariables(node.data?.message || node.data?.text || "Choose options:", variables, contact);
+          const rawQr = node.data?.quickReplies || node.data?.replies || [];
+
+          const formattedQr = rawQr.map((qr, idx) => ({
+            id: typeof qr === "string" ? `qr-${idx}` : (qr.id || `qr-${idx}`),
+            title: typeof qr === "string" ? qr : (qr.title || qr.label || `Option ${idx + 1}`),
+            payload: typeof qr === "string" ? qr : (qr.payload || qr.title || `qr_${idx}`)
+          }));
 
           await sendMsg(agencyId, conversation, textBody, "TEXT", integration, {
-            quickReplies: rawQr.map((qr, idx) => ({
-              id: qr.id || `qr_${idx}`,
-              title: qr.title,
-              payload: qr.payload || qr.title
-            }))
+            quickReplies: formattedQr
           });
 
           stopFlow = true;
@@ -236,7 +337,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         }
 
         case "listMenu": {
-          const textBody = replaceVariables(node.data?.text || "Select from menu:", variables, contact);
+          const textBody = replaceVariables(node.data?.message || node.data?.text || "Select from menu:", variables, contact);
           const items = node.data?.items || [];
 
           await sendMsg(agencyId, conversation, textBody, "TEXT", integration, {
@@ -244,9 +345,9 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
               buttonText: node.data?.buttonText || "Options",
               title: node.data?.title || "Menu",
               items: items.map((item, idx) => ({
-                id: item.id || `item_${idx}`,
-                title: item.title,
-                description: item.description || ""
+                id: typeof item === "string" ? `item_${idx}` : (item.id || `item_${idx}`),
+                title: typeof item === "string" ? item : (item.title || `Item ${idx + 1}`),
+                description: typeof item === "object" ? (item.description || "") : ""
               }))
             }
           });
@@ -258,9 +359,9 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         case "card": {
           const title = replaceVariables(node.data?.title || "", variables, contact);
           const subtitle = replaceVariables(node.data?.subtitle || "", variables, contact);
-          const imageUrl = node.data?.imageUrl || "";
+          const imageUrl = node.data?.imageUrl || node.data?.mediaUrl || "";
 
-          await sendMsg(agencyId, conversation, title, "IMAGE", integration, {
+          await sendMsg(agencyId, conversation, title || "Card", "IMAGE", integration, {
             card: {
               title,
               subtitle,
@@ -276,7 +377,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         case "carousel": {
           const cards = node.data?.cards || [];
           
-          await sendMsg(agencyId, conversation, "Sent carousel card options", "TEXT", integration, {
+          await sendMsg(agencyId, conversation, "Carousel options", "TEXT", integration, {
             carousel: cards.map(c => ({
               title: replaceVariables(c.title || "", variables, contact),
               subtitle: replaceVariables(c.subtitle || "", variables, contact),
@@ -290,7 +391,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         }
 
         case "collectInput": {
-          const prompt = replaceVariables(node.data?.text || "Please enter details:", variables, contact);
+          const prompt = replaceVariables(node.data?.message || node.data?.text || "Please enter details:", variables, contact);
           await sendMsg(agencyId, conversation, prompt, "TEXT", integration);
 
           // Stop execution and wait for input
@@ -432,26 +533,36 @@ function replaceVariables(text, variables, contact) {
 async function sendMsg(agencyId, conversation, bodyText, type, integration, extraFields = {}) {
   const conversationId = conversation.id;
 
+  let activeIntegration = integration;
+  if (!activeIntegration && conversation.integration_id) {
+    try {
+      const [integRows] = await pool.query("SELECT * FROM integrations WHERE id = ?", [conversation.integration_id]);
+      activeIntegration = integRows[0];
+    } catch (e) {}
+  }
+
   // Send via platform API
   let externalMsgId = null;
   try {
     const [contactRows] = await pool.query("SELECT * FROM contacts WHERE id = ?", [conversation.contact_id]);
     const contact = contactRows[0];
 
-    externalMsgId = await sendPlatformMessage(conversation.platform || integration.platform, integration, contact.external_id, {
-      type,
-      body: bodyText,
-      ...extraFields
-    });
+    if (activeIntegration && contact?.external_id) {
+      externalMsgId = await sendPlatformMessage(conversation.platform || activeIntegration.platform, activeIntegration, contact.external_id, {
+        type,
+        body: bodyText,
+        ...extraFields
+      });
+    }
   } catch (apiErr) {
-    console.error("API flow send failed:", apiErr.message);
+    console.error("API flow send failed:", apiErr.message || apiErr);
   }
 
   // Insert message in DB
   const [msgResult] = await pool.query(
-    `INSERT INTO messages (conversation_id, direction, type, body, external_msg_id, created_at)
-     VALUES (?, 'OUTBOUND', ?, ?, ?, NOW())`,
-    [conversationId, type, bodyText, externalMsgId]
+    `INSERT INTO messages (conversation_id, direction, type, body, media_url, external_msg_id, created_at)
+     VALUES (?, 'OUTBOUND', ?, ?, ?, ?, NOW())`,
+    [conversationId, type, bodyText, extraFields?.mediaUrl || null, externalMsgId]
   );
 
   // Update conversation last_message_at

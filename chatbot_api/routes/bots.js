@@ -11,6 +11,7 @@ router.get("/bots", async (req, res) => {
   try {
     const [rows] = await pool.query(`
       SELECT b.*, i.name as integrationName, i.wa_phone_number_id, i.fb_page_name, i.ig_username,
+             (SELECT COUNT(*) FROM bot_rules WHERE bot_id = b.id) as rulesCount,
              COUNT(c.id) as totalConversations
       FROM bots b
       LEFT JOIN integrations i ON i.id = b.integration_id

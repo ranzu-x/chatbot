@@ -18,7 +18,9 @@ router.get("/conversations", async (req, res) => {
 
     let query = `
       SELECT cv.*, 
-             c.name as contactName, c.phone as contactPhone, c.avatar as contactAvatar, c.platform as contactPlatform, c.external_id as contactExternalId,
+             c.name as contactName, c.phone as contactPhone, c.email as contactEmail,
+             c.avatar as contactAvatar, c.platform as contactPlatform, c.external_id as contactExternalId,
+             c.tags as contactTags, c.bot_paused as contactBotPaused,
              u.name as assignedAgentName,
              i.name as integrationName,
              m.body as lastMessageBody, m.direction as lastMessageDirection, m.created_at as lastMessageTime
@@ -48,8 +50,8 @@ router.get("/conversations", async (req, res) => {
     if (status) { query += " AND cv.status = ?"; params.push(status); }
     if (platform) { query += " AND c.platform = ?"; params.push(platform); }
     if (search) {
-      query += " AND (c.name LIKE ? OR c.phone LIKE ?)";
-      params.push(`%${search}%`, `%${search}%`);
+      query += " AND (c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ?)";
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
 
     query += " ORDER BY COALESCE(cv.last_message_at, cv.created_at) DESC";
@@ -62,13 +64,14 @@ router.get("/conversations", async (req, res) => {
   }
 });
 
-// ─── GET SINGLE CONVERSATION WITH MESSAGES ────────────────────────────────────
+// ─── GET SINGLE CONVERSATION WITH MESSAGES, NOTES & BOT STATUS ───────────────
 router.get("/conversations/:id", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
     const [rows] = await pool.query(`
-      SELECT cv.*, c.name as contactName, c.phone as contactPhone, c.avatar as contactAvatar,
-             c.platform as contactPlatform, c.external_id as contactExternalId,
+      SELECT cv.*, c.name as contactName, c.phone as contactPhone, c.email as contactEmail,
+             c.avatar as contactAvatar, c.platform as contactPlatform, c.external_id as contactExternalId,
+             c.tags as contactTags, c.bot_paused as contactBotPaused,
              i.name as integrationName, i.platform as integrationPlatform,
              u.name as assignedAgentName
       FROM conversations cv
@@ -80,10 +83,36 @@ router.get("/conversations/:id", async (req, res) => {
     `, [req.params.id, agencyId]);
 
     if (!rows.length) return res.status(404).json({ success: false, message: "Conversation not found" });
+    const conversation = rows[0];
+
+    // Parse contact tags
+    try {
+      conversation.contactTags = typeof conversation.contactTags === "string" ? JSON.parse(conversation.contactTags || "[]") : (conversation.contactTags || []);
+    } catch { conversation.contactTags = []; }
 
     // Fetch messages
     const [messages] = await pool.query(
       "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC",
+      [req.params.id]
+    );
+
+    // Fetch contact notes
+    const [notes] = await pool.query(
+      `SELECT n.*, u.name as userName 
+       FROM contact_notes n 
+       LEFT JOIN users u ON u.id = n.user_id 
+       WHERE n.contact_id = ? AND n.agency_id = ? 
+       ORDER BY n.created_at DESC`,
+      [conversation.contact_id, agencyId]
+    );
+
+    // Fetch active flow session if any
+    const [flowSessions] = await pool.query(
+      `SELECT fs.*, f.name as flowName 
+       FROM flow_sessions fs 
+       JOIN flows f ON f.id = fs.flow_id 
+       WHERE fs.conversation_id = ? AND fs.status = 'ACTIVE' 
+       ORDER BY fs.updated_at DESC LIMIT 1`,
       [req.params.id]
     );
 
@@ -97,7 +126,13 @@ router.get("/conversations/:id", async (req, res) => {
       [req.params.id]
     );
 
-    return res.json({ success: true, conversation: rows[0], messages });
+    return res.json({
+      success: true,
+      conversation,
+      messages,
+      notes: notes || [],
+      activeFlow: flowSessions[0] || null,
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -212,6 +247,95 @@ router.post("/conversations/:id/messages", async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── TOGGLE BOT FOR CONVERSATION ─────────────────────────────────────────────
+router.patch("/conversations/:id/toggle-bot", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const [rows] = await pool.query(
+      "SELECT id, contact_id, bot_paused FROM conversations WHERE id = ? AND agency_id = ?",
+      [req.params.id, agencyId]
+    );
+
+    if (!rows.length) return res.status(404).json({ success: false, message: "Conversation not found" });
+
+    const newPaused = rows[0].bot_paused ? 0 : 1;
+    await pool.query("UPDATE conversations SET bot_paused = ? WHERE id = ? AND agency_id = ?", [newPaused, req.params.id, agencyId]);
+    await pool.query("UPDATE contacts SET bot_paused = ? WHERE id = ? AND agency_id = ?", [newPaused, rows[0].contact_id, agencyId]);
+
+    // If bot was resumed and there's an active flow, or if paused, emit update
+    emitToAgency(agencyId, "conversation_updated", {
+      conversationId: parseInt(req.params.id),
+      botPaused: newPaused === 1
+    });
+
+    return res.json({ success: true, botPaused: newPaused === 1 });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── MANUALLY TRIGGER A FLOW FOR CONVERSATION ────────────────────────────────
+router.post("/conversations/:id/trigger-flow", async (req, res) => {
+  try {
+    const { flowId } = req.body;
+    const agencyId = req.user.agencyId;
+    if (!flowId) return res.status(400).json({ success: false, message: "Flow ID is required" });
+
+    // Verify flow exists
+    const [flows] = await pool.query("SELECT * FROM flows WHERE id = ? AND agency_id = ? AND is_active = 1", [flowId, agencyId]);
+    if (!flows.length) return res.status(404).json({ success: false, message: "Active flow not found" });
+    const flow = flows[0];
+
+    // Verify conversation exists
+    const [convs] = await pool.query(`
+      SELECT cv.*, i.platform as integrationPlatform, i.access_token, i.wa_phone_number_id, i.fb_page_id, i.ig_account_id,
+             c.id as contactId, c.name as contactName, c.phone as contactPhone, c.email as contactEmail, c.external_id as contactExternalId
+      FROM conversations cv
+      JOIN integrations i ON i.id = cv.integration_id
+      JOIN contacts c ON c.id = cv.contact_id
+      WHERE cv.id = ? AND cv.agency_id = ?
+    `, [req.params.id, agencyId]);
+
+    if (!convs.length) return res.status(404).json({ success: false, message: "Conversation not found" });
+    const conv = convs[0];
+
+    // Close any previous active session
+    await pool.query("UPDATE flow_sessions SET status = 'COMPLETED' WHERE conversation_id = ? AND status = 'ACTIVE'", [conv.id]);
+
+    const nodes = JSON.parse(flow.nodes_json || "[]");
+    const startNode = nodes.find(n => n.type === "start") || nodes[0];
+    if (!startNode) return res.status(400).json({ success: false, message: "Flow has no start node" });
+
+    // Create active flow session
+    const [sessRes] = await pool.query(
+      "INSERT INTO flow_sessions (agency_id, conversation_id, flow_id, current_node_id, variables, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')",
+      [agencyId, conv.id, flow.id, startNode.id, JSON.stringify({})]
+    );
+
+    // Unpause bot for this conversation so flow can execute
+    await pool.query("UPDATE conversations SET bot_paused = 0 WHERE id = ?", [conv.id]);
+    await pool.query("UPDATE contacts SET bot_paused = 0 WHERE id = ?", [conv.contactId]);
+
+    // Import and execute processFlow directly
+    const { processFlow } = await import("../utils/flowEngine.js");
+    const contactObj = { id: conv.contactId, name: conv.contactName, phone: conv.contactPhone, email: conv.contactEmail, external_id: conv.contactExternalId };
+    const integObj = { id: conv.integration_id, platform: conv.platform, access_token: conv.access_token, wa_phone_number_id: conv.wa_phone_number_id, fb_page_id: conv.fb_page_id, ig_account_id: conv.ig_account_id };
+
+    await processFlow(agencyId, conv.platform, conv, contactObj, "", integObj);
+
+    emitToAgency(agencyId, "conversation_updated", {
+      conversationId: conv.id,
+      botPaused: false
+    });
+
+    return res.json({ success: true, message: `Flow "${flow.name}" triggered successfully` });
+  } catch (err) {
+    console.error("Trigger flow error:", err);
+    return res.status(500).json({ success: false, message: "Failed to trigger flow" });
   }
 });
 

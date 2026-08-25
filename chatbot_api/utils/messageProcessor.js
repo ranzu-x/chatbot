@@ -83,16 +83,31 @@ export async function saveMessage(conversationId, direction, type, body, externa
  */
 export async function matchBotRules(agencyId, platform, conversation, contact, incomingMsgBody, integration) {
   try {
+    // Check if bot is paused for this conversation or contact
+    if (conversation?.bot_paused || contact?.bot_paused) {
+      console.log(`🤖 [Bot Matcher] Bot is paused for conversation ${conversation?.id} or contact ${contact?.id}`);
+      return false;
+    }
+
     const textBody = (incomingMsgBody || "").trim().toLowerCase();
+    const integrationId = integration?.id || conversation?.integration_id;
+    console.log(`🤖 [Bot Matcher] Checking rules for agency=${agencyId}, platform=${platform}, text="${textBody}"`);
     
-    // Find active bot for platform
+    // Find active bot: prioritized by specific integration_id, then platform fallback
     const [bots] = await pool.query(
-      "SELECT * FROM bots WHERE agency_id = ? AND platform = ? AND is_active = 1 LIMIT 1",
-      [agencyId, platform]
+      `SELECT * FROM bots 
+       WHERE agency_id = ? AND (integration_id = ? OR platform = ?) AND is_active = 1 
+       ORDER BY (integration_id IS NOT NULL AND integration_id = ?) DESC, id DESC 
+       LIMIT 1`,
+      [agencyId, integrationId || 0, platform, integrationId || 0]
     );
 
-    if (!bots.length) return false;
+    if (!bots.length) {
+      console.log(`🤖 [Bot Matcher] No active bot found for agency=${agencyId}, platform=${platform}`);
+      return false;
+    }
     const bot = bots[0];
+    console.log(`🤖 [Bot Matcher] Using bot "${bot.name}" (ID: ${bot.id})`);
 
     // Find rules sorted by sort_order
     const [rules] = await pool.query(
@@ -100,18 +115,36 @@ export async function matchBotRules(agencyId, platform, conversation, contact, i
       [bot.id]
     );
 
+    if (!rules.length) {
+      console.log(`🤖 [Bot Matcher] Bot "${bot.name}" has no rules configured.`);
+      return false;
+    }
+
     for (const rule of rules) {
       let isMatch = false;
-      const trigger = rule.trigger_keyword.toLowerCase().trim();
+      const triggers = (rule.trigger_keyword || "")
+        .toLowerCase()
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
 
-      if (rule.is_exact_match) {
-        isMatch = textBody === trigger;
-      } else {
-        isMatch = textBody.includes(trigger);
+      for (const trigger of triggers) {
+        if (rule.is_exact_match) {
+          if (textBody === trigger) {
+            isMatch = true;
+            break;
+          }
+        } else {
+          // Contains match
+          if (textBody.includes(trigger) || trigger.includes(textBody)) {
+            isMatch = true;
+            break;
+          }
+        }
       }
 
       if (isMatch) {
-        console.log(`🤖 Match found for rule: ${rule.trigger_keyword} -> ${rule.reply_message}`);
+        console.log(`🤖 [Bot Matcher] ✅ Match found! Trigger="${rule.trigger_keyword}" -> Reply="${rule.reply_message}"`);
         
         // Send auto-reply via channel
         let externalMsgId = null;
@@ -120,8 +153,9 @@ export async function matchBotRules(agencyId, platform, conversation, contact, i
             type: "TEXT",
             body: rule.reply_message,
           });
+          console.log(`🤖 [Bot Matcher] Reply sent successfully to ${contact.external_id}`);
         } catch (apiErr) {
-          console.error("API bot reply failed:", apiErr.message);
+          console.error("API bot reply failed:", apiErr.message || apiErr);
         }
 
         // Save bot message to DB
@@ -154,6 +188,7 @@ export async function matchBotRules(agencyId, platform, conversation, contact, i
       }
     }
 
+    console.log(`🤖 [Bot Matcher] No rule trigger matched text: "${textBody}"`);
     return false; // No rule matched
   } catch (err) {
     console.error("Bot matching error:", err);

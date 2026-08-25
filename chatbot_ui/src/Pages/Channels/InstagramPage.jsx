@@ -281,7 +281,7 @@ export default function InstagramPage() {
                 <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 20, lineHeight: 1.6 }}>
                   Login with Facebook to discover Instagram Business accounts linked to your Pages.
                 </div>
-                <IGLoginButton onClick={handleIGLogin} loading={loginLoading || !fbReady} disabled={!!sdkError || !fbReady} />
+                <IGLoginButton onClick={handleIGLogin} loading={loginLoading} disabled={!!sdkError || !fbReady || loginLoading} />
                 {!fbReady && !sdkError && <div style={{ marginTop: 10, fontSize: '0.78rem', color: 'var(--text-muted)' }}>Loading SDK…</div>}
                 <div style={{ marginTop: 16, fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                   Required: <code>instagram_basic</code>, <code>instagram_manage_messages</code>

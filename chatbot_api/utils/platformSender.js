@@ -1,4 +1,6 @@
 import axios from "axios";
+import fs from "fs";
+import path from "path";
 
 const META_API_VERSION = process.env.META_API_VERSION || "v21.0";
 
@@ -83,8 +85,45 @@ export async function sendPlatformMessage(platform, integration, contactExternal
         message: {},
       };
 
-      if ((type === "IMAGE" || type === "DOCUMENT") && fullMediaUrl) {
-        const attachmentType = type === "IMAGE" ? "image" : "file";
+      const upperType = (type || "").toUpperCase();
+
+      if (fullMediaUrl && ["IMAGE", "VIDEO", "AUDIO", "DOCUMENT", "FILE"].includes(upperType)) {
+        let attachmentType = "image";
+        if (upperType === "VIDEO") attachmentType = "video";
+        else if (upperType === "AUDIO") attachmentType = "audio";
+        else if (upperType === "DOCUMENT" || upperType === "FILE") attachmentType = "file";
+
+        // Check if media is stored locally in uploads folder
+        const localRelPath = mediaUrl ? mediaUrl.replace(/^[/\\]+/, "") : "";
+        const localPath = localRelPath ? path.join(process.cwd(), localRelPath) : null;
+
+        if (localPath && fs.existsSync(localPath)) {
+          try {
+            const formData = new FormData();
+            formData.append("recipient", JSON.stringify({ id: contactExternalId }));
+            formData.append("messaging_type", "RESPONSE");
+            formData.append("message", JSON.stringify({
+              attachment: {
+                type: attachmentType,
+                payload: { is_reusable: true }
+              }
+            }));
+            let mimeType = "image/png";
+            if (attachmentType === "video") mimeType = "video/mp4";
+            else if (attachmentType === "audio") mimeType = "audio/mpeg";
+            else if (attachmentType === "file") mimeType = "application/pdf";
+            const fileBuffer = fs.readFileSync(localPath);
+            const fileBlob = new Blob([fileBuffer], { type: mimeType });
+            formData.append("filedata", fileBlob, path.basename(localPath));
+
+            const response = await axios.post(url, formData);
+            console.log(`[FB Send Media Multipart] File sent to ${contactExternalId}, msgId:`, response.data?.message_id);
+            return response.data?.message_id || null;
+          } catch (multipartErr) {
+            console.error(`[FB Send Media Multipart Error]`, multipartErr.response?.data || multipartErr.message);
+          }
+        }
+
         payload.message = {
           attachment: {
             type: attachmentType,
@@ -98,14 +137,14 @@ export async function sendPlatformMessage(platform, integration, contactExternal
             payload: {
               template_type: "generic",
               elements: carousel.slice(0, 10).map((item) => ({
-                title: item.title,
-                subtitle: item.subtitle,
-                image_url: item.imageUrl,
-                buttons: item.buttons?.slice(0, 3).map((btn) => ({
+                title: item.title || "Option",
+                subtitle: item.subtitle || undefined,
+                image_url: item.imageUrl || undefined,
+                buttons: item.buttons && item.buttons.length > 0 ? item.buttons.slice(0, 3).map((btn) => ({
                   type: btn.type === "URL" ? "web_url" : "postback",
-                  title: btn.title,
-                  [btn.type === "URL" ? "url" : "payload"]: btn.url || btn.payload || btn.title,
-                })),
+                  title: (btn.title || "Select").slice(0, 20),
+                  [btn.type === "URL" ? "url" : "payload"]: btn.url || btn.payload || btn.title || "select",
+                })) : undefined,
               })),
             },
           },
@@ -118,14 +157,14 @@ export async function sendPlatformMessage(platform, integration, contactExternal
               template_type: "generic",
               elements: [
                 {
-                  title: card.title,
-                  subtitle: card.subtitle,
-                  image_url: card.imageUrl,
-                  buttons: card.buttons?.slice(0, 3).map((btn) => ({
+                  title: card.title || "Option",
+                  subtitle: card.subtitle || undefined,
+                  image_url: card.imageUrl || undefined,
+                  buttons: card.buttons && card.buttons.length > 0 ? card.buttons.slice(0, 3).map((btn) => ({
                     type: btn.type === "URL" ? "web_url" : "postback",
-                    title: btn.title,
-                    [btn.type === "URL" ? "url" : "payload"]: btn.url || btn.payload || btn.title,
-                  })),
+                    title: (btn.title || "Select").slice(0, 20),
+                    [btn.type === "URL" ? "url" : "payload"]: btn.url || btn.payload || btn.title || "select",
+                  })) : undefined,
                 },
               ],
             },
@@ -136,31 +175,59 @@ export async function sendPlatformMessage(platform, integration, contactExternal
           text: body || "Select an option:",
           quick_replies: quickReplies.slice(0, 13).map((qr, index) => ({
             content_type: "text",
-            title: qr.title.slice(0, 20),
-            payload: qr.payload || `qr_${index}`,
+            title: (qr.title || `Option ${index + 1}`).slice(0, 20),
+            payload: qr.payload || qr.title || `qr_${index}`,
           })),
         };
-      } else if (buttons && buttons.length > 0 && platform === "FACEBOOK") {
-        payload.message = {
-          attachment: {
-            type: "template",
-            payload: {
-              template_type: "button",
-              text: body || "Please select an option:",
-              buttons: buttons.slice(0, 3).map((btn) => ({
-                type: btn.type === "URL" ? "web_url" : "postback",
-                title: btn.title,
-                [btn.type === "URL" ? "url" : "payload"]: btn.url || btn.payload || btn.title,
-              })),
+      } else if (buttons && buttons.length > 0) {
+        if (platform === "FACEBOOK") {
+          payload.message = {
+            attachment: {
+              type: "template",
+              payload: {
+                template_type: "button",
+                text: (body || "Please select an option:").slice(0, 640),
+                buttons: buttons.slice(0, 3).map((btn) => ({
+                  type: btn.type === "URL" ? "web_url" : "postback",
+                  title: (btn.title || "Button").slice(0, 20),
+                  [btn.type === "URL" ? "url" : "payload"]: btn.url || btn.payload || btn.title || "btn",
+                })),
+              },
             },
-          },
-        };
+          };
+        } else {
+          // Instagram Generic template fallback for buttons
+          payload.message = {
+            attachment: {
+              type: "template",
+              payload: {
+                template_type: "generic",
+                elements: [
+                  {
+                    title: (body || "Please select an option:").slice(0, 80),
+                    buttons: buttons.slice(0, 3).map((btn) => ({
+                      type: btn.type === "URL" ? "web_url" : "postback",
+                      title: (btn.title || "Button").slice(0, 20),
+                      [btn.type === "URL" ? "url" : "payload"]: btn.url || btn.payload || btn.title || "btn",
+                    })),
+                  },
+                ],
+              },
+            },
+          };
+        }
       } else {
-        payload.message = { text: body };
+        payload.message = { text: body || "" };
       }
 
-      const response = await axios.post(url, payload);
-      return response.data?.message_id || null;
+      try {
+        const response = await axios.post(url, payload);
+        console.log(`[FB Send] Message sent to ${contactExternalId}, msgId:`, response.data?.message_id);
+        return response.data?.message_id || null;
+      } catch (err) {
+        console.error(`[FB Send Error] Failed to send message to ${contactExternalId}:`, err.response?.data || err.message);
+        throw err;
+      }
     }
 
     if (platform === "TELEGRAM") {

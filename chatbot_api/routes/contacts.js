@@ -195,14 +195,122 @@ router.put("/contacts/:id", async (req, res) => {
   }
 });
 
-// ─── DELETE CONTACT ───────────────────────────────────────────────────────────
-router.delete("/contacts/:id", async (req, res) => {
+// ─── TAGS MANAGEMENT ─────────────────────────────────────────────────────────
+router.post("/contacts/:id/tags", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    await pool.query("DELETE FROM contacts WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
-    return res.json({ success: true, message: "Contact deleted" });
+    const { tag } = req.body;
+    if (!tag || !tag.trim()) return res.status(400).json({ success: false, message: "Tag is required" });
+
+    const cleanTag = tag.trim();
+    const [rows] = await pool.query("SELECT tags FROM contacts WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
+    if (!rows.length) return res.status(404).json({ success: false, message: "Contact not found" });
+
+    let currentTags = [];
+    try {
+      currentTags = typeof rows[0].tags === "string" ? JSON.parse(rows[0].tags || "[]") : (rows[0].tags || []);
+    } catch { currentTags = []; }
+
+    if (!currentTags.includes(cleanTag)) {
+      currentTags.push(cleanTag);
+      await pool.query("UPDATE contacts SET tags = ? WHERE id = ? AND agency_id = ?", [JSON.stringify(currentTags), req.params.id, agencyId]);
+    }
+
+    return res.json({ success: true, tags: currentTags });
   } catch (err) {
-    console.error("Delete contact error:", err);
+    console.error("Add tag error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+router.delete("/contacts/:id/tags/:tag", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const tagToRemove = decodeURIComponent(req.params.tag).trim();
+
+    const [rows] = await pool.query("SELECT tags FROM contacts WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
+    if (!rows.length) return res.status(404).json({ success: false, message: "Contact not found" });
+
+    let currentTags = [];
+    try {
+      currentTags = typeof rows[0].tags === "string" ? JSON.parse(rows[0].tags || "[]") : (rows[0].tags || []);
+    } catch { currentTags = []; }
+
+    currentTags = currentTags.filter(t => t.toLowerCase() !== tagToRemove.toLowerCase());
+    await pool.query("UPDATE contacts SET tags = ? WHERE id = ? AND agency_id = ?", [JSON.stringify(currentTags), req.params.id, agencyId]);
+
+    return res.json({ success: true, tags: currentTags });
+  } catch (err) {
+    console.error("Remove tag error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── NOTES MANAGEMENT ────────────────────────────────────────────────────────
+router.get("/contacts/:id/notes", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const [notes] = await pool.query(
+      `SELECT n.*, u.name as userName
+       FROM contact_notes n
+       LEFT JOIN users u ON u.id = n.user_id
+       WHERE n.contact_id = ? AND n.agency_id = ?
+       ORDER BY n.created_at DESC`,
+      [req.params.id, agencyId]
+    );
+    return res.json({ success: true, notes });
+  } catch (err) {
+    console.error("Get notes error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+router.post("/contacts/:id/notes", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const { note } = req.body;
+    if (!note || !note.trim()) return res.status(400).json({ success: false, message: "Note content is required" });
+
+    const authorName = req.user.name || "Agent";
+    const [result] = await pool.query(
+      "INSERT INTO contact_notes (agency_id, contact_id, user_id, author_name, note) VALUES (?, ?, ?, ?, ?)",
+      [agencyId, req.params.id, req.user.id || null, authorName, note.trim()]
+    );
+
+    const [created] = await pool.query("SELECT * FROM contact_notes WHERE id = ?", [result.insertId]);
+    return res.status(201).json({ success: true, note: created[0] });
+  } catch (err) {
+    console.error("Add note error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+router.delete("/contacts/:id/notes/:noteId", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    await pool.query("DELETE FROM contact_notes WHERE id = ? AND contact_id = ? AND agency_id = ?", [req.params.noteId, req.params.id, agencyId]);
+    return res.json({ success: true, message: "Note deleted" });
+  } catch (err) {
+    console.error("Delete note error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── TOGGLE BOT PAUSE ─────────────────────────────────────────────────────────
+router.patch("/contacts/:id/toggle-bot", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const [rows] = await pool.query("SELECT bot_paused FROM contacts WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
+    if (!rows.length) return res.status(404).json({ success: false, message: "Contact not found" });
+
+    const newPaused = rows[0].bot_paused ? 0 : 1;
+    await pool.query("UPDATE contacts SET bot_paused = ? WHERE id = ? AND agency_id = ?", [newPaused, req.params.id, agencyId]);
+    // Also update any open conversation for this contact
+    await pool.query("UPDATE conversations SET bot_paused = ? WHERE contact_id = ? AND agency_id = ?", [newPaused, req.params.id, agencyId]);
+
+    return res.json({ success: true, botPaused: newPaused === 1 });
+  } catch (err) {
+    console.error("Toggle bot error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });

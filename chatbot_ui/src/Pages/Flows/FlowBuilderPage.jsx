@@ -3,7 +3,8 @@ import { useParams, useNavigate } from 'react-router';
 import {
   ReactFlow, Background, Controls, MiniMap,
   Handle, Position, useNodesState, useEdgesState,
-  addEdge, ReactFlowProvider, useReactFlow
+  addEdge, ReactFlowProvider, useReactFlow,
+  BaseEdge, EdgeLabelRenderer, getSmoothStepPath
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
@@ -12,30 +13,35 @@ import {
   Layers, Keyboard, GitBranch, Clock, Headphones,
   CircleStop, Play, Type, GripVertical, X, Plus, Trash2,
   ChevronRight, Zap, MousePointerClick, Mail, Phone,
-  User, Settings2, CornerDownRight, Image
+  User, Settings2, CornerDownRight, Image, Upload,
+  Video, Music, FileText
 } from 'lucide-react';
-import { flowAPI } from '../../services/api';
+import { flowAPI, uploadAPI, integrationAPI } from '../../services/api';
 
 /* ═══════════════════════════════════════════════════════════════════
    CONSTANTS
    ═══════════════════════════════════════════════════════════════════ */
 
 const PLATFORM_RULES = {
-  WHATSAPP:  { text: true, buttons: 3, quickReplies: false, listMenu: 10, card: false, carousel: false },
-  FACEBOOK:  { text: true, buttons: 3, quickReplies: 13, listMenu: false, card: true, carousel: 10 },
-  INSTAGRAM: { text: true, buttons: false, quickReplies: 13, listMenu: false, card: true, carousel: false },
-  TELEGRAM:  { text: true, buttons: true, quickReplies: false, listMenu: true, card: true, carousel: false },
-  WEBCHAT:   { text: true, buttons: true, quickReplies: true, listMenu: true, card: true, carousel: true },
+  WHATSAPP:  { text: true, image: true, video: true, audio: true, file: true, buttons: 3, quickReplies: false, listMenu: 10, card: false, carousel: false },
+  FACEBOOK:  { text: true, image: true, video: true, audio: true, file: true, buttons: 3, quickReplies: 13, listMenu: false, card: true, carousel: 10 },
+  INSTAGRAM: { text: true, image: true, video: true, audio: true, file: true, buttons: false, quickReplies: 13, listMenu: false, card: true, carousel: false },
+  TELEGRAM:  { text: true, image: true, video: true, audio: true, file: true, buttons: true, quickReplies: false, listMenu: true, card: true, carousel: false },
+  WEBCHAT:   { text: true, image: true, video: true, audio: true, file: true, buttons: true, quickReplies: true, listMenu: true, card: true, carousel: true },
 };
 
 const NODE_COLORS = {
   start: '#10b981',
   text: '#6366f1',
+  image: '#ec4899',
+  video: '#f43f5e',
+  audio: '#06b6d4',
+  file: '#64748b',
   buttons: '#f59e0b',
   quickReplies: '#22d3ee',
   listMenu: '#8b5cf6',
-  card: '#ec4899',
-  carousel: '#f472b6',
+  card: '#a855f7',
+  carousel: '#d946ef',
   collectInput: '#14b8a6',
   condition: '#f97316',
   delay: '#64748b',
@@ -46,6 +52,10 @@ const NODE_COLORS = {
 const NODE_ICONS = {
   start: Play,
   text: Type,
+  image: Image,
+  video: Video,
+  audio: Music,
+  file: FileText,
   buttons: MousePointerClick,
   quickReplies: Keyboard,
   listMenu: ListOrdered,
@@ -71,6 +81,10 @@ const PALETTE_CATEGORIES = [
   {
     label: 'Rich Media',
     items: [
+      { type: 'image', label: 'Image' },
+      { type: 'video', label: 'Video' },
+      { type: 'audio', label: 'Audio' },
+      { type: 'file', label: 'File / Document' },
       { type: 'card', label: 'Card' },
       { type: 'carousel', label: 'Carousel' },
     ],
@@ -93,8 +107,12 @@ const PALETTE_CATEGORIES = [
 ];
 
 const DEFAULT_NODE_DATA = {
-  start:        { label: 'Start', trigger_type: 'keyword' },
+  start:        { label: 'Start Trigger', trigger_type: 'keyword', match_type: 'contains' },
   text:         { label: 'Text Message', message: '' },
+  image:        { label: 'Image', imageUrl: '', caption: '' },
+  video:        { label: 'Video', mediaUrl: '', caption: '' },
+  audio:        { label: 'Audio', mediaUrl: '' },
+  file:         { label: 'File / Document', mediaUrl: '', filename: '' },
   buttons:      { label: 'Buttons', message: '', buttons: ['Button 1'] },
   quickReplies: { label: 'Quick Replies', message: '', replies: ['Reply 1'] },
   listMenu:     { label: 'List Menu', title: 'Menu', items: ['Item 1'] },
@@ -654,11 +672,46 @@ function NodeWrapper({ children, color, label, icon: Icon, selected, data, type 
 
 /* ── Start Node ──────────────────────────────────────────────── */
 function StartNode({ data, selected }) {
+  const triggerType = data.trigger_type || 'keyword';
+  const rawKeywords = data.keywords || (data.trigger_keyword ? data.trigger_keyword.split(',') : []);
+  const keywords = Array.isArray(rawKeywords) ? rawKeywords : [rawKeywords].filter(Boolean);
+
   return (
-    <NodeWrapper color={NODE_COLORS.start} label="Start" icon={Play} selected={selected} data={data} type="start">
+    <NodeWrapper color={NODE_COLORS.start} label="Start Trigger" icon={Play} selected={selected} data={data} type="start">
       <div className="fb-node-body">
-        <span style={{ fontSize: 11, opacity: 0.8 }}>Trigger: </span>
-        <span style={{ fontWeight: 600, color: '#10b981' }}>{data.trigger_type || 'keyword'}</span>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+          <span style={{ fontSize: 11, opacity: 0.8 }}>Trigger:</span>
+          <span style={{ fontWeight: 700, color: '#10b981', textTransform: 'capitalize', fontSize: 11 }}>
+            {triggerType === 'keyword' ? '🔑 Keywords' : triggerType === 'first_message' ? '👋 First Message' : triggerType === 'any_message' ? '💬 Any Message' : triggerType}
+          </span>
+        </div>
+
+        {triggerType === 'keyword' && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+            {keywords.length === 0 ? (
+              <span style={{ fontSize: 10, opacity: 0.5, fontStyle: 'italic' }}>No keywords set (click to add)</span>
+            ) : (
+              keywords.slice(0, 4).map((kw, i) => (
+                <span
+                  key={i}
+                  style={{
+                    padding: '2px 6px',
+                    borderRadius: 4,
+                    background: 'rgba(16, 185, 129, 0.15)',
+                    color: '#10b981',
+                    fontSize: 10,
+                    fontWeight: 600,
+                  }}
+                >
+                  {kw}
+                </span>
+              ))
+            )}
+            {keywords.length > 4 && (
+              <span style={{ fontSize: 10, opacity: 0.6 }}>+{keywords.length - 4} more</span>
+            )}
+          </div>
+        )}
       </div>
       <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.start }} />
     </NodeWrapper>
@@ -676,6 +729,93 @@ function TextNode({ data, selected }) {
         </div>
       </div>
       <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.text }} />
+    </NodeWrapper>
+  );
+}
+
+/* ── Image Node ──────────────────────────────────────────────── */
+function ImageNode({ data, selected }) {
+  const rawUrl = data.imageUrl || data.mediaUrl || '';
+  const backendUrl = import.meta.env.VITE_API_URL
+    ? import.meta.env.VITE_API_URL.replace('/api/v1', '')
+    : 'http://localhost:5000';
+  const fullUrl = rawUrl && !rawUrl.startsWith('http') ? `${backendUrl}${rawUrl}` : rawUrl;
+
+  return (
+    <NodeWrapper color={NODE_COLORS.image} label="Image" icon={Image} selected={selected} data={data} type="image">
+      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.image }} />
+      <div className="fb-node-body">
+        {fullUrl ? (
+          <img
+            src={fullUrl}
+            alt="Preview"
+            style={{ width: '100%', maxHeight: 90, borderRadius: 6, objectFit: 'cover', display: 'block', marginBottom: 6 }}
+          />
+        ) : (
+          <div style={{
+            width: '100%', height: 50, borderRadius: 6, marginBottom: 6,
+            background: 'rgba(255,255,255,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
+          }}>
+            <Image size={16} style={{ opacity: 0.3 }} />
+            <span style={{ fontSize: 10, opacity: 0.4 }}>No image set</span>
+          </div>
+        )}
+        {data.caption && (
+          <div style={{ fontSize: 11, color: 'var(--text-secondary)' }} className="fb-node-body-preview">{data.caption}</div>
+        )}
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.image }} />
+    </NodeWrapper>
+  );
+}
+
+/* ── Video Node ──────────────────────────────────────────────── */
+function VideoNode({ data, selected }) {
+  return (
+    <NodeWrapper color={NODE_COLORS.video} label="Video" icon={Video} selected={selected} data={data} type="video">
+      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.video }} />
+      <div className="fb-node-body" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Video size={16} style={{ color: NODE_COLORS.video, flexShrink: 0 }} />
+        <div style={{ overflow: 'hidden' }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>Video Message</div>
+          <div style={{ fontSize: 10, opacity: 0.6 }} className="truncate">{data.mediaUrl ? 'Video linked' : 'No video attached'}</div>
+        </div>
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.video }} />
+    </NodeWrapper>
+  );
+}
+
+/* ── Audio Node ──────────────────────────────────────────────── */
+function AudioNode({ data, selected }) {
+  return (
+    <NodeWrapper color={NODE_COLORS.audio} label="Audio" icon={Music} selected={selected} data={data} type="audio">
+      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.audio }} />
+      <div className="fb-node-body" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Music size={16} style={{ color: NODE_COLORS.audio, flexShrink: 0 }} />
+        <div style={{ overflow: 'hidden' }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>Audio Note</div>
+          <div style={{ fontSize: 10, opacity: 0.6 }} className="truncate">{data.mediaUrl ? 'Audio linked' : 'No audio attached'}</div>
+        </div>
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.audio }} />
+    </NodeWrapper>
+  );
+}
+
+/* ── File Node ───────────────────────────────────────────────── */
+function FileNode({ data, selected }) {
+  return (
+    <NodeWrapper color={NODE_COLORS.file} label="File / Document" icon={FileText} selected={selected} data={data} type="file">
+      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.file }} />
+      <div className="fb-node-body" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <FileText size={16} style={{ color: NODE_COLORS.file, flexShrink: 0 }} />
+        <div style={{ overflow: 'hidden' }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>{data.filename || 'Document'}</div>
+          <div style={{ fontSize: 10, opacity: 0.6 }} className="truncate">{data.mediaUrl ? 'File linked' : 'No file attached'}</div>
+        </div>
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.file }} />
     </NodeWrapper>
   );
 }
@@ -940,6 +1080,318 @@ function EndNode({ data, selected }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   MEDIA UPLOAD HELPERS FOR PROPERTIES PANEL
+   ═══════════════════════════════════════════════════════════════════ */
+
+function ImageUploadField({ label = 'Image', value, onChange, placeholder = 'https://...' }) {
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const backendUrl = import.meta.env.VITE_API_URL
+    ? import.meta.env.VITE_API_URL.replace('/api/v1', '')
+    : 'http://localhost:5000';
+  const fullUrl = value && !value.startsWith('http') ? `${backendUrl}${value}` : value;
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await uploadAPI.uploadFile(formData);
+      if (res.data?.url) {
+        onChange(res.data.url);
+      }
+    } catch (err) {
+      console.error('Failed to upload image:', err);
+      alert('Failed to upload image. Please try again.');
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  return (
+    <div className="fb-field">
+      <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span>{label}</span>
+        {value && (
+          <button
+            type="button"
+            style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 11, padding: 0 }}
+            onClick={() => onChange('')}
+          >
+            Remove
+          </button>
+        )}
+      </label>
+
+      {/* Image Preview Thumbnail if value exists */}
+      {value ? (
+        <div style={{ position: 'relative', marginBottom: 8, borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)' }}>
+          <img
+            src={fullUrl}
+            alt="Preview"
+            style={{ width: '100%', maxHeight: 130, objectFit: 'cover', display: 'block' }}
+          />
+        </div>
+      ) : null}
+
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <input
+          type="file"
+          ref={fileInputRef}
+          accept="image/*"
+          style={{ display: 'none' }}
+          onChange={handleFileChange}
+        />
+        <button
+          type="button"
+          className="fb-add-btn"
+          style={{ padding: '6px 10px', fontSize: 11, flexShrink: 0, gap: 4 }}
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading}
+        >
+          {uploading ? <Loader2 size={12} className="fb-loading-spinner" /> : <Upload size={12} />}
+          {uploading ? 'Uploading…' : value ? 'Replace Image' : 'Upload Image'}
+        </button>
+
+        <input
+          value={value || ''}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          style={{ flex: 1, fontSize: 11, padding: '6px 8px' }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function MediaUploadField({ label = 'Media File', value, onChange, accept = '*/*', placeholder = 'https://...' }) {
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await uploadAPI.uploadFile(formData);
+      if (res.data?.url) {
+        onChange(res.data.url);
+      }
+    } catch (err) {
+      console.error('Failed to upload file:', err);
+      alert('Failed to upload media file.');
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  return (
+    <div className="fb-field">
+      <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span>{label}</span>
+        {value && (
+          <button
+            type="button"
+            style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: 11, padding: 0 }}
+            onClick={() => onChange('')}
+          >
+            Remove
+          </button>
+        )}
+      </label>
+
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <input
+          type="file"
+          ref={fileInputRef}
+          accept={accept}
+          style={{ display: 'none' }}
+          onChange={handleFileChange}
+        />
+        <button
+          type="button"
+          className="fb-add-btn"
+          style={{ padding: '6px 10px', fontSize: 11, flexShrink: 0, gap: 4 }}
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading}
+        >
+          {uploading ? <Loader2 size={12} className="fb-loading-spinner" /> : <Upload size={12} />}
+          {uploading ? 'Uploading…' : value ? 'Replace File' : 'Upload File'}
+        </button>
+
+        <input
+          value={value || ''}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          style={{ flex: 1, fontSize: 11, padding: '6px 8px' }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/* ── Start Node Properties with Reactive Keywords Manager ──── */
+function StartNodeProperties({ data = {}, onUpdateNode }) {
+  const [keywordInput, setKeywordInput] = useState('');
+
+  const triggerType = data.trigger_type || 'keyword';
+  const rawKeywords = data.keywords !== undefined
+    ? data.keywords
+    : (data.trigger_keyword ? data.trigger_keyword.split(',') : ['hi', 'hello']);
+  const keywords = Array.isArray(rawKeywords) ? rawKeywords : [rawKeywords].filter(Boolean);
+
+  const handleTriggerTypeChange = (newType) => {
+    onUpdateNode({
+      ...data,
+      trigger_type: newType,
+    });
+  };
+
+  const handleMatchTypeChange = (newMatch) => {
+    onUpdateNode({
+      ...data,
+      match_type: newMatch,
+    });
+  };
+
+  const handleAddKeyword = () => {
+    const val = keywordInput.trim();
+    if (!val) return;
+    const newItems = val.split(',').map((k) => k.trim()).filter(Boolean);
+    const updated = Array.from(new Set([...keywords, ...newItems]));
+    onUpdateNode({
+      ...data,
+      keywords: updated,
+      trigger_keyword: updated.join(','),
+    });
+    setKeywordInput('');
+  };
+
+  const handleRemoveKeyword = (indexToRemove) => {
+    const updated = keywords.filter((_, idx) => idx !== indexToRemove);
+    onUpdateNode({
+      ...data,
+      keywords: updated,
+      trigger_keyword: updated.join(','),
+    });
+  };
+
+  return (
+    <>
+      <div className="fb-field">
+        <label>Trigger Type</label>
+        <select value={triggerType} onChange={(e) => handleTriggerTypeChange(e.target.value)}>
+          <option value="keyword">🔑 Keyword Trigger (e.g. hi, pricing, hello)</option>
+          <option value="first_message">👋 First Message (Welcome new contacts)</option>
+          <option value="any_message">💬 Any Message / Fallback</option>
+          <option value="button_payload">🔘 Button Payload / Postback</option>
+          <option value="webhook">⚡ Webhook / API</option>
+        </select>
+      </div>
+
+      {triggerType === 'keyword' && (
+        <>
+          <div className="fb-field">
+            <label>Matching Method</label>
+            <select
+              value={data.match_type || 'contains'}
+              onChange={(e) => handleMatchTypeChange(e.target.value)}
+            >
+              <option value="contains">Contains (e.g. user says "hey there" matches "hey")</option>
+              <option value="exact">Exact Match (user text must match keyword exactly)</option>
+              <option value="starts_with">Starts With (e.g. starts with keyword)</option>
+            </select>
+          </div>
+
+          <div className="fb-field">
+            <label>Trigger Keywords ({keywords.length})</label>
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.4 }}>
+              Type a keyword and press <b>Enter</b> or click <b>+ Add</b>. You can also paste comma-separated keywords (e.g. <i>hi, hello, hey, start</i>).
+            </p>
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10, minHeight: 32 }}>
+              {keywords.length === 0 ? (
+                <span style={{ fontSize: 11, color: '#f59e0b', fontStyle: 'italic', padding: '4px 0' }}>
+                  ⚠️ No keywords added. Type a keyword below and click "+ Add".
+                </span>
+              ) : (
+                keywords.map((kw, i) => (
+                  <span
+                    key={`${kw}_${i}`}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '4px 10px',
+                      borderRadius: 6,
+                      background: 'rgba(16, 185, 129, 0.18)',
+                      color: '#10b981',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      border: '1px solid rgba(16, 185, 129, 0.35)',
+                    }}
+                  >
+                    🏷️ {kw}
+                    <button
+                      type="button"
+                      style={{
+                        background: 'rgba(0,0,0,0.2)',
+                        border: 'none',
+                        color: '#ef4444',
+                        cursor: 'pointer',
+                        padding: '1px 5px',
+                        borderRadius: '50%',
+                        fontSize: 11,
+                        lineHeight: 1,
+                        fontWeight: 'bold',
+                      }}
+                      onClick={() => handleRemoveKeyword(i)}
+                      title={`Remove "${kw}"`}
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input
+                value={keywordInput}
+                onChange={(e) => setKeywordInput(e.target.value)}
+                placeholder="Type keyword (e.g. pricing, support)…"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddKeyword();
+                  }
+                }}
+                style={{ flex: 1, fontSize: 12 }}
+              />
+              <button
+                type="button"
+                className="fb-add-btn"
+                style={{ padding: '6px 14px', fontSize: 12, flexShrink: 0, fontWeight: 700 }}
+                onClick={handleAddKeyword}
+              >
+                <Plus size={14} /> Add
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
    PROPERTIES PANEL
    ═══════════════════════════════════════════════════════════════════ */
 
@@ -956,16 +1408,10 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete }) {
     switch (type) {
       case 'start':
         return (
-          <div className="fb-field">
-            <label>Trigger Type</label>
-            <select value={data.trigger_type || 'keyword'} onChange={(e) => updateField('trigger_type', e.target.value)}>
-              <option value="keyword">Keyword</option>
-              <option value="first_message">First Message</option>
-              <option value="any_message">Any Message</option>
-              <option value="button_payload">Button Payload</option>
-              <option value="webhook">Webhook</option>
-            </select>
-          </div>
+          <StartNodeProperties
+            data={data}
+            onUpdateNode={(newData) => onUpdate(node.id, newData)}
+          />
         );
 
       case 'text':
@@ -978,6 +1424,83 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete }) {
               placeholder="Enter your text message..."
             />
           </div>
+        );
+
+      case 'image':
+        return (
+          <>
+            <ImageUploadField
+              label="Image File or URL"
+              value={data.imageUrl || data.mediaUrl || ''}
+              onChange={(val) => {
+                updateField('imageUrl', val);
+                updateField('mediaUrl', val);
+              }}
+            />
+            <div className="fb-field">
+              <label>Caption (Optional)</label>
+              <textarea
+                value={data.caption || data.message || ''}
+                onChange={(e) => {
+                  updateField('caption', e.target.value);
+                  updateField('message', e.target.value);
+                }}
+                placeholder="Caption text shown below image..."
+                rows={2}
+              />
+            </div>
+          </>
+        );
+
+      case 'video':
+        return (
+          <>
+            <MediaUploadField
+              label="Video File or URL"
+              accept="video/*"
+              value={data.mediaUrl || data.url || ''}
+              onChange={(val) => updateField('mediaUrl', val)}
+            />
+            <div className="fb-field">
+              <label>Caption (Optional)</label>
+              <textarea
+                value={data.caption || data.message || ''}
+                onChange={(e) => updateField('caption', e.target.value)}
+                placeholder="Caption text..."
+                rows={2}
+              />
+            </div>
+          </>
+        );
+
+      case 'audio':
+        return (
+          <MediaUploadField
+            label="Audio File or URL"
+            accept="audio/*"
+            value={data.mediaUrl || data.url || ''}
+            onChange={(val) => updateField('mediaUrl', val)}
+          />
+        );
+
+      case 'file':
+        return (
+          <>
+            <MediaUploadField
+              label="Document / Attachment"
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.zip"
+              value={data.mediaUrl || data.url || ''}
+              onChange={(val) => updateField('mediaUrl', val)}
+            />
+            <div className="fb-field">
+              <label>Filename / Title</label>
+              <input
+                value={data.filename || ''}
+                onChange={(e) => updateField('filename', e.target.value)}
+                placeholder="e.g. Product_Brochure.pdf"
+              />
+            </div>
+          </>
         );
 
       case 'buttons':
@@ -1134,14 +1657,11 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete }) {
                 placeholder="Card subtitle..."
               />
             </div>
-            <div className="fb-field">
-              <label>Image URL</label>
-              <input
-                value={data.imageUrl || ''}
-                onChange={(e) => updateField('imageUrl', e.target.value)}
-                placeholder="https://..."
-              />
-            </div>
+            <ImageUploadField
+              label="Card Image"
+              value={data.imageUrl || ''}
+              onChange={(val) => updateField('imageUrl', val)}
+            />
           </>
         );
 
@@ -1198,19 +1718,13 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete }) {
                       color: 'var(--text-primary)', outline: 'none',
                     }}
                   />
-                  <input
+                  <ImageUploadField
+                    label={`Card ${i + 1} Image`}
                     value={card.imageUrl || ''}
-                    onChange={(e) => {
+                    onChange={(val) => {
                       const updated = [...(data.cards || [])];
-                      updated[i] = { ...updated[i], imageUrl: e.target.value };
+                      updated[i] = { ...updated[i], imageUrl: val };
                       updateField('cards', updated);
-                    }}
-                    placeholder="Image URL"
-                    style={{
-                      width: '100%',
-                      background: 'var(--bg-card)', border: '1px solid var(--border, rgba(255,255,255,0.06))',
-                      borderRadius: 6, padding: '6px 10px', fontSize: 12,
-                      color: 'var(--text-primary)', outline: 'none',
                     }}
                   />
                 </div>
@@ -1408,6 +1922,10 @@ function NodePalette({ platform }) {
 const nodeTypes = {
   start: StartNode,
   text: TextNode,
+  image: ImageNode,
+  video: VideoNode,
+  audio: AudioNode,
+  file: FileNode,
   buttons: ButtonsNode,
   quickReplies: QuickRepliesNode,
   listMenu: ListMenuNode,
@@ -1419,6 +1937,300 @@ const nodeTypes = {
   handoff: HandoffNode,
   end: EndNode,
 };
+
+/* ── Removable / Deletable Edge ────────────────────────────── */
+function RemovableEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  style = {},
+  markerEnd,
+  selected,
+}) {
+  const { setEdges } = useReactFlow();
+  const [edgePath, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+    borderRadius: 16,
+  });
+
+  const onEdgeDelete = (e) => {
+    e.stopPropagation();
+    setEdges((eds) => eds.filter((edge) => edge.id !== id));
+  };
+
+  return (
+    <>
+      <BaseEdge
+        path={edgePath}
+        markerEnd={markerEnd}
+        style={{
+          ...style,
+          strokeWidth: selected ? 3.5 : 2.5,
+          stroke: selected ? '#818cf8' : (style.stroke || 'rgba(99, 102, 241, 0.6)'),
+        }}
+      />
+      <EdgeLabelRenderer>
+        <div
+          style={{
+            position: 'absolute',
+            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            pointerEvents: 'all',
+            zIndex: 1000,
+          }}
+          className="nodrag nopan"
+        >
+          <button
+            type="button"
+            className="fb-edge-delete-btn"
+            onClick={onEdgeDelete}
+            title="Disconnect connection (Delete Edge)"
+            style={{
+              width: 22,
+              height: 22,
+              background: '#181b2e',
+              border: '1.5px solid #ef4444',
+              color: '#ef4444',
+              cursor: 'pointer',
+              borderRadius: '50%',
+              fontSize: 11,
+              fontWeight: 800,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 3px 10px rgba(0,0,0,0.5)',
+              transition: 'all 0.15s ease',
+              padding: 0,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'scale(1.25)';
+              e.currentTarget.style.background = '#ef4444';
+              e.currentTarget.style.color = '#ffffff';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'scale(1)';
+              e.currentTarget.style.background = '#181b2e';
+              e.currentTarget.style.color = '#ef4444';
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      </EdgeLabelRenderer>
+    </>
+  );
+}
+
+const edgeTypes = {
+  smoothstep: RemovableEdge,
+  removable: RemovableEdge,
+  default: RemovableEdge,
+};
+
+/* ── Floating Quick Component Picker (drag-to-connect) ──────── */
+function QuickComponentPicker({ position, onClose, onSelect, platform }) {
+  const [search, setSearch] = useState('');
+  const pickerRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target)) {
+        onClose();
+      }
+    };
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onClose]);
+
+  const filteredCategories = useMemo(() => {
+    return PALETTE_CATEGORIES.map((cat) => ({
+      ...cat,
+      items: cat.items.filter((item) => {
+        if (item.type === 'start') return false; // don't spawn multiple start nodes
+        if (search.trim()) {
+          return (
+            item.label.toLowerCase().includes(search.toLowerCase()) ||
+            item.type.toLowerCase().includes(search.toLowerCase())
+          );
+        }
+        return true;
+      }),
+    })).filter((cat) => cat.items.length > 0);
+  }, [search]);
+
+  return (
+    <div
+      ref={pickerRef}
+      style={{
+        position: 'fixed',
+        left: position.x,
+        top: position.y,
+        zIndex: 11000,
+        width: 280,
+        maxHeight: 380,
+        background: '#1a1d2e',
+        borderRadius: 14,
+        border: '1px solid rgba(99, 102, 241, 0.4)',
+        boxShadow: '0 16px 40px rgba(0,0,0,0.6)',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }}
+    >
+      {/* Header & Search */}
+      <div
+        style={{
+          padding: '10px 12px',
+          borderBottom: '1px solid rgba(255,255,255,0.08)',
+          background: 'rgba(0,0,0,0.2)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 700,
+              color: '#a5b4fc',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            <Zap size={14} color="#6366f1" /> Connect Next Step
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+              padding: 0,
+              fontSize: 14,
+            }}
+          >
+            ✕
+          </button>
+        </div>
+        <input
+          type="text"
+          placeholder="Search components..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          autoFocus
+          style={{
+            width: '100%',
+            padding: '6px 10px',
+            fontSize: 12,
+            background: '#121422',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: 6,
+            color: '#fff',
+            outline: 'none',
+          }}
+        />
+      </div>
+
+      {/* Components List */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '6px 8px' }}>
+        {filteredCategories.length === 0 ? (
+          <div style={{ padding: '20px 10px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+            No components found
+          </div>
+        ) : (
+          filteredCategories.map((cat) => (
+            <div key={cat.label} style={{ marginBottom: 8 }}>
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: 800,
+                  textTransform: 'uppercase',
+                  color: 'var(--text-muted)',
+                  padding: '4px 6px',
+                  letterSpacing: 0.5,
+                }}
+              >
+                {cat.label}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 3 }}>
+                {cat.items.map((item) => {
+                  const Icon = NODE_ICONS[item.type] || MessageSquare;
+                  const color = NODE_COLORS[item.type] || '#6366f1';
+                  const isSupported = isNodeSupportedOnPlatform(item.type, platform);
+
+                  return (
+                    <button
+                      key={item.type}
+                      type="button"
+                      onClick={() => onSelect(item.type)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '7px 10px',
+                        borderRadius: 8,
+                        background: 'rgba(255,255,255,0.02)',
+                        border: '1px solid transparent',
+                        color: isSupported ? 'var(--text-primary)' : 'var(--text-muted)',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        transition: 'all 0.12s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = 'rgba(99, 102, 241, 0.15)';
+                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.3)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = 'rgba(255,255,255,0.02)';
+                        e.currentTarget.style.borderColor = 'transparent';
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: 24,
+                          height: 24,
+                          borderRadius: 6,
+                          background: `${color}22`,
+                          color,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0,
+                        }}
+                      >
+                        <Icon size={14} />
+                      </div>
+                      <span style={{ fontSize: 12, fontWeight: 600, flex: 1 }}>{item.label}</span>
+                      {!isSupported && (
+                        <span style={{ fontSize: 10, color: '#f59e0b', opacity: 0.8 }}>⚠️</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
 
 const defaultEdgeOptions = {
   type: 'smoothstep',
@@ -1436,6 +2248,8 @@ function FlowBuilderInner() {
   const [flowData, setFlowData] = useState(null);
   const [flowName, setFlowName] = useState('');
   const [platform, setPlatform] = useState('WEBCHAT');
+  const [integrationId, setIntegrationId] = useState(null);
+  const [integrations, setIntegrations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [selectedNode, setSelectedNode] = useState(null);
@@ -1465,12 +2279,21 @@ function FlowBuilderInner() {
     async function loadFlow() {
       try {
         setLoading(true);
-        const res = await flowAPI.getOne(id);
-        const flow = res.data?.flow || res.data;
+        const [res, intRes] = await Promise.allSettled([
+          flowAPI.getOne(id),
+          integrationAPI.getAll(),
+        ]);
+        if (intRes.status === 'fulfilled') {
+          setIntegrations(intRes.value.data?.integrations || []);
+        }
+
+        const flow = res.status === 'fulfilled' ? (res.value.data?.flow || res.value.data) : null;
+        if (!flow) return;
 
         setFlowData(flow);
         setFlowName(flow.name || 'Untitled Flow');
         setPlatform(flow.platform || 'WEBCHAT');
+        setIntegrationId(flow.integration_id || null);
 
         let loadedNodes = [];
         let loadedEdges = [];
@@ -1498,14 +2321,25 @@ function FlowBuilderInner() {
         }
 
         // Ensure all nodes have proper data defaults merged
-        loadedNodes = loadedNodes.map((n) => ({
-          ...n,
-          data: {
+        loadedNodes = loadedNodes.map((n) => {
+          const nodeData = {
             ...(DEFAULT_NODE_DATA[n.type] || {}),
             ...n.data,
             _unsupported: !isNodeSupportedOnPlatform(n.type, flow.platform || 'WEBCHAT'),
-          },
-        }));
+          };
+
+          if (n.type === 'start') {
+            if (nodeData.keywords === undefined) {
+              if (flow.trigger_keyword) {
+                nodeData.keywords = flow.trigger_keyword.split(',').map((k) => k.trim()).filter(Boolean);
+              } else {
+                nodeData.keywords = ['hi', 'hello'];
+              }
+            }
+          }
+
+          return { ...n, data: nodeData };
+        });
 
         setNodes(loadedNodes);
         setEdges(loadedEdges);
@@ -1525,9 +2359,17 @@ function FlowBuilderInner() {
     autoSaveTimerRef.current = setTimeout(async () => {
       try {
         setAutoSaveStatus('saving');
+        const currentNodes = nodesRef.current || [];
+        const startNode = currentNodes.find((n) => n.type === 'start');
+        const triggerType = (startNode?.data?.trigger_type || 'KEYWORD').toUpperCase();
+        const rawKeywords = startNode?.data?.keywords || (startNode?.data?.trigger_keyword ? startNode.data.trigger_keyword.split(',') : []);
+        const triggerKeyword = Array.isArray(rawKeywords) ? rawKeywords.join(',') : (rawKeywords || '');
+
         await flowAPI.update(id, {
           name: flowName,
-          nodes_json: JSON.stringify(nodesRef.current.map((n) => {
+          triggerType,
+          triggerKeyword,
+          nodes_json: JSON.stringify(currentNodes.map((n) => {
             const { _unsupported, ...rest } = n.data;
             return { ...n, data: rest };
           })),
@@ -1558,8 +2400,17 @@ function FlowBuilderInner() {
       setSaving(true);
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
 
+      const startNode = nodes.find((n) => n.type === 'start');
+      const triggerType = (startNode?.data?.trigger_type || 'KEYWORD').toUpperCase();
+      const rawKeywords = startNode?.data?.keywords || (startNode?.data?.trigger_keyword ? startNode.data.trigger_keyword.split(',') : []);
+      const triggerKeyword = Array.isArray(rawKeywords) ? rawKeywords.join(',') : (rawKeywords || '');
+
       await flowAPI.update(id, {
         name: flowName,
+        platform,
+        integrationId: integrationId ? Number(integrationId) : null,
+        triggerType,
+        triggerKeyword,
         nodes_json: JSON.stringify(nodes.map((n) => {
           const { _unsupported, ...rest } = n.data;
           return { ...n, data: rest };
@@ -1575,10 +2426,77 @@ function FlowBuilderInner() {
     }
   };
 
+  const connectingNodeRef = useRef(null);
+  const [quickPicker, setQuickPicker] = useState(null);
+
   /* ── Edge connection ────────────────────────────────────── */
   const onConnect = useCallback(
     (params) => setEdges((eds) => addEdge({ ...params, type: 'smoothstep', animated: true }, eds)),
     [setEdges]
+  );
+
+  /* ── Drag to Connect: onConnectStart & onConnectEnd ──────── */
+  const onConnectStart = useCallback((_, { nodeId, handleId, handleType }) => {
+    connectingNodeRef.current = { nodeId, handleId, handleType };
+  }, []);
+
+  const onConnectEnd = useCallback(
+    (event) => {
+      if (!connectingNodeRef.current) return;
+
+      const targetIsPane =
+        event.target?.classList?.contains('react-flow__pane') ||
+        event.target?.closest('.react-flow__pane');
+
+      if (targetIsPane) {
+        const clientX = event.clientX || ('changedTouches' in event ? event.changedTouches[0]?.clientX : 0);
+        const clientY = event.clientY || ('changedTouches' in event ? event.changedTouches[0]?.clientY : 0);
+        const flowPosition = screenToFlowPosition({ x: clientX, y: clientY });
+
+        setQuickPicker({
+          x: Math.min(window.innerWidth - 300, Math.max(20, clientX)),
+          y: Math.min(window.innerHeight - 400, Math.max(20, clientY)),
+          flowPosition,
+          sourceNodeId: connectingNodeRef.current.nodeId,
+          sourceHandleId: connectingNodeRef.current.handleId,
+          sourceHandleType: connectingNodeRef.current.handleType,
+        });
+      }
+      connectingNodeRef.current = null;
+    },
+    [screenToFlowPosition]
+  );
+
+  const handleSelectQuickPicker = useCallback(
+    (type) => {
+      if (!quickPicker) return;
+
+      const newNodeId = generateNodeId(type);
+      const newNode = {
+        id: newNodeId,
+        type,
+        position: quickPicker.flowPosition,
+        data: {
+          ...DEFAULT_NODE_DATA[type],
+          _unsupported: !isNodeSupportedOnPlatform(type, platform),
+        },
+      };
+
+      const newEdge = {
+        id: `e_${quickPicker.sourceNodeId}_${newNodeId}_${Date.now()}`,
+        source: quickPicker.sourceNodeId,
+        sourceHandle: quickPicker.sourceHandleId || undefined,
+        target: newNodeId,
+        type: 'smoothstep',
+        animated: true,
+      };
+
+      setNodes((nds) => [...nds, newNode]);
+      setEdges((eds) => [...eds, newEdge]);
+      setSelectedNode(newNode);
+      setQuickPicker(null);
+    },
+    [quickPicker, setNodes, setEdges, platform]
   );
 
   /* ── Node click → select for properties ────────────────── */
@@ -1678,8 +2596,14 @@ function FlowBuilderInner() {
     <div className="flow-builder-root">
       {/* ── Toolbar ─────────────────────────────────────────── */}
       <div className="fb-toolbar">
-        <button className="fb-toolbar-back" onClick={() => navigate(-1)} title="Go back">
-          <ArrowLeft size={18} />
+        <button
+          className="fb-toolbar-back"
+          onClick={() => navigate('/bots')}
+          title="Back to Bot Manager"
+          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8 }}
+        >
+          <ArrowLeft size={16} />
+          <span style={{ fontSize: 13, fontWeight: 600 }}>Bot Manager</span>
         </button>
         <input
           className="fb-toolbar-name"
@@ -1688,7 +2612,55 @@ function FlowBuilderInner() {
           onBlur={triggerAutoSave}
           spellCheck={false}
         />
-        <span className="fb-platform-badge">{platform}</span>
+        <select
+          value={integrationId ? `integ_${integrationId}` : `plat_${platform}`}
+          onChange={(e) => {
+            const val = e.target.value;
+            if (val.startsWith('integ_')) {
+              const selId = val.replace('integ_', '');
+              const matched = integrations.find((i) => String(i.id) === String(selId));
+              setIntegrationId(selId);
+              if (matched?.platform) setPlatform(matched.platform.toUpperCase());
+            } else if (val.startsWith('plat_')) {
+              setIntegrationId(null);
+              setPlatform(val.replace('plat_', ''));
+            }
+            triggerAutoSave();
+          }}
+          className="fb-platform-badge"
+          style={{
+            padding: '5px 12px',
+            borderRadius: 8,
+            fontSize: 12,
+            fontWeight: 700,
+            background: 'rgba(99, 102, 241, 0.15)',
+            border: '1px solid rgba(99, 102, 241, 0.35)',
+            color: '#a5b4fc',
+            cursor: 'pointer',
+            outline: 'none',
+          }}
+          title="Assigned Page / Channel (Click to switch)"
+        >
+          {integrations.length > 0 && (
+            <optgroup label="Connected Pages & Channels">
+              {integrations.map((i) => {
+                const icon = i.platform === 'FACEBOOK' ? '📘' : i.platform === 'INSTAGRAM' ? '📸' : i.platform === 'WHATSAPP' ? '💬' : '🌐';
+                return (
+                  <option key={i.id} value={`integ_${i.id}`}>
+                    {icon} {i.fb_page_name || i.name} ({i.platform})
+                  </option>
+                );
+              })}
+            </optgroup>
+          )}
+          <optgroup label="General Platform (All Pages)">
+            <option value="plat_FACEBOOK">📘 Facebook (All Pages)</option>
+            <option value="plat_INSTAGRAM">📸 Instagram (All Accounts)</option>
+            <option value="plat_WHATSAPP">💬 WhatsApp (All Numbers)</option>
+            <option value="plat_TELEGRAM">✈️ Telegram</option>
+            <option value="plat_WEBCHAT">🌐 Website Live Chat</option>
+          </optgroup>
+        </select>
         <div className="fb-toolbar-spacer" />
         <div className={`fb-autosave-indicator ${autoSaveStatus ? 'visible' : ''}`}>
           {autoSaveStatus === 'saving' && (
@@ -1727,11 +2699,14 @@ function FlowBuilderInner() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            onConnectStart={onConnectStart}
+            onConnectEnd={onConnectEnd}
             onNodeClick={onNodeClick}
             onPaneClick={onPaneClick}
             onDragOver={onDragOver}
             onDrop={onDrop}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             defaultEdgeOptions={defaultEdgeOptions}
             fitView
             fitViewOptions={{ padding: 0.3 }}
@@ -1750,6 +2725,16 @@ function FlowBuilderInner() {
               style={{ background: 'var(--bg-surface, #1a1d2e)' }}
             />
           </ReactFlow>
+
+          {/* Quick Component Picker (opened on drag-to-connect release on empty canvas) */}
+          {quickPicker && (
+            <QuickComponentPicker
+              position={quickPicker}
+              onClose={() => setQuickPicker(null)}
+              onSelect={handleSelectQuickPicker}
+              platform={platform}
+            />
+          )}
         </div>
 
         {/* Right Properties Panel */}

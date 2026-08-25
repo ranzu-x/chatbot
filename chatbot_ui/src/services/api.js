@@ -46,6 +46,8 @@ export const conversationAPI = {
   getOne: (id) => api.get(`/conversations/${id}`),
   assign: (id, agentProfileId) => api.patch(`/conversations/${id}/assign`, { agentProfileId }),
   updateStatus: (id, status) => api.patch(`/conversations/${id}/status`, { status }),
+  toggleBot: (id) => api.patch(`/conversations/${id}/toggle-bot`),
+  triggerFlow: (id, flowId) => api.post(`/conversations/${id}/trigger-flow`, { flowId }),
   sendMessage: (id, data) => api.post(`/conversations/${id}/messages`, data),
 };
 
@@ -59,6 +61,8 @@ export const channelAPI = {
   getFacebook: () => api.get('/channels/facebook'),
   addFacebook: (data) => api.post('/channels/facebook', data),
   importFBPages: (token) => api.post('/channels/facebook/import-pages', { userAccessToken: token }),
+  quickConnectFacebook: (token) => api.post('/channels/facebook/quick-connect', { token }),
+  syncFBSubscriptions: () => api.post('/channels/facebook/sync-subscriptions'),
   deleteFacebook: (id) => api.delete(`/channels/facebook/${id}`),
   // Instagram
   getInstagram: () => api.get('/channels/instagram'),
@@ -114,6 +118,12 @@ export const contactAPI = {
   create: (data) => api.post('/contacts', data),
   update: (id, data) => api.put(`/contacts/${id}`, data),
   delete: (id) => api.delete(`/contacts/${id}`),
+  addTag: (id, tag) => api.post(`/contacts/${id}/tags`, { tag }),
+  removeTag: (id, tag) => api.delete(`/contacts/${id}/tags/${encodeURIComponent(tag)}`),
+  getNotes: (id) => api.get(`/contacts/${id}/notes`),
+  addNote: (id, note) => api.post(`/contacts/${id}/notes`, { note }),
+  deleteNote: (contactId, noteId) => api.delete(`/contacts/${contactId}/notes/${noteId}`),
+  toggleBot: (id) => api.patch(`/contacts/${id}/toggle-bot`),
   exportCSV: (params) => api.get('/contacts/export/csv', { params, responseType: 'blob' }),
 };
 

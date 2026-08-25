@@ -11,9 +11,11 @@ router.get("/flows", async (req, res) => {
   try {
     const [rows] = await pool.query(`
       SELECT f.*, b.name AS botName,
+             i.name AS integration_name, i.fb_page_name, i.wa_phone_number_id, i.ig_username,
              JSON_LENGTH(f.nodes_json) AS nodeCount
       FROM flows f
       LEFT JOIN bots b ON b.id = f.bot_id
+      LEFT JOIN integrations i ON i.id = f.integration_id
       WHERE f.agency_id = ?
       ORDER BY f.updated_at DESC
     `, [req.user.agencyId]);
@@ -25,7 +27,11 @@ router.get("/flows", async (req, res) => {
 router.get("/flows/:id", async (req, res) => {
   try {
     const [[flow]] = await pool.query(
-      "SELECT * FROM flows WHERE id=? AND agency_id=?",
+      `SELECT f.*,
+              i.name AS integration_name, i.fb_page_name, i.wa_phone_number_id, i.ig_username, i.platform AS integration_platform
+       FROM flows f
+       LEFT JOIN integrations i ON i.id = f.integration_id
+       WHERE f.id=? AND f.agency_id=?`,
       [req.params.id, req.user.agencyId]
     );
     if (!flow) return res.status(404).json({ success: false, message: "Flow not found" });
@@ -37,15 +43,27 @@ router.get("/flows/:id", async (req, res) => {
 
 // ── CREATE ────────────────────────────────────────────────────────
 router.post("/flows", async (req, res) => {
-  const { name, platform, botId, triggerKeyword, triggerType, nodesJson, edgesJson } = req.body;
+  const name = req.body.name;
+  const platform = req.body.platform;
+  const integrationId = req.body.integrationId || req.body.integration_id || null;
+  const botId = req.body.botId || req.body.bot_id || null;
+  const triggerKeyword = req.body.triggerKeyword || req.body.trigger_keyword || null;
+  const triggerType = req.body.triggerType || req.body.trigger_type || 'KEYWORD';
+  const nodes = req.body.nodesJson !== undefined ? req.body.nodesJson : req.body.nodes_json;
+  const edges = req.body.edgesJson !== undefined ? req.body.edgesJson : req.body.edges_json;
+
   if (!name || !platform) return res.status(400).json({ success: false, message: "Name and platform are required" });
+
+  const nodesStr = typeof nodes === "string" ? nodes : JSON.stringify(nodes || []);
+  const edgesStr = typeof edges === "string" ? edges : JSON.stringify(edges || []);
+
   try {
     const [result] = await pool.query(
-      `INSERT INTO flows (agency_id, bot_id, name, platform, trigger_keyword, trigger_type, nodes_json, edges_json)
-       VALUES (?,?,?,?,?,?,?,?)`,
-      [req.user.agencyId, botId || null, name, platform,
-        triggerKeyword || null, triggerType || 'KEYWORD',
-        JSON.stringify(nodesJson || []), JSON.stringify(edgesJson || [])]
+      `INSERT INTO flows (agency_id, bot_id, integration_id, name, platform, trigger_keyword, trigger_type, nodes_json, edges_json)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+      [req.user.agencyId, botId, integrationId, name, platform,
+        triggerKeyword, triggerType,
+        nodesStr, edgesStr]
     );
     return res.status(201).json({ success: true, message: "Flow created", flowId: result.insertId });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
@@ -53,17 +71,29 @@ router.post("/flows", async (req, res) => {
 
 // ── SAVE (update nodes+edges) ─────────────────────────────────────
 router.put("/flows/:id", async (req, res) => {
-  const { name, triggerKeyword, triggerType, botId, nodesJson, edgesJson, isActive } = req.body;
+  const name = req.body.name;
+  const platform = req.body.platform;
+  const integrationId = req.body.integrationId !== undefined ? req.body.integrationId : req.body.integration_id;
+  const triggerKeyword = req.body.triggerKeyword || req.body.trigger_keyword || null;
+  const triggerType = req.body.triggerType || req.body.trigger_type || 'KEYWORD';
+  const botId = req.body.botId || req.body.bot_id || null;
+  const nodes = req.body.nodesJson !== undefined ? req.body.nodesJson : req.body.nodes_json;
+  const edges = req.body.edgesJson !== undefined ? req.body.edgesJson : req.body.edges_json;
+  const isActive = req.body.isActive !== undefined ? req.body.isActive : (req.body.is_active !== undefined ? req.body.is_active : 1);
+
+  const nodesStr = typeof nodes === "string" ? nodes : JSON.stringify(nodes || []);
+  const edgesStr = typeof edges === "string" ? edges : JSON.stringify(edges || []);
+
   try {
     await pool.query(
-      `UPDATE flows SET name=?, trigger_keyword=?, trigger_type=?, bot_id=?,
+      `UPDATE flows SET name=?, platform=COALESCE(?, platform), integration_id=?, trigger_keyword=?, trigger_type=?, bot_id=?,
        nodes_json=?, edges_json=?, is_active=? WHERE id=? AND agency_id=?`,
-      [name, triggerKeyword || null, triggerType || 'KEYWORD', botId || null,
-        JSON.stringify(nodesJson || []), JSON.stringify(edgesJson || []),
-        isActive ?? 1, req.params.id, req.user.agencyId]
+      [name, platform || null, integrationId || null, triggerKeyword, triggerType, botId,
+        nodesStr, edgesStr,
+        isActive, req.params.id, req.user.agencyId]
     );
     return res.json({ success: true, message: "Flow saved" });
-  } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
+  } catch (err) { console.error("Flow save error:", err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
 // ── TOGGLE ────────────────────────────────────────────────────────

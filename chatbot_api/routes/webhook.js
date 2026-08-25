@@ -137,6 +137,8 @@ router.post("/webhook/:agencyId", async (req, res) => {
   const { agencyId } = req.params;
   const body = req.body;
 
+  console.log(`\n📨 [Webhook POST] /webhook/${agencyId} received:`, JSON.stringify(body, null, 2));
+
   // Always respond 200 immediately to Meta
   res.sendStatus(200);
 
@@ -156,6 +158,7 @@ router.post("/webhook/:agencyId", async (req, res) => {
       ))[0]?.[0];
 
       if (integration) {
+        console.log(`[Webhook POST] Routing to WhatsApp handler, integration=${integration.id}`);
         return handleWhatsAppPayload(body, agencyId, integration.id, integration);
       }
     }
@@ -165,6 +168,7 @@ router.post("/webhook/:agencyId", async (req, res) => {
     const pageOrIgId = fbEntry?.id;
 
     if (pageOrIgId) {
+      console.log(`[Webhook POST] Detected FB/IG payload, pageOrIgId=${pageOrIgId}`);
       const [fbRows] = await pool.query(
         "SELECT * FROM integrations WHERE (fb_page_id = ? OR ig_account_id = ?) AND agency_id = ? AND is_active = 1 LIMIT 1",
         [pageOrIgId, pageOrIgId, agencyId]
@@ -175,12 +179,17 @@ router.post("/webhook/:agencyId", async (req, res) => {
       ))[0]?.[0];
 
       if (integration) {
+        console.log(`[Webhook POST] Matched integration: id=${integration.id}, platform=${integration.platform}, name=${integration.name}`);
         if (integration.platform === "FACEBOOK") {
           return handleFacebookPayload(body, agencyId, integration.id, integration);
         } else if (integration.platform === "INSTAGRAM") {
           return handleInstagramPayload(body, agencyId, integration.id, integration);
         }
+      } else {
+        console.warn(`[Webhook POST] ⚠️ No matching integration found for pageOrIgId=${pageOrIgId}, agency=${agencyId}`);
       }
+    } else {
+      console.warn(`[Webhook POST] ⚠️ Could not determine payload type (no WA phone ID or FB page ID found)`);
     }
   } catch (err) {
     console.error("Agency Webhook POST processing error:", err);
@@ -239,11 +248,18 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
 
 async function handleFacebookPayload(body, agencyId, integrationId, integration) {
   try {
+    console.log(`[FB Webhook] Incoming payload for agency=${agencyId}, integration=${integrationId}:`, JSON.stringify(body, null, 2));
     const entries = body?.entry || [];
     for (const entry of entries) {
       const messaging = entry?.messaging || [];
       for (const event of messaging) {
         if (!event.message && !event.postback) continue;
+
+        // Skip echo messages (messages sent by the page itself)
+        if (event.message?.is_echo) {
+          console.log('[FB Webhook] Skipping echo message from page itself.');
+          continue;
+        }
 
         const externalId = event.sender?.id;
         let externalMsgId = event.message?.mid || event.timestamp?.toString();
@@ -256,6 +272,8 @@ async function handleFacebookPayload(body, agencyId, integrationId, integration)
           msgBody = event.message?.text || "[Attachment]";
           msgType = event.message?.attachments ? "IMAGE" : "TEXT";
         }
+
+        console.log(`[FB Webhook] Processing message from sender=${externalId}: "${msgBody}"`);
 
         await handleIncomingPayload({
           agencyId,

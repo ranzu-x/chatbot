@@ -56,16 +56,24 @@ export default function useFacebookSDK() {
   }, []);
 
   const login = useCallback((scope, callback) => {
-    if (!window.FB) return;
-    window.FB.login((response) => {
-      if (response.authResponse) {
-        callback(null, response.authResponse.accessToken, response.authResponse);
-      } else {
-        callback(response.status === 'not_authorized'
-          ? 'Please authorise the app to continue.'
-          : 'Login was cancelled.');
-      }
-    }, { scope, return_scopes: true });
+    if (!window.FB) {
+      if (callback) callback('Facebook SDK is not ready yet. Please refresh the page.');
+      return;
+    }
+    try {
+      window.FB.login((response) => {
+        if (response && response.authResponse) {
+          callback(null, response.authResponse.accessToken, response.authResponse);
+        } else {
+          callback(response?.status === 'not_authorized'
+            ? 'Please authorise the app to continue.'
+            : 'Login was cancelled or closed.');
+        }
+      }, { scope, return_scopes: true, auth_type: 'rerequest' });
+    } catch (err) {
+      console.error('FB.login error:', err);
+      if (callback) callback(err?.message || 'Failed to initiate Facebook Login');
+    }
   }, []);
 
   return { fbReady, appId, sdkError, login };
