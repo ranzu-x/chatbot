@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
-import { flowAPI, integrationAPI } from '../../services/api';
+import { flowAPI, integrationAPI, channelAPI, botAPI, templateAPI } from '../../services/api';
 import {
   Bot,
   Plus,
@@ -27,36 +27,105 @@ import {
   Grid,
   List,
   ChevronRight,
+  ChevronDown,
+  Video,
+  Folder,
+  Settings,
+  MessageCircle,
+  Facebook,
+  Instagram,
+  Send,
+  Radio,
+  FileText,
+  Clock,
+  Key,
+  Shield,
+  Eye,
+  Database,
+  Share2,
+  PhoneCall,
+  Heart,
+  FileCode,
+  Tag,
+  Users,
+  MoreVertical,
+  X,
 } from 'lucide-react';
 
-/* ─── Platform Definitions ─── */
-const PLATFORMS = {
-  FACEBOOK:  { label: 'Facebook',  icon: '📘', color: '#1877f2', badgeBg: 'rgba(24, 119, 242, 0.15)', border: 'rgba(24, 119, 242, 0.35)' },
-  INSTAGRAM: { label: 'Instagram', icon: '📸', color: '#e1306c', badgeBg: 'rgba(225, 48, 108, 0.15)', border: 'rgba(225, 48, 108, 0.35)' },
-  WHATSAPP:  { label: 'WhatsApp',  icon: '💬', color: '#25d366', badgeBg: 'rgba(37, 211, 102, 0.15)', border: 'rgba(37, 211, 102, 0.35)' },
-  TELEGRAM:  { label: 'Telegram',  icon: '✈️', color: '#229ed9', badgeBg: 'rgba(34, 158, 217, 0.15)', border: 'rgba(34, 158, 217, 0.35)' },
-  WEBCHAT:   { label: 'Webchat',   icon: '🌐', color: '#6366f1', badgeBg: 'rgba(99, 102, 241, 0.15)', border: 'rgba(99, 102, 241, 0.35)' },
+/* ─── Platform Map & Config ─── */
+const PLATFORM_MAP = {
+  WHATSAPP:  { label: 'WhatsApp',  icon: MessageCircle, color: '#25d366', bg: 'rgba(37, 211, 102, 0.12)', border: '#25d366' },
+  FACEBOOK:  { label: 'Facebook',  icon: Facebook,      color: '#1877f2', bg: 'rgba(24, 119, 242, 0.12)', border: '#1877f2' },
+  INSTAGRAM: { label: 'Instagram', icon: Instagram,     color: '#e1306c', bg: 'rgba(225, 48, 108, 0.12)', border: '#e1306c' },
+  TELEGRAM:  { label: 'Telegram',  icon: Send,          color: '#229ed9', bg: 'rgba(34, 158, 217, 0.12)', border: '#229ed9' },
+  WEBCHAT:   { label: 'Webchat',   icon: Globe,         color: '#6366f1', bg: 'rgba(99, 102, 241, 0.12)', border: '#6366f1' },
 };
 
-/* ─── Trigger Definitions ─── */
-const TRIGGER_TYPES = {
-  KEYWORD:       { label: 'Keyword Trigger',  icon: '🔑', color: '#10b981' },
-  FIRST_CONTACT: { label: 'First Contact',    icon: '👋', color: '#f59e0b' },
-  FIRST_MESSAGE: { label: 'First Message',    icon: '👋', color: '#f59e0b' },
-  ANY:           { label: 'Any Message',      icon: '💬', color: '#6366f1' },
-  ANY_MESSAGE:   { label: 'Any Message',      icon: '💬', color: '#6366f1' },
-  POSTBACK:      { label: 'Button Postback',  icon: '🔘', color: '#8b5cf6' },
-  WEBHOOK:       { label: 'Webhook / API',    icon: '⚡', color: '#ec4899' },
+function getPlatformInfo(p) {
+  const norm = (p || 'WHATSAPP').toUpperCase();
+  return PLATFORM_MAP[norm] || { label: norm, icon: MessageSquare, color: '#64748b', bg: 'rgba(100, 116, 139, 0.12)', border: '#64748b' };
+}
+
+/* ─── Primary Categories & Sub-tabs ─── */
+const MAIN_CATEGORIES = [
+  { id: 'automation',     label: 'Automation',      icon: Zap },
+  { id: 'dataCollection', label: 'Data Collection', icon: Folder },
+  { id: 'ai',             label: 'AI',              icon: Sparkles },
+  { id: 'engagement',     label: 'Engagement',      icon: Radio },
+  { id: 'commerce',       label: 'Commerce',        icon: ShoppingBag },
+  { id: 'integrations',   label: 'Integrations',    icon: Share2 },
+];
+
+const SUB_TABS = {
+  automation: [
+    { id: 'keywordReplies',   label: 'Keyword Replies' },
+    { id: 'messageTemplates', label: 'Message Templates' },
+    { id: 'clickAds',         label: 'Click Ads' },
+    { id: 'followUpSequences',label: 'Follow-up Sequences' },
+    { id: 'quickActions',     label: 'Quick Actions' },
+    { id: 'outboundActions',  label: 'Outbound Actions' },
+    { id: 'webhookWorkflows', label: 'Webhook Workflows' },
+    { id: 'whatsappCalling',  label: 'WhatsApp Calling' },
+  ],
+  dataCollection: [
+    { id: 'userInputFlows', label: 'User Input Flows' },
+    { id: 'customFields',   label: 'Custom Variables' },
+    { id: 'contactLabels',  label: 'Contact Labels' },
+    { id: 'segments',       label: 'Subscriber Segments' },
+  ],
+  ai: [
+    { id: 'aiPrompts',   label: 'AI Prompts & Training' },
+    { id: 'aiBotRules',  label: 'AI Bot Rules' },
+    { id: 'aiModels',    label: 'ChatGPT / Gemini Models' },
+    { id: 'knowledgeBase', label: 'Knowledge Base / Files' },
+  ],
+  engagement: [
+    { id: 'commentAutomation', label: 'Comment Automation' },
+    { id: 'iceBreakers',       label: 'Ice Breakers & Welcome' },
+    { id: 'storyMentions',     label: 'Story Mentions Reply' },
+    { id: 'actionMenus',       label: 'Action Buttons & Menus' },
+  ],
+  commerce: [
+    { id: 'catalogSync',      label: 'Product Catalog Sync' },
+    { id: 'productMessages',  label: 'Product Messages' },
+    { id: 'orderConfirm',     label: 'Order Confirmations' },
+    { id: 'paymentLinks',     label: 'Payment Links & Cart' },
+  ],
+  integrations: [
+    { id: 'webhooksOutbound', label: 'Webhooks Outbound' },
+    { id: 'googleSheets',     label: 'Google Sheets Sync' },
+    { id: 'crmConnectors',    label: 'CRM Connectors' },
+    { id: 'zapierMake',       label: 'Zapier / Make' },
+  ],
 };
 
-/* ─── Pre-built Bot Starter Templates ─── */
+/* ─── Starter Templates ─── */
 const STARTER_TEMPLATES = [
   {
     id: 'blank',
     title: 'Blank Canvas',
-    description: 'Start from scratch and design a custom multi-step flow with complete freedom.',
+    description: 'Start from scratch and design a custom multi-step flow.',
     icon: Sparkles,
-    badge: 'Custom',
     color: '#6366f1',
     nodes: (name) => [
       {
@@ -79,9 +148,8 @@ const STARTER_TEMPLATES = [
   {
     id: 'welcome_menu',
     title: 'Welcome & Main Menu',
-    description: 'Greets subscriber on keyword or first message and provides quick action buttons.',
+    description: 'Greets subscriber on keyword or first message with interactive buttons.',
     icon: Bot,
-    badge: 'Popular',
     color: '#10b981',
     nodes: (name) => [
       {
@@ -96,42 +164,27 @@ const STARTER_TEMPLATES = [
         position: { x: 320, y: 220 },
         data: {
           label: 'Interactive Menu',
-          message: `👋 Welcome to ${name || 'our chatbot'}! Please pick an option below:`,
+          message: `👋 Welcome to ${name || 'our bot'}! Please pick an option below:`,
           buttons: ['🛍️ Browse Products', '💰 View Pricing', '💬 Talk to Agent'],
         },
-      },
-      {
-        id: 'text_pricing',
-        type: 'text',
-        position: { x: 50, y: 440 },
-        data: { label: 'Pricing Info', message: '💳 Our plans start at $19/mo. Check our website for full details!' },
-      },
-      {
-        id: 'text_agent',
-        type: 'text',
-        position: { x: 420, y: 440 },
-        data: { label: 'Agent Handoff', message: '🔔 One moment! An agent will join this conversation shortly.' },
       },
     ],
     edges: () => [
       { id: 'e_start_btn', source: 'start_1', target: 'btn_1', type: 'smoothstep', animated: true },
-      { id: 'e_btn_pricing', source: 'btn_1', sourceHandle: 'btn-1', target: 'text_pricing', type: 'smoothstep', animated: true },
-      { id: 'e_btn_agent', source: 'btn_1', sourceHandle: 'btn-2', target: 'text_agent', type: 'smoothstep', animated: true },
     ],
   },
   {
     id: 'lead_capture',
     title: 'Lead Capture & Booking',
-    description: 'Collects visitor Name, Email, and Phone number and confirms submission.',
+    description: 'Collects visitor Name, Email, and Phone number automatically.',
     icon: UserCheck,
-    badge: 'High Conversion',
     color: '#f59e0b',
     nodes: (name) => [
       {
         id: 'start_1',
         type: 'start',
         position: { x: 320, y: 60 },
-        data: { label: 'Start Trigger', trigger_type: 'keyword', keywords: ['quote', 'consult', 'booking', 'lead'], match_type: 'contains' },
+        data: { label: 'Start Trigger', trigger_type: 'keyword', keywords: ['quote', 'consult', 'booking'], match_type: 'contains' },
       },
       {
         id: 'text_intro',
@@ -145,280 +198,1451 @@ const STARTER_TEMPLATES = [
         position: { x: 320, y: 350 },
         data: { label: 'Capture Name', variableName: 'contact_name', text: 'Please type your name:' },
       },
-      {
-        id: 'text_confirm',
-        type: 'text',
-        position: { x: 320, y: 500 },
-        data: { label: 'Confirmation', message: '🎉 Thank you {{contact_name}}! Our team will reach out to you shortly.' },
-      },
     ],
     edges: () => [
       { id: 'e1', source: 'start_1', target: 'text_intro', type: 'smoothstep', animated: true },
       { id: 'e2', source: 'text_intro', target: 'collect_name', type: 'smoothstep', animated: true },
-      { id: 'e3', source: 'collect_name', target: 'text_confirm', type: 'smoothstep', animated: true },
-    ],
-  },
-  {
-    id: 'ecommerce_showcase',
-    title: 'E-Commerce & Carousel',
-    description: 'Displays a visual carousel of popular products with direct purchase actions.',
-    icon: ShoppingBag,
-    badge: 'Rich Media',
-    color: '#ec4899',
-    nodes: (name) => [
-      {
-        id: 'start_1',
-        type: 'start',
-        position: { x: 320, y: 60 },
-        data: { label: 'Start Trigger', trigger_type: 'keyword', keywords: ['shop', 'products', 'buy', 'catalog'], match_type: 'contains' },
-      },
-      {
-        id: 'carousel_1',
-        type: 'carousel',
-        position: { x: 320, y: 220 },
-        data: {
-          label: 'Featured Products',
-          cards: [
-            { title: 'Premium Plan', subtitle: 'Unlimited bots and live chat', imageUrl: '', buttons: ['Select Plan'] },
-            { title: 'Starter Plan', subtitle: 'Perfect for small teams', imageUrl: '', buttons: ['Select Plan'] },
-          ],
-        },
-      },
-    ],
-    edges: () => [
-      { id: 'e1', source: 'start_1', target: 'carousel_1', type: 'smoothstep', animated: true },
-    ],
-  },
-  {
-    id: 'support_faq',
-    title: 'Customer Support FAQ',
-    description: 'Instant answers to frequent questions with automatic fallback and agent handoff.',
-    icon: HelpCircle,
-    badge: 'Automation',
-    color: '#06b6d4',
-    nodes: (name) => [
-      {
-        id: 'start_1',
-        type: 'start',
-        position: { x: 320, y: 60 },
-        data: { label: 'Start Trigger', trigger_type: 'keyword', keywords: ['help', 'faq', 'support', 'question'], match_type: 'contains' },
-      },
-      {
-        id: 'qr_faq',
-        type: 'quickReplies',
-        position: { x: 320, y: 220 },
-        data: {
-          label: 'FAQ Quick Options',
-          message: 'How can we help you today? Pick a topic:',
-          replies: ['🚚 Shipping Times', '↩️ Refund Policy', '📞 Human Support'],
-        },
-      },
-    ],
-    edges: () => [
-      { id: 'e1', source: 'start_1', target: 'qr_faq', type: 'smoothstep', animated: true },
     ],
   },
 ];
 
+function formatDate(ts) {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: '2-digit' });
+}
+
+function formatUniqueId(id) {
+  if (!id) return '2072078';
+  return String(2000000 + Number(id) * 31);
+}
+
 export default function BotManagerPage() {
   const navigate = useNavigate();
-  const [bots, setBots] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedPlatform, setSelectedPlatform] = useState('ALL');
-  const [statusFilter, setStatusFilter] = useState('ALL');
-  const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
-  const [toast, setToast] = useState(null);
 
-  // Modal State
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] = useState('blank');
-  const [newBotName, setNewBotName] = useState('');
-  const [newBotPlatform, setNewBotPlatform] = useState('FACEBOOK');
-  const [newBotIntegrationId, setNewBotIntegrationId] = useState('');
+  // Data
   const [integrations, setIntegrations] = useState([]);
-  const [creating, setCreating] = useState(false);
+  const [flows, setFlows] = useState([]);
+  const [commentRules, setCommentRules] = useState([]);
+  const [templates, setTemplates] = useState([]);
+  const [loading, setLoading] = useState(true);
 
+  // Selected State
+  const [selectedAccount, setSelectedAccount] = useState(null); // null = "All Accounts" or specific integration object
+  const [accountSearch, setAccountSearch] = useState('');
+  const [channelFilter, setChannelFilter] = useState('ALL');
+
+  // Category & SubTab Navigation
+  const [activeCategory, setActiveCategory] = useState('automation');
+  const [activeSubTab, setActiveSubTab] = useState('keywordReplies');
+
+  // Table Filter & Search
+  const [folderFilter, setFolderFilter] = useState('All Folders');
+  const [tableSearch, setTableSearch] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  // Modals
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState('blank');
+  const [newFlowName, setNewFlowName] = useState('');
+  const [newFlowPlatform, setNewFlowPlatform] = useState('WHATSAPP');
+  const [creating, setCreating] = useState(false);
+  const [showOptionsDropdown, setShowOptionsDropdown] = useState(false);
+
+  // AI settings mock state
+  const [aiPrompt, setAiPrompt] = useState('You are a helpful and polite customer support AI assistant for our brand.');
+  const [aiModel, setAiModel] = useState('gpt-4o');
+
+  // Toast
+  const [toast, setToast] = useState(null);
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
   };
 
-  /* ── Load all bots/flows & integrations ── */
-  const fetchBots = useCallback(async () => {
+  /* ─── Load Data ─── */
+  const loadAllData = useCallback(async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      const [flowsRes, integsRes] = await Promise.allSettled([
-        flowAPI.getAll(),
+      const [integsRes, flowsRes, commentRes, templRes] = await Promise.allSettled([
         integrationAPI.getAll(),
+        flowAPI.getAll(),
+        channelAPI.getFBCommentRules(),
+        templateAPI.getWATemplates(),
       ]);
-      if (flowsRes.status === 'fulfilled') {
-        setBots(flowsRes.value.data?.flows || flowsRes.value.data || []);
-      }
+
+      let integs = [];
       if (integsRes.status === 'fulfilled') {
-        setIntegrations(integsRes.value.data?.integrations || []);
+        integs = integsRes.value.data?.integrations || [];
+        setIntegrations(integs);
       }
-    } catch (err) {
-      console.error('Failed to load data:', err);
-      showToast('Failed to load bot flows', 'error');
+
+      if (flowsRes.status === 'fulfilled') {
+        setFlows(flowsRes.value.data?.flows || []);
+      }
+
+      if (commentRes.status === 'fulfilled') {
+        setCommentRules(commentRes.value.data?.rules || []);
+      }
+
+      if (templRes.status === 'fulfilled') {
+        setTemplates(templRes.value.data?.templates || []);
+      }
+
+      // Default select the first account if available
+      if (integs.length > 0 && !selectedAccount) {
+        setSelectedAccount(integs[0]);
+      } else if (!selectedAccount) {
+        setSelectedAccount({ id: 'all', name: 'All Connected Channels', platform: 'WHATSAPP', is_active: 1 });
+      }
+    } catch (e) {
+      console.error(e);
+      showToast('Failed to load bot manager data', 'error');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedAccount]);
 
   useEffect(() => {
-    fetchBots();
-  }, [fetchBots]);
+    loadAllData();
+  }, [loadAllData]);
 
-  /* ── Toggle Active Status ── */
-  const handleToggleActive = async (bot, e) => {
-    e.stopPropagation();
-    const newStatus = !bot.is_active;
-
-    // Optimistic UI update
-    setBots((prev) =>
-      prev.map((b) => (b.id === bot.id ? { ...b, is_active: newStatus ? 1 : 0 } : b))
-    );
-
-    try {
-      await flowAPI.toggle(bot.id);
-      showToast(`Bot "${bot.name}" is now ${newStatus ? 'Active' : 'Paused'}`);
-    } catch (err) {
-      console.error('Failed to toggle bot status:', err);
-      showToast('Failed to change status', 'error');
-      // Revert on error
-      fetchBots();
+  // Sync category change to reset subtab
+  const handleCategoryChange = (catId) => {
+    setActiveCategory(catId);
+    const subList = SUB_TABS[catId] || [];
+    if (subList.length > 0) {
+      setActiveSubTab(subList[0].id);
     }
   };
 
-  /* ── Duplicate Bot ── */
-  const handleDuplicateBot = async (bot, e) => {
-    e.stopPropagation();
-    try {
-      let nodes = [];
-      let edges = [];
-      try { nodes = typeof bot.nodes_json === 'string' ? JSON.parse(bot.nodes_json) : (bot.nodes_json || []); } catch {}
-      try { edges = typeof bot.edges_json === 'string' ? JSON.parse(bot.edges_json) : (bot.edges_json || []); } catch {}
+  /* ─── Filter Accounts in Left Nav ─── */
+  const filteredAccounts = useMemo(() => {
+    return integrations.filter((acc) => {
+      const p = (acc.platform || 'WHATSAPP').toUpperCase();
+      const matchesChannel = channelFilter === 'ALL' || p === channelFilter;
+      const q = accountSearch.toLowerCase().trim();
+      const matchesSearch =
+        !q ||
+        (acc.name && acc.name.toLowerCase().includes(q)) ||
+        (acc.wa_phone_number_id && acc.wa_phone_number_id.includes(q)) ||
+        (acc.fb_page_name && acc.fb_page_name.toLowerCase().includes(q)) ||
+        (acc.ig_username && acc.ig_username.toLowerCase().includes(q));
+      return matchesChannel && matchesSearch;
+    });
+  }, [integrations, channelFilter, accountSearch]);
 
-      const res = await flowAPI.create({
-        name: `${bot.name} (Copy)`,
-        platform: bot.platform || 'FACEBOOK',
-        integrationId: bot.integration_id || null,
-        triggerKeyword: bot.trigger_keyword || 'hi,hello',
-        triggerType: bot.trigger_type || 'KEYWORD',
-        nodes_json: JSON.stringify(nodes),
-        edges_json: JSON.stringify(edges),
-        isActive: 0,
-      });
+  // Channel counts for pills
+  const channelCounts = useMemo(() => {
+    const counts = { ALL: integrations.length, WHATSAPP: 0, TELEGRAM: 0, FACEBOOK: 0, INSTAGRAM: 0, WEBCHAT: 0 };
+    integrations.forEach((i) => {
+      const p = (i.platform || 'WHATSAPP').toUpperCase();
+      if (counts[p] !== undefined) counts[p]++;
+    });
+    return counts;
+  }, [integrations]);
 
-      showToast(`Duplicated "${bot.name}"!`);
-      fetchBots();
-    } catch (err) {
-      console.error('Failed to duplicate bot:', err);
-      showToast('Failed to duplicate bot', 'error');
-    }
-  };
+  /* ─── Filter Flows for Selected Account ─── */
+  const displayedFlows = useMemo(() => {
+    return flows.filter((f) => {
+      if (selectedAccount && selectedAccount.id !== 'all') {
+        if (f.integration_id && String(f.integration_id) !== String(selectedAccount.id)) {
+          return false;
+        }
+      }
+      if (tableSearch.trim()) {
+        const q = tableSearch.toLowerCase();
+        const matchesName = f.name && f.name.toLowerCase().includes(q);
+        const matchesKeyword = f.trigger_keyword && f.trigger_keyword.toLowerCase().includes(q);
+        if (!matchesName && !matchesKeyword) return false;
+      }
+      return true;
+    });
+  }, [flows, selectedAccount, tableSearch]);
 
-  /* ── Delete Bot ── */
-  const handleDeleteBot = async (bot, e) => {
-    e.stopPropagation();
-    if (!window.confirm(`Are you sure you want to delete the bot "${bot.name}"? This action cannot be undone.`)) {
+  /* ─── Create Flow ─── */
+  const handleCreateFlow = async () => {
+    if (!newFlowName.trim()) {
+      showToast('Please enter a flow name', 'error');
       return;
     }
-
-    try {
-      await flowAPI.delete(bot.id);
-      setBots((prev) => prev.filter((b) => b.id !== bot.id));
-      showToast(`Deleted "${bot.name}"`);
-    } catch (err) {
-      console.error('Failed to delete bot:', err);
-      showToast('Failed to delete bot', 'error');
-    }
-  };
-
-  /* ── Create Bot from Template ── */
-  const handleCreateBot = async (e) => {
-    e.preventDefault();
-    if (!newBotName.trim()) {
-      showToast('Please enter a bot name', 'error');
-      return;
-    }
-
     setCreating(true);
     try {
       const template = STARTER_TEMPLATES.find((t) => t.id === selectedTemplate) || STARTER_TEMPLATES[0];
-      const nodes = template.nodes(newBotName);
-      const edges = template.edges();
+      const nodes = template.nodes(newFlowName);
+      const edges = template.edges(newFlowName);
 
-      const startNode = nodes.find((n) => n.type === 'start');
-      const triggerType = (startNode?.data?.trigger_type || 'KEYWORD').toUpperCase();
-      const rawKeywords = startNode?.data?.keywords || ['hi', 'hello'];
-      const triggerKeyword = Array.isArray(rawKeywords) ? rawKeywords.join(',') : rawKeywords;
+      const targetPlatform = selectedAccount?.platform || newFlowPlatform || 'WHATSAPP';
+      const targetIntegId = selectedAccount?.id !== 'all' ? selectedAccount?.id : null;
 
       const res = await flowAPI.create({
-        name: newBotName.trim(),
-        platform: newBotPlatform,
-        integrationId: newBotIntegrationId ? Number(newBotIntegrationId) : null,
-        triggerKeyword,
-        triggerType,
+        name: newFlowName.trim(),
+        platform: targetPlatform,
+        integrationId: targetIntegId,
+        triggerKeyword: 'hi,hello',
+        triggerType: 'KEYWORD',
         nodes_json: JSON.stringify(nodes),
         edges_json: JSON.stringify(edges),
         isActive: 1,
       });
 
-      const newId = res.data?.flowId || res.data?.id;
-      showToast('Bot created successfully! Opening Flow Builder...');
+      showToast(`Flow "${newFlowName}" created!`);
       setShowCreateModal(false);
-      setNewBotName('');
-      setNewBotIntegrationId('');
-
+      setNewFlowName('');
+      const newId = res.data?.flow?.id || res.data?.id;
       if (newId) {
-        navigate(`/bots/${newId}/edit`);
+        navigate(`/flows/${newId}`);
       } else {
-        fetchBots();
+        loadAllData();
       }
     } catch (err) {
-      console.error('Failed to create bot:', err);
-      showToast(err.response?.data?.message || 'Failed to create bot', 'error');
+      console.error(err);
+      showToast('Failed to create flow', 'error');
     } finally {
       setCreating(false);
     }
   };
 
-  /* ── Filtered Bots ── */
-  const filteredBots = useMemo(() => {
-    return bots.filter((b) => {
-      // Platform filter
-      if (selectedPlatform !== 'ALL' && b.platform?.toUpperCase() !== selectedPlatform) {
-        return false;
-      }
-      // Status filter
-      if (statusFilter === 'ACTIVE' && !b.is_active) return false;
-      if (statusFilter === 'PAUSED' && b.is_active) return false;
-      // Search query
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const nameMatch = b.name?.toLowerCase().includes(q);
-        const kwMatch = b.trigger_keyword?.toLowerCase().includes(q);
-        if (!nameMatch && !kwMatch) return false;
-      }
-      return true;
-    });
-  }, [bots, selectedPlatform, statusFilter, searchQuery]);
+  /* ─── Delete Flow ─── */
+  const handleDeleteFlow = async (flowId, flowName, e) => {
+    if (e) e.stopPropagation();
+    if (!window.confirm(`Delete flow "${flowName}"?`)) return;
+    try {
+      await flowAPI.delete(flowId);
+      setFlows((prev) => prev.filter((f) => f.id !== flowId));
+      showToast('Flow deleted');
+    } catch {
+      showToast('Failed to delete flow', 'error');
+    }
+  };
 
-  /* ── Stats Calculations ── */
-  const stats = useMemo(() => {
-    const total = bots.length;
-    const active = bots.filter((b) => b.is_active).length;
-    const fb = bots.filter((b) => b.platform === 'FACEBOOK').length;
-    const ig = bots.filter((b) => b.platform === 'INSTAGRAM').length;
-    const wa = bots.filter((b) => b.platform === 'WHATSAPP').length;
-    return { total, active, fb, ig, wa };
-  }, [bots]);
+  const currentPlatformInfo = getPlatformInfo(selectedAccount?.platform);
 
   return (
     <AppLayout>
-      {/* Toast Notification */}
+      <style>{`
+        .bm-root {
+          display: flex;
+          height: calc(100vh - 60px);
+          width: 100%;
+          margin: 0;
+          padding: 0;
+          background: #f4f6fb;
+          overflow: hidden;
+          font-family: 'Inter', system-ui, sans-serif;
+        }
+
+        /* ── Left Navigation Column ── */
+        .bm-accounts-nav {
+          width: 280px;
+          flex-shrink: 0;
+          background: #ffffff;
+          border-right: 1px solid #e4e4f0;
+          display: flex;
+          flex-direction: column;
+          box-shadow: 2px 0 6px rgba(0,0,0,0.02);
+        }
+        .bm-nav-header {
+          padding: 16px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          border-bottom: 1px solid #f0f0fa;
+        }
+        .bm-nav-title {
+          font-size: 0.96rem;
+          font-weight: 800;
+          color: #1a1a2e;
+        }
+        .bm-add-bot-btn {
+          font-size: 0.78rem;
+          font-weight: 700;
+          color: #6366f1;
+          background: rgba(99, 102, 241, 0.08);
+          border: 1px solid rgba(99, 102, 241, 0.2);
+          border-radius: 6px;
+          padding: 5px 10px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          transition: all 0.15s;
+        }
+        .bm-add-bot-btn:hover {
+          background: #6366f1;
+          color: #ffffff;
+        }
+        .bm-search-wrap {
+          padding: 10px 14px;
+          position: relative;
+        }
+        .bm-search-input {
+          width: 100%;
+          padding: 7px 10px 7px 32px;
+          border-radius: 8px;
+          border: 1px solid #e4e4f0;
+          background: #f8f8fc;
+          font-size: 0.8rem;
+          color: #1a1a2e;
+          outline: none;
+        }
+        .bm-channel-pills {
+          display: flex;
+          gap: 4px;
+          padding: 0 14px 10px;
+          overflow-x: auto;
+          border-bottom: 1px solid #f0f0fa;
+          scrollbar-width: none;
+        }
+        .bm-channel-pills::-webkit-scrollbar { display: none; }
+        .bm-pill {
+          padding: 4px 8px;
+          border-radius: 14px;
+          font-size: 0.72rem;
+          font-weight: 600;
+          border: 1px solid #e4e4f0;
+          background: #ffffff;
+          color: #5c5c80;
+          cursor: pointer;
+          white-space: nowrap;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          transition: all 0.15s;
+        }
+        .bm-pill.active {
+          background: #1a1a2e;
+          color: #ffffff;
+          border-color: #1a1a2e;
+        }
+        .bm-account-list {
+          flex: 1;
+          overflow-y: auto;
+          padding: 8px;
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+        .bm-account-item {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 9px 12px;
+          border-radius: 10px;
+          cursor: pointer;
+          border: 1.5px solid transparent;
+          background: transparent;
+          transition: all 0.15s;
+        }
+        .bm-account-item:hover {
+          background: #f8f8fc;
+        }
+        .bm-account-item.active {
+          background: #f0f2ff;
+          border-color: #c7d2fe;
+        }
+        .bm-avatar-circle {
+          width: 36px;
+          height: 36px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          font-weight: 700;
+          font-size: 0.9rem;
+        }
+
+        /* ── Main Work Area ── */
+        .bm-main-content {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          overflow-y: auto;
+          padding: 18px 24px;
+        }
+
+        /* ── Top Account Header ── */
+        .bm-top-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 14px;
+        }
+        .bm-account-details {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+        .bm-account-details h2 {
+          font-size: 1.15rem;
+          font-weight: 800;
+          margin: 0;
+          color: #1a1a2e;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .bm-account-details .sub {
+          font-size: 0.78rem;
+          color: #5c5c80;
+          margin-top: 2px;
+        }
+        .bm-status-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          font-size: 0.72rem;
+          font-weight: 700;
+          padding: 2px 8px;
+          border-radius: 12px;
+          background: rgba(16, 185, 129, 0.12);
+          color: #10b981;
+        }
+
+        /* ── Primary Category Tabs ── */
+        .bm-category-tabs {
+          display: flex;
+          gap: 24px;
+          border-bottom: 1px solid #e4e4f0;
+          margin-bottom: 14px;
+        }
+        .bm-cat-tab {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 10px 0;
+          font-size: 0.88rem;
+          font-weight: 600;
+          color: #5c5c80;
+          border: none;
+          background: none;
+          cursor: pointer;
+          border-bottom: 2.5px solid transparent;
+          transition: all 0.15s;
+        }
+        .bm-cat-tab:hover {
+          color: #1a1a2e;
+        }
+        .bm-cat-tab.active {
+          color: #6366f1;
+          border-bottom-color: #6366f1;
+          font-weight: 700;
+        }
+
+        /* ── Secondary Sub-Tabs (Pills) ── */
+        .bm-subtabs-row {
+          display: flex;
+          gap: 8px;
+          margin-bottom: 20px;
+          overflow-x: auto;
+          padding-bottom: 4px;
+          scrollbar-width: none;
+        }
+        .bm-subtabs-row::-webkit-scrollbar { display: none; }
+        .bm-subtab-pill {
+          padding: 6px 14px;
+          border-radius: 8px;
+          font-size: 0.8rem;
+          font-weight: 600;
+          border: 1px solid #e4e4f0;
+          background: #ffffff;
+          color: #5c5c80;
+          cursor: pointer;
+          white-space: nowrap;
+          transition: all 0.15s;
+        }
+        .bm-subtab-pill:hover {
+          background: #f8f8fc;
+          color: #1a1a2e;
+        }
+        .bm-subtab-pill.active {
+          background: #6366f1;
+          color: #ffffff;
+          border-color: #6366f1;
+          box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+        }
+
+        /* ── Work Area Content Box ── */
+        .bm-content-card {
+          background: #ffffff;
+          border: 1px solid #e4e4f0;
+          border-radius: 14px;
+          box-shadow: 0 1px 4px rgba(0,0,0,0.03);
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
+        .bm-card-header {
+          padding: 16px 20px;
+          border-bottom: 1px solid #f0f0fa;
+        }
+        .bm-card-title {
+          font-size: 1rem;
+          font-weight: 800;
+          color: #1a1a2e;
+          margin: 0;
+        }
+        .bm-card-sub {
+          font-size: 0.78rem;
+          color: #5c5c80;
+          margin: 3px 0 0 0;
+        }
+        .bm-action-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 12px 20px;
+          background: #fafbfe;
+          border-bottom: 1px solid #e4e4f0;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+        .bm-table th {
+          padding: 12px 16px;
+          font-size: 0.74rem;
+          font-weight: 700;
+          letter-spacing: 0.5px;
+          color: #5c5c80;
+          border-bottom: 1px solid #e4e4f0;
+          background: #f8f8fc;
+          white-space: nowrap;
+          text-align: left;
+        }
+        .bm-table td {
+          padding: 13px 16px;
+          font-size: 0.82rem;
+          border-bottom: 1px solid #e4e4f0;
+          vertical-align: middle;
+          background: #ffffff;
+        }
+        .bm-table tr:hover td {
+          background: #fbfbfe;
+        }
+        .bm-row-action {
+          width: 28px;
+          height: 28px;
+          border-radius: 6px;
+          border: 1px solid #e4e4f0;
+          background: #ffffff;
+          color: #5c5c80;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .bm-row-action:hover {
+          border-color: #6366f1;
+          color: #6366f1;
+          background: rgba(99, 102, 241, 0.08);
+          transform: translateY(-1px);
+        }
+        .bm-row-action.delete:hover {
+          border-color: #ef4444;
+          color: #ef4444;
+          background: rgba(239, 68, 68, 0.08);
+        }
+      `}</style>
+
+      <div className="bm-root">
+        {/* ═══════════════════════════════════════════════════════════════════
+            LEFT NAVIGATION: BOTS / ACCOUNTS
+            ═══════════════════════════════════════════════════════════════════ */}
+        <div className="bm-accounts-nav">
+          {/* Header */}
+          <div className="bm-nav-header">
+            <div className="bm-nav-title">Bots / Accounts</div>
+            <button
+              className="bm-add-bot-btn"
+              onClick={() => {
+                setShowCreateModal(true);
+              }}
+            >
+              <Plus size={13} /> Add Bot
+            </button>
+          </div>
+
+          {/* Search Box */}
+          <div className="bm-search-wrap">
+            <Search size={14} color="#9999bb" style={{ position: 'absolute', left: 24, top: '50%', transform: 'translateY(-50%)' }} />
+            <input
+              type="text"
+              placeholder="Search by name or number..."
+              className="bm-search-input"
+              value={accountSearch}
+              onChange={(e) => setAccountSearch(e.target.value)}
+            />
+          </div>
+
+          {/* Channel Filter Pills */}
+          <div className="bm-channel-pills">
+            <button
+              className={`bm-pill ${channelFilter === 'ALL' ? 'active' : ''}`}
+              onClick={() => setChannelFilter('ALL')}
+            >
+              All {channelCounts.ALL}
+            </button>
+            <button
+              className={`bm-pill ${channelFilter === 'WHATSAPP' ? 'active' : ''}`}
+              onClick={() => setChannelFilter('WHATSAPP')}
+            >
+              💬 {channelCounts.WHATSAPP}
+            </button>
+            <button
+              className={`bm-pill ${channelFilter === 'TELEGRAM' ? 'active' : ''}`}
+              onClick={() => setChannelFilter('TELEGRAM')}
+            >
+              ✈️ {channelCounts.TELEGRAM}
+            </button>
+            <button
+              className={`bm-pill ${channelFilter === 'FACEBOOK' ? 'active' : ''}`}
+              onClick={() => setChannelFilter('FACEBOOK')}
+            >
+              📘 {channelCounts.FACEBOOK}
+            </button>
+            <button
+              className={`bm-pill ${channelFilter === 'INSTAGRAM' ? 'active' : ''}`}
+              onClick={() => setChannelFilter('INSTAGRAM')}
+            >
+              📸 {channelCounts.INSTAGRAM}
+            </button>
+            <button
+              className={`bm-pill ${channelFilter === 'WEBCHAT' ? 'active' : ''}`}
+              onClick={() => setChannelFilter('WEBCHAT')}
+            >
+              🌐 {channelCounts.WEBCHAT}
+            </button>
+          </div>
+
+          {/* Accounts List */}
+          <div className="bm-account-list">
+            {filteredAccounts.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '30px 14px', color: '#9999bb', fontSize: '0.8rem' }}>
+                No accounts found.
+              </div>
+            ) : (
+              filteredAccounts.map((acc) => {
+                const pInfo = getPlatformInfo(acc.platform);
+                const IconComponent = pInfo.icon;
+                const isSelected = selectedAccount?.id === acc.id;
+                const identifier = acc.wa_phone_number_id || acc.fb_page_id || acc.ig_username || `${pInfo.label} Account`;
+
+                return (
+                  <div
+                    key={acc.id}
+                    className={`bm-account-item ${isSelected ? 'active' : ''}`}
+                    onClick={() => setSelectedAccount(acc)}
+                  >
+                    <div
+                      className="bm-avatar-circle"
+                      style={{ background: pInfo.bg, color: pInfo.color }}
+                    >
+                      <IconComponent size={18} />
+                    </div>
+
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#1a1a2e', truncate: true }}>
+                        {acc.name || acc.fb_page_name || 'Nexa Bot'}
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: '#5c5c80', marginTop: 1, truncate: true }}>
+                        {identifier}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* ═══════════════════════════════════════════════════════════════════
+            MAIN WORK AREA (SELECTED BOT DASHBOARD)
+            ═══════════════════════════════════════════════════════════════════ */}
+        <div className="bm-main-content">
+          {/* Top Header of Selected Account */}
+          <div className="bm-top-header">
+            <div className="bm-account-details">
+              <div
+                className="bm-avatar-circle"
+                style={{
+                  width: 44,
+                  height: 44,
+                  background: currentPlatformInfo.bg,
+                  color: currentPlatformInfo.color,
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+                }}
+              >
+                {React.createElement(currentPlatformInfo.icon, { size: 22 })}
+              </div>
+
+              <div>
+                <h2>
+                  {selectedAccount?.name || selectedAccount?.fb_page_name || 'All Connected Bots'}
+                  <span className="bm-status-badge">● Active</span>
+                </h2>
+                <div className="sub">
+                  {selectedAccount?.wa_phone_number_id ? `+${selectedAccount.wa_phone_number_id}` : (selectedAccount?.fb_page_name || `${currentPlatformInfo.label} Channel`)}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', position: 'relative' }}>
+              <button
+                onClick={() => setShowSettingsModal(true)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '7px 14px',
+                  borderRadius: 8,
+                  border: '1px solid #e4e4f0',
+                  background: '#ffffff',
+                  color: '#1a1a2e',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                <Settings size={14} /> Bot Settings
+              </button>
+
+              <div style={{ position: 'relative' }}>
+                <button
+                  onClick={() => setShowOptionsDropdown((prev) => !prev)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '7px 14px',
+                    borderRadius: 8,
+                    border: '1px solid #e4e4f0',
+                    background: '#ffffff',
+                    color: '#5c5c80',
+                    fontSize: '0.82rem',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Options <ChevronDown size={13} />
+                </button>
+
+                {showOptionsDropdown && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      right: 0,
+                      top: '115%',
+                      background: '#ffffff',
+                      border: '1px solid #e4e4f0',
+                      borderRadius: 8,
+                      boxShadow: '0 8px 24px rgba(0,0,0,0.1)',
+                      zIndex: 100,
+                      width: 170,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <div
+                      onClick={() => {
+                        setShowOptionsDropdown(false);
+                        setShowCreateModal(true);
+                      }}
+                      style={{ padding: '9px 14px', fontSize: '0.82rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: '#1a1a2e' }}
+                      onMouseOver={(e) => e.currentTarget.style.background = '#f8f8fc'}
+                      onMouseOut={(e) => e.currentTarget.style.background = '#ffffff'}
+                    >
+                      <Plus size={13} color="#6366f1" /> Create Flow
+                    </div>
+                    <div
+                      onClick={() => {
+                        setShowOptionsDropdown(false);
+                        loadAllData();
+                        showToast('Refreshed all bot flows');
+                      }}
+                      style={{ padding: '9px 14px', fontSize: '0.82rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: '#1a1a2e', borderTop: '1px solid #f0f0fa' }}
+                      onMouseOver={(e) => e.currentTarget.style.background = '#f8f8fc'}
+                      onMouseOut={(e) => e.currentTarget.style.background = '#ffffff'}
+                    >
+                      <RefreshCw size={13} color="#10b981" /> Refresh Account
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Primary Category Tabs */}
+          <div className="bm-category-tabs">
+            {MAIN_CATEGORIES.map((cat) => {
+              const CatIcon = cat.icon;
+              const isActive = activeCategory === cat.id;
+              return (
+                <button
+                  key={cat.id}
+                  className={`bm-cat-tab ${isActive ? 'active' : ''}`}
+                  onClick={() => handleCategoryChange(cat.id)}
+                >
+                  <CatIcon size={16} />
+                  {cat.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Secondary Sub-Tabs (Pills) */}
+          <div className="bm-subtabs-row">
+            {(SUB_TABS[activeCategory] || []).map((sub) => (
+              <button
+                key={sub.id}
+                className={`bm-subtab-pill ${activeSubTab === sub.id ? 'active' : ''}`}
+                onClick={() => setActiveSubTab(sub.id)}
+              >
+                {sub.label}
+              </button>
+            ))}
+          </div>
+
+          {/* ═════════════════════════════════════════════════════════════════
+              VIEW 1: KEYWORD REPLIES (AUTOMATION)
+              ═════════════════════════════════════════════════════════════════ */}
+          {activeCategory === 'automation' && activeSubTab === 'keywordReplies' && (
+            <div className="bm-content-card">
+              <div className="bm-card-header">
+                <h3 className="bm-card-title">Keyword Replies</h3>
+                <p className="bm-card-sub">
+                  Create and manage keyword based replies and automate multi-step conversational visual flows.
+                </p>
+              </div>
+
+              {/* Action Bar */}
+              <div className="bm-action-bar">
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center', flex: 1, minWidth: 280 }}>
+                  <select
+                    value={folderFilter}
+                    onChange={(e) => setFolderFilter(e.target.value)}
+                    style={{
+                      padding: '7px 28px 7px 10px',
+                      borderRadius: 8,
+                      border: '1px solid #e4e4f0',
+                      background: '#ffffff',
+                      fontSize: '0.82rem',
+                      color: '#1a1a2e',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <option value="All Folders">All Folders</option>
+                    <option value="Onboarding">Onboarding</option>
+                    <option value="Support">Support</option>
+                    <option value="Sales">Sales</option>
+                  </select>
+
+                  <div style={{ position: 'relative', flex: 1, maxWidth: 360 }}>
+                    <Search size={14} color="#9999bb" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+                    <input
+                      type="text"
+                      placeholder="Search & Enter..."
+                      value={tableSearch}
+                      onChange={(e) => setTableSearch(e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '7px 10px 7px 30px',
+                        borderRadius: 8,
+                        border: '1px solid #e4e4f0',
+                        background: '#ffffff',
+                        fontSize: '0.82rem',
+                        color: '#1a1a2e',
+                        outline: 'none',
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <button
+                    title="Watch Video Tutorial"
+                    style={{
+                      width: 34,
+                      height: 34,
+                      borderRadius: 8,
+                      border: '1px solid #e4e4f0',
+                      background: '#ffffff',
+                      color: '#5c5c80',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <Video size={16} />
+                  </button>
+
+                  <button
+                    onClick={() => setShowCreateModal(true)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '7px 16px',
+                      borderRadius: 8,
+                      background: '#6366f1',
+                      color: '#ffffff',
+                      border: 'none',
+                      fontWeight: 700,
+                      fontSize: '0.84rem',
+                      cursor: 'pointer',
+                      boxShadow: '0 2px 6px rgba(99, 102, 241, 0.3)',
+                    }}
+                  >
+                    <Plus size={15} /> Create
+                  </button>
+                </div>
+              </div>
+
+              {/* Table */}
+              <div style={{ flex: 1, overflowX: 'auto' }}>
+                <table className="bm-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: 50 }}>#</th>
+                      <th>UNIQUE ID</th>
+                      <th>REFERENCE NAME</th>
+                      <th>UPDATED AT</th>
+                      <th style={{ textAlign: 'right', paddingRight: 24 }}>ACTIONS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loading ? (
+                      <tr>
+                        <td colSpan={5} style={{ padding: 60, textAlign: 'center' }}>
+                          <div className="loading-spinner" style={{ margin: '0 auto 8px' }} />
+                          <p style={{ color: '#5c5c80', fontSize: '0.82rem' }}>Loading keyword bot replies...</p>
+                        </td>
+                      </tr>
+                    ) : displayedFlows.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} style={{ padding: 60, textAlign: 'center' }}>
+                          <div style={{ fontSize: '2rem', marginBottom: 6 }}>🤖</div>
+                          <h4 style={{ fontSize: '0.94rem', fontWeight: 700, margin: '0 0 4px 0', color: '#1a1a2e' }}>
+                            No keyword reply flows yet
+                          </h4>
+                          <p style={{ color: '#5c5c80', fontSize: '0.8rem', margin: '0 0 14px 0' }}>
+                            Click "+ Create" to build your first interactive visual chat bot flow.
+                          </p>
+                          <button
+                            onClick={() => setShowCreateModal(true)}
+                            style={{
+                              padding: '7px 14px',
+                              borderRadius: 8,
+                              background: '#6366f1',
+                              color: '#ffffff',
+                              border: 'none',
+                              fontWeight: 700,
+                              fontSize: '0.82rem',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            + Create Flow
+                          </button>
+                        </td>
+                      </tr>
+                    ) : (
+                      displayedFlows.map((flow, idx) => (
+                        <tr key={flow.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/flows/${flow.id}`)}>
+                          <td style={{ fontWeight: 700, color: '#5c5c80' }}>
+                            {idx + 1}
+                          </td>
+
+                          <td>
+                            <code style={{ fontSize: '0.8rem', color: '#6366f1', background: '#f0f2ff', padding: '3px 8px', borderRadius: 6, fontWeight: 600 }}>
+                              {formatUniqueId(flow.id)}
+                            </code>
+                          </td>
+
+                          <td>
+                            <div style={{ fontWeight: 700, color: '#1a1a2e', fontSize: '0.86rem' }}>
+                              {flow.name}
+                            </div>
+                            <div style={{ fontSize: '0.72rem', color: '#9999bb', marginTop: 1 }}>
+                              Trigger: <strong>{flow.trigger_keyword || 'hi, hello'}</strong> ({flow.platform || 'WHATSAPP'})
+                            </div>
+                          </td>
+
+                          <td style={{ color: '#5c5c80', fontSize: '0.8rem' }}>
+                            {formatDate(flow.updated_at || flow.created_at)}
+                          </td>
+
+                          <td onClick={(e) => e.stopPropagation()} style={{ textAlign: 'right', paddingRight: 20 }}>
+                            <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                              <button
+                                className="bm-row-action"
+                                title="Open Live Visual Builder"
+                                onClick={() => navigate(`/flows/${flow.id}`)}
+                              >
+                                <Edit3 size={13} />
+                              </button>
+                              <button
+                                className="bm-row-action"
+                                title="Test in Live Chat"
+                                onClick={() => navigate('/inbox')}
+                              >
+                                <MessageSquare size={13} />
+                              </button>
+                              <button
+                                className="bm-row-action"
+                                title="Move to Folder"
+                                onClick={() => showToast('Moved to folder')}
+                              >
+                                <Folder size={13} />
+                              </button>
+                              <button
+                                className="bm-row-action delete"
+                                title="Delete Flow"
+                                onClick={(e) => handleDeleteFlow(flow.id, flow.name, e)}
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Table Footer / Pagination */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '12px 20px',
+                  borderTop: '1px solid #e4e4f0',
+                  background: '#fafbfe',
+                  fontSize: '0.8rem',
+                  color: '#5c5c80',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => setPageSize(Number(e.target.value))}
+                    style={{ padding: '3px 8px', borderRadius: 6, border: '1px solid #e4e4f0', background: '#ffffff' }}
+                  >
+                    <option value={10}>10</option>
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                  </select>
+                  <span>1–{Math.min(displayedFlows.length, pageSize)} of {displayedFlows.length}</span>
+                </div>
+
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <button style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #e4e4f0', background: '#ffffff', cursor: 'pointer' }}>
+                    Previous
+                  </button>
+                  <button style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #6366f1', background: '#6366f1', color: '#fff', fontWeight: 700 }}>
+                    1
+                  </button>
+                  <button style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #e4e4f0', background: '#ffffff', cursor: 'pointer' }}>
+                    Next
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ═════════════════════════════════════════════════════════════════
+              VIEW 2: COMMENT AUTOMATION (ENGAGEMENT)
+              ═════════════════════════════════════════════════════════════════ */}
+          {activeCategory === 'engagement' && activeSubTab === 'commentAutomation' && (
+            <div className="bm-content-card">
+              <div className="bm-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h3 className="bm-card-title">Facebook & Instagram Comment Automation</h3>
+                  <p className="bm-card-sub">
+                    Automatically reply to post comments and dispatch private instant messages in Messenger.
+                  </p>
+                </div>
+                <button
+                  onClick={() => navigate('/channels/facebook')}
+                  style={{
+                    padding: '7px 14px',
+                    borderRadius: 8,
+                    background: '#1877f2',
+                    color: '#ffffff',
+                    border: 'none',
+                    fontWeight: 700,
+                    fontSize: '0.82rem',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+                  <Plus size={14} /> Create Comment Campaign
+                </button>
+              </div>
+
+              <div style={{ padding: 20 }}>
+                {commentRules.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: 40, color: '#5c5c80' }}>
+                    <MessageSquare size={36} color="#1877f2" style={{ margin: '0 auto 10px' }} />
+                    <h4>No active comment campaigns</h4>
+                    <p style={{ fontSize: '0.82rem' }}>Configure comment triggers for your connected Facebook & Instagram pages.</p>
+                  </div>
+                ) : (
+                  <table className="bm-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr>
+                        <th>CAMPAIGN NAME</th>
+                        <th>TARGET POST</th>
+                        <th>TRIGGER</th>
+                        <th>REPLY COMMENT</th>
+                        <th>STATUS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {commentRules.map((rule) => (
+                        <tr key={rule.id}>
+                          <td style={{ fontWeight: 700, color: '#1a1a2e' }}>{rule.campaign_name}</td>
+                          <td>{rule.post_id === 'ALL_POSTS' ? '🌐 All Posts' : rule.post_id}</td>
+                          <td>
+                            <span style={{ fontSize: '0.74rem', padding: '2px 8px', borderRadius: 10, background: 'rgba(16,185,129,0.1)', color: '#10b981', fontWeight: 700 }}>
+                              {rule.trigger_type}
+                            </span>
+                          </td>
+                          <td style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {rule.auto_reply_comment}
+                          </td>
+                          <td>
+                            <span style={{ color: rule.is_active ? '#10b981' : '#f59e0b', fontWeight: 700, fontSize: '0.76rem' }}>
+                              ● {rule.is_active ? 'Active' : 'Paused'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ═════════════════════════════════════════════════════════════════
+              VIEW 3: AI PROMPTS & BOT RULES (AI)
+              ═════════════════════════════════════════════════════════════════ */}
+          {activeCategory === 'ai' && (
+            <div className="bm-content-card">
+              <div className="bm-card-header">
+                <h3 className="bm-card-title">AI Knowledge Base & Training Prompt</h3>
+                <p className="bm-card-sub">
+                  Configure smart generative replies powered by OpenAI ChatGPT, Google Gemini & Claude.
+                </p>
+              </div>
+
+              <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 6 }}>
+                    AI Model Engine
+                  </label>
+                  <select
+                    value={aiModel}
+                    onChange={(e) => setAiModel(e.target.value)}
+                    style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #e4e4f0', width: 280, fontSize: '0.85rem' }}
+                  >
+                    <option value="gpt-4o">OpenAI GPT-4o (Recommended)</option>
+                    <option value="gemini-1.5-pro">Google Gemini 1.5 Pro</option>
+                    <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 6 }}>
+                    System Instructions & Brand Knowledge
+                  </label>
+                  <textarea
+                    rows={6}
+                    value={aiPrompt}
+                    onChange={(e) => setAiPrompt(e.target.value)}
+                    style={{ width: '100%', padding: '10px 14px', borderRadius: 8, border: '1px solid #e4e4f0', fontSize: '0.85rem', outline: 'none' }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    onClick={() => showToast('AI instructions saved!')}
+                    style={{ padding: '8px 20px', borderRadius: 8, background: '#6366f1', color: '#fff', border: 'none', fontWeight: 700, cursor: 'pointer' }}
+                  >
+                    Save AI Settings
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ═════════════════════════════════════════════════════════════════
+              VIEW 4: DEFAULT FALLBACK VIEW FOR OTHER SUB-TABS
+              ═════════════════════════════════════════════════════════════════ */}
+          {!['keywordReplies'].includes(activeSubTab) && activeCategory !== 'engagement' && activeCategory !== 'ai' && (
+            <div className="bm-content-card">
+              <div className="bm-card-header">
+                <h3 className="bm-card-title">{activeSubTab.replace(/([A-Z])/g, ' $1').trim()}</h3>
+                <p className="bm-card-sub">
+                  Configure automated settings and workflows for {selectedAccount?.name || 'this account'}.
+                </p>
+              </div>
+
+              <div style={{ textAlign: 'center', padding: '60px 20px', color: '#5c5c80' }}>
+                <div style={{ fontSize: '2.5rem', marginBottom: 10 }}>⚡</div>
+                <h4 style={{ fontSize: '1.05rem', fontWeight: 800, margin: '0 0 6px 0', color: '#1a1a2e' }}>
+                  {activeSubTab.replace(/([A-Z])/g, ' $1').trim()} Module
+                </h4>
+                <p style={{ fontSize: '0.84rem', maxWidth: 400, margin: '0 auto 16px' }}>
+                  This automation feature is enabled for {currentPlatformInfo.label}. Create visual flow triggers or integrate endpoints.
+                </p>
+                <button
+                  onClick={() => setShowCreateModal(true)}
+                  style={{
+                    padding: '8px 18px',
+                    borderRadius: 8,
+                    background: '#6366f1',
+                    color: '#fff',
+                    border: 'none',
+                    fontWeight: 700,
+                    fontSize: '0.84rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  + Add Flow Trigger
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Create Flow Modal ── */}
+      {showCreateModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <div
+            style={{
+              width: 580,
+              maxWidth: '92vw',
+              background: '#ffffff',
+              borderRadius: 16,
+              padding: 24,
+              boxShadow: '0 16px 40px rgba(0,0,0,0.15)',
+              border: '1px solid #e4e4f0',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+              <h3 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: '#1a1a2e', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Sparkles size={20} color="#6366f1" /> Create Conversational Flow
+              </h3>
+              <button
+                onClick={() => setShowCreateModal(false)}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: '50%',
+                  border: '1px solid #e4e4f0',
+                  background: '#f8f8fc',
+                  cursor: 'pointer',
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 5 }}>
+                  Flow Reference Name *
+                </label>
+                <input
+                  required
+                  className="form-input w-full"
+                  placeholder="e.g. Lead Qualification & Pricing"
+                  value={newFlowName}
+                  onChange={(e) => setNewFlowName(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 5 }}>
+                  Starter Template
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  {STARTER_TEMPLATES.map((tmpl) => {
+                    const TIcon = tmpl.icon;
+                    const isSel = selectedTemplate === tmpl.id;
+                    return (
+                      <div
+                        key={tmpl.id}
+                        onClick={() => setSelectedTemplate(tmpl.id)}
+                        style={{
+                          padding: 12,
+                          borderRadius: 10,
+                          border: `1.5px solid ${isSel ? '#6366f1' : '#e4e4f0'}`,
+                          background: isSel ? '#f0f2ff' : '#ffffff',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: '0.84rem', color: isSel ? '#4f46e5' : '#1a1a2e', marginBottom: 4 }}>
+                          <TIcon size={16} color={tmpl.color} /> {tmpl.title}
+                        </div>
+                        <div style={{ fontSize: '0.74rem', color: '#5c5c80', lineHeight: 1.4 }}>
+                          {tmpl.description}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(false)}
+                  style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid #e4e4f0', background: '#ffffff', cursor: 'pointer', fontSize: '0.85rem' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreateFlow}
+                  disabled={creating}
+                  style={{
+                    padding: '8px 22px',
+                    borderRadius: 8,
+                    background: '#6366f1',
+                    color: '#ffffff',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '0.85rem',
+                    fontWeight: 700,
+                  }}
+                >
+                  {creating ? 'Building...' : 'Launch Visual Flow Builder'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Bot Settings Modal ── */}
+      {showSettingsModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <div
+            style={{
+              width: 500,
+              maxWidth: '92vw',
+              background: '#ffffff',
+              borderRadius: 16,
+              padding: 24,
+              boxShadow: '0 16px 40px rgba(0,0,0,0.15)',
+              border: '1px solid #e4e4f0',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+              <h3 style={{ fontSize: '1.15rem', fontWeight: 800, margin: 0, color: '#1a1a2e', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Settings size={18} color="#6366f1" /> Bot Configuration
+              </h3>
+              <button
+                onClick={() => setShowSettingsModal(false)}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: '50%',
+                  border: '1px solid #e4e4f0',
+                  background: '#f8f8fc',
+                  cursor: 'pointer',
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 5 }}>
+                  Welcome Greeting Message
+                </label>
+                <textarea
+                  rows={2}
+                  className="form-input w-full"
+                  defaultValue="Hello! Welcome to our official support. How can we help you today?"
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 5 }}>
+                  Away / Offline Auto-reply
+                </label>
+                <textarea
+                  rows={2}
+                  className="form-input w-full"
+                  defaultValue="We are currently away. Our team will get back to you during business hours."
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => setShowSettingsModal(false)}
+                  style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid #e4e4f0', background: '#ffffff', cursor: 'pointer', fontSize: '0.85rem' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSettingsModal(false);
+                    showToast('Bot settings updated!');
+                  }}
+                  style={{
+                    padding: '8px 20px',
+                    borderRadius: 8,
+                    background: '#6366f1',
+                    color: '#ffffff',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '0.85rem',
+                    fontWeight: 700,
+                  }}
+                >
+                  Save Settings
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Toast Notification ── */}
       {toast && (
         <div
           style={{
@@ -427,966 +1651,15 @@ export default function BotManagerPage() {
             right: 24,
             zIndex: 9999,
             padding: '12px 20px',
-            borderRadius: 10,
-            background: toast.type === 'success' ? '#10b981' : '#ef4444',
-            color: '#fff',
+            borderRadius: 8,
+            background: toast.type === 'error' ? '#ef4444' : '#10b981',
+            color: '#ffffff',
             fontWeight: 600,
-            fontSize: 14,
-            boxShadow: '0 8px 30px rgba(0,0,0,0.3)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
+            fontSize: '0.85rem',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
           }}
         >
-          {toast.type === 'success' ? '✅' : '❌'} {toast.message}
-        </div>
-      )}
-
-      <div style={{ padding: '24px 32px', maxWidth: 1400, margin: '0 auto' }}>
-        {/* ── Top Header ── */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            marginBottom: 24,
-            flexWrap: 'wrap',
-            gap: 16,
-          }}
-        >
-          <div>
-            <h1
-              style={{
-                fontSize: 26,
-                fontWeight: 800,
-                color: 'var(--text-primary)',
-                margin: 0,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-              }}
-            >
-              🤖 Bot Flow Manager
-            </h1>
-            <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: 4, margin: 0 }}>
-              Design and automate conversational AI flows, triggers, carousels, and rich media for Facebook, Instagram, WhatsApp, and more.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => setShowCreateModal(true)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '12px 22px',
-              fontSize: 14,
-              fontWeight: 700,
-              borderRadius: 10,
-              background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
-              boxShadow: '0 4px 18px rgba(99, 102, 241, 0.4)',
-              cursor: 'pointer',
-              border: 'none',
-              color: '#fff',
-            }}
-          >
-            <Plus size={18} /> Create Bot Flow
-          </button>
-        </div>
-
-        {/* ── Metrics Cards ── */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-            gap: 16,
-            marginBottom: 28,
-          }}
-        >
-          <div className="card" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: 10,
-                background: 'rgba(99, 102, 241, 0.15)',
-                color: '#6366f1',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Bot size={22} />
-            </div>
-            <div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-primary)' }}>{stats.total}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>Total Bot Flows</div>
-            </div>
-          </div>
-
-          <div className="card" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: 10,
-                background: 'rgba(16, 185, 129, 0.15)',
-                color: '#10b981',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Play size={20} />
-            </div>
-            <div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: '#10b981' }}>{stats.active}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>Active Bots</div>
-            </div>
-          </div>
-
-          <div className="card" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: 10,
-                background: 'rgba(24, 119, 242, 0.15)',
-                color: '#1877f2',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <span style={{ fontSize: 20 }}>📘</span>
-            </div>
-            <div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-primary)' }}>{stats.fb}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>Facebook Bots</div>
-            </div>
-          </div>
-
-          <div className="card" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: 10,
-                background: 'rgba(225, 48, 108, 0.15)',
-                color: '#e1306c',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <span style={{ fontSize: 20 }}>📸</span>
-            </div>
-            <div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--text-primary)' }}>{stats.ig}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 600 }}>Instagram Bots</div>
-            </div>
-          </div>
-        </div>
-
-        {/* ── Filter & Search Toolbar ── */}
-        <div
-          className="card"
-          style={{
-            padding: 16,
-            marginBottom: 24,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: 14,
-          }}
-        >
-          {/* Search Box */}
-          <div style={{ position: 'relative', minWidth: 260, flex: '1 1 260px' }}>
-            <Search
-              size={16}
-              style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }}
-            />
-            <input
-              type="text"
-              placeholder="Search bot name or keyword trigger..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="form-input"
-              style={{ paddingLeft: 36, width: '100%', fontSize: 13 }}
-            />
-          </div>
-
-          {/* Platform Pills */}
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-            {['ALL', 'FACEBOOK', 'INSTAGRAM', 'WHATSAPP', 'TELEGRAM', 'WEBCHAT'].map((plat) => {
-              const info = PLATFORMS[plat] || { label: 'All Platforms', icon: '🌐' };
-              const isSelected = selectedPlatform === plat;
-              return (
-                <button
-                  key={plat}
-                  type="button"
-                  onClick={() => setSelectedPlatform(plat)}
-                  style={{
-                    padding: '6px 12px',
-                    borderRadius: 8,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    border: isSelected ? '1px solid #6366f1' : '1px solid var(--border-color, rgba(255,255,255,0.1))',
-                    background: isSelected ? 'rgba(99, 102, 241, 0.2)' : 'transparent',
-                    color: isSelected ? '#a5b4fc' : 'var(--text-muted)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    transition: 'all 0.15s ease',
-                  }}
-                >
-                  <span>{info.icon}</span> {plat === 'ALL' ? 'All' : info.label}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Status Filter & View Toggle */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="form-input"
-              style={{ fontSize: 12, padding: '6px 12px', width: 120 }}
-            >
-              <option value="ALL">All Status</option>
-              <option value="ACTIVE">Active Only</option>
-              <option value="PAUSED">Paused Only</option>
-            </select>
-
-            <div style={{ display: 'flex', background: 'var(--bg-surface-2, rgba(255,255,255,0.05))', borderRadius: 8, padding: 2 }}>
-              <button
-                type="button"
-                onClick={() => setViewMode('grid')}
-                style={{
-                  padding: '6px 8px',
-                  background: viewMode === 'grid' ? 'rgba(99, 102, 241, 0.3)' : 'transparent',
-                  border: 'none',
-                  borderRadius: 6,
-                  color: viewMode === 'grid' ? '#a5b4fc' : 'var(--text-muted)',
-                  cursor: 'pointer',
-                }}
-                title="Grid View"
-              >
-                <Grid size={15} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('list')}
-                style={{
-                  padding: '6px 8px',
-                  background: viewMode === 'list' ? 'rgba(99, 102, 241, 0.3)' : 'transparent',
-                  border: 'none',
-                  borderRadius: 6,
-                  color: viewMode === 'list' ? '#a5b4fc' : 'var(--text-muted)',
-                  cursor: 'pointer',
-                }}
-                title="List View"
-              >
-                <List size={15} />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* ── Bots Content Area ── */}
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-muted)' }}>
-            <RefreshCw size={32} className="spinning" style={{ margin: '0 auto 12px' }} />
-            <div>Loading bot flows...</div>
-          </div>
-        ) : filteredBots.length === 0 ? (
-          <div
-            className="card"
-            style={{
-              padding: '60px 20px',
-              textAlign: 'center',
-              background: 'var(--bg-surface)',
-              borderRadius: 16,
-              border: '1px dashed var(--border-color, rgba(255,255,255,0.15))',
-            }}
-          >
-            <div
-              style={{
-                width: 64,
-                height: 64,
-                borderRadius: '50%',
-                background: 'rgba(99, 102, 241, 0.12)',
-                color: '#6366f1',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                margin: '0 auto 16px',
-              }}
-            >
-              <Bot size={32} />
-            </div>
-            <h3 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 8px', color: 'var(--text-primary)' }}>
-              {searchQuery || selectedPlatform !== 'ALL' || statusFilter !== 'ALL'
-                ? 'No matching bot flows found'
-                : 'No Bot Flows Created Yet'}
-            </h3>
-            <p style={{ color: 'var(--text-muted)', fontSize: 14, maxWidth: 440, margin: '0 auto 20px' }}>
-              Create your first visual bot with triggers, buttons, interactive carousels, and rich media attachments.
-            </p>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => setShowCreateModal(true)}
-              style={{
-                padding: '10px 20px',
-                fontSize: 14,
-                fontWeight: 700,
-                borderRadius: 8,
-              }}
-            >
-              <Plus size={16} /> Create New Bot Flow
-            </button>
-          </div>
-        ) : viewMode === 'grid' ? (
-          /* ── Grid View ── */
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
-              gap: 20,
-            }}
-          >
-            {filteredBots.map((bot) => {
-              const platformInfo = PLATFORMS[bot.platform] || PLATFORMS.WEBCHAT;
-              const triggerTypeKey = (bot.trigger_type || 'KEYWORD').toUpperCase();
-              const triggerInfo = TRIGGER_TYPES[triggerTypeKey] || TRIGGER_TYPES.KEYWORD;
-
-              let nodeCount = 0;
-              let keywordsList = [];
-              try {
-                const parsedNodes = typeof bot.nodes_json === 'string' ? JSON.parse(bot.nodes_json) : (bot.nodes_json || []);
-                nodeCount = parsedNodes.length;
-                const startNode = parsedNodes.find((n) => n.type === 'start');
-                if (startNode?.data?.keywords) {
-                  keywordsList = startNode.data.keywords;
-                } else if (bot.trigger_keyword) {
-                  keywordsList = bot.trigger_keyword.split(',').map((k) => k.trim()).filter(Boolean);
-                }
-              } catch {}
-
-              return (
-                <div
-                  key={bot.id}
-                  className="card"
-                  onClick={() => navigate(`/bots/${bot.id}/edit`)}
-                  style={{
-                    padding: 20,
-                    borderRadius: 14,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'space-between',
-                    cursor: 'pointer',
-                    transition: 'transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease',
-                    border: '1px solid var(--border-color, rgba(255,255,255,0.08))',
-                    background: 'var(--bg-surface, #1e2238)',
-                    position: 'relative',
-                    overflow: 'hidden',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = 'translateY(-3px)';
-                    e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.4)';
-                    e.currentTarget.style.boxShadow = '0 10px 25px rgba(0,0,0,0.3)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = 'translateY(0)';
-                    e.currentTarget.style.borderColor = 'var(--border-color, rgba(255,255,255,0.08))';
-                    e.currentTarget.style.boxShadow = 'none';
-                  }}
-                >
-                  {/* Top Bar: Platform & Status Switch */}
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                      <span
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 6,
-                          padding: '4px 10px',
-                          borderRadius: 6,
-                          background: platformInfo.badgeBg,
-                          color: platformInfo.color,
-                          fontSize: 12,
-                          fontWeight: 700,
-                          border: `1px solid ${platformInfo.border}`,
-                        }}
-                      >
-                        <span>{platformInfo.icon}</span> {bot.fb_page_name || bot.integration_name || platformInfo.label}
-                      </span>
-
-                      {/* Active Toggle Switch */}
-                      <div
-                        onClick={(e) => handleToggleActive(bot, e)}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 6,
-                          padding: '3px 8px',
-                          borderRadius: 20,
-                          background: bot.is_active ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255,255,255,0.08)',
-                          color: bot.is_active ? '#10b981' : 'var(--text-muted)',
-                          fontSize: 11,
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                          border: `1px solid ${bot.is_active ? 'rgba(16, 185, 129, 0.3)' : 'transparent'}`,
-                        }}
-                        title={bot.is_active ? 'Click to Pause' : 'Click to Activate'}
-                      >
-                        <span
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: '50%',
-                            background: bot.is_active ? '#10b981' : '#64748b',
-                            boxShadow: bot.is_active ? '0 0 8px #10b981' : 'none',
-                          }}
-                        />
-                        {bot.is_active ? 'Active' : 'Paused'}
-                      </div>
-                    </div>
-
-                    {/* Bot Name & Meta */}
-                    <h3
-                      style={{
-                        fontSize: 17,
-                        fontWeight: 700,
-                        margin: '0 0 6px',
-                        color: 'var(--text-primary)',
-                        lineHeight: 1.3,
-                      }}
-                    >
-                      {bot.name}
-                    </h3>
-
-                    {/* Trigger info */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-                      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Trigger:</span>
-                      <span
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 700,
-                          color: triggerInfo.color,
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 4,
-                        }}
-                      >
-                        {triggerInfo.icon} {triggerInfo.label}
-                      </span>
-                    </div>
-
-                    {/* Keywords List Preview */}
-                    {keywordsList.length > 0 && (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 16 }}>
-                        {keywordsList.slice(0, 4).map((kw, i) => (
-                          <span
-                            key={i}
-                            style={{
-                              padding: '2px 7px',
-                              borderRadius: 4,
-                              background: 'rgba(16, 185, 129, 0.12)',
-                              color: '#10b981',
-                              fontSize: 11,
-                              fontWeight: 600,
-                            }}
-                          >
-                            {kw}
-                          </span>
-                        ))}
-                        {keywordsList.length > 4 && (
-                          <span style={{ fontSize: 11, color: 'var(--text-muted)', alignSelf: 'center' }}>
-                            +{keywordsList.length - 4} more
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Bottom Action Footer */}
-                  <div
-                    style={{
-                      paddingTop: 12,
-                      borderTop: '1px solid var(--border-color, rgba(255,255,255,0.06))',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                    }}
-                  >
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                      {nodeCount} {nodeCount === 1 ? 'node' : 'nodes'}
-                    </span>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <button
-                        type="button"
-                        onClick={(e) => handleDuplicateBot(bot, e)}
-                        style={{
-                          background: 'rgba(255,255,255,0.05)',
-                          border: 'none',
-                          color: 'var(--text-muted)',
-                          padding: '6px 8px',
-                          borderRadius: 6,
-                          cursor: 'pointer',
-                        }}
-                        title="Duplicate Bot"
-                      >
-                        <Copy size={14} />
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={(e) => handleDeleteBot(bot, e)}
-                        style={{
-                          background: 'rgba(239, 68, 68, 0.1)',
-                          border: 'none',
-                          color: '#ef4444',
-                          padding: '6px 8px',
-                          borderRadius: 6,
-                          cursor: 'pointer',
-                        }}
-                        title="Delete Bot"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => navigate(`/bots/${bot.id}/edit`)}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 6,
-                          padding: '6px 12px',
-                          borderRadius: 6,
-                          background: 'rgba(99, 102, 241, 0.18)',
-                          color: '#a5b4fc',
-                          border: '1px solid rgba(99, 102, 241, 0.3)',
-                          fontSize: 12,
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        <Edit3 size={13} /> Edit Flow
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          /* ── List / Table View ── */
-          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-            <table className="table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ background: 'var(--bg-surface-2, rgba(255,255,255,0.03))', textAlign: 'left' }}>
-                  <th style={{ padding: '12px 16px' }}>Bot Name</th>
-                  <th style={{ padding: '12px 16px' }}>Platform</th>
-                  <th style={{ padding: '12px 16px' }}>Trigger</th>
-                  <th style={{ padding: '12px 16px' }}>Keywords</th>
-                  <th style={{ padding: '12px 16px' }}>Status</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'right' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredBots.map((bot) => {
-                  const platformInfo = PLATFORMS[bot.platform] || PLATFORMS.WEBCHAT;
-                  const triggerTypeKey = (bot.trigger_type || 'KEYWORD').toUpperCase();
-                  const triggerInfo = TRIGGER_TYPES[triggerTypeKey] || TRIGGER_TYPES.KEYWORD;
-
-                  let keywordsList = [];
-                  try {
-                    const parsedNodes = typeof bot.nodes_json === 'string' ? JSON.parse(bot.nodes_json) : (bot.nodes_json || []);
-                    const startNode = parsedNodes.find((n) => n.type === 'start');
-                    if (startNode?.data?.keywords) {
-                      keywordsList = startNode.data.keywords;
-                    } else if (bot.trigger_keyword) {
-                      keywordsList = bot.trigger_keyword.split(',').map((k) => k.trim()).filter(Boolean);
-                    }
-                  } catch {}
-
-                  return (
-                    <tr
-                      key={bot.id}
-                      onClick={() => navigate(`/bots/${bot.id}/edit`)}
-                      style={{
-                        cursor: 'pointer',
-                        borderBottom: '1px solid var(--border-color, rgba(255,255,255,0.05))',
-                      }}
-                    >
-                      <td style={{ padding: '14px 16px', fontWeight: 700, color: 'var(--text-primary)' }}>
-                        {bot.name}
-                      </td>
-                      <td style={{ padding: '14px 16px' }}>
-                        <span
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 6,
-                            padding: '3px 8px',
-                            borderRadius: 6,
-                            background: platformInfo.badgeBg,
-                            color: platformInfo.color,
-                            fontSize: 12,
-                            fontWeight: 700,
-                          }}
-                        >
-                          {platformInfo.icon} {bot.fb_page_name || bot.integration_name || platformInfo.label}
-                        </span>
-                      </td>
-                      <td style={{ padding: '14px 16px', fontSize: 12, color: triggerInfo.color, fontWeight: 600 }}>
-                        {triggerInfo.icon} {triggerInfo.label}
-                      </td>
-                      <td style={{ padding: '14px 16px' }}>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                          {keywordsList.slice(0, 3).map((kw, i) => (
-                            <span
-                              key={i}
-                              style={{
-                                padding: '2px 6px',
-                                borderRadius: 4,
-                                background: 'rgba(16, 185, 129, 0.12)',
-                                color: '#10b981',
-                                fontSize: 11,
-                                fontWeight: 600,
-                              }}
-                            >
-                              {kw}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td style={{ padding: '14px 16px' }}>
-                        <button
-                          type="button"
-                          onClick={(e) => handleToggleActive(bot, e)}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 6,
-                            color: bot.is_active ? '#10b981' : '#64748b',
-                            fontWeight: 700,
-                            fontSize: 12,
-                          }}
-                        >
-                          <span
-                            style={{
-                              width: 8,
-                              height: 8,
-                              borderRadius: '50%',
-                              background: bot.is_active ? '#10b981' : '#64748b',
-                            }}
-                          />
-                          {bot.is_active ? 'Active' : 'Paused'}
-                        </button>
-                      </td>
-                      <td style={{ padding: '14px 16px', textAlign: 'right' }}>
-                        <div style={{ display: 'inline-flex', gap: 6 }}>
-                          <button
-                            type="button"
-                            onClick={() => navigate(`/bots/${bot.id}/edit`)}
-                            className="btn btn-primary"
-                            style={{ padding: '6px 12px', fontSize: 12 }}
-                          >
-                            <Edit3 size={13} /> Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => handleDuplicateBot(bot, e)}
-                            style={{
-                              background: 'rgba(255,255,255,0.05)',
-                              border: 'none',
-                              color: 'var(--text-muted)',
-                              padding: '6px 8px',
-                              borderRadius: 6,
-                              cursor: 'pointer',
-                            }}
-                            title="Duplicate"
-                          >
-                            <Copy size={14} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => handleDeleteBot(bot, e)}
-                            style={{
-                              background: 'rgba(239, 68, 68, 0.1)',
-                              border: 'none',
-                              color: '#ef4444',
-                              padding: '6px 8px',
-                              borderRadius: 6,
-                              cursor: 'pointer',
-                            }}
-                            title="Delete"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* ── Create New Bot Flow Modal ── */}
-      {showCreateModal && (
-        <div
-          className="modal-overlay"
-          onClick={() => !creating && setShowCreateModal(false)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.75)',
-            backdropFilter: 'blur(6px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10000,
-            padding: 20,
-          }}
-        >
-          <div
-            className="modal"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              maxWidth: 720,
-              width: '100%',
-              background: 'var(--bg-surface, #1e2238)',
-              borderRadius: 18,
-              border: '1px solid rgba(255,255,255,0.1)',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
-              padding: 28,
-              maxHeight: '90vh',
-              overflowY: 'auto',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-              <div>
-                <h2 style={{ fontSize: 20, fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
-                  🤖 Create New Bot Flow
-                </h2>
-                <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '4px 0 0' }}>
-                  Choose a starter template or start from a blank canvas.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowCreateModal(false)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'var(--text-muted)',
-                  fontSize: 22,
-                  cursor: 'pointer',
-                  padding: 4,
-                }}
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateBot}>
-              {/* Bot Name & Platform Selection */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 22 }}>
-                <div>
-                  <label className="form-label" style={{ fontWeight: 700, fontSize: 13 }}>
-                    Bot Name *
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Limitless Sales Bot, Support FAQ..."
-                    value={newBotName}
-                    onChange={(e) => setNewBotName(e.target.value)}
-                    className="form-input"
-                    required
-                    style={{ width: '100%' }}
-                    autoFocus
-                  />
-                </div>
-
-                <div>
-                  <label className="form-label" style={{ fontWeight: 700, fontSize: 13 }}>
-                    Connect to Page / Channel *
-                  </label>
-                  <select
-                    value={newBotIntegrationId ? `integ_${newBotIntegrationId}` : `plat_${newBotPlatform}`}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val.startsWith('integ_')) {
-                        const integId = val.replace('integ_', '');
-                        const integ = integrations.find((i) => String(i.id) === String(integId));
-                        setNewBotIntegrationId(integId);
-                        if (integ?.platform) setNewBotPlatform(integ.platform.toUpperCase());
-                      } else if (val.startsWith('plat_')) {
-                        setNewBotIntegrationId('');
-                        setNewBotPlatform(val.replace('plat_', ''));
-                      }
-                    }}
-                    className="form-input"
-                    style={{ width: '100%' }}
-                  >
-                    {integrations.length > 0 && (
-                      <optgroup label="Connected Pages & Channels">
-                        {integrations.map((i) => {
-                          const icon = i.platform === 'FACEBOOK' ? '📘' : i.platform === 'INSTAGRAM' ? '📸' : i.platform === 'WHATSAPP' ? '💬' : '🌐';
-                          return (
-                            <option key={i.id} value={`integ_${i.id}`}>
-                              {icon} {i.fb_page_name || i.name} ({i.platform})
-                            </option>
-                          );
-                        })}
-                      </optgroup>
-                    )}
-                    <optgroup label="General Platform (All Pages)">
-                      <option value="plat_FACEBOOK">📘 All Facebook Pages</option>
-                      <option value="plat_INSTAGRAM">📸 All Instagram Accounts</option>
-                      <option value="plat_WHATSAPP">💬 All WhatsApp Numbers</option>
-                      <option value="plat_TELEGRAM">✈️ Telegram</option>
-                      <option value="plat_WEBCHAT">🌐 Website Live Chat</option>
-                    </optgroup>
-                  </select>
-                </div>
-              </div>
-
-              {/* Starter Templates Selection */}
-              <label className="form-label" style={{ fontWeight: 700, fontSize: 13, marginBottom: 10, display: 'block' }}>
-                Select Starter Template
-              </label>
-
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-                  gap: 12,
-                  marginBottom: 24,
-                }}
-              >
-                {STARTER_TEMPLATES.map((tmpl) => {
-                  const Icon = tmpl.icon;
-                  const isSelected = selectedTemplate === tmpl.id;
-                  return (
-                    <div
-                      key={tmpl.id}
-                      onClick={() => setSelectedTemplate(tmpl.id)}
-                      style={{
-                        padding: 14,
-                        borderRadius: 12,
-                        cursor: 'pointer',
-                        border: isSelected
-                          ? `2px solid ${tmpl.color}`
-                          : '1px solid var(--border-color, rgba(255,255,255,0.08))',
-                        background: isSelected ? 'rgba(99, 102, 241, 0.12)' : 'rgba(255,255,255,0.02)',
-                        transition: 'all 0.15s ease',
-                        position: 'relative',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        justifyContent: 'space-between',
-                      }}
-                    >
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                          <div
-                            style={{
-                              width: 32,
-                              height: 32,
-                              borderRadius: 8,
-                              background: `${tmpl.color}22`,
-                              color: tmpl.color,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                            }}
-                          >
-                            <Icon size={18} />
-                          </div>
-                          {tmpl.badge && (
-                            <span
-                              style={{
-                                fontSize: 10,
-                                fontWeight: 700,
-                                padding: '2px 6px',
-                                borderRadius: 4,
-                                background: `${tmpl.color}22`,
-                                color: tmpl.color,
-                              }}
-                            >
-                              {tmpl.badge}
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-primary)', marginBottom: 4 }}>
-                          {tmpl.title}
-                        </div>
-                        <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>
-                          {tmpl.description}
-                        </div>
-                      </div>
-
-                      {isSelected && (
-                        <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 4, color: tmpl.color, fontSize: 11, fontWeight: 700 }}>
-                          <CheckCircle2 size={13} /> Selected
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Action Buttons */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => setShowCreateModal(false)}
-                  disabled={creating}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                  disabled={creating}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '10px 22px',
-                    fontWeight: 700,
-                  }}
-                >
-                  {creating ? (
-                    <>
-                      <RefreshCw size={16} className="spinning" /> Creating...
-                    </>
-                  ) : (
-                    <>
-                      Create & Open Flow Builder <ArrowRight size={16} />
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
+          {toast.message}
         </div>
       )}
     </AppLayout>

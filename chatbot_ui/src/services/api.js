@@ -5,6 +5,15 @@ const api = axios.create({
   withCredentials: true,
 });
 
+// Inject stored token as Authorization header on every request
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem("auth_token");
+  if (token) {
+    config.headers["Authorization"] = `Bearer ${token}`;
+  }
+  return config;
+});
+
 // ─── Auth ─────────────────────────────────────────────────────────
 export const authAPI = {
   login: (data) => api.post("/auth/login", data),
@@ -20,6 +29,11 @@ export const adminAPI = {
   toggleAgency: (id) => api.patch(`/admin/agencies/${id}/toggle`),
   deleteAgency: (id) => api.delete(`/admin/agencies/${id}`),
   getUsers: () => api.get("/admin/users"),
+  toggleUser: (id) => api.patch(`/admin/users/${id}/toggle`),
+  createUser: (data) => api.post("/admin/users", data),
+  updateUser: (id, data) => api.put(`/admin/users/${id}`, data),
+  deleteUser: (id) => api.delete(`/admin/users/${id}`),
+  getAnalytics: (days = 14) => api.get(`/admin/analytics?days=${days}`),
 };
 
 // ─── Agency ───────────────────────────────────────────────────────
@@ -56,6 +70,8 @@ export const channelAPI = {
   // WhatsApp
   getWhatsApp: () => api.get('/channels/whatsapp'),
   addWhatsApp: (data) => api.post('/channels/whatsapp', data),
+  addWhatsAppEmbedded: (data) => api.post('/channels/whatsapp/embedded-signup', data),
+  discoverWhatsAppAccounts: (token) => api.post('/channels/whatsapp/discover-accounts', { userAccessToken: token }),
   deleteWhatsApp: (id) => api.delete(`/channels/whatsapp/${id}`),
   // Facebook
   getFacebook: () => api.get('/channels/facebook'),
@@ -64,6 +80,12 @@ export const channelAPI = {
   quickConnectFacebook: (token) => api.post('/channels/facebook/quick-connect', { token }),
   syncFBSubscriptions: () => api.post('/channels/facebook/sync-subscriptions'),
   deleteFacebook: (id) => api.delete(`/channels/facebook/${id}`),
+  // Facebook Comment Automation
+  getFBCommentRules: () => api.get('/channels/facebook/comment-rules'),
+  createFBCommentRule: (data) => api.post('/channels/facebook/comment-rules', data),
+  updateFBCommentRule: (id, data) => api.put(`/channels/facebook/comment-rules/${id}`, data),
+  toggleFBCommentRule: (id) => api.patch(`/channels/facebook/comment-rules/${id}/toggle`),
+  deleteFBCommentRule: (id) => api.delete(`/channels/facebook/comment-rules/${id}`),
   // Instagram
   getInstagram: () => api.get('/channels/instagram'),
   addInstagram: (data) => api.post('/channels/instagram', data),

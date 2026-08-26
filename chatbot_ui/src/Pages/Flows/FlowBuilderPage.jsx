@@ -135,7 +135,7 @@ const builderStyles = `
     height: 100vh;
     display: flex;
     flex-direction: column;
-    background: var(--bg-base, #0f1117);
+    background: #f0f2f7;
     overflow: hidden;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   }
@@ -147,29 +147,31 @@ const builderStyles = `
     align-items: center;
     gap: 12px;
     padding: 0 16px;
-    background: var(--bg-surface, #1a1d2e);
-    border-bottom: 1px solid var(--border, rgba(255,255,255,0.08));
+    background: #ffffff;
+    border-bottom: 1px solid #e4e4f0;
     z-index: 20;
     flex-shrink: 0;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
   }
   .fb-toolbar-back {
     width: 36px; height: 36px;
     display: flex; align-items: center; justify-content: center;
     border-radius: 8px;
     background: transparent;
-    border: 1px solid var(--border, rgba(255,255,255,0.08));
-    color: var(--text-secondary, #94a3b8);
+    border: 1px solid #e4e4f0;
+    color: #5c5c80;
     cursor: pointer;
     transition: all 0.2s;
   }
   .fb-toolbar-back:hover {
-    background: var(--bg-hover, rgba(255,255,255,0.05));
-    color: var(--text-primary, #f1f5f9);
+    background: #f0f0fa;
+    color: #1a1a2e;
+    border-color: #c4c4e0;
   }
   .fb-toolbar-name {
     font-size: 16px;
     font-weight: 600;
-    color: var(--text-primary, #f1f5f9);
+    color: #1a1a2e;
     background: transparent;
     border: 1px solid transparent;
     border-radius: 6px;
@@ -181,8 +183,8 @@ const builderStyles = `
   }
   .fb-toolbar-name:hover,
   .fb-toolbar-name:focus {
-    border-color: var(--border, rgba(255,255,255,0.12));
-    background: var(--bg-card, #1e2235);
+    border-color: #e4e4f0;
+    background: #f8f8fc;
   }
   .fb-platform-badge {
     padding: 4px 12px;
@@ -191,9 +193,9 @@ const builderStyles = `
     font-weight: 600;
     letter-spacing: 0.5px;
     text-transform: uppercase;
-    background: rgba(99, 102, 241, 0.15);
-    color: var(--primary, #6366f1);
-    border: 1px solid rgba(99, 102, 241, 0.25);
+    background: rgba(99, 102, 241, 0.10);
+    color: #6366f1;
+    border: 1px solid rgba(99, 102, 241, 0.20);
   }
   .fb-toolbar-spacer { flex: 1; }
   .fb-autosave-indicator {
@@ -201,7 +203,7 @@ const builderStyles = `
     align-items: center;
     gap: 6px;
     font-size: 12px;
-    color: var(--text-secondary, #94a3b8);
+    color: #5c5c80;
     opacity: 0;
     transition: opacity 0.4s;
   }
@@ -213,14 +215,14 @@ const builderStyles = `
     padding: 8px 20px;
     border-radius: 8px;
     border: none;
-    background: var(--primary, #6366f1);
+    background: #6366f1;
     color: #fff;
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
   }
-  .fb-save-btn:hover { filter: brightness(1.15); transform: translateY(-1px); }
+  .fb-save-btn:hover { background: #4f46e5; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(99,102,241,0.3); }
   .fb-save-btn:active { transform: translateY(0); }
   .fb-save-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
   .fb-save-btn .spin { animation: fb-spin 0.8s linear infinite; }
@@ -236,58 +238,61 @@ const builderStyles = `
 
   /* ── Palette (Left) ────────────────────────────────────────── */
   .fb-palette {
-    width: 240px;
+    width: 228px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
-    background: rgba(26, 29, 46, 0.85);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-right: 1px solid var(--border, rgba(255,255,255,0.08));
+    background: #ffffff;
+    border-right: 1px solid #e4e4f0;
     z-index: 10;
     overflow-y: auto;
+    box-shadow: 2px 0 8px rgba(0,0,0,0.04);
   }
   .fb-palette::-webkit-scrollbar { width: 4px; }
-  .fb-palette::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+  .fb-palette::-webkit-scrollbar-thumb { background: #d0d0e8; border-radius: 4px; }
   .fb-palette-header {
-    padding: 16px 16px 8px;
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1.2px;
-    color: var(--text-secondary, #94a3b8);
-  }
-  .fb-palette-category {
-    padding: 4px 12px;
+    padding: 14px 16px 6px;
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: #9999bb;
+    border-bottom: 1px solid #f0f0fa;
+    margin-bottom: 4px;
+  }
+  .fb-palette-category {
+    padding: 4px 14px;
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
     letter-spacing: 1px;
-    color: var(--text-secondary, #64748b);
-    margin-top: 12px;
+    color: #9999bb;
+    margin-top: 10px;
     margin-bottom: 2px;
   }
   .fb-palette-item {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 14px;
-    margin: 2px 8px;
+    padding: 9px 12px;
+    margin: 1px 6px;
     border-radius: 8px;
     cursor: grab;
-    transition: all 0.2s;
+    transition: all 0.15s;
     user-select: none;
-    color: var(--text-primary, #e2e8f0);
+    color: #1a1a2e;
     font-size: 13px;
     font-weight: 500;
+    border: 1px solid transparent;
   }
   .fb-palette-item:hover {
-    background: var(--bg-hover, rgba(255,255,255,0.06));
+    background: #f0f0fa;
+    border-color: #e4e4f0;
     transform: translateX(2px);
   }
   .fb-palette-item:active { cursor: grabbing; }
   .fb-palette-item-icon {
-    width: 32px; height: 32px;
+    width: 30px; height: 30px;
     border-radius: 8px;
     display: flex;
     align-items: center;
@@ -296,7 +301,7 @@ const builderStyles = `
   }
   .fb-palette-item-grip {
     margin-left: auto;
-    color: var(--text-secondary, #475569);
+    color: #9999bb;
     opacity: 0;
     transition: opacity 0.2s;
   }
@@ -308,49 +313,49 @@ const builderStyles = `
     position: relative;
   }
   .fb-canvas .react-flow__node { cursor: pointer; }
-  .fb-canvas .react-flow__minimap { border-radius: 8px; overflow: hidden; border: 1px solid var(--border, rgba(255,255,255,0.08)); }
-  .fb-canvas .react-flow__controls { border-radius: 8px; overflow: hidden; border: 1px solid var(--border, rgba(255,255,255,0.08)); }
+  .fb-canvas .react-flow__minimap { border-radius: 8px; overflow: hidden; border: 1px solid #e4e4f0; }
+  .fb-canvas .react-flow__controls { border-radius: 8px; overflow: hidden; border: 1px solid #e4e4f0; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
   .fb-canvas .react-flow__controls button {
-    background: var(--bg-surface, #1a1d2e);
-    color: var(--text-primary, #e2e8f0);
-    border-color: var(--border, rgba(255,255,255,0.08));
+    background: #ffffff;
+    color: #1a1a2e;
+    border-color: #e4e4f0;
   }
   .fb-canvas .react-flow__controls button:hover {
-    background: var(--bg-hover, rgba(255,255,255,0.08));
+    background: #f0f0fa;
   }
 
   /* ── Properties Panel (Right) ──────────────────────────────── */
   .fb-props {
-    width: 320px;
+    width: 310px;
     flex-shrink: 0;
-    background: rgba(26, 29, 46, 0.92);
-    backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
-    border-left: 1px solid var(--border, rgba(255,255,255,0.08));
+    background: #ffffff;
+    border-left: 1px solid #e4e4f0;
     z-index: 10;
     display: flex;
     flex-direction: column;
-    animation: fb-slide-in 0.25s ease-out;
+    animation: fb-slide-in 0.2s ease-out;
     overflow-y: auto;
+    box-shadow: -2px 0 8px rgba(0,0,0,0.04);
   }
   @keyframes fb-slide-in {
     from { transform: translateX(20px); opacity: 0; }
     to { transform: translateX(0); opacity: 1; }
   }
   .fb-props::-webkit-scrollbar { width: 4px; }
-  .fb-props::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+  .fb-props::-webkit-scrollbar-thumb { background: #d0d0e8; border-radius: 4px; }
   .fb-props-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px;
-    border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+    padding: 14px 16px;
+    border-bottom: 1px solid #e4e4f0;
+    background: #fafafa;
   }
   .fb-props-header h3 {
     margin: 0;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 700;
-    color: var(--text-primary, #f1f5f9);
+    color: #1a1a2e;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -361,29 +366,29 @@ const builderStyles = `
     border-radius: 6px;
     background: transparent;
     border: none;
-    color: var(--text-secondary, #94a3b8);
+    color: #5c5c80;
     cursor: pointer;
     transition: all 0.2s;
   }
-  .fb-props-close:hover { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
-  .fb-props-body { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
-  .fb-field { display: flex; flex-direction: column; gap: 6px; }
+  .fb-props-close:hover { background: rgba(239, 68, 68, 0.10); color: #ef4444; }
+  .fb-props-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+  .fb-field { display: flex; flex-direction: column; gap: 5px; }
   .fb-field label {
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.8px;
-    color: var(--text-secondary, #94a3b8);
+    color: #5c5c80;
   }
   .fb-field input,
   .fb-field textarea,
   .fb-field select {
-    background: var(--bg-card, #1e2235);
-    border: 1px solid var(--border, rgba(255,255,255,0.08));
+    background: #f8f8fc;
+    border: 1px solid #e4e4f0;
     border-radius: 8px;
-    padding: 9px 12px;
+    padding: 8px 12px;
     font-size: 13px;
-    color: var(--text-primary, #e2e8f0);
+    color: #1a1a2e;
     outline: none;
     transition: all 0.2s;
     font-family: inherit;
@@ -392,8 +397,9 @@ const builderStyles = `
   .fb-field input:focus,
   .fb-field textarea:focus,
   .fb-field select:focus {
-    border-color: var(--primary, #6366f1);
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.10);
+    background: #ffffff;
   }
   .fb-field textarea { min-height: 80px; }
   .fb-list-item {
@@ -409,27 +415,27 @@ const builderStyles = `
     border-radius: 6px;
     background: transparent;
     border: none;
-    color: var(--text-secondary, #475569);
+    color: #9999bb;
     cursor: pointer;
     transition: all 0.2s;
     flex-shrink: 0;
   }
-  .fb-list-item-del:hover { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+  .fb-list-item-del:hover { background: rgba(239, 68, 68, 0.10); color: #ef4444; }
   .fb-add-btn {
     display: flex;
     align-items: center;
     gap: 6px;
     padding: 7px 12px;
     border-radius: 8px;
-    border: 1px dashed var(--border, rgba(255,255,255,0.12));
+    border: 1.5px dashed #d0d0e8;
     background: transparent;
-    color: var(--primary, #6366f1);
+    color: #6366f1;
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
   }
-  .fb-add-btn:hover { background: rgba(99, 102, 241, 0.08); border-color: var(--primary, #6366f1); }
+  .fb-add-btn:hover { background: rgba(99, 102, 241, 0.06); border-color: #6366f1; }
   .fb-delete-node-btn {
     display: flex;
     align-items: center;
@@ -437,8 +443,8 @@ const builderStyles = `
     gap: 8px;
     padding: 10px;
     border-radius: 8px;
-    border: 1px solid rgba(239, 68, 68, 0.25);
-    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.20);
+    background: rgba(239, 68, 68, 0.05);
     color: #ef4444;
     font-size: 13px;
     font-weight: 600;
@@ -446,43 +452,46 @@ const builderStyles = `
     transition: all 0.2s;
     margin-top: 8px;
   }
-  .fb-delete-node-btn:hover { background: rgba(239, 68, 68, 0.18); }
+  .fb-delete-node-btn:hover { background: rgba(239, 68, 68, 0.12); }
 
   /* ── Custom Node Styles ────────────────────────────────────── */
   .fb-node {
     min-width: 180px;
     max-width: 260px;
     border-radius: 12px;
-    background: var(--bg-card, #1e2235);
-    border: 1.5px solid var(--border, rgba(255,255,255,0.08));
-    box-shadow: 0 4px 24px rgba(0,0,0,0.3), 0 1px 4px rgba(0,0,0,0.2);
+    background: #ffffff;
+    border: 1.5px solid #e4e4f0;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.07), 0 1px 4px rgba(0,0,0,0.04);
     overflow: visible;
     transition: box-shadow 0.2s, border-color 0.2s;
     position: relative;
   }
   .fb-node:hover {
-    box-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.25);
+    box-shadow: 0 6px 24px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.06);
+    border-color: #c4c4e0;
   }
   .fb-node.selected {
-    border-color: var(--primary, #6366f1);
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2), 0 8px 32px rgba(0,0,0,0.4);
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15), 0 6px 24px rgba(0,0,0,0.10);
   }
   .fb-node-header {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 14px;
-    border-radius: 11px 11px 0 0;
+    padding: 9px 12px;
+    border-radius: 10px 10px 0 0;
     font-size: 12px;
     font-weight: 700;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.2px;
     color: #fff;
   }
   .fb-node-body {
-    padding: 10px 14px 12px;
+    padding: 8px 12px 10px;
     font-size: 12px;
-    color: var(--text-secondary, #94a3b8);
+    color: #5c5c80;
     line-height: 1.5;
+    background: #ffffff;
+    border-radius: 0 0 10px 10px;
   }
   .fb-node-body-preview {
     overflow: hidden;
@@ -491,35 +500,37 @@ const builderStyles = `
     -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
     word-break: break-word;
+    color: #5c5c80;
   }
   .fb-node-warning {
     position: absolute;
     top: -8px;
     right: -8px;
     width: 22px; height: 22px;
-    background: var(--warning, #f59e0b);
+    background: #f59e0b;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.4);
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.35);
     z-index: 2;
   }
   .fb-node-btn-list {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    padding: 0 14px 12px;
+    padding: 0 12px 10px;
   }
   .fb-node-btn-chip {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 5px 10px;
+    padding: 4px 8px;
     border-radius: 6px;
-    background: rgba(255,255,255,0.06);
+    background: rgba(99,102,241,0.07);
+    border: 1px solid rgba(99,102,241,0.15);
     font-size: 11px;
-    color: var(--text-primary, #e2e8f0);
+    color: #4f46e5;
     font-weight: 500;
     position: relative;
   }
@@ -527,45 +538,46 @@ const builderStyles = `
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
-    padding: 0 14px 12px;
+    padding: 0 12px 10px;
   }
   .fb-node-reply-chip {
-    padding: 4px 10px;
+    padding: 3px 8px;
     border-radius: 14px;
-    background: rgba(255,255,255,0.08);
+    background: rgba(99,102,241,0.08);
+    border: 1px solid rgba(99,102,241,0.15);
     font-size: 10px;
-    color: var(--text-primary, #e2e8f0);
+    color: #4f46e5;
     font-weight: 500;
   }
 
-  /* ── Condition diamond ─────────────────────────────────────── */
+  /* ── Condition node ─────────────────────────────────────────── */
   .fb-node-condition {
     min-width: 160px;
     max-width: 220px;
     border-radius: 12px;
-    background: var(--bg-card, #1e2235);
-    border: 1.5px solid var(--border, rgba(255,255,255,0.08));
-    box-shadow: 0 4px 24px rgba(0,0,0,0.3);
-    transform: rotate(0deg);
+    background: #ffffff;
+    border: 1.5px solid #e4e4f0;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.07);
     position: relative;
     overflow: visible;
     transition: box-shadow 0.2s, border-color 0.2s;
   }
   .fb-node-condition:hover {
-    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    box-shadow: 0 6px 24px rgba(0,0,0,0.10);
   }
   .fb-node-condition.selected {
-    border-color: var(--primary, #6366f1);
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2), 0 8px 32px rgba(0,0,0,0.4);
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15), 0 6px 24px rgba(0,0,0,0.10);
   }
 
   /* ── React Flow Handle overrides ───────────────────────────── */
   .react-flow__handle {
     width: 12px !important;
     height: 12px !important;
-    border: 2px solid var(--bg-surface, #1a1d2e) !important;
+    border: 2px solid #ffffff !important;
     border-radius: 50% !important;
     transition: all 0.2s !important;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15) !important;
   }
   .react-flow__handle:hover {
     transform: scale(1.3) !important;
@@ -576,11 +588,11 @@ const builderStyles = `
 
   /* ── Edge styling ──────────────────────────────────────────── */
   .react-flow__edge-path {
-    stroke: rgba(99, 102, 241, 0.5) !important;
+    stroke: rgba(99, 102, 241, 0.55) !important;
     stroke-width: 2 !important;
   }
   .react-flow__edge.selected .react-flow__edge-path {
-    stroke: var(--primary, #6366f1) !important;
+    stroke: #6366f1 !important;
     stroke-width: 2.5 !important;
   }
 
@@ -2083,10 +2095,10 @@ function QuickComponentPicker({ position, onClose, onSelect, platform }) {
         zIndex: 11000,
         width: 280,
         maxHeight: 380,
-        background: '#1a1d2e',
+        background: '#ffffff',
         borderRadius: 14,
-        border: '1px solid rgba(99, 102, 241, 0.4)',
-        boxShadow: '0 16px 40px rgba(0,0,0,0.6)',
+        border: '1px solid #e4e4f0',
+        boxShadow: '0 16px 40px rgba(0,0,0,0.15)',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
@@ -2095,17 +2107,17 @@ function QuickComponentPicker({ position, onClose, onSelect, platform }) {
       {/* Header & Search */}
       <div
         style={{
-          padding: '10px 12px',
-          borderBottom: '1px solid rgba(255,255,255,0.08)',
-          background: 'rgba(0,0,0,0.2)',
+          padding: '12px 14px',
+          borderBottom: '1px solid #e4e4f0',
+          background: '#f8f8fc',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
           <span
             style={{
               fontSize: 12,
               fontWeight: 700,
-              color: '#a5b4fc',
+              color: '#4f46e5',
               display: 'flex',
               alignItems: 'center',
               gap: 6,
@@ -2119,7 +2131,7 @@ function QuickComponentPicker({ position, onClose, onSelect, platform }) {
             style={{
               background: 'none',
               border: 'none',
-              color: 'var(--text-muted)',
+              color: '#5c5c80',
               cursor: 'pointer',
               padding: 0,
               fontSize: 14,
@@ -2136,12 +2148,12 @@ function QuickComponentPicker({ position, onClose, onSelect, platform }) {
           autoFocus
           style={{
             width: '100%',
-            padding: '6px 10px',
+            padding: '7px 10px',
             fontSize: 12,
-            background: '#121422',
-            border: '1px solid rgba(255,255,255,0.1)',
+            background: '#ffffff',
+            border: '1px solid #e4e4f0',
             borderRadius: 6,
-            color: '#fff',
+            color: '#1a1a2e',
             outline: 'none',
           }}
         />
@@ -2150,7 +2162,7 @@ function QuickComponentPicker({ position, onClose, onSelect, platform }) {
       {/* Components List */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '6px 8px' }}>
         {filteredCategories.length === 0 ? (
-          <div style={{ padding: '20px 10px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+          <div style={{ padding: '20px 10px', textAlign: 'center', color: '#9999bb', fontSize: 12 }}>
             No components found
           </div>
         ) : (
@@ -2161,7 +2173,7 @@ function QuickComponentPicker({ position, onClose, onSelect, platform }) {
                   fontSize: 10,
                   fontWeight: 800,
                   textTransform: 'uppercase',
-                  color: 'var(--text-muted)',
+                  color: '#9999bb',
                   padding: '4px 6px',
                   letterSpacing: 0.5,
                 }}
@@ -2185,19 +2197,19 @@ function QuickComponentPicker({ position, onClose, onSelect, platform }) {
                         gap: 8,
                         padding: '7px 10px',
                         borderRadius: 8,
-                        background: 'rgba(255,255,255,0.02)',
+                        background: '#ffffff',
                         border: '1px solid transparent',
-                        color: isSupported ? 'var(--text-primary)' : 'var(--text-muted)',
+                        color: isSupported ? '#1a1a2e' : '#9999bb',
                         cursor: 'pointer',
                         textAlign: 'left',
                         transition: 'all 0.12s ease',
                       }}
                       onMouseEnter={(e) => {
-                        e.currentTarget.style.background = 'rgba(99, 102, 241, 0.15)';
-                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.3)';
+                        e.currentTarget.style.background = '#f0f0fa';
+                        e.currentTarget.style.borderColor = '#e4e4f0';
                       }}
                       onMouseLeave={(e) => {
-                        e.currentTarget.style.background = 'rgba(255,255,255,0.02)';
+                        e.currentTarget.style.background = '#ffffff';
                         e.currentTarget.style.borderColor = 'transparent';
                       }}
                     >
@@ -2206,7 +2218,7 @@ function QuickComponentPicker({ position, onClose, onSelect, platform }) {
                           width: 24,
                           height: 24,
                           borderRadius: 6,
-                          background: `${color}22`,
+                          background: `${color}18`,
                           color,
                           display: 'flex',
                           alignItems: 'center',
@@ -2216,10 +2228,7 @@ function QuickComponentPicker({ position, onClose, onSelect, platform }) {
                       >
                         <Icon size={14} />
                       </div>
-                      <span style={{ fontSize: 12, fontWeight: 600, flex: 1 }}>{item.label}</span>
-                      {!isSupported && (
-                        <span style={{ fontSize: 10, color: '#f59e0b', opacity: 0.8 }}>⚠️</span>
-                      )}
+                      <span style={{ fontSize: 12, fontWeight: 600 }}>{item.label}</span>
                     </button>
                   );
                 })}
@@ -2629,36 +2638,36 @@ function FlowBuilderInner() {
           }}
           className="fb-platform-badge"
           style={{
-            padding: '5px 12px',
+            padding: '6px 14px',
             borderRadius: 8,
             fontSize: 12,
             fontWeight: 700,
-            background: 'rgba(99, 102, 241, 0.15)',
-            border: '1px solid rgba(99, 102, 241, 0.35)',
-            color: '#a5b4fc',
+            background: '#f0f0fa',
+            border: '1px solid #e4e4f0',
+            color: '#4f46e5',
             cursor: 'pointer',
             outline: 'none',
           }}
           title="Assigned Page / Channel (Click to switch)"
         >
           {integrations.length > 0 && (
-            <optgroup label="Connected Pages & Channels">
+            <optgroup label="Connected Pages & Channels" style={{ background: '#ffffff', color: '#1a1a2e' }}>
               {integrations.map((i) => {
                 const icon = i.platform === 'FACEBOOK' ? '📘' : i.platform === 'INSTAGRAM' ? '📸' : i.platform === 'WHATSAPP' ? '💬' : '🌐';
                 return (
-                  <option key={i.id} value={`integ_${i.id}`}>
+                  <option key={i.id} value={`integ_${i.id}`} style={{ background: '#ffffff', color: '#1a1a2e' }}>
                     {icon} {i.fb_page_name || i.name} ({i.platform})
                   </option>
                 );
               })}
             </optgroup>
           )}
-          <optgroup label="General Platform (All Pages)">
-            <option value="plat_FACEBOOK">📘 Facebook (All Pages)</option>
-            <option value="plat_INSTAGRAM">📸 Instagram (All Accounts)</option>
-            <option value="plat_WHATSAPP">💬 WhatsApp (All Numbers)</option>
-            <option value="plat_TELEGRAM">✈️ Telegram</option>
-            <option value="plat_WEBCHAT">🌐 Website Live Chat</option>
+          <optgroup label="General Platform (All Pages)" style={{ background: '#ffffff', color: '#1a1a2e' }}>
+            <option value="plat_FACEBOOK" style={{ background: '#ffffff', color: '#1a1a2e' }}>📘 Facebook (All Pages)</option>
+            <option value="plat_INSTAGRAM" style={{ background: '#ffffff', color: '#1a1a2e' }}>📸 Instagram (All Accounts)</option>
+            <option value="plat_WHATSAPP" style={{ background: '#ffffff', color: '#1a1a2e' }}>💬 WhatsApp (All Numbers)</option>
+            <option value="plat_TELEGRAM" style={{ background: '#ffffff', color: '#1a1a2e' }}>✈️ Telegram</option>
+            <option value="plat_WEBCHAT" style={{ background: '#ffffff', color: '#1a1a2e' }}>🌐 Website Live Chat</option>
           </optgroup>
         </select>
         <div className="fb-toolbar-spacer" />
@@ -2709,20 +2718,20 @@ function FlowBuilderInner() {
             edgeTypes={edgeTypes}
             defaultEdgeOptions={defaultEdgeOptions}
             fitView
-            fitViewOptions={{ padding: 0.3 }}
+            fitViewOptions={{ padding: 0.4, maxZoom: 0.72 }}
             proOptions={{ hideAttribution: true }}
             deleteKeyCode={['Backspace', 'Delete']}
             minZoom={0.15}
             maxZoom={2}
           >
-            <Background variant="dots" gap={20} size={1} color="rgba(255,255,255,0.05)" />
+            <Background variant="dots" gap={20} size={1.2} color="#d4d4e8" />
             <Controls position="bottom-left" showInteractive={false} />
             <MiniMap
               position="bottom-right"
               nodeStrokeWidth={3}
               nodeColor={(n) => NODE_COLORS[n.type] || '#6366f1'}
-              maskColor="rgba(0, 0, 0, 0.7)"
-              style={{ background: 'var(--bg-surface, #1a1d2e)' }}
+              maskColor="rgba(240, 242, 247, 0.75)"
+              style={{ background: '#ffffff', border: '1px solid #e4e4f0' }}
             />
           </ReactFlow>
 

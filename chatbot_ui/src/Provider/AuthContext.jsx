@@ -8,7 +8,7 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Try to restore session from cookie/token
+    // Try to restore session — works via cookie OR localStorage token (header)
     authAPI.me()
       .then((res) => setUser(res.data.user))
       .catch(() => setUser(null))
@@ -17,12 +17,17 @@ export function AuthProvider({ children }) {
 
   const login = async (email, password) => {
     const res = await authAPI.login({ email, password });
-    setUser(res.data.user);
-    return res.data.user;
+    const { user, token } = res.data;
+    // Persist token so axios interceptor can send it as Authorization header
+    // on any domain (ngrok, production) even if httpOnly cookie doesn't travel
+    if (token) localStorage.setItem("auth_token", token);
+    setUser(user);
+    return user;
   };
 
   const logout = async () => {
     await authAPI.logout();
+    localStorage.removeItem("auth_token");
     setUser(null);
   };
 

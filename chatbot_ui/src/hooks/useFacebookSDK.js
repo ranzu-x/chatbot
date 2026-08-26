@@ -14,41 +14,77 @@ import { metaAppAPI } from '../services/api';
 export default function useFacebookSDK() {
   const [fbReady, setFbReady]   = useState(false);
   const [appId, setAppId]       = useState(null);
+  const [configId, setConfigId] = useState(null);
   const [sdkError, setSdkError] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
-      // 1. Fetch App ID from backend
       try {
+        // 1. Fetch App ID & Config ID from backend
         const res = await metaAppAPI.getAppId();
         if (cancelled) return;
         const id = res.data.appId;
+        const cfgId = res.data.configId || null;
         setAppId(id);
+        setConfigId(cfgId);
 
-        // 2. Load FB SDK if not already loaded
-        if (!window.FB) {
-          await new Promise((resolve, reject) => {
-            window.fbAsyncInit = () => {
-              window.FB.init({ appId: id, cookie: true, xfbml: false, version: 'v19.0' });
-              resolve();
-            };
-            const script = document.createElement('script');
-            script.src = 'https://connect.facebook.net/en_US/sdk.js';
-            script.async = true;
-            script.defer = true;
-            script.onerror = reject;
-            document.body.appendChild(script);
-          });
-        } else {
-          // Already loaded — re-init with current appId
-          window.FB.init({ appId: id, cookie: true, xfbml: false, version: 'v19.0' });
+        if (!id) {
+          setSdkError('Meta App ID is not configured');
+          return;
         }
 
-        if (!cancelled) setFbReady(true);
+        // 2. Prepare fbAsyncInit hook
+        window.fbAsyncInit = function () {
+          if (window.FB) {
+            window.FB.init({
+              appId: id,
+              cookie: true,
+              xfbml: false,
+              version: 'v21.0',
+            });
+            if (!cancelled) setFbReady(true);
+          }
+        };
+
+        // 3. If window.FB is already available, init directly
+        if (window.FB) {
+          window.FB.init({
+            appId: id,
+            cookie: true,
+            xfbml: false,
+            version: 'v21.0',
+          });
+          if (!cancelled) setFbReady(true);
+          return;
+        }
+
+        // 4. Inject Facebook SDK script if not present
+        if (!document.getElementById('facebook-jssdk')) {
+          const script = document.createElement('script');
+          script.id = 'facebook-jssdk';
+          script.src = 'https://connect.facebook.net/en_US/sdk.js';
+          script.async = true;
+          script.defer = true;
+          script.onload = () => {
+            if (window.FB) {
+              window.FB.init({
+                appId: id,
+                cookie: true,
+                xfbml: false,
+                version: 'v21.0',
+              });
+              if (!cancelled) setFbReady(true);
+            }
+          };
+          script.onerror = () => {
+            if (!cancelled) setSdkError('Failed to load Meta SDK from connect.facebook.net');
+          };
+          document.head.appendChild(script);
+        }
       } catch (err) {
-        if (!cancelled) setSdkError(err.response?.data?.message || 'Failed to load Facebook SDK');
+        if (!cancelled) setSdkError(err.response?.data?.message || 'Meta App not configured');
       }
     })();
 
@@ -76,5 +112,5 @@ export default function useFacebookSDK() {
     }
   }, []);
 
-  return { fbReady, appId, sdkError, login };
+  return { fbReady, appId, configId, sdkError, login };
 }

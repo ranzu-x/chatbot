@@ -58,7 +58,7 @@ router.get("/settings/meta-app", async (req, res) => {
 
 // ─── SAVE META APP SETTINGS ───────────────────────────────────────
 router.post("/settings/meta-app", async (req, res) => {
-  const { appId, appSecret, verifyToken, appName, siteUrl, privacyUrl, tosUrl, isActive, customWebhookUrl } = req.body;
+  const { appId, appSecret, whatsappConfigId, verifyToken, appName, siteUrl, privacyUrl, tosUrl, isActive, customWebhookUrl } = req.body;
   if (!appId || !appSecret || !verifyToken)
     return res.status(400).json({ success: false, message: "App ID, App Secret and Verify Token are required" });
 
@@ -71,15 +71,15 @@ router.post("/settings/meta-app", async (req, res) => {
     );
     if (existing.length) {
       await pool.query(
-        `UPDATE meta_app_settings SET app_id=?, app_secret=?, verify_token=?, webhook_url=?, is_configured=1,
+        `UPDATE meta_app_settings SET app_id=?, app_secret=?, whatsapp_config_id=?, verify_token=?, webhook_url=?, is_configured=1,
          app_name=?, site_url=?, privacy_url=?, tos_url=?, is_active=? WHERE agency_id=?`,
-        [appId, appSecret, verifyToken, webhookUrl, appName || null, siteUrl || null, privacyUrl || null, tosUrl || null, isActive ? 1 : 0, agencyId]
+        [appId, appSecret, whatsappConfigId || null, verifyToken, webhookUrl, appName || null, siteUrl || null, privacyUrl || null, tosUrl || null, isActive ? 1 : 0, agencyId]
       );
     } else {
       await pool.query(
-        `INSERT INTO meta_app_settings (agency_id, app_id, app_secret, verify_token, webhook_url, is_configured, app_name, site_url, privacy_url, tos_url, is_active)
-         VALUES (?,?,?,?,?,1,?,?,?,?,?)`,
-        [agencyId, appId, appSecret, verifyToken, webhookUrl, appName || null, siteUrl || null, privacyUrl || null, tosUrl || null, isActive ? 1 : 0]
+        `INSERT INTO meta_app_settings (agency_id, app_id, app_secret, whatsapp_config_id, verify_token, webhook_url, is_configured, app_name, site_url, privacy_url, tos_url, is_active)
+         VALUES (?,?,?,?,?,?,1,?,?,?,?,?)`,
+        [agencyId, appId, appSecret, whatsappConfigId || null, verifyToken, webhookUrl, appName || null, siteUrl || null, privacyUrl || null, tosUrl || null, isActive ? 1 : 0]
       );
     }
     return res.json({ success: true, message: "Meta App settings saved", webhookUrl, agencyId });
@@ -99,7 +99,7 @@ router.post("/settings/meta-app/test", async (req, res) => {
     if (!rows.length) return res.status(404).json({ success: false, message: "Meta App not configured yet" });
 
     const { app_id, app_secret } = rows[0];
-    const testRes = await fetch(`https://graph.facebook.com/v19.0/${app_id}?access_token=${app_id}|${app_secret}`);
+    const testRes = await fetch(`https://graph.facebook.com/v21.0/${app_id}?access_token=${app_id}|${app_secret}`);
     const testData = await testRes.json();
 
     if (testData.error) return res.status(400).json({ success: false, message: testData.error.message });
@@ -115,11 +115,11 @@ router.get("/settings/meta-app/app-id", async (req, res) => {
   try {
     const agencyId = await resolveAgencyId(req);
     const [rows] = await pool.query(
-      "SELECT app_id FROM meta_app_settings WHERE agency_id=?", [agencyId]
+      "SELECT app_id, whatsapp_config_id FROM meta_app_settings WHERE agency_id=?", [agencyId]
     );
     if (!rows.length || !rows[0].app_id)
       return res.status(404).json({ success: false, message: "Meta App not configured. Go to Settings → Meta App Setup first." });
-    return res.json({ success: true, appId: rows[0].app_id });
+    return res.json({ success: true, appId: rows[0].app_id, configId: rows[0].whatsapp_config_id || null });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: "Server error" });

@@ -4,7 +4,7 @@ import { channelAPI } from '../../services/api';
 
 const BACKEND_URL = import.meta.env.VITE_API_URL?.replace('/api/v1', '') || 'http://localhost:5000';
 
-export default function WebchatPage() {
+export default function WebchatPage({ embedded = false }) {
   const [widgets, setWidgets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -50,8 +50,10 @@ export default function WebchatPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const LayoutWrapper = embedded ? ({ children }) => <div>{children}</div> : AppLayout;
+
   return (
-    <AppLayout>
+    <LayoutWrapper>
       {toast && <div className="toast-container"><div className={`toast ${toast.type}`}>{toast.type === 'success' ? '✅' : '❌'} {toast.msg}</div></div>}
 
       {/* Embed Modal */}
@@ -75,47 +77,64 @@ export default function WebchatPage() {
         </div>
       )}
 
-      {/* Create Modal */}
+      {/* Create Widget Modal */}
       {showModal && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-title">🌐 Create Webchat Widget</div>
-            <form onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div className="form-group"><label className="form-label">Widget Name *</label><input className="form-input" placeholder="e.g. My Website Chat" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required /></div>
+            <form onSubmit={handleCreate}>
+              <div className="form-group">
+                <label className="form-label">Widget Name *</label>
+                <input className="form-input" placeholder="e.g. Sales Website Widget" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required />
+              </div>
               <div className="form-group">
                 <label className="form-label">Primary Color</label>
-                <div className="flex items-center gap-3">
-                  <input type="color" value={form.primaryColor} onChange={e => setForm(f => ({ ...f, primaryColor: e.target.value }))} style={{ width: 48, height: 36, border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer', padding: 2 }} />
-                  <input className="form-input" value={form.primaryColor} onChange={e => setForm(f => ({ ...f, primaryColor: e.target.value }))} style={{ flex: 1 }} />
+                <div className="flex items-center gap-2">
+                  <input type="color" value={form.primaryColor} onChange={e => setForm(f => ({ ...f, primaryColor: e.target.value }))} style={{ width: 44, height: 36, borderRadius: 6, border: '1px solid var(--border)', cursor: 'pointer' }} />
+                  <input className="form-input" value={form.primaryColor} onChange={e => setForm(f => ({ ...f, primaryColor: e.target.value }))} />
                 </div>
               </div>
-              <div className="form-group"><label className="form-label">Greeting Message</label><textarea className="form-input" rows={2} value={form.greetingMessage} onChange={e => setForm(f => ({ ...f, greetingMessage: e.target.value }))} style={{ resize: 'vertical' }} /></div>
-              <div className="form-group"><label className="form-label">Placeholder Text</label><input className="form-input" value={form.placeholderText} onChange={e => setForm(f => ({ ...f, placeholderText: e.target.value }))} /></div>
-              <div className="form-group"><label className="form-label">Allowed Domains</label><input className="form-input" placeholder="e.g. mysite.com (empty = allow all)" value={form.allowedDomains} onChange={e => setForm(f => ({ ...f, allowedDomains: e.target.value }))} /></div>
+              <div className="form-group">
+                <label className="form-label">Greeting Message</label>
+                <input className="form-input" value={form.greetingMessage} onChange={e => setForm(f => ({ ...f, greetingMessage: e.target.value }))} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Input Placeholder</label>
+                <input className="form-input" value={form.placeholderText} onChange={e => setForm(f => ({ ...f, placeholderText: e.target.value }))} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Allowed Domains (optional, comma-separated)</label>
+                <input className="form-input" placeholder="e.g. mywebsite.com, shop.mywebsite.com" value={form.allowedDomains} onChange={e => setForm(f => ({ ...f, allowedDomains: e.target.value }))} />
+              </div>
               <div className="modal-actions">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Creating…' : '✅ Create Widget'}</button>
+                <button type="submit" className="btn btn-primary" disabled={saving}>
+                  {saving ? 'Creating…' : 'Create Widget'}
+                </button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      <div className="page-header">
-        <div className="flex items-center justify-between">
-          <div><h1 className="page-title">🌐 Webchat</h1><p className="page-subtitle">Add a live chat widget to any website</p></div>
-          <button className="btn btn-primary" onClick={() => setShowModal(true)}>➕ Create Widget</button>
+      <div className="page-header flex items-center justify-between">
+        <div>
+          <h1 className="page-title">🌐 Live Webchat</h1>
+          <p className="page-subtitle">Embed customizable live chat widgets on your websites</p>
         </div>
+        <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+          ➕ Create Widget
+        </button>
       </div>
 
       <div className="page-body">
         {loading ? <div className="loading-overlay"><div className="loading-spinner" /></div>
           : widgets.length === 0 ? (
-            <div className="empty-state" style={{ paddingTop: 80 }}>
+            <div className="empty-state">
               <div className="empty-icon">🌐</div>
-              <div className="empty-title">No webchat widgets yet</div>
-              <div className="empty-desc">Create your first widget to add live chat to your website</div>
-              <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => setShowModal(true)}>➕ Create Widget</button>
+              <div className="empty-title">No Webchat widgets created</div>
+              <div className="empty-desc">Create a widget to embed on your website</div>
+              <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => setShowModal(true)}>➕ Create First Widget</button>
             </div>
           ) : (
             <div className="grid-3">
@@ -141,6 +160,6 @@ export default function WebchatPage() {
             </div>
           )}
       </div>
-    </AppLayout>
+    </LayoutWrapper>
   );
 }

@@ -67,11 +67,11 @@ export async function isDuplicateMessage(externalMsgId) {
 /**
  * Save incoming/outgoing message in DB
  */
-export async function saveMessage(conversationId, direction, type, body, externalMsgId) {
+export async function saveMessage(conversationId, direction, type, body, externalMsgId, mediaUrl = null) {
   const [msgResult] = await pool.query(
-    `INSERT INTO messages (conversation_id, direction, type, body, external_msg_id, is_read, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-    [conversationId, direction, type, body, externalMsgId || null, direction === "INBOUND" ? 0 : 1]
+    `INSERT INTO messages (conversation_id, direction, type, body, media_url, external_msg_id, is_read, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+    [conversationId, direction, type, body || "", mediaUrl || null, externalMsgId || null, direction === "INBOUND" ? 0 : 1]
   );
 
   const [savedMsg] = await pool.query("SELECT * FROM messages WHERE id = ?", [msgResult.insertId]);

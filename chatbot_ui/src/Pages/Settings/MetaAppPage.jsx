@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import AppLayout from '../../Layout/AppLayout';
 import { metaAppAPI } from '../../services/api';
 import { useAuth } from '../../Provider/AuthContext';
@@ -34,6 +34,7 @@ export default function MetaAppPage() {
     appName: '',
     appId: '',
     appSecret: '',
+    whatsappConfigId: '',
     verifyToken: generateRandomToken(),
     siteUrl: window.location.origin,
     privacyUrl: `${window.location.origin}/privacy-policy`,
@@ -96,14 +97,15 @@ export default function MetaAppPage() {
           const token = s.verify_token || res.data.generatedVerifyToken || generateRandomToken();
           setForm(f => ({
             ...f,
-            appName:     s.app_name     || '',
-            appId:       s.app_id       || '',
-            appSecret:   s.app_secret   || '',
-            verifyToken: token,
-            siteUrl:     s.site_url     || window.location.origin,
-            privacyUrl:  s.privacy_url  || `${window.location.origin}/privacy-policy`,
-            tosUrl:      s.tos_url      || `${window.location.origin}/terms-of-service`,
-            isActive:    s.is_active    !== 0,
+            appName:          s.app_name           || '',
+            appId:            s.app_id             || '',
+            appSecret:        s.app_secret         || '',
+            whatsappConfigId: s.whatsapp_config_id || '',
+            verifyToken:      token,
+            siteUrl:          s.site_url           || window.location.origin,
+            privacyUrl:       s.privacy_url        || `${window.location.origin}/privacy-policy`,
+            tosUrl:           s.tos_url            || `${window.location.origin}/terms-of-service`,
+            isActive:         s.is_active          !== 0,
           }));
         } else if (res.data.generatedVerifyToken) {
           setForm(f => ({ ...f, verifyToken: res.data.generatedVerifyToken }));
@@ -390,6 +392,24 @@ export default function MetaAppPage() {
                     </button>
                   </div>
                 </div>
+              </div>
+
+              {/* WhatsApp Embedded Signup Configuration ID */}
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <label className="form-label" style={{ margin: 0 }}>
+                    WhatsApp Embedded Signup Configuration ID (Optional)
+                  </label>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                    Found in Meta App &rarr; WhatsApp &rarr; Quickstart / Embedded Signup Setup
+                  </span>
+                </div>
+                <input
+                  className="form-input"
+                  placeholder="e.g. 103984729104829 (Leave blank if not generated yet)"
+                  value={form.whatsappConfigId}
+                  onChange={e => setForm(f => ({ ...f, whatsappConfigId: e.target.value }))}
+                />
               </div>
 
               {/* Verify Token Input with Generator */}

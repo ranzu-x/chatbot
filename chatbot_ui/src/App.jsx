@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
 import { AuthProvider } from './Provider/AuthContext';
+import { LayoutProvider } from './Provider/LayoutContext';
 import ProtectedRoute from './Router/ProtectedRoute';
 
 // Public landing pages
@@ -17,12 +18,13 @@ import AgentsPage       from './Pages/Agency/AgentsPage';
 import IntegrationsPage from './Pages/Agency/IntegrationsPage';
 import InboxPage        from './Pages/Inbox/InboxPage';
 
-// Channel pages
-import WhatsAppPage     from './Pages/Channels/WhatsAppPage';
-import FacebookPage     from './Pages/Channels/FacebookPage';
-import InstagramPage    from './Pages/Channels/InstagramPage';
-import TelegramPage     from './Pages/Channels/TelegramPage';
-import WebchatPage      from './Pages/Channels/WebchatPage';
+// Channel & Connect Account pages
+import ConnectAccountsPage from './Pages/Channels/ConnectAccountsPage';
+import WhatsAppPage        from './Pages/Channels/WhatsAppPage';
+import FacebookPage        from './Pages/Channels/FacebookPage';
+import InstagramPage       from './Pages/Channels/InstagramPage';
+import TelegramPage        from './Pages/Channels/TelegramPage';
+import WebchatPage         from './Pages/Channels/WebchatPage';
 
 // Bot & Settings
 import BotManagerPage   from './Pages/Bots/BotManagerPage';
@@ -45,54 +47,59 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <Routes>
-          {/* Public */}
-          <Route path="/" element={<Navigate to="/login" replace />} />
-          <Route path="/login" element={<Login />} />
+        <LayoutProvider>
+          <Routes>
+            {/* Public */}
+            <Route path="/" element={<Navigate to="/login" replace />} />
+            <Route path="/login" element={<Login />} />
 
-          {/* ── Admin ── */}
-          <Route path="/admin" element={<ProtectedRoute roles={['ADMIN']}><AdminDashboard /></ProtectedRoute>} />
-          <Route path="/admin/agencies" element={<ProtectedRoute roles={['ADMIN']}><AgenciesPage /></ProtectedRoute>} />
-          <Route path="/admin/users" element={<ProtectedRoute roles={['ADMIN']}><UsersPage /></ProtectedRoute>} />
-          <Route path="/admin/agents" element={<ProtectedRoute roles={['ADMIN']}><AgentsPage /></ProtectedRoute>} />
-          <Route path="/admin/integrations" element={<ProtectedRoute roles={['ADMIN']}><IntegrationsPage /></ProtectedRoute>} />
+            {/* ── Admin ── */}
+            <Route path="/admin" element={<ProtectedRoute roles={['ADMIN']}><AdminDashboard /></ProtectedRoute>} />
+            <Route path="/admin/agencies" element={<ProtectedRoute roles={['ADMIN']}><AgenciesPage /></ProtectedRoute>} />
+            <Route path="/admin/users" element={<ProtectedRoute roles={ADMIN_AGENCY}><UsersPage /></ProtectedRoute>} />
+            <Route path="/users" element={<ProtectedRoute roles={ADMIN_AGENCY}><UsersPage /></ProtectedRoute>} />
+            <Route path="/admin/agents" element={<ProtectedRoute roles={['ADMIN']}><AgentsPage /></ProtectedRoute>} />
+            <Route path="/admin/integrations" element={<ProtectedRoute roles={['ADMIN']}><IntegrationsPage /></ProtectedRoute>} />
 
-          {/* ── Agency ── */}
-          <Route path="/agency" element={<ProtectedRoute roles={['AGENCY']}><AgencyDashboard /></ProtectedRoute>} />
-          <Route path="/agency/agents" element={<ProtectedRoute roles={['AGENCY']}><AgentsPage /></ProtectedRoute>} />
-          <Route path="/agency/integrations" element={<ProtectedRoute roles={['AGENCY']}><IntegrationsPage /></ProtectedRoute>} />
+            {/* ── Agency ── */}
+            <Route path="/agency" element={<ProtectedRoute roles={['AGENCY']}><AgencyDashboard /></ProtectedRoute>} />
+            <Route path="/agency/agents" element={<ProtectedRoute roles={['AGENCY']}><AgentsPage /></ProtectedRoute>} />
+            <Route path="/agency/integrations" element={<ProtectedRoute roles={['AGENCY']}><IntegrationsPage /></ProtectedRoute>} />
 
-          {/* ── Channels (Admin + Agency) ── */}
-          <Route path="/channels/whatsapp"  element={<ProtectedRoute roles={ADMIN_AGENCY}><WhatsAppPage /></ProtectedRoute>} />
-          <Route path="/channels/facebook"  element={<ProtectedRoute roles={ADMIN_AGENCY}><FacebookPage /></ProtectedRoute>} />
-          <Route path="/channels/instagram" element={<ProtectedRoute roles={ADMIN_AGENCY}><InstagramPage /></ProtectedRoute>} />
-          <Route path="/channels/telegram"  element={<ProtectedRoute roles={ADMIN_AGENCY}><TelegramPage /></ProtectedRoute>} />
-          <Route path="/channels/webchat"   element={<ProtectedRoute roles={ADMIN_AGENCY}><WebchatPage /></ProtectedRoute>} />
+            {/* ── Connect Account Central Hub (Admin + Agency) ── */}
+            <Route path="/connect-accounts"   element={<ProtectedRoute roles={ADMIN_AGENCY}><ConnectAccountsPage /></ProtectedRoute>} />
+            <Route path="/channels"           element={<ProtectedRoute roles={ADMIN_AGENCY}><ConnectAccountsPage /></ProtectedRoute>} />
+            <Route path="/channels/whatsapp"  element={<ProtectedRoute roles={ADMIN_AGENCY}><WhatsAppPage /></ProtectedRoute>} />
+            <Route path="/channels/facebook"  element={<ProtectedRoute roles={ADMIN_AGENCY}><FacebookPage /></ProtectedRoute>} />
+            <Route path="/channels/instagram" element={<ProtectedRoute roles={ADMIN_AGENCY}><InstagramPage /></ProtectedRoute>} />
+            <Route path="/channels/telegram"  element={<ProtectedRoute roles={ADMIN_AGENCY}><TelegramPage /></ProtectedRoute>} />
+            <Route path="/channels/webchat"   element={<ProtectedRoute roles={ADMIN_AGENCY}><WebchatPage /></ProtectedRoute>} />
 
-          {/* ── Bot Manager (Visual Flow Bots) ── */}
-          <Route path="/bots" element={<ProtectedRoute roles={ALL_ROLES}><BotManagerPage /></ProtectedRoute>} />
-          <Route path="/bots/:id/edit" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
-          <Route path="/flows" element={<Navigate to="/bots" replace />} />
-          <Route path="/flows/:id/edit" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
-          <Route path="/templates/whatsapp" element={<ProtectedRoute roles={ADMIN_AGENCY}><WhatsAppTemplatesPage /></ProtectedRoute>} />
-          <Route path="/campaigns" element={<ProtectedRoute roles={ADMIN_AGENCY}><CampaignListPage /></ProtectedRoute>} />
-          <Route path="/campaigns/sequence" element={<ProtectedRoute roles={ADMIN_AGENCY}><SequenceCampaignPage /></ProtectedRoute>} />
+            {/* ── Bot Manager (Visual Flow Bots) ── */}
+            <Route path="/bots" element={<ProtectedRoute roles={ALL_ROLES}><BotManagerPage /></ProtectedRoute>} />
+            <Route path="/bots/:id/edit" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
+            <Route path="/flows" element={<Navigate to="/bots" replace />} />
+            <Route path="/flows/:id/edit" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
+            <Route path="/templates/whatsapp" element={<ProtectedRoute roles={ADMIN_AGENCY}><WhatsAppTemplatesPage /></ProtectedRoute>} />
+            <Route path="/campaigns" element={<ProtectedRoute roles={ADMIN_AGENCY}><CampaignListPage /></ProtectedRoute>} />
+            <Route path="/campaigns/sequence" element={<ProtectedRoute roles={ADMIN_AGENCY}><SequenceCampaignPage /></ProtectedRoute>} />
 
-          {/* ── Settings ── */}
-          <Route path="/settings/meta-app" element={<ProtectedRoute roles={ADMIN_AGENCY}><MetaAppPage /></ProtectedRoute>} />
+            {/* ── Settings ── */}
+            <Route path="/settings/meta-app" element={<ProtectedRoute roles={ADMIN_AGENCY}><MetaAppPage /></ProtectedRoute>} />
 
-          {/* ── Live Chat Inbox & Contacts ── */}
-          <Route path="/inbox" element={<ProtectedRoute roles={ALL_ROLES}><InboxPage /></ProtectedRoute>} />
-          <Route path="/contacts" element={<ProtectedRoute roles={ALL_ROLES}><ContactsPage /></ProtectedRoute>} />
+            {/* ── Live Chat Inbox & Contacts ── */}
+            <Route path="/inbox" element={<ProtectedRoute roles={ALL_ROLES}><InboxPage /></ProtectedRoute>} />
+            <Route path="/contacts" element={<ProtectedRoute roles={ALL_ROLES}><ContactsPage /></ProtectedRoute>} />
 
-          {/* ── Public Pages ── */}
-          <Route path="/landing"          element={<LandingPage />} />
-          <Route path="/privacy-policy"   element={<PrivacyPolicy />} />
-          <Route path="/terms-of-service" element={<TermsOfService />} />
+            {/* ── Public Pages ── */}
+            <Route path="/landing"          element={<LandingPage />} />
+            <Route path="/privacy-policy"   element={<PrivacyPolicy />} />
+            <Route path="/terms-of-service" element={<TermsOfService />} />
 
-          {/* Catch-all */}
-          <Route path="*" element={<Navigate to="/login" replace />} />
-        </Routes>
+            {/* Catch-all */}
+            <Route path="*" element={<Navigate to="/login" replace />} />
+          </Routes>
+        </LayoutProvider>
       </BrowserRouter>
     </AuthProvider>
   );

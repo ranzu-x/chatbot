@@ -104,6 +104,22 @@ router.get("/agency/analytics", async (req, res) => {
       GROUP BY m.direction
     `, [agencyId]);
 
+    // 5. Daily subscriber gain (last N days)
+    const [subscriberGain] = await pool.query(`
+      SELECT 
+        DATE(created_at) as date,
+        COUNT(*) as new_subscribers,
+        SUM(CASE WHEN platform = 'WHATSAPP' THEN 1 ELSE 0 END) as whatsapp,
+        SUM(CASE WHEN platform = 'FACEBOOK' THEN 1 ELSE 0 END) as facebook,
+        SUM(CASE WHEN platform = 'INSTAGRAM' THEN 1 ELSE 0 END) as instagram,
+        SUM(CASE WHEN platform = 'TELEGRAM' THEN 1 ELSE 0 END) as telegram,
+        SUM(CASE WHEN platform = 'WEBCHAT' THEN 1 ELSE 0 END) as webchat
+      FROM contacts
+      WHERE agency_id = ? AND created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+      GROUP BY DATE(created_at)
+      ORDER BY DATE(created_at) ASC
+    `, [agencyId, days]);
+
     return res.json({
       success: true,
       analytics: {
@@ -111,6 +127,7 @@ router.get("/agency/analytics", async (req, res) => {
         platformDistribution,
         statusBreakdown,
         roleBreakdown,
+        subscriberGain,
       },
     });
   } catch (err) {

@@ -1,9 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import { useAuth } from '../Provider/AuthContext';
+import { useLayout } from '../Provider/LayoutContext';
+import { Menu, PanelLeft, PanelLeftClose, Sun, Moon, Plug, LogOut } from 'lucide-react';
 
 export default function TopBar() {
   const { user, logout } = useAuth();
+  const { collapsed, toggleSidebar, isInbox, openPopupNav } = useLayout();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
@@ -33,7 +36,7 @@ export default function TopBar() {
   };
 
   const getInitials = (name = '') => {
-    return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+    return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) || 'U';
   };
 
   const toggleTheme = () => {
@@ -48,20 +51,53 @@ export default function TopBar() {
 
   const apiLink = getApiLink();
 
+  const handleMenuClick = () => {
+    if (isInbox) {
+      openPopupNav();
+    } else {
+      toggleSidebar();
+    }
+  };
+
   return (
-    <header className="top-bar">
-      <div className="top-bar-left">
-        <span className="platform-tag">⚡ SaaS Portal</span>
+    <header className="top-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', height: 56, borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+      <div className="top-bar-left" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <button
+          onClick={handleMenuClick}
+          title={isInbox ? 'Open Navigation Menu (Pop Bar)' : (collapsed ? 'Expand Menu' : 'Collapse Menu (Icons Only)')}
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 8,
+            border: '1px solid var(--border)',
+            background: 'var(--bg-card)',
+            color: 'var(--text-secondary)',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            transition: 'all 0.15s',
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.color = 'var(--primary)'}
+          onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-secondary)'}
+        >
+          <Menu size={17} />
+        </button>
+
+        <span className="platform-tag" style={{ fontSize: '0.78rem', fontWeight: 600, padding: '3px 10px', borderRadius: 20, background: 'rgba(37, 99, 235, 0.08)', color: 'var(--primary)' }}>
+          ⚡ Nexa Workspace
+        </span>
       </div>
 
-      <div className="top-bar-right" ref={menuRef}>
+      <div className="top-bar-right" ref={menuRef} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div 
           className="top-bar-user-trigger"
           onClick={() => setMenuOpen(!menuOpen)}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '4px 8px', borderRadius: 8 }}
         >
           <div className="avatar avatar-sm avatar-glow">{getInitials(user?.name)}</div>
-          <span className="user-trigger-name">{user?.name || 'My Account'}</span>
-          <span className={`trigger-arrow ${menuOpen ? 'open' : ''}`}>▼</span>
+          <span className="user-trigger-name" style={{ fontSize: '0.85rem', fontWeight: 600 }}>{user?.name || 'My Account'}</span>
+          <span className={`trigger-arrow ${menuOpen ? 'open' : ''}`} style={{ fontSize: '0.7rem' }}>▼</span>
         </div>
 
         {menuOpen && (
@@ -78,7 +114,7 @@ export default function TopBar() {
                   className="dropdown-item" 
                   onClick={() => { setMenuOpen(false); navigate(apiLink); }}
                 >
-                  <span className="dropdown-icon">🔌</span>
+                  <Plug size={15} style={{ marginRight: 8 }} />
                   <div className="dropdown-text">
                     <div className="dropdown-label">API & Integrations</div>
                     <div className="dropdown-desc">Manage API connections</div>
@@ -87,7 +123,7 @@ export default function TopBar() {
               )}
 
               <div className="dropdown-item" onClick={toggleTheme}>
-                <span className="dropdown-icon">{theme === 'light' ? '🌙' : '☀️'}</span>
+                {theme === 'light' ? <Moon size={15} style={{ marginRight: 8 }} /> : <Sun size={15} style={{ marginRight: 8 }} />}
                 <div className="dropdown-text">
                   <div className="dropdown-label">{theme === 'light' ? 'Dark Theme' : 'Light Theme'}</div>
                   <div className="dropdown-desc">Switch interface display</div>
@@ -96,8 +132,8 @@ export default function TopBar() {
             </div>
 
             <div className="dropdown-section dropdown-footer">
-              <button className="btn btn-danger btn-sm w-full" onClick={handleLogout}>
-                🚪 Logout
+              <button className="btn btn-danger btn-sm w-full" onClick={handleLogout} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <LogOut size={13} /> Logout
               </button>
             </div>
           </div>

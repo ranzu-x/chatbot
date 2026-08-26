@@ -210,6 +210,7 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
       const externalId = msg.from; // sender's WA phone number
       const externalMsgId = msg.id;
       const msgType = (msg.type || "text").toUpperCase();
+      let mediaUrl = null;
 
       let msgBody = "";
       if (msg.type === "text") {
@@ -223,8 +224,20 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
         } else if (type === "list_reply") {
           msgBody = msg.interactive?.list_reply?.title || "";
         }
+      } else if (msg.type === "image") {
+        msgBody = msg.image?.caption || "";
+        mediaUrl = msg.image?.link || msg.image?.url || null;
+      } else if (msg.type === "video") {
+        msgBody = msg.video?.caption || "";
+        mediaUrl = msg.video?.link || msg.video?.url || null;
+      } else if (msg.type === "audio" || msg.type === "voice") {
+        msgBody = "";
+        mediaUrl = msg.audio?.link || msg.audio?.url || msg.voice?.link || null;
+      } else if (msg.type === "document") {
+        msgBody = msg.document?.filename || "";
+        mediaUrl = msg.document?.link || msg.document?.url || null;
       } else {
-        msgBody = msg.image?.caption || msg.video?.caption || msg.document?.filename || (msg.audio ? "[Audio]" : "[Media]");
+        msgBody = msg.image?.caption || msg.video?.caption || msg.document?.filename || "";
       }
 
       const senderName = value?.contacts?.[0]?.profile?.name || externalId;
@@ -237,6 +250,7 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
         externalMsgId,
         msgType: msgType === "INTERACTIVE" || msgType === "BUTTON" ? "TEXT" : msgType,
         msgBody,
+        mediaUrl,
         senderName,
         integration,
       });
@@ -248,32 +262,31 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
 
 async function handleFacebookPayload(body, agencyId, integrationId, integration) {
   try {
-    console.log(`[FB Webhook] Incoming payload for agency=${agencyId}, integration=${integrationId}:`, JSON.stringify(body, null, 2));
     const entries = body?.entry || [];
     for (const entry of entries) {
       const messaging = entry?.messaging || [];
       for (const event of messaging) {
         if (!event.message && !event.postback) continue;
 
-        // Skip echo messages (messages sent by the page itself)
-        if (event.message?.is_echo) {
-          console.log('[FB Webhook] Skipping echo message from page itself.');
-          continue;
-        }
+        if (event.message?.is_echo) continue;
 
         const externalId = event.sender?.id;
         let externalMsgId = event.message?.mid || event.timestamp?.toString();
         let msgBody = "";
         let msgType = "TEXT";
+        let mediaUrl = null;
 
         if (event.postback) {
           msgBody = event.postback.title || event.postback.payload || "";
         } else {
-          msgBody = event.message?.text || "[Attachment]";
-          msgType = event.message?.attachments ? "IMAGE" : "TEXT";
+          msgBody = event.message?.text || "";
+          if (event.message?.attachments && event.message.attachments.length > 0) {
+            const att = event.message.attachments[0];
+            const attType = (att.type || "image").toUpperCase();
+            msgType = attType === "VIDEO" ? "VIDEO" : (attType === "AUDIO" ? "AUDIO" : "IMAGE");
+            mediaUrl = att.payload?.url || null;
+          }
         }
-
-        console.log(`[FB Webhook] Processing message from sender=${externalId}: "${msgBody}"`);
 
         await handleIncomingPayload({
           agencyId,
@@ -283,6 +296,7 @@ async function handleFacebookPayload(body, agencyId, integrationId, integration)
           externalMsgId,
           msgType,
           msgBody,
+          mediaUrl,
           senderName: externalId,
           integration,
         });
@@ -305,12 +319,18 @@ async function handleInstagramPayload(body, agencyId, integrationId, integration
         let externalMsgId = event.message?.mid || event.timestamp?.toString();
         let msgBody = "";
         let msgType = "TEXT";
+        let mediaUrl = null;
 
         if (event.postback) {
           msgBody = event.postback.title || event.postback.payload || "";
         } else {
-          msgBody = event.message?.text || "[Attachment]";
-          msgType = event.message?.attachments ? "IMAGE" : "TEXT";
+          msgBody = event.message?.text || "";
+          if (event.message?.attachments && event.message.attachments.length > 0) {
+            const att = event.message.attachments[0];
+            const attType = (att.type || "image").toUpperCase();
+            msgType = attType === "VIDEO" ? "VIDEO" : (attType === "AUDIO" ? "AUDIO" : "IMAGE");
+            mediaUrl = att.payload?.url || null;
+          }
         }
 
         await handleIncomingPayload({
@@ -321,6 +341,7 @@ async function handleInstagramPayload(body, agencyId, integrationId, integration
           externalMsgId,
           msgType,
           msgBody,
+          mediaUrl,
           senderName: externalId,
           integration,
         });
@@ -348,11 +369,11 @@ router.post("/webhook/:agencyId/:integrationId", async (req, res) => {
     const integration = integRows[0];
 
     if (integration.platform === "WHATSAPP") {
-      await handleWhatsAppPayload(body, agencyId, integrationId, integration);
+      return handleWhatsAppPayload(body, agencyId, integrationId, integration);
     } else if (integration.platform === "FACEBOOK") {
-      await handleFacebookPayload(body, agencyId, integrationId, integration);
+      return handleFacebookPayload(body, agencyId, integrationId, integration);
     } else if (integration.platform === "INSTAGRAM") {
-      await handleInstagramPayload(body, agencyId, integrationId, integration);
+      return handleInstagramPayload(body, agencyId, integrationId, integration);
     }
   } catch (err) {
     console.error("Meta Webhook processing error:", err);
@@ -423,6 +444,7 @@ async function handleIncomingPayload({
   externalMsgId,
   msgType,
   msgBody,
+  mediaUrl,
   senderName,
   integration,
 }) {
@@ -436,8 +458,8 @@ async function handleIncomingPayload({
   // 3. Find or create conversation
   const { conversation, isNew } = await findOrCreateConversation(agencyId, contact.id, integrationId, platform);
 
-  // 4. Save incoming message
-  const message = await saveMessage(conversation.id, "INBOUND", msgType, msgBody, externalMsgId);
+  // 4. Save incoming message with mediaUrl
+  const message = await saveMessage(conversation.id, "INBOUND", msgType, msgBody, externalMsgId, mediaUrl);
 
   // Emit socket event to notify agents of new message/conversation
   emitToAgency(agencyId, "new_message", {

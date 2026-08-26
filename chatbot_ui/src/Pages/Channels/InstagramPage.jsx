@@ -81,7 +81,7 @@ function IGAccountCard({ account, selected, onToggle, connected }) {
   );
 }
 
-export default function InstagramPage() {
+export default function InstagramPage({ embedded = false }) {
   const { fbReady, sdkError, login } = useFacebookSDK();
 
   const [connected, setConnected]         = useState([]);
@@ -177,8 +177,10 @@ export default function InstagramPage() {
 
   const connectedIds = new Set(connected.map(c => c.ig_account_id));
 
+  const LayoutWrapper = embedded ? ({ children }) => <div>{children}</div> : AppLayout;
+
   return (
-    <AppLayout>
+    <LayoutWrapper>
       {toast && <div className="toast-container"><div className={`toast ${toast.type}`}>{toast.msg}</div></div>}
 
       {/* Manual Connect Modal */}
@@ -335,6 +337,6 @@ export default function InstagramPage() {
           </div>
         </div>
       </div>
-    </AppLayout>
+    </LayoutWrapper>
   );
 }

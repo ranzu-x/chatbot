@@ -41,8 +41,8 @@ router.post("/auth/login", async (req, res) => {
 
     res.cookie("token", token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+      secure: false,          // keep false so HTTP ngrok tunnels work
+      sameSite: "lax",        // was "strict" — strict blocks cookie on cross-domain nav
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 

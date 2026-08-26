@@ -116,11 +116,133 @@ router.delete("/admin/agencies/:id", async (req, res) => {
 router.get("/admin/users", async (req, res) => {
   try {
     const [users] = await pool.query(
-      "SELECT id, name, email, role, is_active, created_at FROM users ORDER BY created_at DESC"
+      "SELECT id, name, email, role, is_active, avatar, created_at, updated_at FROM users ORDER BY created_at DESC"
     );
     return res.json({ success: true, users });
   } catch (err) {
     console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── TOGGLE USER STATUS ───────────────────────────────────────────────────────
+router.patch("/admin/users/:id/toggle", async (req, res) => {
+  try {
+    const [rows] = await pool.query("SELECT is_active FROM users WHERE id = ?", [req.params.id]);
+    if (!rows.length) return res.status(404).json({ success: false, message: "User not found" });
+    const newStatus = rows[0].is_active ? 0 : 1;
+    await pool.query("UPDATE users SET is_active = ? WHERE id = ?", [newStatus, req.params.id]);
+    return res.json({ success: true, isActive: newStatus === 1 });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── CREATE USER ──────────────────────────────────────────────────────────────
+router.post("/admin/users", async (req, res) => {
+  try {
+    const { name, email, password, role = "AGENT" } = req.body;
+    if (!name || !email || !password) {
+      return res.status(400).json({ success: false, message: "Name, email, and password are required" });
+    }
+
+    const [existing] = await pool.query("SELECT id FROM users WHERE email = ?", [email]);
+    if (existing.length) {
+      return res.status(400).json({ success: false, message: "Email is already in use" });
+    }
+
+    const bcryptModule = await import("bcrypt");
+    const hashedPassword = await bcryptModule.default.hash(password, 10);
+
+    const [result] = await pool.query(
+      "INSERT INTO users (name, email, password, role, is_active, created_at) VALUES (?, ?, ?, ?, 1, NOW())",
+      [name, email, hashedPassword, role]
+    );
+
+    const [created] = await pool.query("SELECT id, name, email, role, is_active, created_at FROM users WHERE id = ?", [result.insertId]);
+    return res.status(201).json({ success: true, user: created[0] });
+  } catch (err) {
+    console.error("Create user error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── UPDATE USER ──────────────────────────────────────────────────────────────
+router.put("/admin/users/:id", async (req, res) => {
+  try {
+    const { name, email, role } = req.body;
+    await pool.query(
+      "UPDATE users SET name = ?, email = ?, role = ? WHERE id = ?",
+      [name, email, role, req.params.id]
+    );
+    const [updated] = await pool.query("SELECT id, name, email, role, is_active, created_at FROM users WHERE id = ?", [req.params.id]);
+    return res.json({ success: true, user: updated[0] });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── DELETE USER ──────────────────────────────────────────────────────────────
+router.delete("/admin/users/:id", async (req, res) => {
+  try {
+    await pool.query("DELETE FROM users WHERE id = ?", [req.params.id]);
+    return res.json({ success: true, message: "User deleted" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── GET SYSTEM ANALYTICS ──────────────────────────────────────────────────
+router.get("/admin/analytics", async (req, res) => {
+  try {
+    const days = parseInt(req.query.days || "14");
+
+    const [dailyMessages] = await pool.query(`
+      SELECT 
+        DATE(created_at) as date,
+        SUM(CASE WHEN direction = 'INBOUND' THEN 1 ELSE 0 END) as inbound,
+        SUM(CASE WHEN direction = 'OUTBOUND' THEN 1 ELSE 0 END) as outbound,
+        COUNT(*) as total
+      FROM messages
+      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+      GROUP BY DATE(created_at)
+      ORDER BY DATE(created_at) ASC
+    `, [days]);
+
+    const [subscriberGain] = await pool.query(`
+      SELECT 
+        DATE(created_at) as date,
+        COUNT(*) as new_subscribers,
+        SUM(CASE WHEN platform = 'WHATSAPP' THEN 1 ELSE 0 END) as whatsapp,
+        SUM(CASE WHEN platform = 'FACEBOOK' THEN 1 ELSE 0 END) as facebook,
+        SUM(CASE WHEN platform = 'INSTAGRAM' THEN 1 ELSE 0 END) as instagram,
+        SUM(CASE WHEN platform = 'TELEGRAM' THEN 1 ELSE 0 END) as telegram,
+        SUM(CASE WHEN platform = 'WEBCHAT' THEN 1 ELSE 0 END) as webchat
+      FROM contacts
+      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+      GROUP BY DATE(created_at)
+      ORDER BY DATE(created_at) ASC
+    `, [days]);
+
+    const [platformDistribution] = await pool.query(`
+      SELECT platform, COUNT(*) as count
+      FROM contacts
+      GROUP BY platform
+    `);
+
+    return res.json({
+      success: true,
+      analytics: {
+        dailyMessages,
+        subscriberGain,
+        platformDistribution,
+      },
+    });
+  } catch (err) {
+    console.error("Admin Analytics error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });

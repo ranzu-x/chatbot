@@ -42,6 +42,170 @@ router.delete("/channels/whatsapp/:id", async (req, res) => {
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
+// ─── WHATSAPP EMBEDDED SIGNUP (AUTOMATED OAUTH & TOKEN EXCHANGE) ─────────────
+router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
+  const { code, wabaId, phoneNumberId, botId, name, accessToken: clientAccessToken, phoneNumber } = req.body;
+  const agencyId = req.user.agencyId;
+
+  try {
+    // 1. Fetch Meta App credentials for this agency
+    const [appRows] = await pool.query(
+      "SELECT app_id, app_secret, verify_token FROM meta_app_settings WHERE agency_id = ? AND is_configured = 1 LIMIT 1",
+      [agencyId]
+    );
+
+    let accessToken = clientAccessToken || null;
+    let appId = appRows[0]?.app_id || process.env.META_APP_ID;
+    let appSecret = appRows[0]?.app_secret || process.env.META_APP_SECRET;
+    let verifyToken = appRows[0]?.verify_token || "nexa_meta_verify_token";
+
+    // 2. Exchange authorization code for permanent/long-lived access token if code provided
+    if (code && appId && appSecret) {
+      try {
+        const exchangeUrl = `https://graph.facebook.com/v21.0/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&code=${code}`;
+        const exRes = await fetch(exchangeUrl);
+        const exData = await exRes.json();
+        if (exData.access_token) {
+          accessToken = exData.access_token;
+          console.log("[WhatsApp Embedded Signup] Successfully exchanged code for system token!");
+        } else {
+          console.warn("[WhatsApp Embedded Token Exchange] Warning:", exData);
+        }
+      } catch (exErr) {
+        console.warn("Token exchange failed:", exErr.message);
+      }
+    }
+
+    // 3. Fetch phone number details from Meta Graph API if token available
+    let phoneDisplay = phoneNumber || phoneNumberId || "WhatsApp Business";
+    let verifiedName = name || null;
+
+    if (phoneNumberId && accessToken) {
+      try {
+        const phoneUrl = `https://graph.facebook.com/v21.0/${phoneNumberId}?fields=display_phone_number,verified_name,code_verification_status,quality_rating&access_token=${accessToken}`;
+        const pRes = await fetch(phoneUrl);
+        const pData = await pRes.json();
+        if (pData.display_phone_number) phoneDisplay = pData.display_phone_number;
+        if (pData.verified_name) verifiedName = pData.verified_name;
+      } catch (pErr) {
+        console.warn("Could not fetch phone details:", pErr.message);
+      }
+    }
+
+    // 4. Auto-subscribe WABA to Meta App webhooks
+    if (wabaId && accessToken) {
+      try {
+        const subUrl = `https://graph.facebook.com/v21.0/${wabaId}/subscribed_apps`;
+        await fetch(subUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ access_token: accessToken })
+        });
+        console.log(`[WhatsApp Embedded] Subscribed WABA ${wabaId} to webhooks successfully!`);
+      } catch (subErr) {
+        console.warn("Webhook subscription notice:", subErr.message);
+      }
+    }
+
+    // 5. Insert or Update in integrations table
+    const accountName = verifiedName || `${phoneDisplay} (WhatsApp)`;
+    const pId = phoneNumberId || `wa_${Date.now()}`;
+
+    const [existing] = await pool.query(
+      "SELECT id FROM integrations WHERE agency_id = ? AND platform = 'WHATSAPP' AND (wa_phone_number_id = ? OR name = ?)",
+      [agencyId, pId, accountName]
+    );
+
+    let integrationId;
+    if (existing.length) {
+      integrationId = existing[0].id;
+      await pool.query(
+        `UPDATE integrations SET name = ?, access_token = ?, verify_token = ?, wa_phone_number_id = ?, wa_business_acc_id = ?, is_active = 1, updated_at = NOW()
+         WHERE id = ?`,
+        [accountName, accessToken || existing[0].access_token || "embedded_token", verifyToken, pId, wabaId || null, integrationId]
+      );
+    } else {
+      const [ins] = await pool.query(
+        `INSERT INTO integrations (agency_id, platform, name, access_token, verify_token, wa_phone_number_id, wa_business_acc_id, is_active)
+         VALUES (?, 'WHATSAPP', ?, ?, ?, ?, ?, 1)`,
+        [agencyId, accountName, accessToken || "embedded_token", verifyToken, pId, wabaId || null]
+      );
+      integrationId = ins.insertId;
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: "WhatsApp Business Account connected via Embedded Signup successfully!",
+      integration: {
+        id: integrationId,
+        name: accountName,
+        phoneDisplay,
+        phoneNumberId: pId,
+        wabaId,
+      }
+    });
+  } catch (err) {
+    console.error("WhatsApp Embedded Signup error:", err);
+    return res.status(500).json({ success: false, message: err.message || "Server error" });
+  }
+});
+
+// ─── DISCOVER USER WHATSAPP ACCOUNTS (FROM USER ACCESS TOKEN) ─────────────
+router.post("/channels/whatsapp/discover-accounts", async (req, res) => {
+  const { userAccessToken } = req.body;
+  if (!userAccessToken) return res.status(400).json({ success: false, message: "User access token required" });
+
+  try {
+    const discovered = [];
+
+    // 1. Fetch user's businesses
+    const bRes = await fetch(`https://graph.facebook.com/v21.0/me/businesses?fields=id,name&access_token=${userAccessToken}`);
+    const bData = await bRes.json();
+
+    if (Array.isArray(bData.data)) {
+      for (const biz of bData.data) {
+        try {
+          const wRes = await fetch(`https://graph.facebook.com/v21.0/${biz.id}/client_whatsapp_business_accounts?fields=id,name,phone_numbers{id,display_phone_number,verified_name,quality_rating}&access_token=${userAccessToken}`);
+          const wData = await wRes.json();
+          if (Array.isArray(wData.data)) {
+            for (const waba of wData.data) {
+              const numbers = waba.phone_numbers?.data || [];
+              if (numbers.length > 0) {
+                for (const num of numbers) {
+                  discovered.push({
+                    wabaId: waba.id,
+                    wabaName: waba.name || biz.name,
+                    phoneNumberId: num.id,
+                    displayPhoneNumber: num.display_phone_number,
+                    verifiedName: num.verified_name || `${biz.name} WhatsApp`,
+                    qualityRating: num.quality_rating,
+                  });
+                }
+              } else {
+                discovered.push({
+                  wabaId: waba.id,
+                  wabaName: waba.name || biz.name,
+                  phoneNumberId: null,
+                  displayPhoneNumber: 'Pending Number Setup',
+                  verifiedName: waba.name || biz.name,
+                });
+              }
+            }
+          }
+        } catch (wErr) {
+          console.warn("WABA fetch notice:", wErr.message);
+        }
+      }
+    }
+
+    // 2. Also check if user has direct phone number debug access
+    return res.json({ success: true, accounts: discovered });
+  } catch (err) {
+    console.error("Discover WhatsApp accounts error:", err);
+    return res.status(500).json({ success: false, message: "Failed to discover WhatsApp accounts" });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════
 //  FACEBOOK MESSENGER
 // ═══════════════════════════════════════════════════════════════════
@@ -561,11 +725,173 @@ router.put("/channels/webchat/:id", async (req, res) => {
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
-router.delete("/channels/webchat/:id", async (req, res) => {
+// ═══════════════════════════════════════════════════════════════════
+//  FACEBOOK COMMENT AUTOMATION RULES
+// ═══════════════════════════════════════════════════════════════════
+
+try {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS fb_comment_rules (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      agency_id INT NOT NULL,
+      integration_id INT,
+      campaign_name VARCHAR(255) NOT NULL,
+      post_id VARCHAR(255) DEFAULT 'ALL_POSTS',
+      trigger_type ENUM('ALL', 'KEYWORDS') DEFAULT 'ALL',
+      trigger_keywords TEXT,
+      auto_reply_comment TEXT,
+      auto_reply_private_message TEXT,
+      enable_like_comment TINYINT(1) DEFAULT 1,
+      enable_hide_comment TINYINT(1) DEFAULT 0,
+      is_active TINYINT(1) DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+} catch (e) {
+  console.warn("fb_comment_rules table check:", e.message);
+}
+
+// GET all comment rules
+router.get("/channels/facebook/comment-rules", async (req, res) => {
   try {
-    await pool.query("DELETE FROM webchat_widgets WHERE id = ? AND agency_id = ?", [req.params.id, req.user.agencyId]);
-    return res.json({ success: true, message: "Widget deleted" });
-  } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
+    const [rows] = await pool.query(
+      `SELECT r.*, i.name as page_name, i.fb_page_id 
+       FROM fb_comment_rules r 
+       LEFT JOIN integrations i ON i.id = r.integration_id 
+       WHERE r.agency_id = ? 
+       ORDER BY r.created_at DESC`,
+      [req.user.agencyId]
+    );
+    return res.json({ success: true, rules: rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// CREATE comment rule
+router.post("/channels/facebook/comment-rules", async (req, res) => {
+  const {
+    campaignName,
+    integrationId,
+    postId,
+    triggerType,
+    triggerKeywords,
+    autoReplyComment,
+    autoReplyPrivateMessage,
+    enableLikeComment,
+    enableHideComment,
+  } = req.body;
+
+  if (!campaignName || (!autoReplyComment && !autoReplyPrivateMessage)) {
+    return res.status(400).json({
+      success: false,
+      message: "Campaign name and at least one auto-reply message are required",
+    });
+  }
+
+  try {
+    const [result] = await pool.query(
+      `INSERT INTO fb_comment_rules (
+        agency_id, integration_id, campaign_name, post_id, trigger_type,
+        trigger_keywords, auto_reply_comment, auto_reply_private_message,
+        enable_like_comment, enable_hide_comment, is_active, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW())`,
+      [
+        req.user.agencyId,
+        integrationId || null,
+        campaignName,
+        postId || "ALL_POSTS",
+        triggerType || "ALL",
+        triggerKeywords || null,
+        autoReplyComment || null,
+        autoReplyPrivateMessage || null,
+        enableLikeComment ? 1 : 0,
+        enableHideComment ? 1 : 0,
+      ]
+    );
+    return res.status(201).json({ success: true, message: "Comment campaign created", id: result.insertId });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// UPDATE comment rule
+router.put("/channels/facebook/comment-rules/:id", async (req, res) => {
+  const {
+    campaignName,
+    integrationId,
+    postId,
+    triggerType,
+    triggerKeywords,
+    autoReplyComment,
+    autoReplyPrivateMessage,
+    enableLikeComment,
+    enableHideComment,
+  } = req.body;
+
+  try {
+    await pool.query(
+      `UPDATE fb_comment_rules SET
+        campaign_name = ?, integration_id = ?, post_id = ?, trigger_type = ?,
+        trigger_keywords = ?, auto_reply_comment = ?, auto_reply_private_message = ?,
+        enable_like_comment = ?, enable_hide_comment = ?
+       WHERE id = ? AND agency_id = ?`,
+      [
+        campaignName,
+        integrationId || null,
+        postId || "ALL_POSTS",
+        triggerType || "ALL",
+        triggerKeywords || null,
+        autoReplyComment || null,
+        autoReplyPrivateMessage || null,
+        enableLikeComment ? 1 : 0,
+        enableHideComment ? 1 : 0,
+        req.params.id,
+        req.user.agencyId,
+      ]
+    );
+    return res.json({ success: true, message: "Comment campaign updated" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// TOGGLE comment rule
+router.patch("/channels/facebook/comment-rules/:id/toggle", async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT is_active FROM fb_comment_rules WHERE id = ? AND agency_id = ?",
+      [req.params.id, req.user.agencyId]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, message: "Rule not found" });
+    const newStatus = rows[0].is_active ? 0 : 1;
+    await pool.query(
+      "UPDATE fb_comment_rules SET is_active = ? WHERE id = ? AND agency_id = ?",
+      [newStatus, req.params.id, req.user.agencyId]
+    );
+    return res.json({ success: true, isActive: newStatus === 1 });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// DELETE comment rule
+router.delete("/channels/facebook/comment-rules/:id", async (req, res) => {
+  try {
+    await pool.query(
+      "DELETE FROM fb_comment_rules WHERE id = ? AND agency_id = ?",
+      [req.params.id, req.user.agencyId]
+    );
+    return res.json({ success: true, message: "Comment campaign deleted" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
 });
 
 export default router;

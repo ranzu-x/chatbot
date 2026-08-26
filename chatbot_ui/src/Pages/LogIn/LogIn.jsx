@@ -61,9 +61,11 @@ export default function Login() {
       <div className="login-card animate-slide-up">
         {/* Logo */}
         <div className="login-logo">
-          <div className="login-logo-icon">💬</div>
-          <h1 className="login-title gradient-text">ChatSaaS</h1>
-          <p className="login-sub">Sign in to your workspace</p>
+          <div className="login-logo-icon" style={{ background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)', color: '#fff', width: 44, height: 44, borderRadius: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>
+            <span style={{ fontSize: '1.4rem' }}>⚡</span>
+          </div>
+          <h1 className="login-title gradient-text">Nexa Chatbot</h1>
+          <p className="login-sub">Sign in to your AI & multichannel marketing workspace</p>
         </div>
 
         {/* Error */}

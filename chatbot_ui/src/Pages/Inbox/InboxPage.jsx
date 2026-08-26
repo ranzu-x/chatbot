@@ -1,24 +1,85 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import Sidebar from '../../Components/Sidebar';
-import { conversationAPI, uploadAPI, cannedResponseAPI, contactAPI, flowAPI, agencyAPI } from '../../services/api';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import AppLayout from '../../Layout/AppLayout';
+import {
+  conversationAPI,
+  uploadAPI,
+  cannedResponseAPI,
+  contactAPI,
+  flowAPI,
+  agencyAPI,
+} from '../../services/api';
 import { useAuth } from '../../Provider/AuthContext';
+import { useLayout } from '../../Provider/LayoutContext';
 import io from 'socket.io-client';
+import {
+  MessageSquare,
+  MessageCircle,
+  Facebook,
+  Instagram,
+  Send,
+  Globe,
+  Search,
+  SlidersHorizontal,
+  Bot,
+  User,
+  Tag,
+  FileText,
+  Paperclip,
+  Check,
+  CheckCheck,
+  Zap,
+  Sparkles,
+  Pause,
+  Play,
+  Trash2,
+  PhoneCall,
+  Clock,
+  ChevronRight,
+  X,
+  Plus,
+  RefreshCw,
+  MoreVertical,
+  Shield,
+  CheckCircle2,
+  Smile,
+  Image as ImageIcon,
+  Film,
+  Menu,
+  Download,
+  ExternalLink,
+  Volume2,
+  UserCheck,
+  ListFilter,
+  Layers,
+  Calendar,
+  Phone,
+  Mail,
+  Sliders,
+} from 'lucide-react';
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+/* ─── Platform Map ─── */
+const PLATFORM_MAP = {
+  WHATSAPP:  { label: 'WhatsApp',  icon: MessageCircle, color: '#25d366', bg: 'rgba(37, 211, 102, 0.12)' },
+  FACEBOOK:  { label: 'Facebook',  icon: Facebook,      color: '#1877f2', bg: 'rgba(24, 119, 242, 0.12)' },
+  INSTAGRAM: { label: 'Instagram', icon: Instagram,     color: '#e1306c', bg: 'rgba(225, 48, 108, 0.12)' },
+  TELEGRAM:  { label: 'Telegram',  icon: Send,          color: '#229ed9', bg: 'rgba(34, 158, 217, 0.12)' },
+  WEBCHAT:   { label: 'Webchat',   icon: Globe,         color: '#2563eb', bg: 'rgba(37, 99, 235, 0.12)' },
+};
 
-function getPlatformIcon(platform) {
-  const map = { WHATSAPP: '📱', FACEBOOK: '📘', INSTAGRAM: '📸', TELEGRAM: '✈️', WEBCHAT: '🌐' };
-  return map[platform] || '💬';
+function getPlatformInfo(p) {
+  const norm = (p || 'WHATSAPP').toUpperCase();
+  return PLATFORM_MAP[norm] || { label: norm, icon: MessageSquare, color: '#64748b', bg: 'rgba(100, 116, 139, 0.12)' };
 }
 
-function getPlatformClass(platform) {
-  const map = { WHATSAPP: 'platform-wa', FACEBOOK: 'platform-fb', INSTAGRAM: 'platform-ig', TELEGRAM: 'platform-tg', WEBCHAT: 'platform-wc' };
-  return map[platform] || '';
-}
-
-function getPlatformBadgeClass(platform) {
-  const map = { WHATSAPP: 'badge-wa', FACEBOOK: 'badge-fb', INSTAGRAM: 'badge-ig', TELEGRAM: 'badge-tg', WEBCHAT: 'badge-wc' };
-  return map[platform] || 'badge-muted';
+function resolveMediaUrl(url) {
+  if (!url) return '';
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('blob:') || url.startsWith('data:')) {
+    return url;
+  }
+  const baseUrl = import.meta.env.VITE_API_URL
+    ? import.meta.env.VITE_API_URL.replace('/api/v1', '')
+    : 'http://localhost:5000';
+  return `${baseUrl}${url.startsWith('/') ? '' : '/'}${url}`;
 }
 
 function formatTime(ts) {
@@ -38,22 +99,27 @@ function formatRelativeTime(ts) {
   return new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
+function formatFullDate(ts) {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 function getInitials(name = '') {
-  return name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2) || '?';
+  return (name || '').trim().split(/\s+/).map((w) => w[0]).join('').toUpperCase().slice(0, 2) || '?';
 }
 
 const STATUS_CHIPS = ['All', 'OPEN', 'PENDING', 'RESOLVED'];
-const PLATFORM_CHIPS = ['WHATSAPP', 'FACEBOOK', 'INSTAGRAM', 'TELEGRAM', 'WEBCHAT'];
+const DRAWER_TABS = ['Overview', 'Labels', 'Flows & Agent', 'Custom Fields', 'Notes'];
 
 export default function InboxPage() {
   const { user } = useAuth();
-  
-  // Layout toggles
-  const [sidebarVisible, setSidebarVisible] = useState(() => {
-    const saved = localStorage.getItem('inbox_sidebar_visible');
-    return saved !== null ? saved === 'true' : true;
-  });
-  const [showSubscriberPanel, setShowSubscriberPanel] = useState(true);
+  const { openPopupNav } = useLayout();
 
   // Conversations & Messages
   const [conversations, setConversations] = useState([]);
@@ -67,27 +133,29 @@ export default function InboxPage() {
   const [statusFilter, setStatusFilter] = useState('All');
   const [platformFilter, setPlatformFilter] = useState('');
   const [search, setSearch] = useState('');
+  const [showSubscriberPanel, setShowSubscriberPanel] = useState(true);
+  const [previewImage, setPreviewImage] = useState(null);
 
-  // Subscriber Details & Controls State
+  // Subscriber Details & Extended Panel State
+  const [activeDrawerTab, setActiveDrawerTab] = useState('Overview');
+  const [botPaused, setBotPaused] = useState(false);
+  const [togglingBot, setTogglingBot] = useState(false);
   const [contactTags, setContactTags] = useState([]);
   const [newTagInput, setNewTagInput] = useState('');
   const [addingTag, setAddingTag] = useState(false);
   const [contactNotes, setContactNotes] = useState([]);
   const [newNoteText, setNewNoteText] = useState('');
-  const [addingNote, setAddingNote] = useState(false);
-  const [botPaused, setBotPaused] = useState(false);
-  const [togglingBot, setTogglingBot] = useState(false);
-  const [activeFlow, setActiveFlow] = useState(null);
+  const [savingNote, setSavingNote] = useState(false);
+  const [agentsList, setAgentsList] = useState([]);
+  const [assigningAgent, setAssigningAgent] = useState(false);
   const [availableFlows, setAvailableFlows] = useState([]);
   const [selectedFlowId, setSelectedFlowId] = useState('');
   const [triggeringFlow, setTriggeringFlow] = useState(false);
-  const [agentsList, setAgentsList] = useState([]);
-  const [assigningAgent, setAssigningAgent] = useState(false);
+  const [convStatus, setConvStatus] = useState('OPEN');
+  const [updatingStatus, setUpdatingStatus] = useState(false);
 
   // Canned Responses State
   const [cannedResponses, setCannedResponses] = useState([]);
-  const [showCannedModal, setShowCannedModal] = useState(false);
-  const [cannedSearch, setCannedSearch] = useState('');
 
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -99,24 +167,16 @@ export default function InboxPage() {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
 
-  const toggleSidebar = () => {
-    setSidebarVisible((prev) => {
-      const next = !prev;
-      localStorage.setItem('inbox_sidebar_visible', String(next));
-      return next;
-    });
-  };
-
-  // Load Canned Responses, Flows & Agents
+  // Load Canned Responses, Flows & Team Agents
   useEffect(() => {
-    cannedResponseAPI.getAll().then((res) => setCannedResponses(res.data.cannedResponses || [])).catch(() => {});
-    flowAPI.getAll().then((res) => setAvailableFlows(res.data.flows || [])).catch(() => {});
+    cannedResponseAPI.getAll().then((res) => setCannedResponses(res.data?.cannedResponses || [])).catch(() => {});
+    flowAPI.getAll().then((res) => setAvailableFlows(res.data?.flows || [])).catch(() => {});
     if (agencyAPI?.getAgents) {
-      agencyAPI.getAgents().then((res) => setAgentsList(res.data.agents || [])).catch(() => {});
+      agencyAPI.getAgents().then((res) => setAgentsList(res.data?.agents || [])).catch(() => {});
     }
   }, []);
 
-  // ── Load conversations ──────────────────────────────────────────────────────
+  // Load conversations list
   const loadConversations = useCallback(async () => {
     try {
       const params = {};
@@ -136,7 +196,7 @@ export default function InboxPage() {
     loadConversations();
   }, [loadConversations]);
 
-  // ── Load messages and subscriber info ───────────────────────────────────────
+  // Load messages and subscriber info
   const loadMessages = useCallback(async (convId) => {
     if (!convId) return;
     setMsgLoading(true);
@@ -146,10 +206,10 @@ export default function InboxPage() {
       setMessages(data.messages || []);
       const conv = data.conversation || data;
       setSelectedConv(conv);
+      setConvStatus(conv.status || 'OPEN');
       setBotPaused(Boolean(conv.bot_paused || conv.botPaused || conv.contactBotPaused));
       setContactTags(conv.contactTags || []);
       setContactNotes(data.notes || []);
-      setActiveFlow(data.activeFlow || null);
     } catch (err) {
       console.error('Failed to load conversation details', err);
     } finally {
@@ -157,36 +217,14 @@ export default function InboxPage() {
     }
   }, []);
 
-  // ── Select conversation ─────────────────────────────────────────────────────
   const selectConversation = (conv) => {
     setSelectedConv(conv);
+    setConvStatus(conv.status || 'OPEN');
     setMessages([]);
     loadMessages(conv._id || conv.id);
   };
 
-  // ── Web Audio Chime Helper ──────────────────────────────────────────────────
-  const playNotificationChime = () => {
-    try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (!AudioCtx) return;
-      const ctx = new AudioCtx();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(587.33, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.15);
-      gain.gain.setValueAtTime(0.12, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.3);
-    } catch (e) {
-      // Audio autoplay policy
-    }
-  };
-
-  // ── Socket.io Connection ────────────────────────────────────────────────────
+  // Socket.io Real-time connection with strict deduplication
   useEffect(() => {
     if (!user) return;
 
@@ -204,51 +242,66 @@ export default function InboxPage() {
     });
 
     socket.on('new_message', (data) => {
-      if (data.message?.direction?.toUpperCase() === 'INBOUND') {
-        playNotificationChime();
-      }
-      if (data.conversationId === selectedIdRef.current) {
+      if (String(data.conversationId) === String(selectedIdRef.current)) {
+        const incoming = data.message;
+        if (!incoming) return;
+
         setMessages((prev) => {
-          if (prev.some((m) => (m._id || m.id) === (data.message._id || data.message.id))) return prev;
-          return [...prev, data.message];
+          const isDuplicate = prev.some((m) => {
+            if (m.id && incoming.id && String(m.id) === String(incoming.id)) return true;
+            if (m._id && incoming._id && String(m._id) === String(incoming._id)) return true;
+            if (m.external_msg_id && incoming.external_msg_id && m.external_msg_id === incoming.external_msg_id) return true;
+            return false;
+          });
+          if (isDuplicate) return prev;
+          return [...prev, incoming];
         });
       }
       loadConversations();
     });
 
-    socket.on('conversation_updated', (data) => {
-      loadConversations();
-      if (selectedIdRef.current === data.conversationId) {
-        setSelectedConv((prev) => (prev ? { ...prev, ...data } : prev));
-        if (data.botPaused !== undefined) setBotPaused(data.botPaused);
-      }
-    });
-
-    socket.on('new_conversation', () => {
-      playNotificationChime();
+    socket.on('conversation_updated', () => {
       loadConversations();
     });
 
-    return () => {
-      socket.disconnect();
-    };
+    return () => socket.disconnect();
   }, [user, loadConversations]);
 
-  // ── Auto-scroll to bottom on new messages ──────────────────────────────────
+  // Auto-scroll messages to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // ── Send message ────────────────────────────────────────────────────────────
-  const handleSend = async () => {
-    const body = messageText.trim();
-    if (!body || !selectedConv || sending) return;
-    const convId = selectedConv._id || selectedConv.id;
-    setSending(true);
+  // Send Message with robust deduplication
+  const handleSendMessage = async (e) => {
+    e?.preventDefault();
+    if (!messageText.trim() || !selectedId || sending) return;
+
+    const text = messageText.trim();
     setMessageText('');
+    setSending(true);
+
     try {
-      await conversationAPI.sendMessage(convId, { body });
-      await loadMessages(convId);
+      const res = await conversationAPI.sendMessage(selectedId, {
+        content: text,
+        body: text,
+        type: 'text',
+        direction: 'OUTBOUND',
+      });
+      const newMsg = res.data.message || res.data;
+
+      // Add to messages only if not already present
+      setMessages((prev) => {
+        const isDuplicate = prev.some((m) => {
+          if (m.id && newMsg.id && String(m.id) === String(newMsg.id)) return true;
+          if (m._id && newMsg._id && String(m._id) === String(newMsg._id)) return true;
+          return false;
+        });
+        if (isDuplicate) return prev;
+        return [...prev, newMsg];
+      });
+
+      loadConversations();
     } catch (err) {
       console.error('Failed to send message', err);
     } finally {
@@ -256,53 +309,57 @@ export default function InboxPage() {
     }
   };
 
+  // Handle File / Media Upload
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
-    if (!file || !selectedConv || uploading) return;
-    const convId = selectedConv._id || selectedConv.id;
-    setUploading(true);
+    if (!file || !selectedId) return;
 
+    setUploading(true);
     try {
       const formData = new FormData();
       formData.append('file', file);
+
       const uploadRes = await uploadAPI.uploadFile(formData);
-
       const { url, type, filename } = uploadRes.data;
-      let msgType = 'DOCUMENT';
-      if (file.type.startsWith('image/')) msgType = 'IMAGE';
-      else if (file.type.startsWith('video/')) msgType = 'VIDEO';
-      else if (file.type.startsWith('audio/')) msgType = 'AUDIO';
 
-      await conversationAPI.sendMessage(convId, {
+      const res = await conversationAPI.sendMessage(selectedId, {
+        type: type || 'IMAGE',
         body: filename || file.name,
-        type: msgType,
         mediaUrl: url,
+        direction: 'OUTBOUND',
       });
-      await loadMessages(convId);
+
+      const newMsg = res.data.message || res.data;
+      setMessages((prev) => {
+        const isDuplicate = prev.some((m) => {
+          if (m.id && newMsg.id && String(m.id) === String(newMsg.id)) return true;
+          if (m._id && newMsg._id && String(m._id) === String(newMsg._id)) return true;
+          return false;
+        });
+        if (isDuplicate) return prev;
+        return [...prev, newMsg];
+      });
+
+      loadConversations();
     } catch (err) {
       console.error('Failed to upload file', err);
+      alert('Failed to upload attachment.');
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
-
-  // ── Toggle Bot Pause / Resume ───────────────────────────────────────────────
+  // Toggle Bot Pause
   const handleToggleBot = async () => {
-    if (!selectedConv || togglingBot) return;
-    const convId = selectedConv._id || selectedConv.id;
+    if (!selectedConv) return;
+    const contactId = selectedConv.contact_id || selectedConv.contactId;
+    if (!contactId) return;
+
     setTogglingBot(true);
     try {
-      const res = await conversationAPI.toggleBot(convId);
-      setBotPaused(res.data.botPaused);
-      setSelectedConv((prev) => ({ ...prev, bot_paused: res.data.botPaused ? 1 : 0 }));
+      await contactAPI.toggleBot(contactId);
+      setBotPaused((prev) => !prev);
     } catch (err) {
       console.error('Failed to toggle bot', err);
     } finally {
@@ -310,30 +367,14 @@ export default function InboxPage() {
     }
   };
 
-  // ── Trigger Flow Manually ───────────────────────────────────────────────────
-  const handleTriggerFlow = async () => {
-    if (!selectedConv || !selectedFlowId || triggeringFlow) return;
-    const convId = selectedConv._id || selectedConv.id;
-    setTriggeringFlow(true);
-    try {
-      await conversationAPI.triggerFlow(convId, selectedFlowId);
-      await loadMessages(convId);
-      setSelectedFlowId('');
-    } catch (err) {
-      console.error('Failed to trigger flow', err);
-    } finally {
-      setTriggeringFlow(false);
-    }
-  };
-
-  // ── Assign Agent ────────────────────────────────────────────────────────────
+  // Assign Team Agent
   const handleAssignAgent = async (agentProfileId) => {
-    if (!selectedConv || assigningAgent) return;
-    const convId = selectedConv._id || selectedConv.id;
+    if (!selectedId) return;
     setAssigningAgent(true);
     try {
-      await conversationAPI.assign(convId, agentProfileId || null);
-      await loadMessages(convId);
+      await conversationAPI.assign(selectedId, agentProfileId || null);
+      setSelectedConv((prev) => ({ ...prev, assigned_to_id: agentProfileId }));
+      loadConversations();
     } catch (err) {
       console.error('Failed to assign agent', err);
     } finally {
@@ -341,17 +382,48 @@ export default function InboxPage() {
     }
   };
 
-  // ── Tags Management ─────────────────────────────────────────────────────────
+  // Update Conversation Status (OPEN, PENDING, RESOLVED)
+  const handleUpdateStatus = async (newStatus) => {
+    if (!selectedId) return;
+    setUpdatingStatus(true);
+    try {
+      await conversationAPI.updateStatus(selectedId, newStatus);
+      setConvStatus(newStatus);
+      setSelectedConv((prev) => ({ ...prev, status: newStatus }));
+      loadConversations();
+    } catch (err) {
+      console.error('Failed to update status', err);
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
+
+  // Trigger Visual Bot Flow
+  const handleTriggerFlow = async () => {
+    if (!selectedId || !selectedFlowId) return;
+    setTriggeringFlow(true);
+    try {
+      await conversationAPI.triggerFlow(selectedId, selectedFlowId);
+      alert('Flow triggered successfully!');
+      loadMessages(selectedId);
+    } catch (err) {
+      console.error('Failed to trigger flow', err);
+    } finally {
+      setTriggeringFlow(false);
+    }
+  };
+
+  // Add Contact Tag / Label
   const handleAddTag = async (e) => {
-    e.preventDefault();
+    e?.preventDefault();
     const tag = newTagInput.trim();
-    if (!tag || !selectedConv || addingTag) return;
-    const contactId = selectedConv.contact_id || selectedConv.contactId || selectedConv.contact?.id;
-    if (!contactId) return;
+    const contactId = selectedConv?.contact_id || selectedConv?.contactId;
+    if (!tag || !contactId || addingTag) return;
+
     setAddingTag(true);
     try {
-      const res = await contactAPI.addTag(contactId, tag);
-      setContactTags(res.data.tags || []);
+      await contactAPI.addTag(contactId, tag);
+      setContactTags((prev) => [...new Set([...prev, tag])]);
       setNewTagInput('');
     } catch (err) {
       console.error('Failed to add tag', err);
@@ -360,193 +432,209 @@ export default function InboxPage() {
     }
   };
 
-  const handleRemoveTag = async (tagToRemove) => {
-    if (!selectedConv) return;
-    const contactId = selectedConv.contact_id || selectedConv.contactId || selectedConv.contact?.id;
+  // Remove Contact Tag / Label
+  const handleRemoveTag = async (tag) => {
+    const contactId = selectedConv?.contact_id || selectedConv?.contactId;
     if (!contactId) return;
     try {
-      const res = await contactAPI.removeTag(contactId, tagToRemove);
-      setContactTags(res.data.tags || []);
+      await contactAPI.removeTag(contactId, tag);
+      setContactTags((prev) => prev.filter((t) => t !== tag));
     } catch (err) {
       console.error('Failed to remove tag', err);
     }
   };
 
-  // ── Notes Management ────────────────────────────────────────────────────────
+  // Add Internal Agent Note
   const handleAddNote = async (e) => {
-    e.preventDefault();
-    const note = newNoteText.trim();
-    if (!note || !selectedConv || addingNote) return;
-    const contactId = selectedConv.contact_id || selectedConv.contactId || selectedConv.contact?.id;
-    if (!contactId) return;
-    setAddingNote(true);
+    e?.preventDefault();
+    const noteText = newNoteText.trim();
+    const contactId = selectedConv?.contact_id || selectedConv?.contactId;
+    if (!noteText || !contactId || savingNote) return;
+
+    setSavingNote(true);
     try {
-      const res = await contactAPI.addNote(contactId, note);
-      setContactNotes((prev) => [res.data.note, ...prev]);
+      await contactAPI.addNote(contactId, noteText);
+      const res = await contactAPI.getNotes(contactId);
+      setContactNotes(res.data.notes || []);
       setNewNoteText('');
     } catch (err) {
       console.error('Failed to add note', err);
     } finally {
-      setAddingNote(false);
+      setSavingNote(false);
     }
   };
 
-  const handleDeleteNote = async (noteId) => {
-    if (!selectedConv) return;
-    const contactId = selectedConv.contact_id || selectedConv.contactId || selectedConv.contact?.id;
-    if (!contactId) return;
-    try {
-      await contactAPI.deleteNote(contactId, noteId);
-      setContactNotes((prev) => prev.filter((n) => n.id !== noteId));
-    } catch (err) {
-      console.error('Failed to delete note', err);
-    }
-  };
-
-  // ── Resolve conversation ────────────────────────────────────────────────────
-  const handleResolve = async () => {
-    if (!selectedConv) return;
-    const convId = selectedConv._id || selectedConv.id;
-    try {
-      await conversationAPI.updateStatus(convId, 'RESOLVED');
-      setSelectedConv((prev) => ({ ...prev, status: 'RESOLVED' }));
-      setConversations((prev) =>
-        prev.map((c) => ((c._id === convId || c.id === convId) ? { ...c, status: 'RESOLVED' } : c))
-      );
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // ── Filtered conversations ──────────────────────────────────────────────────
+  // Filtered Conversations
   const filteredConversations = conversations.filter((c) => {
-    const name = c.contact?.name || c.contactName || '';
-    if (search && !name.toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
+    const q = search.toLowerCase();
+    const name = (c.contactName || c.contact_name || c.external_id || '').toLowerCase();
+    const lastMsg = (c.lastMessageBody || c.lastMessage?.content || c.last_message || '').toLowerCase();
+    return name.includes(q) || lastMsg.includes(q);
   });
 
-  const contactName = selectedConv?.contact?.name || selectedConv?.contactName || 'Subscriber';
-  const contactPhone = selectedConv?.contactPhone || selectedConv?.phone || '—';
-  const contactEmail = selectedConv?.contactEmail || selectedConv?.email || '—';
-  const contactPlatform = selectedConv?.platform || selectedConv?.contactPlatform || 'FACEBOOK';
-  const contactExternalId = selectedConv?.contactExternalId || selectedConv?.external_id || '—';
+  const activePlatformInfo = getPlatformInfo(selectedConv?.platform || selectedConv?.contactPlatform);
+  const ActivePlatformIcon = activePlatformInfo.icon || MessageSquare;
 
   return (
-    <div className={`inbox-page-wrapper ${sidebarVisible ? 'with-sidebar' : 'no-sidebar'}`}>
-      {/* ── Collapsible Main Navigation Sidebar ── */}
-      {sidebarVisible && <Sidebar />}
-
-      <div className="inbox-layout">
+    <AppLayout>
+      <div className="inbox-layout" style={{ display: 'flex', height: '100vh', width: '100%', overflow: 'hidden', background: '#f8fafc' }}>
         {/* ── 1. Conversation List Column ── */}
-        <aside className="conversation-list">
-          <div className="conversation-list-header">
-            <div className="conversation-list-title">
-              <div className="flex items-center gap-2">
-                {/* Sidebar Collapse Toggle Button */}
+        <aside className="conversation-list" style={{ width: 310, flexShrink: 0, borderRight: '1px solid #e2e8f0', background: '#ffffff', display: 'flex', flexDirection: 'column' }}>
+          <div className="conversation-list-header" style={{ padding: '14px 16px', borderBottom: '1px solid #e2e8f0' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <button
-                  type="button"
-                  className="sidebar-collapse-btn"
-                  onClick={toggleSidebar}
-                  title={sidebarVisible ? 'Hide main navigation menu' : 'Show main navigation menu'}
-                  style={!sidebarVisible ? { width: 'auto', padding: '0 10px', gap: 6, fontSize: '0.8rem', fontWeight: 600 } : {}}
+                  onClick={openPopupNav}
+                  title="Open Navigation Menu (Pop Bar)"
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: 7,
+                    border: '1px solid #e2e8f0',
+                    background: '#f8fafc',
+                    color: '#475569',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    transition: 'all 0.12s',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = '#2563eb'; e.currentTarget.style.background = '#f1f5f9'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = '#475569'; e.currentTarget.style.background = '#f8fafc'; }}
                 >
-                  {sidebarVisible ? '◀' : '▶ ☰ Menu'}
+                  <Menu size={16} />
                 </button>
-                <span>Live Chat 💬</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 800, fontSize: '0.94rem', color: '#0f172a' }}>
+                  <MessageSquare size={17} color="#2563eb" /> Live Inbox
+                </div>
               </div>
-              {!sidebarVisible && (
-                <span className="badge badge-primary" style={{ fontSize: '0.7rem', padding: '2px 8px' }}>
-                  Full View
-                </span>
-              )}
+              <span style={{ fontSize: '0.74rem', fontWeight: 600, padding: '2px 8px', borderRadius: 12, background: 'rgba(37, 99, 235, 0.08)', color: '#2563eb' }}>
+                {filteredConversations.length} Active
+              </span>
             </div>
 
-            {/* Status filters */}
-            <div className="filter-bar">
+            {/* Status Filter Chips */}
+            <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
               {STATUS_CHIPS.map((s) => (
                 <button
                   key={s}
-                  className={`filter-chip ${statusFilter === s ? 'active' : ''}`}
                   onClick={() => setStatusFilter(s)}
+                  style={{
+                    padding: '4px 8px',
+                    borderRadius: 6,
+                    fontSize: '0.72rem',
+                    fontWeight: 600,
+                    border: '1px solid',
+                    borderColor: statusFilter === s ? '#2563eb' : '#e2e8f0',
+                    background: statusFilter === s ? '#2563eb' : '#ffffff',
+                    color: statusFilter === s ? '#ffffff' : '#64748b',
+                    cursor: 'pointer',
+                  }}
                 >
-                  {s === 'All' ? 'All' : s.charAt(0) + s.slice(1).toLowerCase()}
+                  {s}
                 </button>
               ))}
             </div>
 
-            {/* Platform filters */}
-            <div className="filter-bar">
-              <button
-                className={`filter-chip ${platformFilter === '' ? 'active' : ''}`}
-                onClick={() => setPlatformFilter('')}
-              >
-                All
-              </button>
-              {PLATFORM_CHIPS.map((p) => (
-                <button
-                  key={p}
-                  className={`filter-chip ${platformFilter === p ? 'active' : ''}`}
-                  onClick={() => setPlatformFilter(p)}
-                >
-                  {getPlatformIcon(p)} {p.slice(0, 4)}
-                </button>
-              ))}
+            {/* Search Box */}
+            <div style={{ position: 'relative' }}>
+              <Search size={14} color="#94a3b8" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+              <input
+                type="text"
+                className="form-input"
+                placeholder="Search subscribers..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{ paddingLeft: 30, fontSize: '0.8rem', height: 34 }}
+              />
             </div>
-
-            {/* Search */}
-            <input
-              className="form-input"
-              placeholder="🔍 Search subscribers…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{ fontSize: '0.85rem' }}
-            />
           </div>
 
-          <div className="conversation-list-body">
+          {/* Conversation List Items */}
+          <div className="conversation-list-body" style={{ flex: 1, overflowY: 'auto' }}>
             {convLoading ? (
-              <div className="loading-overlay">
-                <div className="loading-spinner" />
+              <div style={{ padding: 40, textAlign: 'center' }}>
+                <div className="loading-spinner" style={{ margin: '0 auto 8px' }} />
+                <span style={{ fontSize: '0.78rem', color: '#64748b' }}>Loading chats...</span>
               </div>
             ) : filteredConversations.length === 0 ? (
-              <div className="empty-state" style={{ padding: '40px 20px' }}>
-                <div className="empty-icon">💬</div>
-                <div className="empty-title">No conversations</div>
+              <div style={{ padding: 40, textAlign: 'center', color: '#94a3b8', fontSize: '0.82rem' }}>
+                No conversations found.
               </div>
             ) : (
               filteredConversations.map((conv) => {
                 const id = conv._id || conv.id;
-                const name = conv.contact?.name || conv.contactName || 'Unknown';
-                const preview = conv.lastMessage?.body || conv.lastMessageBody || '…';
-                const time =
-                  conv.lastMessageTime ||
-                  conv.last_message_at ||
-                  conv.lastMessage?.createdAt ||
-                  conv.updated_at ||
-                  conv.created_at;
-                const unread = conv.unreadCount || conv.unread_count || 0;
-                const platform = conv.platform || 'FACEBOOK';
-                const isActive = id === selectedId;
+                const isSelected = String(selectedId) === String(id);
+                const pInfo = getPlatformInfo(conv.platform || conv.contactPlatform);
+                const PlatformIcon = pInfo.icon;
+                const contactName = conv.contactName || conv.contact_name || conv.external_id || 'Visitor';
+                const lastMsg = conv.lastMessageBody || conv.lastMessage?.content || conv.last_message || 'Started conversation';
+                const time = conv.lastMessageTime || conv.last_message_at || conv.updatedAt || conv.createdAt;
 
                 return (
                   <div
                     key={id}
-                    className={`conversation-item ${isActive ? 'active' : ''}`}
+                    className={`conversation-item ${isSelected ? 'active' : ''}`}
                     onClick={() => selectConversation(conv)}
+                    style={{
+                      padding: '12px 14px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      cursor: 'pointer',
+                      borderBottom: '1px solid #f1f5f9',
+                      background: isSelected ? '#f0f4ff' : 'transparent',
+                      borderLeft: isSelected ? '3px solid #2563eb' : '3px solid transparent',
+                    }}
                   >
-                    <div className="avatar avatar-sm">{getInitials(name)}</div>
-
-                    <div className="conv-info">
-                      <div className="conv-name truncate">{name}</div>
-                      <div className="conv-preview truncate">{preview}</div>
+                    <div style={{ position: 'relative' }}>
+                      <div
+                        style={{
+                          width: 38,
+                          height: 38,
+                          borderRadius: '50%',
+                          background: '#f1f5f9',
+                          color: '#0f172a',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontWeight: 700,
+                          fontSize: '0.85rem',
+                        }}
+                      >
+                        {getInitials(contactName)}
+                      </div>
+                      <div
+                        style={{
+                          position: 'absolute',
+                          bottom: -2,
+                          right: -2,
+                          width: 16,
+                          height: 16,
+                          borderRadius: '50%',
+                          background: '#ffffff',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+                        }}
+                      >
+                        <PlatformIcon size={10} color={pInfo.color} />
+                      </div>
                     </div>
 
-                    <div className="conv-meta">
-                      <span className="conv-time">{formatRelativeTime(time)}</span>
-                      <span className={`platform-icon ${getPlatformClass(platform)}`}>
-                        {getPlatformIcon(platform)}
-                      </span>
-                      {unread > 0 && <span className="unread-badge">{unread}</span>}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.84rem', color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {contactName}
+                        </span>
+                        <span style={{ fontSize: '0.7rem', color: '#94a3b8', flexShrink: 0, marginLeft: 4 }}>
+                          {formatRelativeTime(time)}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.76rem', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>
+                        {lastMsg}
+                      </div>
                     </div>
                   </div>
                 );
@@ -555,152 +643,214 @@ export default function InboxPage() {
           </div>
         </aside>
 
-        {/* ── 2. Full-Screen Chat Area (Middle Column) ── */}
-        <main className="chat-area">
-          {!selectedConv ? (
-            <div className="chat-empty">
-              <div style={{ fontSize: '4.5rem', opacity: 0.2 }}>💬</div>
-              <div style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--text-secondary)' }}>
-                Select a conversation
-              </div>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                Choose a conversation from the left to start live messaging
-              </div>
-            </div>
-          ) : (
+        {/* ── 2. Active Chat Messages Area ── */}
+        <main className="chat-area" style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#f8fafc', overflow: 'hidden' }}>
+          {selectedConv ? (
             <>
-              {/* Header */}
-              <div className="chat-header">
-                <div className="avatar">{getInitials(contactName)}</div>
-                <div className="chat-header-info">
-                  <div className="chat-header-name">{contactName}</div>
-                  <div className="chat-header-status">
-                    <span className={`badge ${getPlatformBadgeClass(contactPlatform)}`}>
-                      {getPlatformIcon(contactPlatform)} {contactPlatform}
-                    </span>
-                    {botPaused ? (
-                      <span className="badge badge-warning">⏸️ Bot Paused</span>
-                    ) : (
-                      <span className="badge badge-success">🤖 Bot Active</span>
-                    )}
+              {/* Chat Header */}
+              <div className="chat-header" style={{ height: 56, padding: '0 20px', background: '#ffffff', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: '50%',
+                      background: activePlatformInfo.bg,
+                      color: activePlatformInfo.color,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <ActivePlatformIcon size={18} />
+                  </div>
+
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '0.92rem', color: '#0f172a' }}>
+                      {selectedConv.contactName || selectedConv.contact_name || selectedConv.external_id || 'Subscriber'}
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span>{activePlatformInfo.label}</span>
+                      <span>•</span>
+                      <span style={{ color: botPaused ? '#ef4444' : '#10b981', fontWeight: 600 }}>
+                        ● {botPaused ? 'Bot Paused (Agent Mode)' : 'Bot Active'}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
-                <div className="chat-header-actions">
-                  {/* Bot Pause Toggle Button */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <button
-                    type="button"
-                    className={`btn btn-sm ${botPaused ? 'btn-primary' : 'btn-secondary'}`}
                     onClick={handleToggleBot}
                     disabled={togglingBot}
-                    title={botPaused ? 'Resume bot auto-replies' : 'Pause bot for human takeover'}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '6px 12px',
+                      borderRadius: 8,
+                      border: '1px solid #e2e8f0',
+                      background: botPaused ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)',
+                      color: botPaused ? '#10b981' : '#ef4444',
+                      fontSize: '0.8rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
                   >
-                    {botPaused ? '▶️ Resume Bot' : '⏸️ Pause Bot'}
+                    {botPaused ? <Play size={13} /> : <Pause size={13} />}
+                    {botPaused ? 'Resume Bot' : 'Pause Bot'}
                   </button>
 
-                  {/* Resolve Button */}
-                  {selectedConv.status !== 'RESOLVED' && (
-                    <button className="btn btn-sm btn-success" onClick={handleResolve}>
-                      ✅ Resolve
-                    </button>
-                  )}
-
-                  {/* Toggle Subscriber Panel */}
                   <button
-                    type="button"
-                    className={`btn btn-sm ${showSubscriberPanel ? 'btn-primary' : 'btn-secondary'}`}
-                    onClick={() => setShowSubscriberPanel(!showSubscriberPanel)}
-                    title="Toggle Subscriber Details Panel"
+                    onClick={() => setShowSubscriberPanel((p) => !p)}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: 8,
+                      border: '1px solid #e2e8f0',
+                      background: '#ffffff',
+                      color: '#475569',
+                      fontSize: '0.8rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
                   >
-                    👤 Subscriber Info
+                    <SlidersHorizontal size={14} />
+                    {showSubscriberPanel ? 'Hide Drawer' : 'Subscriber Info'}
                   </button>
                 </div>
               </div>
 
-              {/* Messages viewport */}
-              <div className="chat-messages">
+              {/* Chat Message List */}
+              <div className="chat-messages" style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {msgLoading ? (
-                  <div className="loading-overlay" style={{ flex: 1 }}>
-                    <div className="loading-spinner" />
+                  <div style={{ textAlign: 'center', padding: 40 }}>
+                    <div className="loading-spinner" style={{ margin: '0 auto 8px' }} />
+                    <span style={{ fontSize: '0.8rem', color: '#64748b' }}>Loading conversation messages...</span>
                   </div>
                 ) : messages.length === 0 ? (
-                  <div className="chat-empty">No messages yet. Send a message below! 👋</div>
+                  <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8', fontSize: '0.84rem' }}>
+                    No messages yet in this conversation.
+                  </div>
                 ) : (
-                  messages.map((msg) => {
-                    const isInbound =
-                      msg.direction?.toLowerCase() === 'inbound' || msg.type?.toLowerCase() === 'inbound';
-                    const rawMediaUrl = msg.media_url || msg.mediaUrl;
-                    const backendUrl = import.meta.env.VITE_API_URL
-                      ? import.meta.env.VITE_API_URL.replace('/api/v1', '')
-                      : 'http://localhost:5000';
-                    const fullMediaUrl =
-                      rawMediaUrl && !rawMediaUrl.startsWith('http')
-                        ? `${backendUrl}${rawMediaUrl}`
-                        : rawMediaUrl;
-                    const msgType = (msg.type || '').toUpperCase();
+                  messages.map((msg, idx) => {
+                    const isOutbound = (msg.direction || '').toUpperCase() === 'OUTBOUND';
+                    const rawMedia = msg.media_url || msg.mediaUrl || msg.url || (
+                      typeof msg.body === 'string' && (msg.body.startsWith('http') || msg.body.startsWith('/uploads')) && msg.body.match(/\.(jpeg|jpg|gif|png|webp|svg|mp4|webm|mov|ogg|mp3|pdf|doc|docx)($|\?)/i)
+                        ? msg.body
+                        : null
+                    );
+                    const mediaUrl = resolveMediaUrl(rawMedia);
+                    const text = (msg.body || msg.content || msg.message || '').trim();
+                    const isMediaOnly = rawMedia && (text === rawMedia || text === '[Attachment]' || text === '[Media]' || text === '[Audio]');
+
+                    const isImage = msg.type === 'IMAGE' || (mediaUrl && mediaUrl.match(/\.(jpeg|jpg|gif|png|webp|svg)($|\?)/i));
+                    const isVideo = msg.type === 'VIDEO' || (mediaUrl && mediaUrl.match(/\.(mp4|webm|mov|mkv)($|\?)/i));
+                    const isAudio = msg.type === 'AUDIO' || (mediaUrl && mediaUrl.match(/\.(mp3|wav|ogg|m4a)($|\?)/i));
+                    const isDoc   = msg.type === 'DOCUMENT' || (mediaUrl && mediaUrl.match(/\.(pdf|doc|docx|zip|txt)($|\?)/i));
 
                     return (
                       <div
-                        key={msg._id || msg.id}
+                        key={msg.id || msg._id || idx}
                         style={{
                           display: 'flex',
                           flexDirection: 'column',
-                          alignItems: isInbound ? 'flex-start' : 'flex-end',
+                          alignItems: isOutbound ? 'flex-end' : 'flex-start',
                         }}
                       >
-                        <div className={`message-bubble ${isInbound ? 'inbound' : 'outbound'}`}>
-                          {/* Rich Media Previews */}
-                          {fullMediaUrl && (
-                            <div style={{ marginBottom: 8 }}>
-                              {msgType === 'IMAGE' || /\.(jpg|jpeg|png|gif|webp)$/i.test(fullMediaUrl) ? (
-                                <img
-                                  src={fullMediaUrl}
-                                  alt="Attachment"
-                                  style={{
-                                    maxWidth: 320,
-                                    maxHeight: 240,
-                                    borderRadius: 10,
-                                    objectFit: 'cover',
-                                    display: 'block',
-                                    cursor: 'pointer',
-                                  }}
-                                  onClick={() => window.open(fullMediaUrl, '_blank')}
-                                />
-                              ) : msgType === 'VIDEO' || /\.(mp4|webm|mov)$/i.test(fullMediaUrl) ? (
-                                <video
-                                  controls
-                                  src={fullMediaUrl}
-                                  style={{ maxWidth: 320, maxHeight: 220, borderRadius: 10 }}
-                                />
-                              ) : msgType === 'AUDIO' || /\.(mp3|wav|ogg)$/i.test(fullMediaUrl) ? (
-                                <audio controls style={{ maxWidth: 260 }} src={fullMediaUrl} />
-                              ) : (
-                                <a
-                                  href={fullMediaUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: 8,
-                                    padding: '8px 14px',
-                                    background: 'rgba(0,0,0,0.12)',
-                                    borderRadius: 8,
-                                    fontSize: '0.85rem',
-                                    color: 'inherit',
-                                    textDecoration: 'none',
-                                    fontWeight: 600,
-                                  }}
-                                >
-                                  📎 Download File Attachment
-                                </a>
-                              )}
+                        <div
+                          style={{
+                            maxWidth: '72%',
+                            padding: isImage && isMediaOnly ? '4px' : '10px 14px',
+                            borderRadius: isOutbound ? '14px 14px 2px 14px' : '14px 14px 14px 2px',
+                            background: isOutbound ? '#2563eb' : '#ffffff',
+                            color: isOutbound ? '#ffffff' : '#0f172a',
+                            border: isOutbound ? 'none' : '1px solid #e2e8f0',
+                            fontSize: '0.86rem',
+                            lineHeight: 1.45,
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                            wordBreak: 'break-word',
+                            overflow: 'hidden',
+                          }}
+                        >
+                          {/* ── Image Rendering ── */}
+                          {isImage && (
+                            <div style={{ marginBottom: isMediaOnly ? 0 : 8 }}>
+                              <img
+                                src={mediaUrl}
+                                alt="Attachment"
+                                style={{
+                                  maxWidth: '100%',
+                                  maxHeight: 280,
+                                  borderRadius: 10,
+                                  cursor: 'pointer',
+                                  display: 'block',
+                                  objectFit: 'cover',
+                                }}
+                                onClick={() => setPreviewImage(mediaUrl)}
+                              />
                             </div>
                           )}
 
-                          {msg.body && <div>{msg.body}</div>}
-                          <div className="message-time">{formatTime(msg.created_at || msg.createdAt)}</div>
+                          {/* ── Video Rendering ── */}
+                          {isVideo && (
+                            <div style={{ marginBottom: isMediaOnly ? 0 : 8 }}>
+                              <video
+                                src={mediaUrl}
+                                controls
+                                style={{
+                                  maxWidth: '100%',
+                                  maxHeight: 280,
+                                  borderRadius: 10,
+                                  display: 'block',
+                                }}
+                              />
+                            </div>
+                          )}
+
+                          {/* ── Audio Rendering ── */}
+                          {isAudio && (
+                            <div style={{ marginBottom: isMediaOnly ? 0 : 8, minWidth: 220 }}>
+                              <audio src={mediaUrl} controls style={{ width: '100%', height: 36 }} />
+                            </div>
+                          )}
+
+                          {/* ── Document / File Rendering ── */}
+                          {isDoc && (
+                            <div style={{ marginBottom: isMediaOnly ? 0 : 8 }}>
+                              <a
+                                href={mediaUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 8,
+                                  padding: '8px 12px',
+                                  borderRadius: 8,
+                                  background: isOutbound ? 'rgba(255,255,255,0.15)' : '#f1f5f9',
+                                  color: isOutbound ? '#ffffff' : '#0f172a',
+                                  textDecoration: 'none',
+                                  fontSize: '0.82rem',
+                                  fontWeight: 600,
+                                }}
+                              >
+                                <FileText size={16} />
+                                <span>{text || 'Download Document'}</span>
+                                <Download size={14} style={{ marginLeft: 'auto' }} />
+                              </a>
+                            </div>
+                          )}
+
+                          {/* Text message */}
+                          {!isMediaOnly && text && <div>{text}</div>}
                         </div>
+
+                        <span style={{ fontSize: '0.68rem', color: '#94a3b8', marginTop: 3, padding: '0 4px' }}>
+                          {formatTime(msg.created_at || msg.timestamp || msg.createdAt)}
+                        </span>
                       </div>
                     );
                   })
@@ -709,382 +859,449 @@ export default function InboxPage() {
               </div>
 
               {/* Chat Input Bar */}
-              <div className="chat-input-area" style={{ position: 'relative' }}>
-                {/* Canned Quick Replies Popover */}
-                {showCannedModal && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      bottom: '100%',
-                      left: 20,
-                      right: 20,
-                      marginBottom: 10,
-                      background: 'var(--bg-card)',
-                      border: '1px solid var(--border)',
-                      borderRadius: 14,
-                      padding: 16,
-                      boxShadow: 'var(--shadow-lg)',
-                      zIndex: 100,
-                      maxHeight: 280,
-                      display: 'flex',
-                      flexDirection: 'column',
-                    }}
-                  >
-                    <div className="flex justify-between items-center" style={{ marginBottom: 10 }}>
-                      <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>⚡ Quick Replies</span>
-                      <button
-                        type="button"
-                        className="btn btn-xs btn-secondary"
-                        onClick={() => setShowCannedModal(false)}
-                      >
-                        ✕ Close
-                      </button>
-                    </div>
-
-                    <input
-                      className="form-input w-full"
-                      placeholder="Search quick replies…"
-                      value={cannedSearch}
-                      onChange={(e) => setCannedSearch(e.target.value)}
-                      style={{ marginBottom: 10, padding: '6px 10px', fontSize: '0.85rem' }}
-                    />
-
-                    <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {cannedResponses.filter(
-                        (c) =>
-                          c.title.toLowerCase().includes(cannedSearch.toLowerCase()) ||
-                          c.body.toLowerCase().includes(cannedSearch.toLowerCase())
-                      ).length === 0 ? (
-                        <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', textAlign: 'center', padding: 12 }}>
-                          No matching quick replies found.
-                        </div>
-                      ) : (
-                        cannedResponses
-                          .filter(
-                            (c) =>
-                              c.title.toLowerCase().includes(cannedSearch.toLowerCase()) ||
-                              c.body.toLowerCase().includes(cannedSearch.toLowerCase())
-                          )
-                          .map((item) => (
-                            <div
-                              key={item.id}
-                              style={{
-                                padding: '8px 12px',
-                                background: 'var(--bg-surface)',
-                                borderRadius: 8,
-                                cursor: 'pointer',
-                                border: '1px solid var(--border)',
-                              }}
-                              onClick={() => {
-                                setMessageText(item.body);
-                                setShowCannedModal(false);
-                              }}
-                            >
-                              <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--primary)' }}>
-                                {item.title}
-                              </div>
-                              <div
-                                style={{
-                                  fontSize: '0.8rem',
-                                  color: 'var(--text-secondary)',
-                                  whiteSpace: 'nowrap',
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                }}
-                              >
-                                {item.body}
-                              </div>
-                            </div>
-                          ))
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                <div className="chat-input-row" style={{ alignItems: 'center' }}>
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    style={{ display: 'none' }}
-                    onChange={handleFileUpload}
-                    accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt"
-                  />
-
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    style={{
-                      borderRadius: '50%',
-                      width: 40,
-                      height: 40,
-                      padding: 0,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '1.15rem',
-                    }}
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={uploading || sending || selectedConv.status === 'RESOLVED'}
-                    title="Upload & Send Image / Video / File"
-                  >
-                    {uploading ? (
-                      <div className="loading-spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
-                    ) : (
-                      '📎'
-                    )}
-                  </button>
-
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    style={{
-                      borderRadius: 20,
-                      height: 40,
-                      padding: '0 14px',
-                      fontSize: '0.85rem',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      fontWeight: 600,
-                    }}
-                    onClick={() => setShowCannedModal(!showCannedModal)}
-                    disabled={selectedConv.status === 'RESOLVED'}
-                    title="Insert Quick Reply"
-                  >
-                    ⚡ Quick Replies
-                  </button>
-
-                  <textarea
-                    className="chat-textarea"
-                    placeholder="Type a message… (press Enter to send, / for quick replies)"
-                    value={messageText}
-                    onChange={(e) => {
-                      setMessageText(e.target.value);
-                      if (e.target.value === '/') setShowCannedModal(true);
-                    }}
-                    onKeyDown={handleKeyDown}
-                    rows={1}
-                    disabled={sending || uploading || selectedConv.status === 'RESOLVED'}
-                  />
-
-                  <button
-                    className="chat-send-btn"
-                    onClick={handleSend}
-                    disabled={sending || uploading || !messageText.trim() || selectedConv.status === 'RESOLVED'}
-                    title="Send message"
-                  >
-                    {sending ? (
-                      <div className="loading-spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
-                    ) : (
-                      '➤'
-                    )}
-                  </button>
-                </div>
-
-                {selectedConv.status === 'RESOLVED' && (
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 6, textAlign: 'center' }}>
-                    This conversation is resolved. Reopen or send a message to activate.
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </main>
-
-        {/* ── 3. Subscriber Info & Metadata Panel (Right Column) ── */}
-        {selectedConv && showSubscriberPanel && (
-          <aside className="subscriber-panel">
-            {/* Header / Avatar */}
-            <div className="subscriber-panel-header">
-              <div className="avatar" style={{ width: 60, height: 60, fontSize: '1.4rem', margin: '0 auto 10px' }}>
-                {getInitials(contactName)}
-              </div>
-              <div style={{ fontWeight: 700, fontSize: '1.05rem' }}>{contactName}</div>
-              <div style={{ marginTop: 4 }}>
-                <span className={`badge ${getPlatformBadgeClass(contactPlatform)}`}>
-                  {getPlatformIcon(contactPlatform)} {contactPlatform}
-                </span>
-              </div>
-            </div>
-
-            <div className="subscriber-panel-body">
-              {/* Profile Details */}
-              <div className="subscriber-section">
-                <div className="subscriber-section-title">Subscriber Details</div>
-                <div style={{ fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div>
-                    <span style={{ color: 'var(--text-muted)' }}>Phone: </span>
-                    <span style={{ fontWeight: 600 }}>{contactPhone}</span>
-                  </div>
-                  <div>
-                    <span style={{ color: 'var(--text-muted)' }}>Email: </span>
-                    <span style={{ fontWeight: 600 }}>{contactEmail}</span>
-                  </div>
-                  <div>
-                    <span style={{ color: 'var(--text-muted)' }}>External ID: </span>
-                    <span style={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>{contactExternalId}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Bot & Flow Control */}
-              <div className="subscriber-section">
-                <div className="subscriber-section-title">
-                  <span>Bot & Flow Automation</span>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Bot Status:</span>
-                  <span className={`badge ${botPaused ? 'badge-warning' : 'badge-success'}`}>
-                    {botPaused ? '⏸️ Bot Paused' : '🤖 Bot Active'}
-                  </span>
-                </div>
+              <form onSubmit={handleSendMessage} className="chat-input-area" style={{ padding: '12px 20px', background: '#ffffff', borderTop: '1px solid #e2e8f0', display: 'flex', gap: 10, alignItems: 'center' }}>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileUpload}
+                  style={{ display: 'none' }}
+                  accept="image/*,video/*,audio/*,application/pdf"
+                />
 
                 <button
                   type="button"
-                  className={`btn btn-sm ${botPaused ? 'btn-primary' : 'btn-secondary'} w-full`}
-                  onClick={handleToggleBot}
-                  disabled={togglingBot}
+                  disabled={uploading}
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Send image, video, audio or file"
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 8,
+                    border: '1px solid #e2e8f0',
+                    background: '#f8fafc',
+                    color: '#64748b',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                  }}
                 >
-                  {botPaused ? '▶️ Resume Bot Auto-Replies' : '⏸️ Pause Bot (Human Takeover)'}
+                  {uploading ? (
+                    <div className="loading-spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
+                  ) : (
+                    <Paperclip size={16} />
+                  )}
                 </button>
 
-                {/* Trigger Flow Dropdown */}
-                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 4 }}>
-                  <div style={{ fontSize: '0.78rem', fontWeight: 600, marginBottom: 6, color: 'var(--text-secondary)' }}>
-                    ⚡ Trigger Bot Flow:
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Type a message or reply..."
+                  value={messageText}
+                  onChange={(e) => setMessageText(e.target.value)}
+                  style={{ flex: 1, height: 40, fontSize: '0.86rem' }}
+                />
+
+                <button
+                  type="submit"
+                  disabled={!messageText.trim() || sending}
+                  className="btn btn-primary"
+                  style={{ height: 40, padding: '0 20px', display: 'flex', alignItems: 'center', gap: 6 }}
+                >
+                  <Send size={15} /> Send
+                </button>
+              </form>
+            </>
+          ) : (
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
+              <MessageSquare size={48} color="#cbd5e1" style={{ marginBottom: 12 }} />
+              <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#0f172a', margin: 0 }}>
+                Select a conversation
+              </h3>
+              <p style={{ fontSize: '0.82rem', color: '#64748b', marginTop: 4 }}>
+                Choose a subscriber from the left list to start live chatting
+              </p>
+            </div>
+          )}
+        </main>
+
+        {/* ── 3. Comprehensive Subscriber Details & Management Drawer ── */}
+        {selectedConv && showSubscriberPanel && (
+          <aside style={{ width: 330, flexShrink: 0, borderLeft: '1px solid #e2e8f0', background: '#ffffff', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+            {/* Subscriber Header Card */}
+            <div style={{ padding: '16px 18px', borderBottom: '1px solid #e2e8f0', background: '#fafbfe' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <span
+                  style={{
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    borderRadius: 12,
+                    background: activePlatformInfo.bg,
+                    color: activePlatformInfo.color,
+                  }}
+                >
+                  {activePlatformInfo.label}
+                </span>
+                <button
+                  onClick={() => setShowSubscriberPanel(false)}
+                  style={{ color: '#94a3b8', cursor: 'pointer', background: 'none', border: 'none' }}
+                  title="Close Drawer"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div
+                  style={{
+                    width: 46,
+                    height: 46,
+                    borderRadius: '50%',
+                    background: 'rgba(37, 99, 235, 0.1)',
+                    color: '#2563eb',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 800,
+                    fontSize: '1rem',
+                  }}
+                >
+                  {getInitials(selectedConv.contactName || selectedConv.contact_name || selectedConv.external_id)}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <h4 style={{ fontSize: '0.94rem', fontWeight: 800, color: '#0f172a', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {selectedConv.contactName || selectedConv.contact_name || selectedConv.external_id || 'Subscriber'}
+                  </h4>
+                  <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: 2 }}>
+                    ID: <strong>{selectedConv.contact_id || selectedConv.id}</strong>
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <select
-                      className="form-input"
-                      style={{ fontSize: '0.82rem', padding: '6px 8px', flex: 1 }}
-                      value={selectedFlowId}
-                      onChange={(e) => setSelectedFlowId(e.target.value)}
-                    >
-                      <option value="">— Select Flow —</option>
-                      {availableFlows
-                        .filter((f) => f.platform === contactPlatform || f.platform === 'FACEBOOK')
-                        .map((f) => (
-                          <option key={f.id} value={f.id}>
-                            {f.name}
-                          </option>
-                        ))}
-                    </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Actions Bar */}
+            <div style={{ padding: '14px 18px', borderBottom: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 700, color: '#64748b', marginBottom: 4 }}>
+                  Conversation Status
+                </label>
+                <select
+                  value={convStatus}
+                  disabled={updatingStatus}
+                  onChange={(e) => handleUpdateStatus(e.target.value)}
+                  style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: '0.82rem', background: '#ffffff' }}
+                >
+                  <option value="OPEN">🟢 Open (Active)</option>
+                  <option value="PENDING">🟡 Pending Follow-up</option>
+                  <option value="RESOLVED">⚪ Resolved</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 700, color: '#64748b', marginBottom: 4 }}>
+                  Assigned Team Agent
+                </label>
+                <select
+                  value={selectedConv.assigned_to_id || ''}
+                  disabled={assigningAgent}
+                  onChange={(e) => handleAssignAgent(e.target.value ? Number(e.target.value) : null)}
+                  style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: '0.82rem', background: '#ffffff' }}
+                >
+                  <option value="">👤 Unassigned</option>
+                  {agentsList.map((ag) => (
+                    <option key={ag.id} value={ag.id}>
+                      {ag.name} ({ag.email})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Drawer Tabs Navigation */}
+            <div style={{ display: 'flex', borderBottom: '1px solid #e2e8f0', overflowX: 'auto', background: '#fafbfe' }}>
+              {DRAWER_TABS.map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveDrawerTab(tab)}
+                  style={{
+                    padding: '8px 12px',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: activeDrawerTab === tab ? '#2563eb' : '#64748b',
+                    borderBottom: activeDrawerTab === tab ? '2px solid #2563eb' : '2px solid transparent',
+                    background: 'none',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+
+            {/* Tab 1: Overview */}
+            {activeDrawerTab === 'Overview' && (
+              <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    Phone / Identifier
+                  </span>
+                  <div style={{ fontSize: '0.84rem', color: '#0f172a', fontWeight: 600, marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Phone size={13} color="#64748b" /> {selectedConv.contactPhone || selectedConv.external_id || '—'}
+                  </div>
+                </div>
+
+                <div>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    Email Address
+                  </span>
+                  <div style={{ fontSize: '0.84rem', color: '#0f172a', fontWeight: 600, marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Mail size={13} color="#64748b" /> {selectedConv.contactEmail || '—'}
+                  </div>
+                </div>
+
+                <div>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    Channel Integration
+                  </span>
+                  <div style={{ fontSize: '0.82rem', color: '#0f172a', fontWeight: 600, marginTop: 2 }}>
+                    {selectedConv.integrationName || activePlatformInfo.label}
+                  </div>
+                </div>
+
+                <div>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    Subscribed On
+                  </span>
+                  <div style={{ fontSize: '0.8rem', color: '#64748b', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Calendar size={13} color="#64748b" /> {formatFullDate(selectedConv.createdAt || selectedConv.created_at)}
+                  </div>
+                </div>
+
+                <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: 12 }}>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    Bot State
+                  </span>
+                  <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: botPaused ? '#ef4444' : '#10b981' }}>
+                      ● {botPaused ? 'Human Agent Mode (Paused)' : 'Automated Bot Active'}
+                    </span>
                     <button
-                      type="button"
-                      className="btn btn-sm btn-primary"
-                      onClick={handleTriggerFlow}
-                      disabled={!selectedFlowId || triggeringFlow}
+                      onClick={handleToggleBot}
+                      className="btn btn-secondary btn-sm"
+                      style={{ fontSize: '0.75rem', padding: '3px 8px' }}
                     >
-                      {triggeringFlow ? '…' : 'Start'}
+                      {botPaused ? 'Resume' : 'Pause'}
                     </button>
                   </div>
                 </div>
               </div>
+            )}
 
-              {/* Labels & Tags Section */}
-              <div className="subscriber-section">
-                <div className="subscriber-section-title">
-                  <span>Labels & Tags</span>
-                  <span style={{ fontSize: '0.7rem' }}>({contactTags.length})</span>
-                </div>
-
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minHeight: 28 }}>
-                  {contactTags.length === 0 ? (
-                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>No tags assigned yet</span>
-                  ) : (
-                    contactTags.map((tag) => (
-                      <span key={tag} className="tag-chip">
-                        🏷️ {tag}
-                        <span
-                          className="tag-chip-remove"
-                          onClick={() => handleRemoveTag(tag)}
-                          title="Remove tag"
-                        >
-                          ✕
-                        </span>
-                      </span>
-                    ))
-                  )}
-                </div>
-
-                <form onSubmit={handleAddTag} style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+            {/* Tab 2: Labels / Tags */}
+            {activeDrawerTab === 'Labels' && (
+              <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <form onSubmit={handleAddTag} style={{ display: 'flex', gap: 6 }}>
                   <input
+                    type="text"
                     className="form-input"
-                    placeholder="Add label (e.g. VIP, Lead)…"
+                    placeholder="New label / tag..."
                     value={newTagInput}
                     onChange={(e) => setNewTagInput(e.target.value)}
-                    style={{ fontSize: '0.82rem', padding: '6px 10px', flex: 1 }}
+                    style={{ flex: 1, height: 32, fontSize: '0.8rem' }}
                   />
-                  <button
-                    type="submit"
-                    className="btn btn-sm btn-secondary"
-                    disabled={addingTag || !newTagInput.trim()}
-                  >
-                    + Add
+                  <button type="submit" disabled={addingTag || !newTagInput.trim()} className="btn btn-primary btn-sm" style={{ height: 32 }}>
+                    <Plus size={13} /> Add
                   </button>
                 </form>
-              </div>
 
-              {/* Internal Notes Section */}
-              <div className="subscriber-section">
-                <div className="subscriber-section-title">
-                  <span>Internal Staff Notes</span>
-                  <span style={{ fontSize: '0.7rem' }}>({contactNotes.length})</span>
+                <div>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', display: 'block', marginBottom: 8 }}>
+                    Attached Labels ({contactTags.length})
+                  </span>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {contactTags.length === 0 ? (
+                      <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>No tags attached yet.</span>
+                    ) : (
+                      contactTags.map((tag) => (
+                        <span
+                          key={tag}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            padding: '3px 8px',
+                            borderRadius: 12,
+                            background: 'rgba(37, 99, 235, 0.08)',
+                            color: '#2563eb',
+                            border: '1px solid rgba(37, 99, 235, 0.2)',
+                          }}
+                        >
+                          <Tag size={11} /> {tag}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveTag(tag)}
+                            style={{ background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', marginLeft: 2 }}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))
+                    )}
+                  </div>
                 </div>
+              </div>
+            )}
 
+            {/* Tab 3: Flows & Agent */}
+            {activeDrawerTab === 'Flows & Agent' && (
+              <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 700, color: '#64748b', marginBottom: 4 }}>
+                    Trigger Flow on Subscriber
+                  </label>
+                  <select
+                    value={selectedFlowId}
+                    onChange={(e) => setSelectedFlowId(e.target.value)}
+                    style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: '0.82rem', background: '#ffffff', marginBottom: 8 }}
+                  >
+                    <option value="">Select a Bot Flow...</option>
+                    {availableFlows.map((fl) => (
+                      <option key={fl.id} value={fl.id}>
+                        {fl.name} ({fl.platform})
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleTriggerFlow}
+                    disabled={!selectedFlowId || triggeringFlow}
+                    className="btn btn-primary w-full btn-sm"
+                    style={{ justifyContent: 'center' }}
+                  >
+                    <Zap size={13} /> {triggeringFlow ? 'Sending Flow...' : 'Execute Flow Now'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Tab 4: Custom Fields */}
+            {activeDrawerTab === 'Custom Fields' && (
+              <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
+                  Collected Flow Variables
+                </span>
+                <div style={{ fontSize: '0.8rem', color: '#64748b', background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <strong style={{ color: '#0f172a' }}>Platform:</strong>
+                    <span>{activePlatformInfo.label}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <strong style={{ color: '#0f172a' }}>External ID:</strong>
+                    <span>{selectedConv.external_id || '—'}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <strong style={{ color: '#0f172a' }}>Bot Session:</strong>
+                    <span>{botPaused ? 'Agent Handled' : 'Active'}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Tab 5: Internal Notes */}
+            {activeDrawerTab === 'Notes' && (
+              <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
                 <form onSubmit={handleAddNote} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <textarea
+                    rows={3}
                     className="form-input"
-                    placeholder="Write an internal note about this subscriber…"
-                    rows={2}
+                    placeholder="Write an internal note for this subscriber..."
                     value={newNoteText}
                     onChange={(e) => setNewNoteText(e.target.value)}
-                    style={{ fontSize: '0.82rem', resize: 'vertical' }}
+                    style={{ fontSize: '0.82rem', resize: 'none' }}
                   />
-                  <button
-                    type="submit"
-                    className="btn btn-sm btn-primary"
-                    style={{ alignSelf: 'flex-end' }}
-                    disabled={addingNote || !newNoteText.trim()}
-                  >
-                    {addingNote ? 'Saving…' : '📝 Save Note'}
+                  <button type="submit" disabled={savingNote || !newNoteText.trim()} className="btn btn-primary btn-sm" style={{ alignSelf: 'flex-end' }}>
+                    <Plus size={13} /> Save Note
                   </button>
                 </form>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6, maxHeight: 200, overflowY: 'auto' }}>
-                  {contactNotes.length === 0 ? (
-                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', textAlign: 'center', padding: 8 }}>
-                      No staff notes yet
-                    </div>
-                  ) : (
-                    contactNotes.map((note) => (
-                      <div key={note.id} className="note-item">
-                        <div className="note-header">
-                          <span style={{ fontWeight: 600 }}>{note.author_name || note.userName || 'Staff'}</span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span>{formatRelativeTime(note.created_at)}</span>
-                            <span
-                              style={{ cursor: 'pointer', color: 'var(--danger)', fontSize: '0.8rem' }}
-                              onClick={() => handleDeleteNote(note.id)}
-                              title="Delete note"
-                            >
-                              🗑
-                            </span>
+                <div>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', display: 'block', marginBottom: 8 }}>
+                    Notes Log ({contactNotes.length})
+                  </span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {contactNotes.length === 0 ? (
+                      <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>No internal notes added.</span>
+                    ) : (
+                      contactNotes.map((n) => (
+                        <div
+                          key={n.id}
+                          style={{
+                            background: '#f8fafc',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: 8,
+                            padding: '10px 12px',
+                            fontSize: '0.82rem',
+                          }}
+                        >
+                          <div style={{ color: '#0f172a', lineHeight: 1.4 }}>{n.note}</div>
+                          <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: 4, display: 'flex', justifyContent: 'space-between' }}>
+                            <span>By: {n.userName || 'Agent'}</span>
+                            <span>{formatRelativeTime(n.created_at)}</span>
                           </div>
                         </div>
-                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', whiteSpace: 'pre-wrap' }}>
-                          {note.note}
-                        </div>
-                      </div>
-                    ))
-                  )}
+                      ))
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </aside>
         )}
       </div>
-    </div>
+
+      {/* ── Image Lightbox Modal ── */}
+      {previewImage && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.85)',
+            zIndex: 99999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
+          }}
+          onClick={() => setPreviewImage(null)}
+        >
+          <div style={{ position: 'relative', maxWidth: '90vw', maxHeight: '90vh' }}>
+            <button
+              onClick={() => setPreviewImage(null)}
+              style={{
+                position: 'absolute',
+                top: -36,
+                right: 0,
+                color: '#ffffff',
+                fontSize: '1.2rem',
+                cursor: 'pointer',
+                background: 'none',
+                border: 'none',
+              }}
+            >
+              ✕ Close
+            </button>
+            <img
+              src={previewImage}
+              alt="Enlarged preview"
+              style={{ maxWidth: '100%', maxHeight: '85vh', borderRadius: 8, boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}
+            />
+          </div>
+        </div>
+      )}
+    </AppLayout>
   );
 }

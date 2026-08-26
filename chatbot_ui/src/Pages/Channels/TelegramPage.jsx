@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import AppLayout from '../../Layout/AppLayout';
 import { channelAPI } from '../../services/api';
 
-export default function TelegramPage() {
+export default function TelegramPage({ embedded = false }) {
   const [bots, setBots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -38,8 +38,10 @@ export default function TelegramPage() {
     catch { showToast('Failed', 'error'); }
   };
 
+  const LayoutWrapper = embedded ? ({ children }) => <div>{children}</div> : AppLayout;
+
   return (
-    <AppLayout>
+    <LayoutWrapper>
       {toast && <div className="toast-container"><div className={`toast ${toast.type}`}>{toast.msg}</div></div>}
       <div className="page-header">
         <h1 className="page-title">✈️ Telegram</h1>
@@ -99,6 +101,6 @@ export default function TelegramPage() {
           </div>
         </div>
       </div>
-    </AppLayout>
+    </LayoutWrapper>
   );
 }
