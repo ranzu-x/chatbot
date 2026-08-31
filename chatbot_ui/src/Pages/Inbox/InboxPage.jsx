@@ -76,9 +76,10 @@ function resolveMediaUrl(url) {
   if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('blob:') || url.startsWith('data:')) {
     return url;
   }
-  const baseUrl = import.meta.env.VITE_API_URL
-    ? import.meta.env.VITE_API_URL.replace('/api/v1', '')
-    : 'http://localhost:5000';
+  const apiUrl = import.meta.env.VITE_API_URL || '';
+  const baseUrl = apiUrl.startsWith('http')
+    ? apiUrl.replace('/api/v1', '')
+    : '';
   return `${baseUrl}${url.startsWith('/') ? '' : '/'}${url}`;
 }
 
@@ -129,7 +130,9 @@ export default function InboxPage() {
   const [msgLoading, setMsgLoading] = useState(false);
   const [messageText, setMessageText] = useState('');
   const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState('');
   const [uploading, setUploading] = useState(false);
+
   const [statusFilter, setStatusFilter] = useState('All');
   const [platformFilter, setPlatformFilter] = useState('');
   const [search, setSearch] = useState('');
@@ -158,6 +161,7 @@ export default function InboxPage() {
   const [cannedResponses, setCannedResponses] = useState([]);
 
   const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
   const fileInputRef = useRef(null);
 
   const selectedId = selectedConv?._id || selectedConv?.id;
@@ -228,11 +232,17 @@ export default function InboxPage() {
   useEffect(() => {
     if (!user) return;
 
-    const socketUrl = import.meta.env.VITE_API_URL
-      ? import.meta.env.VITE_API_URL.replace('/api/v1', '')
-      : 'http://localhost:5000';
+    let socketUrl = import.meta.env.VITE_SOCKET_URL;
+    if (!socketUrl) {
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      if (apiUrl.startsWith('http')) {
+        socketUrl = apiUrl.replace('/api/v1', '');
+      } else {
+        socketUrl = undefined; // lets socket.io use current origin and Vite proxy
+      }
+    }
 
-    const socket = io(import.meta.env.VITE_SOCKET_URL || socketUrl, {
+    const socket = io(socketUrl, {
       auth: {
         agencyId: user.agencyId,
         userId: user.id,
@@ -267,10 +277,31 @@ export default function InboxPage() {
     return () => socket.disconnect();
   }, [user, loadConversations]);
 
-  // Auto-scroll messages to bottom
+  // Auto-scroll messages to bottom reliably
+  const scrollToBottom = useCallback((instant = false) => {
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+    }
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: instant ? 'auto' : 'smooth', block: 'end' });
+    }
+  }, []);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (!msgLoading && messages.length > 0) {
+      // Immediate scroll
+      scrollToBottom(true);
+      // Secondary scrolls to handle async DOM layout & image dimension calculations
+      const t1 = setTimeout(() => scrollToBottom(true), 40);
+      const t2 = setTimeout(() => scrollToBottom(true), 150);
+      const t3 = setTimeout(() => scrollToBottom(true), 350);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+      };
+    }
+  }, [messages, msgLoading, selectedId, scrollToBottom]);
 
   // Send Message with robust deduplication
   const handleSendMessage = async (e) => {
@@ -304,6 +335,12 @@ export default function InboxPage() {
       loadConversations();
     } catch (err) {
       console.error('Failed to send message', err);
+      const errMsg = err?.response?.data?.message || 'Failed to send message. Check your WhatsApp connection settings.';
+      setSendError(errMsg);
+      // Restore the typed message so user doesn't lose it
+      setMessageText(text);
+      // Auto-clear error after 8 seconds
+      setTimeout(() => setSendError(''), 8000);
     } finally {
       setSending(false);
     }
@@ -469,17 +506,36 @@ export default function InboxPage() {
     const q = search.toLowerCase();
     const name = (c.contactName || c.contact_name || c.external_id || '').toLowerCase();
     const lastMsg = (c.lastMessageBody || c.lastMessage?.content || c.last_message || '').toLowerCase();
-    return name.includes(q) || lastMsg.includes(q);
+    const integName = (c.integrationName || c.integration_name || '').toLowerCase();
+    const matchesSearch = name.includes(q) || lastMsg.includes(q) || integName.includes(q);
+
+    const convPlat = (c.platform || c.integrationPlatform || c.contactPlatform || '').toUpperCase();
+    const matchesPlatform = !platformFilter || platformFilter === 'ALL' || convPlat === platformFilter.toUpperCase();
+
+    // Match Status
+    let matchesStatus = true;
+    if (statusFilter && statusFilter !== 'All') {
+      const convStatus = (c.status || 'OPEN').toUpperCase();
+      if (statusFilter.toUpperCase() === 'OPEN') {
+        matchesStatus = ['OPEN', 'ASSIGNED'].includes(convStatus);
+      } else if (statusFilter.toUpperCase() === 'RESOLVED') {
+        matchesStatus = ['RESOLVED', 'CLOSED'].includes(convStatus);
+      } else {
+        matchesStatus = convStatus === statusFilter.toUpperCase();
+      }
+    }
+
+    return matchesSearch && matchesPlatform && matchesStatus;
   });
 
-  const activePlatformInfo = getPlatformInfo(selectedConv?.platform || selectedConv?.contactPlatform);
+  const activePlatformInfo = getPlatformInfo(selectedConv?.platform || selectedConv?.integrationPlatform || selectedConv?.contactPlatform);
   const ActivePlatformIcon = activePlatformInfo.icon || MessageSquare;
 
   return (
     <AppLayout>
       <div className="inbox-layout" style={{ display: 'flex', height: '100vh', width: '100%', overflow: 'hidden', background: '#f8fafc' }}>
         {/* ── 1. Conversation List Column ── */}
-        <aside className="conversation-list" style={{ width: 310, flexShrink: 0, borderRight: '1px solid #e2e8f0', background: '#ffffff', display: 'flex', flexDirection: 'column' }}>
+        <aside className="conversation-list" style={{ width: 330, flexShrink: 0, borderRight: '1px solid #e2e8f0', background: '#ffffff', display: 'flex', flexDirection: 'column' }}>
           <div className="conversation-list-header" style={{ padding: '14px 16px', borderBottom: '1px solid #e2e8f0' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -513,6 +569,40 @@ export default function InboxPage() {
               </span>
             </div>
 
+            {/* Channel Platform Tabs */}
+            <div style={{ display: 'flex', gap: 4, marginBottom: 8, overflowX: 'auto', paddingBottom: 2 }}>
+              {[
+                { id: '', label: 'All' },
+                { id: 'WHATSAPP', label: '💬 WhatsApp' },
+                { id: 'FACEBOOK', label: '📘 Facebook' },
+                { id: 'INSTAGRAM', label: '📸 Instagram' },
+                { id: 'TELEGRAM', label: '✈️ Telegram' },
+                { id: 'WEBCHAT', label: '🌐 Webchat' },
+              ].map((p) => {
+                const isSel = (platformFilter || '') === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => setPlatformFilter(p.id)}
+                    style={{
+                      padding: '3px 8px',
+                      borderRadius: 12,
+                      fontSize: '0.7rem',
+                      fontWeight: 700,
+                      border: '1px solid',
+                      borderColor: isSel ? '#0f172a' : '#e2e8f0',
+                      background: isSel ? '#0f172a' : '#f8fafc',
+                      color: isSel ? '#ffffff' : '#64748b',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
+
             {/* Status Filter Chips */}
             <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
               {STATUS_CHIPS.map((s) => (
@@ -520,9 +610,9 @@ export default function InboxPage() {
                   key={s}
                   onClick={() => setStatusFilter(s)}
                   style={{
-                    padding: '4px 8px',
+                    padding: '3px 8px',
                     borderRadius: 6,
-                    fontSize: '0.72rem',
+                    fontSize: '0.7rem',
                     fontWeight: 600,
                     border: '1px solid',
                     borderColor: statusFilter === s ? '#2563eb' : '#e2e8f0',
@@ -588,22 +678,38 @@ export default function InboxPage() {
                     }}
                   >
                     <div style={{ position: 'relative' }}>
-                      <div
-                        style={{
-                          width: 38,
-                          height: 38,
-                          borderRadius: '50%',
-                          background: '#f1f5f9',
-                          color: '#0f172a',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontWeight: 700,
-                          fontSize: '0.85rem',
-                        }}
-                      >
-                        {getInitials(contactName)}
-                      </div>
+                      {conv.contactAvatar || conv.avatar ? (
+                        <img
+                          src={resolveMediaUrl(conv.contactAvatar || conv.avatar)}
+                          alt={contactName}
+                          style={{
+                            width: 38,
+                            height: 38,
+                            borderRadius: '50%',
+                            objectFit: 'cover',
+                          }}
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            width: 38,
+                            height: 38,
+                            borderRadius: '50%',
+                            background: '#f1f5f9',
+                            color: '#0f172a',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontWeight: 700,
+                            fontSize: '0.85rem',
+                          }}
+                        >
+                          {getInitials(contactName)}
+                        </div>
+                      )}
                       <div
                         style={{
                           position: 'absolute',
@@ -634,6 +740,34 @@ export default function InboxPage() {
                       </div>
                       <div style={{ fontSize: '0.76rem', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>
                         {lastMsg}
+                      </div>
+                      {/* Channel / Bot Account Tag */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            fontSize: '0.68rem',
+                            fontWeight: 700,
+                            padding: '1px 6px',
+                            borderRadius: 4,
+                            background: pInfo.bg,
+                            color: pInfo.color,
+                            maxWidth: '100%',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          <PlatformIcon size={10} />
+                          {conv.integrationName || conv.integration_name || pInfo.label}
+                        </span>
+                        {conv.status && (
+                          <span style={{ fontSize: '0.64rem', color: '#94a3b8', fontWeight: 600, textTransform: 'capitalize' }}>
+                            {conv.status.toLowerCase()}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -670,6 +804,10 @@ export default function InboxPage() {
                       {selectedConv.contactName || selectedConv.contact_name || selectedConv.external_id || 'Subscriber'}
                     </div>
                     <div style={{ fontSize: '0.72rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontWeight: 700, color: activePlatformInfo.color }}>
+                        {selectedConv.integrationName || selectedConv.integration_name || activePlatformInfo.label}
+                      </span>
+                      <span>•</span>
                       <span>{activePlatformInfo.label}</span>
                       <span>•</span>
                       <span style={{ color: botPaused ? '#ef4444' : '#10b981', fontWeight: 600 }}>
@@ -724,7 +862,7 @@ export default function InboxPage() {
               </div>
 
               {/* Chat Message List */}
-              <div className="chat-messages" style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div ref={messagesContainerRef} className="chat-messages" style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {msgLoading ? (
                   <div style={{ textAlign: 'center', padding: 40 }}>
                     <div className="loading-spinner" style={{ margin: '0 auto 8px' }} />
@@ -859,59 +997,89 @@ export default function InboxPage() {
               </div>
 
               {/* Chat Input Bar */}
-              <form onSubmit={handleSendMessage} className="chat-input-area" style={{ padding: '12px 20px', background: '#ffffff', borderTop: '1px solid #e2e8f0', display: 'flex', gap: 10, alignItems: 'center' }}>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileUpload}
-                  style={{ display: 'none' }}
-                  accept="image/*,video/*,audio/*,application/pdf"
-                />
-
-                <button
-                  type="button"
-                  disabled={uploading}
-                  onClick={() => fileInputRef.current?.click()}
-                  title="Send image, video, audio or file"
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 8,
-                    border: '1px solid #e2e8f0',
-                    background: '#f8fafc',
-                    color: '#64748b',
+              <div style={{ borderTop: '1px solid #e2e8f0', background: '#ffffff' }}>
+                {/* Send Error Banner */}
+                {sendError && (
+                  <div style={{
+                    padding: '8px 16px',
+                    background: '#fef2f2',
+                    borderBottom: '1px solid #fecaca',
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'center',
-                    cursor: 'pointer',
-                    flexShrink: 0,
-                  }}
-                >
-                  {uploading ? (
-                    <div className="loading-spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
-                  ) : (
-                    <Paperclip size={16} />
-                  )}
-                </button>
+                    gap: 8,
+                    fontSize: '0.78rem',
+                    color: '#dc2626',
+                  }}>
+                    <span style={{ fontWeight: 700, flexShrink: 0 }}>⚠ Send failed:</span>
+                    <span style={{ flex: 1 }}>{sendError}</span>
+                    <a
+                      href="/channels/whatsapp"
+                      style={{ color: '#dc2626', fontWeight: 700, textDecoration: 'underline', whiteSpace: 'nowrap', fontSize: '0.72rem' }}
+                    >
+                      Fix in Settings →
+                    </a>
+                    <button
+                      onClick={() => setSendError('')}
+                      style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', padding: '0 2px', fontWeight: 700, flexShrink: 0 }}
+                    >✕</button>
+                  </div>
+                )}
 
-                <input
-                  type="text"
-                  className="form-input"
-                  placeholder="Type a message or reply..."
-                  value={messageText}
-                  onChange={(e) => setMessageText(e.target.value)}
-                  style={{ flex: 1, height: 40, fontSize: '0.86rem' }}
-                />
+                <form onSubmit={handleSendMessage} className="chat-input-area" style={{ padding: '12px 20px', display: 'flex', gap: 10, alignItems: 'center' }}>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileUpload}
+                    style={{ display: 'none' }}
+                    accept="image/*,video/*,audio/*,application/pdf"
+                  />
 
-                <button
-                  type="submit"
-                  disabled={!messageText.trim() || sending}
-                  className="btn btn-primary"
-                  style={{ height: 40, padding: '0 20px', display: 'flex', alignItems: 'center', gap: 6 }}
-                >
-                  <Send size={15} /> Send
-                </button>
-              </form>
+                  <button
+                    type="button"
+                    disabled={uploading}
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Send image, video, audio or file"
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 8,
+                      border: '1px solid #e2e8f0',
+                      background: '#f8fafc',
+                      color: '#64748b',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {uploading ? (
+                      <div className="loading-spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
+                    ) : (
+                      <Paperclip size={16} />
+                    )}
+                  </button>
+
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="Type a message or reply..."
+                    value={messageText}
+                    onChange={(e) => setMessageText(e.target.value)}
+                    style={{ flex: 1, height: 40, fontSize: '0.86rem' }}
+                  />
+
+                  <button
+                    type="submit"
+                    disabled={!messageText.trim() || sending}
+                    className="btn btn-primary"
+                    style={{ height: 40, padding: '0 20px', display: 'flex', alignItems: 'center', gap: 6 }}
+                  >
+                    <Send size={15} /> Send
+                  </button>
+                </form>
+              </div>
+
             </>
           ) : (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>

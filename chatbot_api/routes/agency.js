@@ -3,6 +3,7 @@ import bcrypt from "bcrypt";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
+import { assertLimit } from "../utils/entitlements.js";
 
 const router = express.Router();
 
@@ -159,6 +160,12 @@ router.post("/agency/agents", async (req, res) => {
     return res.status(400).json({ success: false, message: "All fields are required" });
 
   const agencyId = req.user.agencyId;
+  try {
+    await assertLimit(agencyId, "max_team_members");
+  } catch (limitErr) {
+    return res.status(403).json({ success: false, message: limitErr.message });
+  }
+
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();

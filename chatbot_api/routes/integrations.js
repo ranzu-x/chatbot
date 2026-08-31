@@ -14,6 +14,47 @@ router.get("/integrations", async (req, res) => {
       "SELECT * FROM integrations WHERE agency_id = ? ORDER BY created_at DESC",
       [req.user.agencyId]
     );
+
+    // Auto-backfill wa_display_phone for WhatsApp accounts missing it
+    const waAccountsMissingPhone = integrations.filter(
+      (i) => i.platform === 'WHATSAPP' && !i.wa_display_phone && i.wa_phone_number_id
+    );
+
+    if (waAccountsMissingPhone.length > 0) {
+      // Get agency-level system token as fallback
+      let systemToken = null;
+      try {
+        const [appRows] = await pool.query(
+          "SELECT system_user_token FROM meta_app_settings WHERE agency_id = ? AND is_configured = 1 LIMIT 1",
+          [req.user.agencyId]
+        );
+        if (appRows[0]?.system_user_token?.startsWith('EAA')) {
+          systemToken = appRows[0].system_user_token;
+        }
+      } catch (_) {}
+
+      await Promise.allSettled(waAccountsMissingPhone.map(async (acc) => {
+        try {
+          // Use the integration's own token if valid, else fall back to system token
+          const token = (acc.access_token?.startsWith('EAA') && acc.access_token.length > 20)
+            ? acc.access_token
+            : systemToken;
+          if (!token) return;
+
+          const url = `https://graph.facebook.com/v21.0/${acc.wa_phone_number_id}?fields=display_phone_number,verified_name&access_token=${token}`;
+          const r = await fetch(url);
+          const d = await r.json();
+          if (d.display_phone_number) {
+            await pool.query(
+              "UPDATE integrations SET wa_display_phone = ? WHERE id = ?",
+              [d.display_phone_number, acc.id]
+            );
+            acc.wa_display_phone = d.display_phone_number;
+          }
+        } catch (_) { /* silently skip */ }
+      }));
+    }
+
     return res.json({ success: true, integrations });
   } catch (err) {
     console.error(err);

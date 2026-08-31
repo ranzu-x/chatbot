@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, Link } from 'react-router';
 import { useAuth } from '../Provider/AuthContext';
 import { useLayout } from '../Provider/LayoutContext';
-import { Menu, PanelLeft, PanelLeftClose, Sun, Moon, Plug, LogOut } from 'lucide-react';
+import { useNotification } from '../Provider/NotificationContext';
+import { Menu, PanelLeft, PanelLeftClose, Sun, Moon, Plug, LogOut, Bell } from 'lucide-react';
 
 export default function TopBar() {
   const { user, logout } = useAuth();
@@ -59,6 +60,8 @@ export default function TopBar() {
     }
   };
 
+  const { openSettingsModal } = useNotification();
+
   return (
     <header className="top-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', height: 56, borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
       <div className="top-bar-left" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -89,7 +92,29 @@ export default function TopBar() {
         </span>
       </div>
 
-      <div className="top-bar-right" ref={menuRef} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div className="top-bar-right" ref={menuRef} style={{ display: 'flex', alignItems: 'center', gap: 10, position: 'relative' }}>
+        {/* Notification Preferences Trigger */}
+        <button
+          type="button"
+          onClick={openSettingsModal}
+          title="Notification Preferences & Sound Settings"
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: 8,
+            border: '1px solid var(--border)',
+            background: 'var(--bg-card)',
+            color: 'var(--text-secondary)',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            transition: 'all 0.15s',
+          }}
+        >
+          <Bell size={16} />
+        </button>
+
         <div 
           className="top-bar-user-trigger"
           onClick={() => setMenuOpen(!menuOpen)}
@@ -110,16 +135,18 @@ export default function TopBar() {
 
             <div className="dropdown-section">
               {apiLink && (
-                <div 
+                <Link 
+                  to={apiLink}
                   className="dropdown-item" 
-                  onClick={() => { setMenuOpen(false); navigate(apiLink); }}
+                  onClick={() => setMenuOpen(false)}
+                  style={{ textDecoration: 'none', color: 'inherit' }}
                 >
                   <Plug size={15} style={{ marginRight: 8 }} />
                   <div className="dropdown-text">
                     <div className="dropdown-label">API & Integrations</div>
                     <div className="dropdown-desc">Manage API connections</div>
                   </div>
-                </div>
+                </Link>
               )}
 
               <div className="dropdown-item" onClick={toggleTheme}>

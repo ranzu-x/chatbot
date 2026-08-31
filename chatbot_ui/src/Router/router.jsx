@@ -4,7 +4,7 @@ import Home from "../Pages/Home/Home";
 import LandingPage from "../Pages/Landing/LandingPage";
 import PrivacyPolicy from "../Pages/Landing/PrivacyPolicy";
 import TermsOfService from "../Pages/Landing/TermsOfService";
-import LogIn from "../Pages/LogIn/LogIn";
+import LogIn from "../Pages/LogIn/Login";
 import Register from "../Pages/Register/Register";
 import Dashboard from "../Pages/Dashboard/Dashboard";
 import PrivateRoute from "./PrivateRoute";

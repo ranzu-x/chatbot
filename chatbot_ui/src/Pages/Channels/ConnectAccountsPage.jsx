@@ -7,6 +7,7 @@ import WhatsAppPage from './WhatsAppPage';
 import FacebookPage from './FacebookPage';
 import InstagramPage from './InstagramPage';
 import TelegramPage from './TelegramPage';
+import TikTokPage from './TikTokPage';
 import WebchatPage from './WebchatPage';
 import {
   Radio,
@@ -32,6 +33,7 @@ import {
   Activity,
   X,
   Lock,
+  Video,
 } from 'lucide-react';
 
 const CHANNELS = [
@@ -40,6 +42,7 @@ const CHANNELS = [
   { id: 'facebook',  label: 'Facebook Messenger',     icon: Facebook,      color: '#1877f2', bg: 'rgba(24, 119, 242, 0.08)' },
   { id: 'instagram', label: 'Instagram DM',           icon: Instagram,     color: '#e1306c', bg: 'rgba(225, 48, 108, 0.08)' },
   { id: 'telegram',  label: 'Telegram Bot',           icon: Send,          color: '#229ed9', bg: 'rgba(34, 158, 217, 0.08)' },
+  { id: 'tiktok',    label: 'TikTok DM & Comments',   icon: Video,         color: '#FE2C55', bg: 'rgba(254, 44, 85, 0.08)' },
   { id: 'webchat',   label: 'Live Webchat',           icon: Globe,         color: '#6366f1', bg: 'rgba(99, 102, 241, 0.08)' },
 ];
 
@@ -49,6 +52,7 @@ function getPlatformBadge(platform = '') {
   if (p === 'FACEBOOK')  return { label: 'Facebook',  color: '#1877f2', bg: 'rgba(24, 119, 242, 0.1)',  icon: Facebook };
   if (p === 'INSTAGRAM') return { label: 'Instagram', color: '#e1306c', bg: 'rgba(225, 48, 108, 0.1)', icon: Instagram };
   if (p === 'TELEGRAM')  return { label: 'Telegram',  color: '#229ed9', bg: 'rgba(34, 158, 217, 0.1)', icon: Send };
+  if (p === 'TIKTOK')    return { label: 'TikTok',    color: '#FE2C55', bg: 'rgba(254, 44, 85, 0.1)',   icon: Video };
   if (p === 'WEBCHAT')   return { label: 'Webchat',   color: '#2563eb', bg: 'rgba(37, 99, 235, 0.1)',  icon: Globe };
   return { label: p || 'Channel', color: '#64748b', bg: 'rgba(100, 116, 139, 0.1)', icon: Radio };
 }
@@ -439,6 +443,7 @@ export default function ConnectAccountsPage() {
                       const badge = getPlatformBadge(item.platform);
                       const BadgeIcon = badge.icon;
                       const identifier =
+                        item.wa_display_phone ||
                         item.wa_phone_number_id ||
                         item.fb_page_id ||
                         item.ig_account_id ||
@@ -560,6 +565,12 @@ export default function ConnectAccountsPage() {
         {activeTab === 'telegram' && (
           <div style={{ marginTop: 10 }}>
             <TelegramPage embedded />
+          </div>
+        )}
+
+        {activeTab === 'tiktok' && (
+          <div style={{ marginTop: 10 }}>
+            <TikTokPage embedded />
           </div>
         )}
 
@@ -751,6 +762,34 @@ export default function ConnectAccountsPage() {
                   <div>
                     <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#0f172a' }}>Telegram Bot</div>
                     <div style={{ fontSize: '0.74rem', color: '#64748b' }}>Connect Telegram bots using BotFather API tokens</div>
+                  </div>
+                </div>
+                <ArrowUpRight size={16} color="#94a3b8" />
+              </div>
+
+              <div
+                onClick={() => { setShowConnectModal(false); setTab('tiktok'); }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '14px 16px',
+                  borderRadius: 10,
+                  border: '1px solid #e2e8f0',
+                  background: '#ffffff',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s',
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
+                onMouseLeave={(e) => e.currentTarget.style.background = '#ffffff'}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ width: 38, height: 38, borderRadius: 10, background: 'rgba(254, 44, 85, 0.1)', color: '#FE2C55', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Video size={20} />
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#0f172a' }}>TikTok Channel</div>
+                    <div style={{ fontSize: '0.74rem', color: '#64748b' }}>Connect TikTok Business accounts for DMs & comment automation</div>
                   </div>
                 </div>
                 <ArrowUpRight size={16} color="#94a3b8" />

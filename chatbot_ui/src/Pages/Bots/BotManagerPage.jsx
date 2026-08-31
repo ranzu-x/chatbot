@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
 import { flowAPI, integrationAPI, channelAPI, botAPI, templateAPI } from '../../services/api';
+import WhatsAppTemplateManager from '../../Components/Templates/WhatsAppTemplateManager';
+import CommentAutomationManager from '../../Components/Comments/CommentAutomationManager';
 import {
   Bot,
   Plus,
@@ -58,6 +60,7 @@ const PLATFORM_MAP = {
   FACEBOOK:  { label: 'Facebook',  icon: Facebook,      color: '#1877f2', bg: 'rgba(24, 119, 242, 0.12)', border: '#1877f2' },
   INSTAGRAM: { label: 'Instagram', icon: Instagram,     color: '#e1306c', bg: 'rgba(225, 48, 108, 0.12)', border: '#e1306c' },
   TELEGRAM:  { label: 'Telegram',  icon: Send,          color: '#229ed9', bg: 'rgba(34, 158, 217, 0.12)', border: '#229ed9' },
+  TIKTOK:    { label: 'TikTok',    icon: Video,         color: '#FE2C55', bg: 'rgba(254, 44, 85, 0.12)',   border: '#FE2C55' },
   WEBCHAT:   { label: 'Webchat',   icon: Globe,         color: '#6366f1', bg: 'rgba(99, 102, 241, 0.12)', border: '#6366f1' },
 };
 
@@ -308,14 +311,63 @@ export default function BotManagerPage() {
     loadAllData();
   }, [loadAllData]);
 
+  // Filter sub-tabs dynamically per channel platform (Message Templates only for WhatsApp)
+  const currentSubTabs = useMemo(() => {
+    const list = SUB_TABS[activeCategory] || [];
+    const platform = (selectedAccount?.platform || 'WHATSAPP').toUpperCase();
+    return list.filter((sub) => {
+      // Message Templates & WhatsApp specific tools ONLY for WhatsApp
+      if (['messageTemplates', 'whatsappCalling', 'catalogSync', 'productMessages'].includes(sub.id)) {
+        return platform === 'WHATSAPP';
+      }
+      // Comments / Story mentions ONLY for Facebook / Instagram
+      if (['commentAutomation', 'storyMentions'].includes(sub.id)) {
+        return ['FACEBOOK', 'INSTAGRAM'].includes(platform);
+      }
+      return true;
+    });
+  }, [activeCategory, selectedAccount]);
+
   // Sync category change to reset subtab
   const handleCategoryChange = (catId) => {
     setActiveCategory(catId);
-    const subList = SUB_TABS[catId] || [];
-    if (subList.length > 0) {
-      setActiveSubTab(subList[0].id);
+    const list = SUB_TABS[catId] || [];
+    const platform = (selectedAccount?.platform || 'WHATSAPP').toUpperCase();
+    const available = list.filter((sub) => {
+      if (['messageTemplates', 'whatsappCalling', 'catalogSync', 'productMessages'].includes(sub.id)) {
+        return platform === 'WHATSAPP';
+      }
+      if (['commentAutomation', 'storyMentions'].includes(sub.id)) {
+        return ['FACEBOOK', 'INSTAGRAM'].includes(platform);
+      }
+      return true;
+    });
+    if (available.length > 0) {
+      setActiveSubTab(available[0].id);
     }
   };
+
+  // When selected account or platform changes, ensure activeSubTab is valid for the current platform
+  useEffect(() => {
+    const list = SUB_TABS[activeCategory] || [];
+    const platform = (selectedAccount?.platform || 'WHATSAPP').toUpperCase();
+    const available = list.filter((sub) => {
+      if (['messageTemplates', 'whatsappCalling', 'catalogSync', 'productMessages'].includes(sub.id)) {
+        return platform === 'WHATSAPP';
+      }
+      if (['commentAutomation', 'storyMentions'].includes(sub.id)) {
+        return ['FACEBOOK', 'INSTAGRAM'].includes(platform);
+      }
+      return true;
+    });
+
+    const isCurrentValid = available.some((sub) => sub.id === activeSubTab);
+    if (!isCurrentValid && available.length > 0) {
+      setActiveSubTab(available[0].id);
+    }
+  }, [selectedAccount, activeCategory, activeSubTab]);
+
+
 
   /* ─── Filter Accounts in Left Nav ─── */
   const filteredAccounts = useMemo(() => {
@@ -326,6 +378,7 @@ export default function BotManagerPage() {
       const matchesSearch =
         !q ||
         (acc.name && acc.name.toLowerCase().includes(q)) ||
+        (acc.wa_display_phone && acc.wa_display_phone.includes(q)) ||
         (acc.wa_phone_number_id && acc.wa_phone_number_id.includes(q)) ||
         (acc.fb_page_name && acc.fb_page_name.toLowerCase().includes(q)) ||
         (acc.ig_username && acc.ig_username.toLowerCase().includes(q));
@@ -346,11 +399,29 @@ export default function BotManagerPage() {
   /* ─── Filter Flows for Selected Account ─── */
   const displayedFlows = useMemo(() => {
     return flows.filter((f) => {
+      // 1. Filter by Selected Account or Channel
       if (selectedAccount && selectedAccount.id !== 'all') {
-        if (f.integration_id && String(f.integration_id) !== String(selectedAccount.id)) {
+        // If flow is bound to a specific integration_id, it must match this selected account
+        if (f.integration_id) {
+          if (String(f.integration_id) !== String(selectedAccount.id)) {
+            return false;
+          }
+        } else {
+          // If flow has no integration_id, it must match the selected account's platform
+          const flowPlat = (f.platform || '').toUpperCase();
+          const accPlat = (selectedAccount.platform || '').toUpperCase();
+          if (flowPlat && accPlat && flowPlat !== accPlat) {
+            return false;
+          }
+        }
+      } else if (channelFilter && channelFilter !== 'ALL') {
+        const flowPlat = (f.platform || '').toUpperCase();
+        if (flowPlat !== channelFilter.toUpperCase()) {
           return false;
         }
       }
+
+      // 2. Table search filtering
       if (tableSearch.trim()) {
         const q = tableSearch.toLowerCase();
         const matchesName = f.name && f.name.toLowerCase().includes(q);
@@ -359,7 +430,8 @@ export default function BotManagerPage() {
       }
       return true;
     });
-  }, [flows, selectedAccount, tableSearch]);
+  }, [flows, selectedAccount, channelFilter, tableSearch]);
+
 
   /* ─── Create Flow ─── */
   const handleCreateFlow = async () => {
@@ -828,7 +900,7 @@ export default function BotManagerPage() {
                 const pInfo = getPlatformInfo(acc.platform);
                 const IconComponent = pInfo.icon;
                 const isSelected = selectedAccount?.id === acc.id;
-                const identifier = acc.wa_phone_number_id || acc.fb_page_id || acc.ig_username || `${pInfo.label} Account`;
+                const identifier = acc.wa_display_phone || acc.wa_phone_number_id || acc.fb_page_id || acc.ig_username || (acc.tiktok_username ? `@${acc.tiktok_username}` : acc.tiktok_open_id) || `${pInfo.label} Account`;
 
                 return (
                   <div
@@ -884,7 +956,7 @@ export default function BotManagerPage() {
                   <span className="bm-status-badge">● Active</span>
                 </h2>
                 <div className="sub">
-                  {selectedAccount?.wa_phone_number_id ? `+${selectedAccount.wa_phone_number_id}` : (selectedAccount?.fb_page_name || `${currentPlatformInfo.label} Channel`)}
+                  {selectedAccount?.wa_display_phone || (selectedAccount?.wa_phone_number_id ? `ID: ${selectedAccount.wa_phone_number_id}` : (selectedAccount?.fb_page_name || `${currentPlatformInfo.label} Channel`))}
                 </div>
               </div>
             </div>
@@ -993,7 +1065,7 @@ export default function BotManagerPage() {
 
           {/* Secondary Sub-Tabs (Pills) */}
           <div className="bm-subtabs-row">
-            {(SUB_TABS[activeCategory] || []).map((sub) => (
+            {currentSubTabs.map((sub) => (
               <button
                 key={sub.id}
                 className={`bm-subtab-pill ${activeSubTab === sub.id ? 'active' : ''}`}
@@ -1257,77 +1329,7 @@ export default function BotManagerPage() {
               VIEW 2: COMMENT AUTOMATION (ENGAGEMENT)
               ═════════════════════════════════════════════════════════════════ */}
           {activeCategory === 'engagement' && activeSubTab === 'commentAutomation' && (
-            <div className="bm-content-card">
-              <div className="bm-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <h3 className="bm-card-title">Facebook & Instagram Comment Automation</h3>
-                  <p className="bm-card-sub">
-                    Automatically reply to post comments and dispatch private instant messages in Messenger.
-                  </p>
-                </div>
-                <button
-                  onClick={() => navigate('/channels/facebook')}
-                  style={{
-                    padding: '7px 14px',
-                    borderRadius: 8,
-                    background: '#1877f2',
-                    color: '#ffffff',
-                    border: 'none',
-                    fontWeight: 700,
-                    fontSize: '0.82rem',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                  }}
-                >
-                  <Plus size={14} /> Create Comment Campaign
-                </button>
-              </div>
-
-              <div style={{ padding: 20 }}>
-                {commentRules.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: 40, color: '#5c5c80' }}>
-                    <MessageSquare size={36} color="#1877f2" style={{ margin: '0 auto 10px' }} />
-                    <h4>No active comment campaigns</h4>
-                    <p style={{ fontSize: '0.82rem' }}>Configure comment triggers for your connected Facebook & Instagram pages.</p>
-                  </div>
-                ) : (
-                  <table className="bm-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr>
-                        <th>CAMPAIGN NAME</th>
-                        <th>TARGET POST</th>
-                        <th>TRIGGER</th>
-                        <th>REPLY COMMENT</th>
-                        <th>STATUS</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {commentRules.map((rule) => (
-                        <tr key={rule.id}>
-                          <td style={{ fontWeight: 700, color: '#1a1a2e' }}>{rule.campaign_name}</td>
-                          <td>{rule.post_id === 'ALL_POSTS' ? '🌐 All Posts' : rule.post_id}</td>
-                          <td>
-                            <span style={{ fontSize: '0.74rem', padding: '2px 8px', borderRadius: 10, background: 'rgba(16,185,129,0.1)', color: '#10b981', fontWeight: 700 }}>
-                              {rule.trigger_type}
-                            </span>
-                          </td>
-                          <td style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {rule.auto_reply_comment}
-                          </td>
-                          <td>
-                            <span style={{ color: rule.is_active ? '#10b981' : '#f59e0b', fontWeight: 700, fontSize: '0.76rem' }}>
-                              ● {rule.is_active ? 'Active' : 'Paused'}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            </div>
+            <CommentAutomationManager defaultPlatform={selectedAccount?.platform || 'FACEBOOK'} />
           )}
 
           {/* ═════════════════════════════════════════════════════════════════
@@ -1383,9 +1385,19 @@ export default function BotManagerPage() {
           )}
 
           {/* ═════════════════════════════════════════════════════════════════
+              VIEW 2: WHATSAPP MESSAGE TEMPLATES (WHATSAPP EXCLUSIVE)
+              ═════════════════════════════════════════════════════════════════ */}
+          {activeCategory === 'automation' && activeSubTab === 'messageTemplates' && (selectedAccount?.platform || '').toUpperCase() === 'WHATSAPP' && (
+            <WhatsAppTemplateManager
+              selectedAccount={selectedAccount}
+              showToast={showToast}
+            />
+          )}
+
+          {/* ═════════════════════════════════════════════════════════════════
               VIEW 4: DEFAULT FALLBACK VIEW FOR OTHER SUB-TABS
               ═════════════════════════════════════════════════════════════════ */}
-          {!['keywordReplies'].includes(activeSubTab) && activeCategory !== 'engagement' && activeCategory !== 'ai' && (
+          {!['keywordReplies', 'messageTemplates'].includes(activeSubTab) && activeCategory !== 'engagement' && activeCategory !== 'ai' && (
             <div className="bm-content-card">
               <div className="bm-card-header">
                 <h3 className="bm-card-title">{activeSubTab.replace(/([A-Z])/g, ' $1').trim()}</h3>

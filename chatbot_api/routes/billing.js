@@ -1,374 +1,238 @@
 import express from "express";
 import pool from "../db.js";
-import { authMiddleWare } from "../middleware/authmiddleware.js";
-import { requireRole } from "../middleware/roleMiddleware.js";
+import { authMiddleware } from "../middleware/authmiddleware.js";
+import { stripe, createCheckoutSession, createCustomerPortalSession, assignPackageLocally } from "../services/stripeService.js";
 
 const router = express.Router();
 
-// ✅ Generate bill after appointment
-router.post("/bills", authMiddleWare, async (req, res) => {
-  const conn = await pool.getConnection();
-  await conn.beginTransaction();
-
+// ─── GET PRICING PLANS ───────────────────────────────────────────────────────
+router.get("/billing/plans", async (req, res) => {
   try {
-    const {
-      appointment_id,
-      patient_id,
-      doctor_id,
-      bill_type,
-      subtotal,
-      discount_amount,
-      tax_amount,
-      grand_total,
-      paid_amount,
-      payment_method,
-      payment_status,
-      remarks,
-      items
-    } = req.body;
-
-    const hospital_id = req.user.hospital_id;
-    const created_by = req.user.id;
-
-    // 1️⃣ Check if bill already exists for this appointment
-    const [existingBill] = await conn.query(
-      `SELECT id FROM billing
-       WHERE hospital_id = ? AND appointment_id = ?
-       LIMIT 1`,
-      [hospital_id, appointment_id]
+    const [packages] = await pool.query(
+      "SELECT * FROM packages WHERE is_active = 1 ORDER BY type ASC, price ASC"
     );
 
-    let billing_id;
+    const [modules] = await pool.query(`
+      SELECT pm.package_id, pm.module_key, pm.is_enabled, m.display_name, m.module_type, m.category
+      FROM package_modules pm
+      JOIN modules m ON m.key = pm.module_key
+      WHERE pm.is_enabled = 1
+    `);
 
-    if (existingBill.length > 0) {
-      // ================= UPDATE BILL =================
-      billing_id = existingBill[0].id;
-
-      await conn.query(
-        `UPDATE billing SET
-          patient_id = ?,
-          doctor_id = ?,
-          bill_type = ?,
-          total_amount = ?,
-          discount_amount = ?,
-          tax_amount = ?,
-          grand_total = ?,
-          paid_amount = ?,
-          payment_status = ?,
-          payment_method = ?,
-          remarks = ?
-        WHERE id = ?`,
-        [
-          patient_id,
-          doctor_id,
-          bill_type,
-          subtotal,
-          discount_amount,
-          tax_amount,
-          grand_total,
-          paid_amount,
-          payment_status,
-          payment_method,
-          remarks,
-          billing_id
-        ]
-      );
-
-      // Remove old items
-      await conn.query(
-        `DELETE FROM billing_items WHERE billing_id = ?`,
-        [billing_id]
-      );
-
-    } else {
-      // ================= INSERT BILL =================
-      const [billResult] = await conn.query(
-        `INSERT INTO billing
-    (hospital_id, patient_id, doctor_id, appointment_id, bill_type, bill_date,
-     total_amount, discount_amount, tax_amount, grand_total,
-     paid_amount, payment_status, payment_method, remarks, created_by)
-    VALUES (?, ?, ?, ?, ?, CURDATE(), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          hospital_id,
-          patient_id,
-          doctor_id,
-          appointment_id,
-          bill_type,
-          subtotal,
-          discount_amount,
-          tax_amount,
-          grand_total,
-          paid_amount,
-          payment_status,
-          payment_method,
-          remarks,
-          created_by
-        ]
-      );
-
-      billing_id = billResult.insertId;
-
-      // 🔐 Generate invoice number ONCE
-      const invoice_no = `INV-${String(billing_id).padStart(6, "0")}`;
-
-      await conn.query(
-        `UPDATE billing SET invoice_no = ? WHERE id = ?`,
-        [invoice_no, billing_id]
-      );
-    }
-
-    // 2️⃣ Insert billing items (fresh)
-    for (const item of items) {
-      await conn.query(
-        `INSERT INTO billing_items
-        (billing_id, service_name, quantity, unit_price, total_price)
-        VALUES (?, ?, ?, ?, ?)`,
-        [
-          billing_id,
-          item.service_name,
-          item.quantity,
-          item.unit_price,
-          item.total
-        ]
-      );
-    }
-
-    // 3️⃣ Update appointment payment status; fully paid scheduled visits become confirmed
-    if (appointment_id) {
-      await conn.query(
-        `UPDATE appointments
-         SET payment_status = ?,
-             status = CASE
-               WHEN ? = 'paid' AND status IN ('scheduled') THEN 'confirmed'
-               ELSE status
-             END
-         WHERE id = ?`,
-        [payment_status, payment_status, appointment_id]
-      );
-    }
-
-    await conn.commit();
-
-    res.json({
-      message: existingBill.length ? "Bill updated successfully" : "Bill created successfully",
-      billing_id
-    });
-
-  } catch (err) {
-    await conn.rollback();
-    console.error("Billing error:", err);
-    res.status(500).json({ message: "Billing failed" });
-  } finally {
-    conn.release();
-  }
-});
-
-
-
-// ✅ Invoice print data
-router.get("/bills/:id", authMiddleWare, async (req, res) => {
-  try {
-    const billId = req.params.id;
-    const hospital_id = req.user.hospital_id;
-
-    const [[bill]] = await pool.query(
-      `SELECT 
-          b.*,
-          CONCAT(p.first_name,' ',p.last_name) AS patient_name,
-          p.phone,
-          p.gender,
-          p.date_of_birth,
-          p.address,
-          TIMESTAMPDIFF(YEAR, p.date_of_birth, CURDATE()) AS age,
-          CONCAT(u.first_name,' ',u.last_name) AS doctor_name,
-          a.appointment_date,
-          a.appointment_time
-       FROM billing b
-       LEFT JOIN patients p ON b.patient_id = p.id
-       LEFT JOIN users u ON b.doctor_id = u.id
-       LEFT JOIN appointments a ON b.appointment_id = a.id
-       WHERE b.id = ? AND b.hospital_id = ?`,
-      [billId, hospital_id]
-    );
-
-    if (!bill) {
-      return res.status(404).json({ message: "Bill not found" });
-    }
-
-    const [items] = await pool.query(
-      `SELECT * FROM billing_items WHERE billing_id = ?`,
-      [billId]
-    );
-
-    // ✅ Date Formatter
-    const formatDateTime = (date) => {
-      if (!date) return null;
-      return new Date(date).toLocaleString("en-IN", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
+    const moduleMap = {};
+    for (const pm of modules) {
+      if (!moduleMap[pm.package_id]) moduleMap[pm.package_id] = [];
+      moduleMap[pm.package_id].push({
+        key: pm.module_key,
+        displayName: pm.display_name,
+        type: pm.module_type,
+        category: pm.category,
       });
-    };
-
-    // ✅ Combine appointment date & time safely
-    let appointmentDateTime = null;
-
-    if (bill.appointment_date) {
-      // Convert MySQL Date object → "YYYY-MM-DD" string to avoid invalid date
-      const dateStr = new Date(bill.appointment_date).toISOString().split("T")[0];
-
-      const combined = bill.appointment_time
-        ? `${dateStr}T${bill.appointment_time}`
-        : dateStr;
-
-      appointmentDateTime = formatDateTime(combined);
     }
 
-    // ✅ Format bill date
-    const billDateStr = new Date(bill.bill_date).toISOString().split("T")[0];
-    const formattedBillDate = formatDateTime(billDateStr);
+    const plans = packages.map((p) => ({
+      ...p,
+      price: Number(p.price),
+      enabledModules: moduleMap[p.id] || [],
+    }));
 
-    // ✅ Invoice Number
-    const invoiceNo = `INV-${new Date(bill.bill_date).getFullYear()}-${String(
-      bill.id
-    ).padStart(6, "0")}`;
-
-    res.json({
-      invoice_no: invoiceNo,
-      bill: {
-        ...bill,
-        formatted_bill_date: formattedBillDate,
-        formatted_appointment_date: appointmentDateTime,
-      },
-      items,
-    });
-
-  } catch (error) {
-    console.error("Invoice Fetch Error:", error);
-    res.status(500).json({ message: "Server error while fetching invoice" });
+    return res.json({ success: true, plans });
+  } catch (err) {
+    console.error("Billing plans error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-// ✅ Get all bills with pagination + search
-router.get("/bills", authMiddleWare, async (req, res) => {
-  const hospital_id = req.user.hospital_id;
-  const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 10;
-  const search = req.query.search ? `%${req.query.search}%` : "%";
-  const offset = (page - 1) * limit;
-
+// ─── CREATE CHECKOUT SESSION ─────────────────────────────────────────────────
+router.post("/billing/create-checkout", authMiddleware, async (req, res) => {
   try {
-    // ✅ Count total
-    const [[{ count }]] = await pool.query(
-      `SELECT COUNT(*) AS count
-       FROM billing b
-       LEFT JOIN patients p ON b.patient_id = p.id
-       WHERE b.hospital_id = ?
-       AND (p.first_name LIKE ? OR p.last_name LIKE ? OR b.payment_status LIKE ?)`,
-      [hospital_id, search, search, search]
-    );
+    const { packageId, successUrl, cancelUrl } = req.body;
+    if (!packageId) return res.status(400).json({ success: false, message: "Package ID is required" });
 
-    // ✅ Fetch paginated data
-    const [rows] = await pool.query(
-      `SELECT 
-        b.*, 
-        CONCAT(p.first_name, ' ', p.last_name) AS patient_name,
-        CONCAT(u.first_name, ' ', u.last_name) AS doctor_name
-      FROM billing b
-      LEFT JOIN patients p ON b.patient_id = p.id
-      LEFT JOIN users u ON b.doctor_id = u.id
-      WHERE b.hospital_id = ?
-      AND (p.first_name LIKE ? OR p.last_name LIKE ? OR b.payment_status LIKE ?)
-      ORDER BY b.created_at DESC
-      LIMIT ? OFFSET ?`,
-      [hospital_id, search, search, search, limit, offset]
-    );
+    const agencyId = req.user?.agencyId;
+    const userId = req.user?.id;
+    const userEmail = req.user?.email;
+    const userName = req.user?.name;
 
-    res.json({
-      bills: rows,
-      pagination: {
-        totalBills: count,
-        totalPages: Math.ceil(count / limit),
-        currentPage: page,
-      },
+    const result = await createCheckoutSession({
+      agencyId,
+      userId,
+      packageId,
+      userEmail,
+      userName,
+      successUrl,
+      cancelUrl,
     });
-  } catch (error) {
-    console.error("Billing fetch error:", error);
-    res.status(500).json({ error: "Failed to load billing data" });
+
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("Create checkout error:", err);
+    return res.status(500).json({ success: false, message: err.message || "Failed to initiate checkout" });
   }
 });
-// ✅ Update bill status or data
-router.put("/bills/:id", authMiddleWare, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const hospital_id = req.user.hospital_id;
-    const updateData = req.body;
 
-    // Mapping frontend fields to backend columns if necessary
-    // If it's just status update:
-    if (updateData.status) {
-      await pool.query(
-        "UPDATE billing SET payment_status = ? WHERE id = ? AND hospital_id = ?",
-        [updateData.status, id, hospital_id]
+// ─── CREATE CUSTOMER PORTAL LINK ─────────────────────────────────────────────
+router.post("/billing/customer-portal", authMiddleware, async (req, res) => {
+  try {
+    const { returnUrl } = req.body;
+    const agencyId = req.user?.agencyId;
+    const userId = req.user?.id;
+
+    const result = await createCustomerPortalSession({
+      agencyId,
+      userId,
+      returnUrl,
+    });
+
+    return res.json({ success: true, url: result.url });
+  } catch (err) {
+    console.error("Customer portal error:", err);
+    return res.status(500).json({ success: false, message: err.message || "Failed to open customer portal" });
+  }
+});
+
+// ─── GET INVOICES HISTORY ────────────────────────────────────────────────────
+router.get("/billing/invoices", authMiddleware, async (req, res) => {
+  try {
+    const agencyId = req.user?.agencyId;
+    const userId = req.user?.id;
+
+    let rows = [];
+    if (agencyId) {
+      [rows] = await pool.query(
+        "SELECT * FROM invoices WHERE agency_id = ? ORDER BY paid_at DESC LIMIT 50",
+        [agencyId]
       );
+    } else if (userId) {
+      [rows] = await pool.query(
+        "SELECT * FROM invoices WHERE user_id = ? ORDER BY paid_at DESC LIMIT 50",
+        [userId]
+      );
+    }
+
+    return res.json({ success: true, invoices: rows });
+  } catch (err) {
+    console.error("Invoices error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── STRIPE WEBHOOK HANDLER ──────────────────────────────────────────────────
+router.post("/billing/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  const sig = req.headers["stripe-signature"];
+  const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  let event;
+  try {
+    if (endpointSecret && stripe && sig) {
+      event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
     } else {
-      // General update
-      await pool.query(
-        `UPDATE billing SET 
-          bill_type = ?, 
-          total_amount = ?, 
-          discount_amount = ?, 
-          tax_amount = ?, 
-          grand_total = ?, 
-          paid_amount = ?, 
-          payment_status = ?, 
-          payment_method = ?, 
-          remarks = ?
-        WHERE id = ? AND hospital_id = ?`,
-        [
-          updateData.bill_type,
-          updateData.subtotal,
-          updateData.discount_amount,
-          updateData.tax_amount,
-          updateData.grand_total,
-          updateData.paid_amount,
-          updateData.payment_status,
-          updateData.payment_method,
-          updateData.remarks,
-          id,
-          hospital_id
-        ]
-      );
+      // Fallback parse if no webhook secret configured in dev
+      event = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
     }
-
-    res.json({ message: "Bill updated successfully" });
-  } catch (error) {
-    console.error("Update bill error:", error);
-    res.status(500).json({ message: "Failed to update bill" });
+  } catch (err) {
+    console.error("Stripe webhook verification error:", err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
   }
-});
 
-// ✅ Delete bill
-router.delete("/bills/:id", authMiddleWare, requireRole(["hospital_admin"]), async (req, res) => {
   try {
-    const { id } = req.params;
-    const hospital_id = req.user.hospital_id;
+    const eventType = event.type;
+    const dataObject = event.data?.object;
 
-    // Delete items first
-    await pool.query("DELETE FROM billing_items WHERE billing_id = ?", [id]);
-    // Delete the bill
-    const [result] = await pool.query("DELETE FROM billing WHERE id = ? AND hospital_id = ?", [id, hospital_id]);
+    console.log(`[STRIPE WEBHOOK] Received event: ${eventType}`);
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "Bill not found" });
+    switch (eventType) {
+      case "checkout.session.completed": {
+        const metadata = dataObject.metadata || {};
+        const agencyId = metadata.agencyId ? Number(metadata.agencyId) : null;
+        const userId = metadata.userId ? Number(metadata.userId) : null;
+        const packageId = metadata.packageId ? Number(metadata.packageId) : null;
+        const customerId = dataObject.customer;
+        const subscriptionId = dataObject.subscription;
+
+        if (packageId && (agencyId || userId)) {
+          await assignPackageLocally({
+            agencyId,
+            userId,
+            packageId,
+            stripeCustomerId: customerId,
+            stripeSubId: subscriptionId,
+            notes: `Stripe Checkout completed: Session ${dataObject.id}`,
+          });
+
+          // Record invoice
+          const amountPaid = (dataObject.amount_total || 0) / 100;
+          await pool.query(
+            `INSERT INTO invoices (
+              agency_id, user_id, package_id, stripe_invoice_id, amount_paid, currency, status, paid_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'PAID', NOW())`,
+            [agencyId, userId, packageId, dataObject.invoice || dataObject.id, amountPaid, (dataObject.currency || "USD").toUpperCase()]
+          );
+          console.log(`✅ [STRIPE] Upgraded workspace (Agency: ${agencyId}, User: ${userId}) to package ID: ${packageId}`);
+        }
+        break;
+      }
+
+      case "customer.subscription.deleted": {
+        // Downgrade to default free plan
+        const customerId = dataObject.customer;
+        const [defaultPkgs] = await pool.query("SELECT id, name FROM packages WHERE is_default = 1 LIMIT 1");
+        const defaultPkgId = defaultPkgs[0]?.id || 1;
+
+        await pool.query("UPDATE agencies SET package_id = ? WHERE id IN (SELECT agency_id FROM subscriptions WHERE stripe_customer_id = ?)", [defaultPkgId, customerId]);
+        await pool.query("UPDATE users SET package_id = ? WHERE id IN (SELECT user_id FROM subscriptions WHERE stripe_customer_id = ?)", [defaultPkgId, customerId]);
+        await pool.query("UPDATE subscriptions SET status = 'CANCELLED' WHERE stripe_customer_id = ?", [customerId]);
+        console.log(`⚠️ [STRIPE] Subscription cancelled for customer ${customerId}. Downgraded to default package.`);
+        break;
+      }
+
+      case "invoice.payment_succeeded": {
+        const customerId = dataObject.customer;
+        const invoicePdf = dataObject.invoice_pdf;
+        const hostedInvoiceUrl = dataObject.hosted_invoice_url;
+        const amountPaid = (dataObject.amount_paid || 0) / 100;
+        const invoiceId = dataObject.id;
+
+        // Lookup agency or user
+        const [subRows] = await pool.query(
+          "SELECT agency_id, user_id, package_id FROM subscriptions WHERE stripe_customer_id = ? ORDER BY id DESC LIMIT 1",
+          [customerId]
+        );
+
+        if (subRows.length) {
+          const { agency_id, user_id, package_id } = subRows[0];
+          await pool.query(
+            `INSERT INTO invoices (
+              agency_id, user_id, package_id, stripe_invoice_id, amount_paid, currency, status, invoice_pdf_url, hosted_invoice_url, paid_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'PAID', ?, ?, NOW())
+            ON DUPLICATE KEY UPDATE
+              amount_paid = VALUES(amount_paid),
+              invoice_pdf_url = VALUES(invoice_pdf_url),
+              hosted_invoice_url = VALUES(hosted_invoice_url)`,
+            [
+              agency_id,
+              user_id,
+              package_id,
+              invoiceId,
+              amountPaid,
+              (dataObject.currency || "USD").toUpperCase(),
+              invoicePdf,
+              hostedInvoiceUrl,
+            ]
+          );
+        }
+        break;
+      }
+
+      default:
+        // Other events ignored
+        break;
     }
 
-    res.json({ message: "Bill deleted successfully" });
-  } catch (error) {
-    console.error("Delete bill error:", error);
-    res.status(500).json({ message: "Failed to delete bill" });
+    return res.json({ received: true });
+  } catch (err) {
+    console.error("Webhook processing error:", err);
+    return res.status(500).json({ error: "Webhook handling failed" });
   }
 });
 

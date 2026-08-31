@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import AppLayout from '../../Layout/AppLayout';
 import { metaAppAPI } from '../../services/api';
 import { useAuth } from '../../Provider/AuthContext';
+import { showAlert, notify } from '../../utils/alerts';
 
 function generateRandomToken() {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -12,7 +13,7 @@ function generateRandomToken() {
   return `nexa_meta_${random}`;
 }
 
-export default function MetaAppPage() {
+export default function MetaAppPage({ embedded = false }) {
   const { user } = useAuth();
   
   // Real numeric agency ID from backend or user context
@@ -34,6 +35,7 @@ export default function MetaAppPage() {
     appName: '',
     appId: '',
     appSecret: '',
+    systemUserToken: '',
     whatsappConfigId: '',
     verifyToken: generateRandomToken(),
     siteUrl: window.location.origin,
@@ -46,6 +48,7 @@ export default function MetaAppPage() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [showSecret, setShowSecret] = useState(false);
+  const [showSystemToken, setShowSystemToken] = useState(false);
   const [toast, setToast] = useState(null);
   const [copiedKey, setCopiedKey] = useState('');
 
@@ -100,6 +103,7 @@ export default function MetaAppPage() {
             appName:          s.app_name           || '',
             appId:            s.app_id             || '',
             appSecret:        s.app_secret         || '',
+            systemUserToken:  s.system_user_token  || '',
             whatsappConfigId: s.whatsapp_config_id || '',
             verifyToken:      token,
             siteUrl:          s.site_url           || window.location.origin,
@@ -119,8 +123,8 @@ export default function MetaAppPage() {
   };
 
   const showToast = (msg, type = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 4000);
+    if (type === 'error') notify.error(msg);
+    else notify.success(msg);
   };
 
   const handleSave = async (e) => {
@@ -134,9 +138,9 @@ export default function MetaAppPage() {
         tosUrl: dynamicTosUrl,
         customWebhookUrl: webhookCallbackUrl,
       });
-      showToast('✅ Meta App settings saved successfully!');
+      showAlert.success('Meta App Settings Saved!', 'Your Meta credentials, system user token, and webhook configuration were successfully updated.');
     } catch (err) {
-      showToast(err.response?.data?.message || 'Failed to save', 'error');
+      showAlert.error('Save Failed', err.response?.data?.message || 'Failed to save settings');
     } finally {
       setSaving(false);
     }
@@ -146,9 +150,9 @@ export default function MetaAppPage() {
     setTesting(true);
     try {
       const res = await metaAppAPI.test();
-      showToast(`✅ Meta Connection Verified! App Name: ${res.data.appName}`);
+      showAlert.success('Connection Verified!', `Successfully connected to Meta Graph API. App Name: ${res.data.appName}`);
     } catch (err) {
-      showToast(err.response?.data?.message || 'Connection test failed. Check App ID & Secret.', 'error');
+      showAlert.error('Connection Failed', err.response?.data?.message || 'Could not verify connection. Check App ID & Secret.');
     } finally {
       setTesting(false);
     }
@@ -168,25 +172,29 @@ export default function MetaAppPage() {
 
   const isLocalhost = cleanPublicBase.includes('localhost') || cleanPublicBase.includes('127.0.0.1');
 
+  const LayoutWrapper = embedded ? ({ children }) => <div>{children}</div> : AppLayout;
+
   return (
-    <AppLayout>
+    <LayoutWrapper>
       {toast && (
         <div className="toast-container">
           <div className={`toast ${toast.type === 'error' ? 'error' : 'success'}`}>{toast.msg}</div>
         </div>
       )}
 
-      <div className="page-header">
-        <div className="flex items-center gap-3">
-          <span style={{ color: '#1877f2', fontSize: '1.6rem' }}>📘</span>
-          <div>
-            <h1 className="page-title">Meta & Facebook App Setup</h1>
-            <p className="page-subtitle">Configure your Meta Developer App credentials, Webhooks, and Domain settings</p>
+      {!embedded && (
+        <div className="page-header">
+          <div className="flex items-center gap-3">
+            <span style={{ color: '#1877f2', fontSize: '1.6rem' }}>📘</span>
+            <div>
+              <h1 className="page-title">Meta Developer App Setup</h1>
+              <p className="page-subtitle">Configure your Meta Developer App credentials, Webhooks, and Domain settings</p>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      <div className="page-body">
+      <div className={embedded ? "" : "page-body"}>
         {loading ? (
           <div className="loading-overlay"><div className="loading-spinner" /></div>
         ) : (
@@ -394,22 +402,68 @@ export default function MetaAppPage() {
                 </div>
               </div>
 
+              {/* Permanent System User Access Token */}
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <label className="form-label" style={{ margin: 0 }}>
+                    Meta Permanent System User Access Token (WhatsApp Cloud API)
+                    <span style={{ marginLeft: 8, fontSize: '0.72rem', fontWeight: 700, color: '#16a34a', background: 'rgba(22,163,74,0.08)', border: '1px solid rgba(22,163,74,0.2)', borderRadius: 6, padding: '1px 7px' }}>
+                      Recommended
+                    </span>
+                  </label>
+                </div>
+
+                <div style={{ position: 'relative' }}>
+                  <input
+                    className="form-input"
+                    type={showSystemToken ? 'text' : 'password'}
+                    placeholder="Paste permanent System User token (starts with EAA...) from Meta Business Settings"
+                    value={form.systemUserToken}
+                    onChange={e => setForm(f => ({ ...f, systemUserToken: e.target.value }))}
+                    style={{ paddingRight: 44, fontFamily: 'monospace', fontSize: '0.82rem' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSystemToken(!showSystemToken)}
+                    style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem' }}
+                  >
+                    {showSystemToken ? '🙈' : '👁️'}
+                  </button>
+                </div>
+                <p style={{ marginTop: 5, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                  💡 <strong>How to get:</strong> Meta Business Settings &rarr; <strong>System Users</strong> &rarr; <strong>Generate New Token</strong> &rarr; Select your app & check <code style={{ background: 'rgba(0,0,0,0.05)', padding: '1px 4px', borderRadius: 3 }}>whatsapp_business_management</code> & <code style={{ background: 'rgba(0,0,0,0.05)', padding: '1px 4px', borderRadius: 3 }}>whatsapp_business_messaging</code>. Once saved here, all WhatsApp numbers activate seamlessly with only a 6-digit PIN!
+                </p>
+              </div>
+
               {/* WhatsApp Embedded Signup Configuration ID */}
               <div style={{ marginBottom: 20 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                   <label className="form-label" style={{ margin: 0 }}>
-                    WhatsApp Embedded Signup Configuration ID (Optional)
+                    WhatsApp Embedded Signup Configuration ID
+                    <span style={{ marginLeft: 8, fontSize: '0.72rem', fontWeight: 700, color: '#dc2626', background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.2)', borderRadius: 6, padding: '1px 7px' }}>
+                      Required for Embedded Signup
+                    </span>
                   </label>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                    Found in Meta App &rarr; WhatsApp &rarr; Quickstart / Embedded Signup Setup
-                  </span>
                 </div>
+
+                {/* Warning banner */}
+                <div style={{ marginBottom: 10, padding: '10px 14px', background: 'rgba(220, 38, 38, 0.06)', border: '1px solid rgba(220, 38, 38, 0.25)', borderRadius: 8, fontSize: '0.8rem', color: '#991b1b', lineHeight: 1.5 }}>
+                  ⚠️ <strong>If you see "This app isn't available — Embedded signup is only available for BSPs or TPs"</strong>, it means this Config ID is missing or wrong. Without it, Meta rejects the login popup entirely.
+                  <div style={{ marginTop: 6, color: '#7f1d1d' }}>
+                    <strong>Where to find it:</strong> Meta App Dashboard → <strong>WhatsApp</strong> → <strong>Quickstart</strong> (or <strong>Configuration</strong>) → scroll to <strong>Embedded Signup</strong> section → copy the <strong>Configuration ID</strong> (a long numeric string like <code style={{ background: 'rgba(0,0,0,0.06)', padding: '1px 5px', borderRadius: 4 }}>1234567890123456</code>).
+                  </div>
+                </div>
+
                 <input
                   className="form-input"
-                  placeholder="e.g. 103984729104829 (Leave blank if not generated yet)"
+                  placeholder="e.g. 1234567890123456 — paste the numeric Config ID from Meta App → WhatsApp → Embedded Signup"
                   value={form.whatsappConfigId}
                   onChange={e => setForm(f => ({ ...f, whatsappConfigId: e.target.value }))}
+                  style={{ borderColor: !form.whatsappConfigId ? 'rgba(220,38,38,0.4)' : undefined }}
                 />
+                <p style={{ marginTop: 5, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                  Meta App Dashboard → WhatsApp → Quickstart or Configuration → Embedded Signup → copy <strong>Configuration ID</strong>
+                </p>
               </div>
 
               {/* Verify Token Input with Generator */}
@@ -464,6 +518,6 @@ export default function MetaAppPage() {
           </form>
         )}
       </div>
-    </AppLayout>
+    </LayoutWrapper>
   );
 }

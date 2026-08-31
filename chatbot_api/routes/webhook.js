@@ -1,4 +1,5 @@
 import express from "express";
+import axios from "axios";
 import pool from "../db.js";
 import { processFlow } from "../utils/flowEngine.js";
 import {
@@ -132,6 +133,33 @@ router.get("/webhook/:agencyId/:integrationId", async (req, res) => {
   }
 });
 
+// ─── HELPER: FETCH META USER PROFILE (FACEBOOK / INSTAGRAM) ─────────────────
+async function fetchMetaUserProfile(platform, externalId, accessToken) {
+  if (!accessToken || !externalId) return { name: null, avatar: null };
+  try {
+    if (platform === "FACEBOOK") {
+      const res = await axios.get(
+        `https://graph.facebook.com/v21.0/${externalId}?fields=first_name,last_name,name,profile_pic&access_token=${accessToken}`,
+        { timeout: 6000 }
+      );
+      const name = res.data?.name || `${res.data?.first_name || ""} ${res.data?.last_name || ""}`.trim() || null;
+      const avatar = res.data?.profile_pic || null;
+      return { name, avatar };
+    } else if (platform === "INSTAGRAM") {
+      const res = await axios.get(
+        `https://graph.facebook.com/v21.0/${externalId}?fields=name,username,profile_pic&access_token=${accessToken}`,
+        { timeout: 6000 }
+      );
+      const name = res.data?.name || res.data?.username || null;
+      const avatar = res.data?.profile_pic || null;
+      return { name, avatar };
+    }
+  } catch (err) {
+    console.warn(`[Profile Fetch] Could not fetch profile for ${platform} user ${externalId}:`, err.response?.data?.error?.message || err.message);
+  }
+  return { name: null, avatar: null };
+}
+
 // ─── RECEIVE META INCOMING MESSAGES VIA AGENCY WEBHOOK (POST) ────────────────
 router.post("/webhook/:agencyId", async (req, res) => {
   const { agencyId } = req.params;
@@ -144,23 +172,50 @@ router.post("/webhook/:agencyId", async (req, res) => {
 
   try {
     // 1. Check if WhatsApp payload
-    const waEntry = body?.entry?.[0]?.changes?.[0]?.value;
-    const waPhoneId = waEntry?.metadata?.phone_number_id;
+    const isWhatsApp =
+      body?.object === "whatsapp_business_account" ||
+      !!body?.entry?.[0]?.changes?.[0]?.value?.messaging_product ||
+      !!body?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
 
-    if (waPhoneId) {
-      const [waRows] = await pool.query(
-        "SELECT * FROM integrations WHERE (wa_phone_number_id = ? OR wa_business_acc_id = ?) AND agency_id = ? AND is_active = 1 LIMIT 1",
-        [waPhoneId, waPhoneId, agencyId]
-      );
-      const integration = waRows[0] || (await pool.query(
-        "SELECT * FROM integrations WHERE agency_id = ? AND platform = 'WHATSAPP' AND is_active = 1 LIMIT 1",
-        [agencyId]
-      ))[0]?.[0];
+    if (isWhatsApp) {
+      let waPhoneId = null;
+      let wabaId = null;
+
+      for (const entry of (body?.entry || [])) {
+        if (entry.id) wabaId = entry.id;
+        for (const change of (entry?.changes || [])) {
+          if (change?.value?.metadata?.phone_number_id) {
+            waPhoneId = change.value.metadata.phone_number_id;
+            break;
+          }
+        }
+        if (waPhoneId) break;
+      }
+
+      let integration = null;
+      if (waPhoneId || wabaId) {
+        const [waRows] = await pool.query(
+          "SELECT * FROM integrations WHERE (wa_phone_number_id = ? OR wa_business_acc_id = ?) AND agency_id = ? AND is_active = 1 LIMIT 1",
+          [waPhoneId || "", wabaId || "", agencyId]
+        );
+        integration = waRows[0];
+      }
+
+      if (!integration) {
+        const [fallbackRows] = await pool.query(
+          "SELECT * FROM integrations WHERE agency_id = ? AND platform = 'WHATSAPP' AND is_active = 1 LIMIT 1",
+          [agencyId]
+        );
+        integration = fallbackRows[0];
+      }
 
       if (integration) {
         console.log(`[Webhook POST] Routing to WhatsApp handler, integration=${integration.id}`);
         return handleWhatsAppPayload(body, agencyId, integration.id, integration);
+      } else {
+        console.warn(`[Webhook POST] ⚠️ No active WhatsApp integration found for agency ${agencyId}`);
       }
+      return;
     }
 
     // 2. Check if Facebook / Instagram payload
@@ -199,64 +254,229 @@ router.post("/webhook/:agencyId", async (req, res) => {
 // ─── PAYLOAD HANDLERS ────────────────────────────────────────────────────────
 async function handleWhatsAppPayload(body, agencyId, integrationId, integration) {
   try {
-    const entry = body?.entry?.[0];
-    const changes = entry?.changes?.[0];
-    const value = changes?.value;
-    const messages = value?.messages;
+    const entries = body?.entry || [];
+    for (const entry of entries) {
+      const changes = entry?.changes || [];
+      for (const change of changes) {
+        const value = change?.value;
+        if (!value) continue;
 
-    if (!messages || messages.length === 0) return;
-
-    for (const msg of messages) {
-      const externalId = msg.from; // sender's WA phone number
-      const externalMsgId = msg.id;
-      const msgType = (msg.type || "text").toUpperCase();
-      let mediaUrl = null;
-
-      let msgBody = "";
-      if (msg.type === "text") {
-        msgBody = msg.text?.body || "";
-      } else if (msg.type === "button") {
-        msgBody = msg.button?.text || "";
-      } else if (msg.type === "interactive") {
-        const type = msg.interactive?.type;
-        if (type === "button_reply") {
-          msgBody = msg.interactive?.button_reply?.title || "";
-        } else if (type === "list_reply") {
-          msgBody = msg.interactive?.list_reply?.title || "";
+        // Handle message status updates (sent, delivered, read)
+        if (Array.isArray(value.statuses)) {
+          for (const statusObj of value.statuses) {
+            const externalMsgId = statusObj.id;
+            const status = statusObj.status; // "delivered", "read", "sent", "failed"
+            if (externalMsgId && status) {
+              if (status === "delivered") {
+                await pool.query("UPDATE messages SET delivered_at = NOW() WHERE external_msg_id = ?", [externalMsgId]);
+              } else if (status === "read") {
+                await pool.query("UPDATE messages SET read_at = NOW(), is_read = 1 WHERE external_msg_id = ?", [externalMsgId]);
+              }
+            }
+          }
         }
-      } else if (msg.type === "image") {
-        msgBody = msg.image?.caption || "";
-        mediaUrl = msg.image?.link || msg.image?.url || null;
-      } else if (msg.type === "video") {
-        msgBody = msg.video?.caption || "";
-        mediaUrl = msg.video?.link || msg.video?.url || null;
-      } else if (msg.type === "audio" || msg.type === "voice") {
-        msgBody = "";
-        mediaUrl = msg.audio?.link || msg.audio?.url || msg.voice?.link || null;
-      } else if (msg.type === "document") {
-        msgBody = msg.document?.filename || "";
-        mediaUrl = msg.document?.link || msg.document?.url || null;
-      } else {
-        msgBody = msg.image?.caption || msg.video?.caption || msg.document?.filename || "";
+
+        const messages = value?.messages;
+        if (!messages || !Array.isArray(messages) || messages.length === 0) continue;
+
+        // Build contact map for profile names
+        const contactMap = {};
+        if (Array.isArray(value?.contacts)) {
+          for (const c of value.contacts) {
+            if (c.wa_id) contactMap[c.wa_id] = c.profile?.name;
+          }
+        }
+
+        for (const msg of messages) {
+          const externalId = msg.from; // sender's WA phone number
+          const externalMsgId = msg.id;
+          const msgType = (msg.type || "text").toUpperCase();
+          let mediaUrl = null;
+
+          let msgBody = "";
+          if (msg.type === "text") {
+            msgBody = msg.text?.body || "";
+          } else if (msg.type === "button") {
+            msgBody = msg.button?.text || "";
+          } else if (msg.type === "interactive") {
+            const type = msg.interactive?.type;
+            if (type === "button_reply") {
+              msgBody = msg.interactive?.button_reply?.title || "";
+            } else if (type === "list_reply") {
+              msgBody = msg.interactive?.list_reply?.title || "";
+            }
+          } else if (msg.type === "image") {
+            msgBody = msg.image?.caption || "";
+            mediaUrl = msg.image?.link || msg.image?.url || null;
+          } else if (msg.type === "video") {
+            msgBody = msg.video?.caption || "";
+            mediaUrl = msg.video?.link || msg.video?.url || null;
+          } else if (msg.type === "audio" || msg.type === "voice") {
+            msgBody = "";
+            mediaUrl = msg.audio?.link || msg.audio?.url || msg.voice?.link || null;
+          } else if (msg.type === "document") {
+            msgBody = msg.document?.filename || "";
+            mediaUrl = msg.document?.link || msg.document?.url || null;
+          } else {
+            msgBody = msg.image?.caption || msg.video?.caption || msg.document?.filename || "";
+          }
+
+          const senderName = contactMap[externalId] || value?.contacts?.[0]?.profile?.name || externalId;
+
+          await handleIncomingPayload({
+            agencyId,
+            integrationId,
+            platform: "WHATSAPP",
+            externalId,
+            externalMsgId,
+            msgType: msgType === "INTERACTIVE" || msgType === "BUTTON" ? "TEXT" : msgType,
+            msgBody,
+            mediaUrl,
+            senderName,
+            avatar: null,
+            integration,
+          });
+        }
       }
-
-      const senderName = value?.contacts?.[0]?.profile?.name || externalId;
-
-      await handleIncomingPayload({
-        agencyId,
-        integrationId,
-        platform: "WHATSAPP",
-        externalId,
-        externalMsgId,
-        msgType: msgType === "INTERACTIVE" || msgType === "BUTTON" ? "TEXT" : msgType,
-        msgBody,
-        mediaUrl,
-        senderName,
-        integration,
-      });
     }
   } catch (err) {
     console.error("WhatsApp Webhook processing error:", err);
+  }
+}
+
+// ─── HELPER: PROCESS COMMENT AUTOMATION (FB PAGE & INSTAGRAM) ────────────────
+async function processCommentAutomation({ commentId, postId, senderId, senderName, commentText }, platform, agencyId, integrationId, integration) {
+  try {
+    if (!commentId || !commentText || !integration?.access_token) return;
+
+    // Do not reply to our own comments
+    if (senderId && (senderId === integration.fb_page_id || senderId === integration.ig_account_id)) {
+      return;
+    }
+
+    // Find active comment rules for this integration
+    const [rules] = await pool.query(
+      `SELECT * FROM comment_automation_rules
+       WHERE agency_id = ? AND (integration_id = ? OR integration_id IS NULL)
+         AND platform = ? AND is_active = 1
+       ORDER BY CASE WHEN post_id = ? THEN 1 ELSE 2 END, id DESC`,
+      [agencyId, integrationId, platform, postId || ""]
+    );
+
+    if (!rules.length) return;
+    const rule = rules[0]; // best match (post-specific or ALL_POSTS)
+
+    const lowerComment = commentText.toLowerCase().trim();
+
+    // 1. Check Offensive Keywords Moderation
+    if (rule.offensive_keywords && rule.offensive_action !== "NONE") {
+      const offensiveList = rule.offensive_keywords.split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
+      const isOffensive = offensiveList.some(k => lowerComment.includes(k));
+
+      if (isOffensive) {
+        console.log(`[Comment Automation] 🚨 Offensive comment detected on ${platform} (${commentId}): "${commentText}"`);
+        if (rule.offensive_action === "HIDE") {
+          await axios.post(
+            `https://graph.facebook.com/v21.0/${commentId}?is_hidden=true`,
+            {},
+            { headers: { Authorization: `Bearer ${integration.access_token}` } }
+          ).catch(e => console.warn("Hide comment warning:", e.message));
+        } else if (rule.offensive_action === "DELETE") {
+          await axios.delete(
+            `https://graph.facebook.com/v21.0/${commentId}`,
+            { headers: { Authorization: `Bearer ${integration.access_token}` } }
+          ).catch(e => console.warn("Delete comment warning:", e.message));
+        }
+
+        if (rule.offensive_reply_message) {
+          const privateText = rule.offensive_reply_message
+            .replace(/\{\{name\}\}/gi, senderName || "there")
+            .replace(/\{\{first_name\}\}/gi, (senderName || "").split(" ")[0] || "there");
+          await axios.post(
+            `https://graph.facebook.com/v21.0/me/messages`,
+            { recipient: { comment_id: commentId }, message: { text: privateText } },
+            { headers: { Authorization: `Bearer ${integration.access_token}` } }
+          ).catch(e => console.warn("Offensive DM warning:", e.message));
+        }
+
+        await pool.query("UPDATE comment_automation_rules SET total_offensive_moderated = total_offensive_moderated + 1 WHERE id = ?", [rule.id]);
+        return; // Halt further processing
+      }
+    }
+
+    // 2. Check Exclude Keywords
+    if (rule.exclude_keywords) {
+      const excludeList = rule.exclude_keywords.split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
+      if (excludeList.some(k => lowerComment.includes(k))) {
+        return;
+      }
+    }
+
+    // 3. Check Trigger Keywords
+    if (rule.trigger_type === "KEYWORDS" && rule.trigger_keywords) {
+      const keywords = rule.trigger_keywords.split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
+      let matched = false;
+      if (rule.match_type === "EXACT") {
+        matched = keywords.includes(lowerComment);
+      } else {
+        matched = keywords.some(k => lowerComment.includes(k));
+      }
+      if (!matched) return;
+    }
+
+    // 4. Auto-Like Comment
+    if (rule.enable_like_comment) {
+      await axios.post(
+        `https://graph.facebook.com/v21.0/${commentId}/likes`,
+        {},
+        { headers: { Authorization: `Bearer ${integration.access_token}` } }
+      ).catch(e => console.warn("Auto-like comment warning:", e.message));
+    }
+
+    // 5. Public Comment Reply (with rotating variations)
+    let replyText = rule.auto_reply_comment || "";
+    let variations = [];
+    try {
+      variations = typeof rule.comment_variations === "string" ? JSON.parse(rule.comment_variations || "[]") : rule.comment_variations || [];
+    } catch { variations = []; }
+
+    if (variations.length > 0) {
+      const randomVar = variations[Math.floor(Math.random() * variations.length)];
+      if (randomVar) replyText = randomVar;
+    }
+
+    if (replyText) {
+      const formattedReply = replyText
+        .replace(/\{\{name\}\}/gi, senderName || "there")
+        .replace(/\{\{first_name\}\}/gi, (senderName || "").split(" ")[0] || "there");
+
+      await axios.post(
+        `https://graph.facebook.com/v21.0/${commentId}/comments`,
+        { message: formattedReply },
+        { headers: { Authorization: `Bearer ${integration.access_token}` } }
+      ).then(() => {
+        pool.query("UPDATE comment_automation_rules SET total_comment_replies = total_comment_replies + 1 WHERE id = ?", [rule.id]);
+        console.log(`[Comment Automation] ✅ Public comment reply sent on ${platform} (${commentId}): "${formattedReply}"`);
+      }).catch(e => console.warn("Public comment reply warning:", e.response?.data || e.message));
+    }
+
+    // 6. Private DM Reply
+    if (rule.auto_reply_private_message) {
+      const formattedPrivate = rule.auto_reply_private_message
+        .replace(/\{\{name\}\}/gi, senderName || "there")
+        .replace(/\{\{first_name\}\}/gi, (senderName || "").split(" ")[0] || "there");
+
+      await axios.post(
+        `https://graph.facebook.com/v21.0/me/messages`,
+        { recipient: { comment_id: commentId }, message: { text: formattedPrivate } },
+        { headers: { Authorization: `Bearer ${integration.access_token}` } }
+      ).then(() => {
+        pool.query("UPDATE comment_automation_rules SET total_private_replies = total_private_replies + 1 WHERE id = ?", [rule.id]);
+        console.log(`[Comment Automation] 📩 Private DM reply sent on ${platform} to ${senderName} (${commentId})`);
+      }).catch(e => console.warn("Private DM reply warning:", e.response?.data || e.message));
+    }
+  } catch (err) {
+    console.error("Comment automation processor error:", err);
   }
 }
 
@@ -264,10 +484,27 @@ async function handleFacebookPayload(body, agencyId, integrationId, integration)
   try {
     const entries = body?.entry || [];
     for (const entry of entries) {
+      // 1. Check for Feed Changes (Comments on Posts)
+      const changes = entry?.changes || [];
+      for (const change of changes) {
+        if (change.field === "feed") {
+          const val = change.value;
+          if (val && val.item === "comment" && (val.verb === "add" || val.verb === "edit")) {
+            await processCommentAutomation({
+              commentId: val.comment_id,
+              postId: val.post_id || val.parent_id,
+              senderId: val.from?.id || val.sender_id,
+              senderName: val.from?.name || val.sender_name || "there",
+              commentText: val.message || "",
+            }, "FACEBOOK", agencyId, integrationId, integration);
+          }
+        }
+      }
+
+      // 2. Direct Messages
       const messaging = entry?.messaging || [];
       for (const event of messaging) {
         if (!event.message && !event.postback) continue;
-
         if (event.message?.is_echo) continue;
 
         const externalId = event.sender?.id;
@@ -288,6 +525,15 @@ async function handleFacebookPayload(body, agencyId, integrationId, integration)
           }
         }
 
+        // Fetch real subscriber name and profile pic from Facebook Graph API
+        let senderName = externalId;
+        let avatar = null;
+        if (integration?.access_token) {
+          const profile = await fetchMetaUserProfile("FACEBOOK", externalId, integration.access_token);
+          if (profile.name) senderName = profile.name;
+          if (profile.avatar) avatar = profile.avatar;
+        }
+
         await handleIncomingPayload({
           agencyId,
           integrationId,
@@ -297,7 +543,8 @@ async function handleFacebookPayload(body, agencyId, integrationId, integration)
           msgType,
           msgBody,
           mediaUrl,
-          senderName: externalId,
+          senderName,
+          avatar,
           integration,
         });
       }
@@ -311,6 +558,24 @@ async function handleInstagramPayload(body, agencyId, integrationId, integration
   try {
     const entries = body?.entry || [];
     for (const entry of entries) {
+      // 1. Check for Instagram Comments Changes
+      const changes = entry?.changes || [];
+      for (const change of changes) {
+        if (change.field === "comments") {
+          const val = change.value;
+          if (val && val.id) {
+            await processCommentAutomation({
+              commentId: val.id,
+              postId: val.media?.id,
+              senderId: val.from?.id,
+              senderName: val.from?.username || "there",
+              commentText: val.text || "",
+            }, "INSTAGRAM", agencyId, integrationId, integration);
+          }
+        }
+      }
+
+      // 2. Direct Messages
       const messaging = entry?.messaging || [];
       for (const event of messaging) {
         if (!event.message && !event.postback) continue;
@@ -333,6 +598,15 @@ async function handleInstagramPayload(body, agencyId, integrationId, integration
           }
         }
 
+        // Fetch subscriber name and profile pic from Instagram
+        let senderName = externalId;
+        let avatar = null;
+        if (integration?.access_token) {
+          const profile = await fetchMetaUserProfile("INSTAGRAM", externalId, integration.access_token);
+          if (profile.name) senderName = profile.name;
+          if (profile.avatar) avatar = profile.avatar;
+        }
+
         await handleIncomingPayload({
           agencyId,
           integrationId,
@@ -342,7 +616,8 @@ async function handleInstagramPayload(body, agencyId, integrationId, integration
           msgType,
           msgBody,
           mediaUrl,
-          senderName: externalId,
+          senderName,
+          avatar,
           integration,
         });
       }
@@ -426,10 +701,72 @@ router.post("/webhook/telegram/:agencyId/:integrationId", async (req, res) => {
       msgType,
       msgBody,
       senderName,
+      avatar: null,
       integration,
     });
   } catch (err) {
     console.error("Telegram Webhook processing error:", err);
+  }
+});
+
+// ─── TIKTOK WEBHOOK VERIFICATION (GET) ───────────────────────────
+router.get(["/webhook/tiktok/:agencyId", "/webhook/tiktok/:agencyId/:integrationId"], async (req, res) => {
+  const challenge = req.query.challenge || req.query["hub.challenge"] || req.query.echostr;
+  const token = req.query.token || req.query["hub.verify_token"];
+  console.log(`[TikTok Webhook] Verification on /webhook/tiktok/${req.params.agencyId}:`, { challenge, token });
+
+  if (challenge) {
+    return res.send(challenge);
+  }
+  return res.json({ status: "ok", message: "TikTok webhook endpoint ready" });
+});
+
+// ─── RECEIVE TIKTOK INCOMING EVENTS (POST) ───────────────────────
+router.post(["/webhook/tiktok/:agencyId", "/webhook/tiktok/:agencyId/:integrationId"], async (req, res) => {
+  // Always respond 200 immediately to TikTok
+  res.status(200).json({ status: "ok" });
+
+  try {
+    const agencyId = Number(req.params.agencyId);
+    let integrationId = req.params.integrationId ? Number(req.params.integrationId) : null;
+
+    let [integs] = [];
+    if (integrationId) {
+      [integs] = await pool.query("SELECT * FROM integrations WHERE id = ? AND platform = 'TIKTOK'", [integrationId]);
+    }
+    if (!integs || !integs.length) {
+      [integs] = await pool.query("SELECT * FROM integrations WHERE agency_id = ? AND platform = 'TIKTOK' AND is_active = 1 LIMIT 1", [agencyId]);
+    }
+    const integration = integs?.[0] || null;
+    if (!integration) return;
+    integrationId = integration.id;
+
+    const payload = req.body || {};
+    const eventType = payload.event || payload.type || "message";
+    const msgData = payload.data || payload.content || payload;
+
+    const externalId = msgData.from_user_id || msgData.open_id || msgData.sender_id || payload.open_id || "tiktok_user";
+    const externalMsgId = msgData.message_id || payload.msg_id || `tt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const msgBody = msgData.text || msgData.content || msgData.message || (typeof payload === 'string' ? payload : '');
+    const senderName = msgData.nickname || msgData.user_name || "TikTok User";
+    const avatar = msgData.avatar_url || null;
+
+    if (!msgBody) return;
+
+    await handleIncomingPayload({
+      agencyId,
+      integrationId,
+      platform: "TIKTOK",
+      externalId,
+      externalMsgId,
+      msgType: "TEXT",
+      msgBody,
+      senderName,
+      avatar,
+      integration,
+    });
+  } catch (err) {
+    console.error("[TikTok Webhook processing error]:", err);
   }
 });
 
@@ -446,14 +783,22 @@ async function handleIncomingPayload({
   msgBody,
   mediaUrl,
   senderName,
+  avatar = null,
   integration,
 }) {
   // 1. Prevent duplicate messages
   const isDup = await isDuplicateMessage(externalMsgId);
   if (isDup) return;
 
-  // 2. Find or create contact
-  const contact = await findOrCreateContact(agencyId, platform, externalId, senderName, platform === "WHATSAPP" ? externalId : null);
+  // 2. Find or create contact with real name and avatar
+  const contact = await findOrCreateContact(
+    agencyId,
+    platform,
+    externalId,
+    senderName,
+    platform === "WHATSAPP" ? externalId : null,
+    avatar
+  );
 
   // 3. Find or create conversation
   const { conversation, isNew } = await findOrCreateConversation(agencyId, contact.id, integrationId, platform);
@@ -486,3 +831,4 @@ async function handleIncomingPayload({
 }
 
 export default router;
+

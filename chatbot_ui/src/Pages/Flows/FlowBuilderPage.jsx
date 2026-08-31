@@ -14,7 +14,7 @@ import {
   CircleStop, Play, Type, GripVertical, X, Plus, Trash2,
   ChevronRight, Zap, MousePointerClick, Mail, Phone,
   User, Settings2, CornerDownRight, Image, Upload,
-  Video, Music, FileText
+  Video, Music, FileText, Globe
 } from 'lucide-react';
 import { flowAPI, uploadAPI, integrationAPI } from '../../services/api';
 
@@ -45,6 +45,8 @@ const NODE_COLORS = {
   collectInput: '#14b8a6',
   condition: '#f97316',
   delay: '#64748b',
+  webhook: '#0284c7',
+  payment: '#10b981',
   handoff: '#6366f1',
   end: '#ef4444',
 };
@@ -64,6 +66,8 @@ const NODE_ICONS = {
   collectInput: Mail,
   condition: GitBranch,
   delay: Clock,
+  webhook: Globe,
+  payment: CreditCard,
   handoff: Headphones,
   end: CircleStop,
 };
@@ -90,11 +94,13 @@ const PALETTE_CATEGORIES = [
     ],
   },
   {
-    label: 'Logic',
+    label: 'Logic & Automations',
     items: [
       { type: 'collectInput', label: 'Collect Input' },
       { type: 'condition', label: 'Condition' },
       { type: 'delay', label: 'Delay' },
+      { type: 'webhook', label: 'Webhook / Zapier' },
+      { type: 'payment', label: 'Collect Payment' },
     ],
   },
   {
@@ -121,6 +127,8 @@ const DEFAULT_NODE_DATA = {
   collectInput: { label: 'Collect Input', variable: '', inputType: 'name' },
   condition:    { label: 'Condition', variable: '', operator: 'equals', value: '' },
   delay:        { label: 'Delay', seconds: 3 },
+  webhook:      { label: 'Webhook / Zapier Action', url: '', method: 'POST', payloadMode: 'ALL_VARIABLES', customPayload: '', customHeaders: '' },
+  payment:      { label: 'Collect Payment', productName: 'Order Product / Service', amount: 49.99, currency: 'USD', buttonLabel: '💳 Pay Now', successMessage: '🎉 Payment received! Your order is confirmed.' },
   handoff:      { label: 'Agent Handoff', message: '' },
   end:          { label: 'End', message: '' },
 };
@@ -1056,6 +1064,52 @@ function DelayNode({ data, selected }) {
   );
 }
 
+/* ── Webhook / Zapier Node ───────────────────────────────────── */
+function WebhookNode({ data, selected }) {
+  return (
+    <NodeWrapper color={NODE_COLORS.webhook} label="Webhook / Zapier" icon={Globe} selected={selected} data={data} type="webhook">
+      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.webhook }} />
+      <div className="fb-node-body">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+          <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 4, background: '#0284c7', color: '#ffffff' }}>
+            {data.method || 'POST'}
+          </span>
+          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>
+            {data.url ? data.url.replace(/^https?:\/\//, '') : 'Set Endpoint URL'}
+          </span>
+        </div>
+        <div style={{ fontSize: 10, color: '#64748b' }}>
+          {data.payloadMode === 'CUSTOM_JSON' ? '📦 Custom JSON Payload' : '⚡ All Contact Variables'}
+        </div>
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.webhook }} />
+    </NodeWrapper>
+  );
+}
+
+/* ── Collect Payment Node ────────────────────────────────────── */
+function PaymentNode({ data, selected }) {
+  return (
+    <NodeWrapper color={NODE_COLORS.payment} label="In-Chat Payment" icon={CreditCard} selected={selected} data={data} type="payment">
+      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.payment }} />
+      <div className="fb-node-body">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+          <strong style={{ fontSize: 11, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }}>
+            {data.productName || 'Order Product'}
+          </strong>
+          <span style={{ fontSize: 10, fontWeight: 800, padding: '1px 6px', borderRadius: 4, background: '#10b98120', color: '#059669' }}>
+            ${Number(data.amount || 0).toFixed(2)}
+          </span>
+        </div>
+        <div style={{ fontSize: 10, color: '#64748b' }}>
+          {data.buttonLabel || '💳 Pay Now'}
+        </div>
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.payment }} />
+    </NodeWrapper>
+  );
+}
+
 /* ── Handoff Node ────────────────────────────────────────────── */
 function HandoffNode({ data, selected }) {
   return (
@@ -1818,6 +1872,130 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete }) {
           </div>
         );
 
+      case 'webhook':
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div className="fb-field">
+              <label>Endpoint URL (Zapier, Make, CRM) *</label>
+              <input
+                type="url"
+                value={data.url || ''}
+                onChange={(e) => updateField('url', e.target.value)}
+                placeholder="https://hooks.zapier.com/hooks/catch/..."
+              />
+            </div>
+
+            <div className="fb-field">
+              <label>HTTP Method</label>
+              <select
+                value={data.method || 'POST'}
+                onChange={(e) => updateField('method', e.target.value)}
+              >
+                <option value="POST">POST (Standard)</option>
+                <option value="GET">GET</option>
+                <option value="PUT">PUT</option>
+                <option value="PATCH">PATCH</option>
+              </select>
+            </div>
+
+            <div className="fb-field">
+              <label>Payload Mode</label>
+              <select
+                value={data.payloadMode || 'ALL_VARIABLES'}
+                onChange={(e) => updateField('payloadMode', e.target.value)}
+              >
+                <option value="ALL_VARIABLES">⚡ Bundle All Subscriber & Flow Variables</option>
+                <option value="CUSTOM_JSON">📦 Custom JSON Body</option>
+              </select>
+            </div>
+
+            {data.payloadMode === 'CUSTOM_JSON' && (
+              <div className="fb-field">
+                <label>Custom JSON Template</label>
+                <textarea
+                  rows={4}
+                  value={data.customPayload || ''}
+                  onChange={(e) => updateField('customPayload', e.target.value)}
+                  placeholder='{ "lead_email": "{{email}}", "score": 100 }'
+                  style={{ fontFamily: 'monospace', fontSize: 11 }}
+                />
+              </div>
+            )}
+
+            <div style={{ padding: '10px 12px', borderRadius: 8, background: '#f8fafc', border: '1px solid #e2e8f0', fontSize: 11, color: '#64748b', lineHeight: 1.4 }}>
+              💡 When this step is reached, subscriber details (Name, Phone, Email, Custom Fields) will be dispatched instantly to your external endpoint.
+            </div>
+          </div>
+        );
+
+      case 'payment':
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div className="fb-field">
+              <label>Product / Service Name *</label>
+              <input
+                type="text"
+                value={data.productName || ''}
+                onChange={(e) => updateField('productName', e.target.value)}
+                placeholder="e.g. VIP 1-on-1 Consultation"
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 8 }}>
+              <div className="fb-field">
+                <label>Amount *</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.50"
+                  value={data.amount || ''}
+                  onChange={(e) => updateField('amount', parseFloat(e.target.value) || 0)}
+                  placeholder="49.99"
+                />
+              </div>
+
+              <div className="fb-field">
+                <label>Currency</label>
+                <select
+                  value={data.currency || 'USD'}
+                  onChange={(e) => updateField('currency', e.target.value)}
+                >
+                  <option value="USD">USD ($)</option>
+                  <option value="EUR">EUR (€)</option>
+                  <option value="GBP">GBP (£)</option>
+                  <option value="CAD">CAD ($)</option>
+                  <option value="AUD">AUD ($)</option>
+                  <option value="INR">INR (₹)</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="fb-field">
+              <label>Payment Button Text</label>
+              <input
+                type="text"
+                value={data.buttonLabel || ''}
+                onChange={(e) => updateField('buttonLabel', e.target.value)}
+                placeholder="💳 Pay $49.99 Now"
+              />
+            </div>
+
+            <div className="fb-field">
+              <label>Confirmation Message (After Payment)</label>
+              <textarea
+                rows={2}
+                value={data.successMessage || ''}
+                onChange={(e) => updateField('successMessage', e.target.value)}
+                placeholder="🎉 Thank you! Your payment is confirmed."
+              />
+            </div>
+
+            <div style={{ padding: '10px 12px', borderRadius: 8, background: '#f0fdf4', border: '1px solid #bbf7d0', fontSize: 11, color: '#15803d', lineHeight: 1.4 }}>
+              💳 A dynamic 1-click checkout link will be generated in WhatsApp, Messenger, or Instagram chat. When paid, the bot will auto-deliver the confirmation message.
+            </div>
+          </div>
+        );
+
       case 'handoff':
         return (
           <div className="fb-field">
@@ -1946,6 +2124,8 @@ const nodeTypes = {
   collectInput: CollectInputNode,
   condition: ConditionNode,
   delay: DelayNode,
+  webhook: WebhookNode,
+  payment: PaymentNode,
   handoff: HandoffNode,
   end: EndNode,
 };

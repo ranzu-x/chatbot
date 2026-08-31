@@ -1,4 +1,5 @@
-import { useNavigate, useLocation } from 'react-router';
+import React, { useMemo } from 'react';
+import { Link, useLocation } from 'react-router';
 import { useAuth } from '../Provider/AuthContext';
 import { useLayout } from '../Provider/LayoutContext';
 import {
@@ -17,24 +18,32 @@ import {
   Sparkles,
   ChevronLeft,
   ChevronRight,
+  Globe,
+  Package,
+  Zap,
+  ShoppingBag,
   X,
-  Menu,
+  Video,
+  Blocks,
 } from 'lucide-react';
 
 const NAV_CONFIG = {
   ADMIN: [
     { section: 'Main', items: [
       { label: 'Dashboard',        icon: LayoutDashboard, path: '/admin' },
-      { label: 'Live Chat',        icon: MessageSquare,   path: '/inbox' },
-      { label: 'Subscribers',      icon: Users,           path: '/contacts' },
-      { label: 'Bot Manager',      icon: Bot,             path: '/bots' },
+      { label: 'Live Chat',        icon: MessageSquare,   path: '/inbox',              moduleKey: 'feature_live_chat' },
+      { label: 'Subscribers',      icon: Users,           path: '/contacts',           moduleKey: 'feature_subscribers' },
+      { label: 'Bot Manager',      icon: Bot,             path: '/bots',               moduleKey: 'feature_bot_manager' },
       { label: 'Connect Account',  icon: Radio,           path: '/connect-accounts' },
-      { label: 'WA Templates',     icon: FileText,        path: '/templates/whatsapp' },
-      { label: 'Broadcasts',       icon: Send,            path: '/campaigns' },
-      { label: 'Drip Sequences',   icon: Clock,           path: '/campaigns/sequence' },
+      { label: 'Broadcasts',       icon: Send,            path: '/campaigns',          moduleKey: 'feature_broadcasts' },
+      { label: 'AI Agent & KB',    icon: Sparkles,        path: '/ai-agent',          moduleKey: 'feature_ai_agent' },
+      { label: 'In-Chat Orders',   icon: ShoppingBag,     path: '/orders' },
     ]},
     { section: 'Control Panel', items: [
-      { label: 'Meta App Setup',   icon: Settings,        path: '/settings/meta-app' },
+      { label: 'App Integrations', icon: Blocks,          path: '/settings/apps' },
+      { label: 'Packages & Modules', icon: Package,       path: '/admin/packages' },
+      { label: 'Webhooks & Zapier',  icon: Globe,         path: '/webhooks' },
+      { label: 'Custom Domain',    icon: Globe,           path: '/agency/domain-settings', moduleKey: 'feature_custom_domain' },
       { label: 'Agencies',         icon: Building2,       path: '/admin/agencies' },
       { label: 'User Manager',     icon: Users,           path: '/admin/users' },
       { label: 'Agents',           icon: UserCheck,       path: '/admin/agents' },
@@ -43,25 +52,27 @@ const NAV_CONFIG = {
   AGENCY: [
     { section: 'Main', items: [
       { label: 'Dashboard',        icon: LayoutDashboard, path: '/agency' },
-      { label: 'Live Chat',        icon: MessageSquare,   path: '/inbox' },
-      { label: 'Subscribers',      icon: Users,           path: '/contacts' },
-      { label: 'Bot Manager',      icon: Bot,             path: '/bots' },
+      { label: 'Live Chat',        icon: MessageSquare,   path: '/inbox',              moduleKey: 'feature_live_chat' },
+      { label: 'Subscribers',      icon: Users,           path: '/contacts',           moduleKey: 'feature_subscribers' },
+      { label: 'Bot Manager',      icon: Bot,             path: '/bots',               moduleKey: 'feature_bot_manager' },
       { label: 'Connect Account',  icon: Radio,           path: '/connect-accounts' },
-      { label: 'WA Templates',     icon: FileText,        path: '/templates/whatsapp' },
-      { label: 'Broadcasts',       icon: Send,            path: '/campaigns' },
-      { label: 'Drip Sequences',   icon: Clock,           path: '/campaigns/sequence' },
+      { label: 'Broadcasts',       icon: Send,            path: '/campaigns',          moduleKey: 'feature_broadcasts' },
+      { label: 'AI Agent & KB',    icon: Sparkles,        path: '/ai-agent',          moduleKey: 'feature_ai_agent' },
+      { label: 'In-Chat Orders',   icon: ShoppingBag,     path: '/orders' },
     ]},
     { section: 'Control Panel', items: [
-      { label: 'Meta App Setup',   icon: Settings,        path: '/settings/meta-app' },
+      { label: 'App Integrations', icon: Blocks,          path: '/settings/apps' },
+      { label: 'My Plan & Usage',  icon: Zap,             path: '/agency/plan' },
+      { label: 'Webhooks & Zapier', icon: Globe,          path: '/webhooks' },
+      { label: 'Custom Domain',    icon: Globe,           path: '/agency/domain-settings', moduleKey: 'feature_custom_domain' },
       { label: 'User Manager',     icon: Users,           path: '/admin/users' },
       { label: 'Agents',           icon: UserCheck,       path: '/agency/agents' },
-      { label: 'Integrations',     icon: Plug,            path: '/agency/integrations' },
     ]},
   ],
   AGENT: [
     { section: 'Main', items: [
-      { label: 'Live Chat',   icon: MessageSquare, path: '/inbox' },
-      { label: 'Subscribers', icon: Users,         path: '/contacts' },
+      { label: 'Live Chat',   icon: MessageSquare, path: '/inbox',      moduleKey: 'feature_live_chat' },
+      { label: 'Subscribers', icon: Users,         path: '/contacts',   moduleKey: 'feature_subscribers' },
     ]},
   ],
 };
@@ -69,23 +80,26 @@ const NAV_CONFIG = {
 const ROLE_SUBTITLES = { ADMIN: 'Super Admin', AGENCY: 'Agency Portal', AGENT: 'Agent Portal' };
 
 export default function Sidebar() {
-  const { user } = useAuth();
+  const { user, hasModule } = useAuth();
   const { collapsed, toggleSidebar, popupNavOpen, closePopupNav, isInbox } = useLayout();
-  const navigate  = useNavigate();
   const location  = useLocation();
 
-  const role     = user?.role || 'AGENT';
-  const sections = NAV_CONFIG[role] || [];
-  const subtitle = ROLE_SUBTITLES[role] || '';
+  const role        = user?.role || 'AGENT';
+  const rawSections = NAV_CONFIG[role] || [];
+  const subtitle    = ROLE_SUBTITLES[role] || '';
+
+  const sections = useMemo(() => {
+    return rawSections
+      .map((sec) => ({
+        ...sec,
+        items: sec.items.filter((item) => !item.moduleKey || hasModule(item.moduleKey)),
+      }))
+      .filter((sec) => sec.items.length > 0);
+  }, [rawSections, hasModule]);
 
   const isActive = (path) => {
     if (path === '/admin' || path === '/agency') return location.pathname === path;
     return location.pathname.startsWith(path);
-  };
-
-  const handleNavClick = (path) => {
-    navigate(path);
-    if (popupNavOpen) closePopupNav();
   };
 
   // ── 1. Pop Bar Overlay Drawer (When in Live Chat or when pop bar triggered) ──
@@ -148,24 +162,27 @@ export default function Sidebar() {
                   alignItems: 'center',
                   justifyContent: 'center',
                   color: '#ffffff',
+                  boxShadow: '0 2px 6px rgba(37, 99, 235, 0.25)',
                 }}
               >
                 <Sparkles size={17} />
               </div>
               <div>
-                <div style={{ fontSize: '0.94rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.2px' }}>
+                <div style={{ fontSize: '0.92rem', fontWeight: 800, color: '#0f172a' }}>
                   Nexa Chatbot
                 </div>
-                <div style={{ fontSize: '0.68rem', color: '#64748b' }}>{subtitle}</div>
+                <div style={{ fontSize: '0.68rem', color: '#64748b' }}>
+                  {subtitle}
+                </div>
               </div>
             </div>
 
             <button
               onClick={closePopupNav}
-              title="Close Menu (Hide)"
+              title="Close Menu"
               style={{
-                width: 30,
-                height: 30,
+                width: 28,
+                height: 28,
                 borderRadius: 6,
                 border: '1px solid #e2e8f0',
                 background: '#ffffff',
@@ -176,7 +193,7 @@ export default function Sidebar() {
                 justifyContent: 'center',
                 transition: 'all 0.12s',
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.borderColor = '#fca5a5'; }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = '#0f172a'; e.currentTarget.style.borderColor = '#cbd5e1'; }}
               onMouseLeave={(e) => { e.currentTarget.style.color = '#64748b'; e.currentTarget.style.borderColor = '#e2e8f0'; }}
             >
               <X size={16} />
@@ -196,17 +213,20 @@ export default function Sidebar() {
                   const active = isActive(item.path);
 
                   return (
-                    <div
+                    <Link
                       key={item.path}
+                      to={item.path}
                       className={`nav-item ${active ? 'active' : ''}`}
-                      onClick={() => handleNavClick(item.path)}
+                      onClick={() => {
+                        if (popupNavOpen) closePopupNav();
+                      }}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
                         gap: 10,
                         padding: '8px 12px',
                         borderRadius: 7,
-                        cursor: 'pointer',
+                        textDecoration: 'none',
                         fontSize: '0.84rem',
                         fontWeight: active ? 600 : 500,
                         color: active ? '#2563eb' : '#475569',
@@ -229,7 +249,7 @@ export default function Sidebar() {
                     >
                       <Icon size={17} color={active ? '#2563eb' : '#64748b'} style={{ flexShrink: 0 }} />
                       <span style={{ whiteSpace: 'nowrap' }}>{item.label}</span>
-                    </div>
+                    </Link>
                   );
                 })}
               </div>
@@ -266,7 +286,8 @@ export default function Sidebar() {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div
+          <Link
+            to="/"
             style={{
               width: 36,
               height: 36,
@@ -278,13 +299,12 @@ export default function Sidebar() {
               color: '#ffffff',
               boxShadow: '0 2px 8px rgba(37, 99, 235, 0.25)',
               flexShrink: 0,
-              cursor: 'pointer',
+              textDecoration: 'none',
             }}
-            onClick={() => navigate('/')}
             title="Nexa Chatbot"
           >
             <Sparkles size={18} />
-          </div>
+          </Link>
 
           {!collapsed && (
             <div>
@@ -337,10 +357,10 @@ export default function Sidebar() {
               const active = isActive(item.path);
 
               return (
-                <div
+                <Link
                   key={item.path}
+                  to={item.path}
                   className={`nav-item ${active ? 'active' : ''}`}
-                  onClick={() => handleNavClick(item.path)}
                   title={collapsed ? item.label : undefined}
                   style={{
                     display: 'flex',
@@ -349,7 +369,7 @@ export default function Sidebar() {
                     gap: 10,
                     padding: collapsed ? '9px 0' : '7px 10px',
                     borderRadius: 7,
-                    cursor: 'pointer',
+                    textDecoration: 'none',
                     fontSize: '0.84rem',
                     fontWeight: active ? 600 : 500,
                     color: active ? '#2563eb' : '#475569',
@@ -376,7 +396,7 @@ export default function Sidebar() {
                     style={{ flexShrink: 0 }}
                   />
                   {!collapsed && <span style={{ whiteSpace: 'nowrap' }}>{item.label}</span>}
-                </div>
+                </Link>
               );
             })}
           </div>

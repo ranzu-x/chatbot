@@ -14,11 +14,56 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// ─── Auth ─────────────────────────────────────────────────────────
+// ─── Auth & Tenant ──────────────────────────────────────────────────
 export const authAPI = {
   login: (data) => api.post("/auth/login", data),
+  register: (data) => api.post("/auth/register", data),
   logout: () => api.post("/auth/logout"),
   me: () => api.get("/auth/me"),
+};
+
+export const tenantAPI = {
+  resolveTenant: (domain) => api.get(`/auth/tenant?domain=${encodeURIComponent(domain || window.location.hostname)}`),
+};
+
+// ─── Custom Domains & White-label ─────────────────────────────────
+export const domainAPI = {
+  getDomainConfig: () => api.get("/agency/domain"),
+  updateDomainConfig: (data) => api.put("/agency/domain", data),
+  verifyDomain: () => api.post("/agency/domain/verify"),
+};
+
+// ─── Packages & Module Entitlements ──────────────────────────────
+export const packageAPI = {
+  getMyEntitlements: () => api.get("/packages/my-entitlements"),
+  getRegistry: () => api.get("/packages/registry"),
+  getAll: () => api.get("/packages"),
+  getOne: (id) => api.get(`/packages/${id}`),
+  create: (data) => api.post("/packages", data),
+  update: (id, data) => api.put(`/packages/${id}`, data),
+  clone: (id) => api.post(`/packages/${id}/clone`),
+  delete: (id) => api.delete(`/packages/${id}`),
+  assign: (data) => api.post("/packages/assign", data),
+};
+
+// ─── Stripe & Billing Subscriptions ──────────────────────────────
+export const billingAPI = {
+  getPlans: () => api.get("/billing/plans"),
+  createCheckout: (data) => api.post("/billing/create-checkout", data),
+  openCustomerPortal: (data) => api.post("/billing/customer-portal", data),
+  getInvoices: () => api.get("/billing/invoices"),
+};
+
+// ─── AI Agent & Knowledge Base ────────────────────────────────────
+export const aiAPI = {
+  getAgent: () => api.get("/ai/agent"),
+  updateAgent: (data) => api.put("/ai/agent", data),
+  getKnowledge: () => api.get("/ai/knowledge"),
+  addTextKnowledge: (data) => api.post("/ai/knowledge/text", data),
+  addFaqKnowledge: (data) => api.post("/ai/knowledge/faq", data),
+  addUrlKnowledge: (data) => api.post("/ai/knowledge/url", data),
+  deleteKnowledge: (id) => api.delete(`/ai/knowledge/${id}`),
+  testChat: (data) => api.post("/ai/test-chat", data),
 };
 
 // ─── Admin ────────────────────────────────────────────────────────
@@ -66,11 +111,13 @@ export const conversationAPI = {
 };
 
 // ─── Channels ─────────────────────────────────────────────────────
+// ─── Channels ─────────────────────────────────────────────────────
 export const channelAPI = {
   // WhatsApp
   getWhatsApp: () => api.get('/channels/whatsapp'),
   addWhatsApp: (data) => api.post('/channels/whatsapp', data),
   addWhatsAppEmbedded: (data) => api.post('/channels/whatsapp/embedded-signup', data),
+  registerWhatsApp: (id, pin, accessToken) => api.post(`/channels/whatsapp/${id}/register`, { pin, accessToken }),
   discoverWhatsAppAccounts: (token) => api.post('/channels/whatsapp/discover-accounts', { userAccessToken: token }),
   deleteWhatsApp: (id) => api.delete(`/channels/whatsapp/${id}`),
   // Facebook
@@ -95,11 +142,25 @@ export const channelAPI = {
   getTelegram: () => api.get('/channels/telegram'),
   addTelegram: (token) => api.post('/channels/telegram', { botToken: token }),
   deleteTelegram: (id) => api.delete(`/channels/telegram/${id}`),
+  // TikTok
+  getTikTok: () => api.get('/channels/tiktok'),
+  addTikTok: (data) => api.post('/channels/tiktok', data),
+  deleteTikTok: (id) => api.delete(`/channels/tiktok/${id}`),
   // Webchat
   getWebchat: () => api.get('/channels/webchat'),
   addWebchat: (data) => api.post('/channels/webchat', data),
   updateWebchat: (id, data) => api.put(`/channels/webchat/${id}`, data),
   deleteWebchat: (id) => api.delete(`/channels/webchat/${id}`),
+};
+
+// ─── Comment Automation (FB & Instagram) ───────────────────────────
+export const commentAPI = {
+  getPosts: (params) => api.get('/comments/posts', { params }),
+  getCampaigns: (params) => api.get('/comments/campaigns', { params }),
+  createCampaign: (data) => api.post('/comments/campaigns', data),
+  updateCampaign: (id, data) => api.put(`/comments/campaigns/${id}`, data),
+  toggleCampaign: (id) => api.patch(`/comments/campaigns/${id}/toggle`),
+  deleteCampaign: (id) => api.delete(`/comments/campaigns/${id}`),
 };
 
 // ─── Bots ──────────────────────────────────────────────────────────
@@ -121,6 +182,14 @@ export const metaAppAPI = {
   save: (data) => api.post('/settings/meta-app', data),
   test: () => api.post('/settings/meta-app/test'),
   getAppId: () => api.get('/settings/meta-app/app-id'),
+};
+
+// ─── TikTok App Settings ───────────────────────────────────────────
+export const tiktokAppAPI = {
+  get: () => api.get('/settings/tiktok-app'),
+  save: (data) => api.post('/settings/tiktok-app', data),
+  test: () => api.post('/settings/tiktok-app/test'),
+  getClientKey: () => api.get('/settings/tiktok-app/client-key'),
 };
 
 // ─── Flows ─────────────────────────────────────────────────────────

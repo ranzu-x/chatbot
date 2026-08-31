@@ -2,9 +2,49 @@ import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
+import { assertModuleAccess, assertLimit } from "../utils/entitlements.js";
 
 const router = express.Router();
 router.use(authMiddleware, roleMiddleware("AGENCY", "ADMIN"));
+
+// Helper to resolve agencyId cleanly for both AGENCY owners and ADMIN users.
+// SECURITY: Only looks up agency owned by the current user — never picks up
+// another user's agency row (prevents cross-tenant data leakage).
+async function resolveAgencyId(req) {
+  if (req.user?.agencyId) return Number(req.user.agencyId);
+  const userId = req.user?.id;
+  if (!userId) return 1;
+  try {
+    // Only look for the agency this user owns
+    const [rows] = await pool.query(
+      "SELECT id FROM agencies WHERE owner_id = ? LIMIT 1",
+      [userId]
+    );
+    if (rows.length) return Number(rows[0].id);
+
+    // No agency exists yet for this owner — create one with a unique slug
+    const slug = `workspace-${userId}-${Date.now()}`;
+    const [ins] = await pool.query(
+      "INSERT INTO agencies (name, slug, owner_id, is_active) VALUES ('My Workspace', ?, ?, 1)",
+      [slug, userId]
+    );
+    return Number(ins.insertId);
+  } catch (err) {
+    console.error("Error resolving agencyId in channels:", err);
+  }
+  return 1;
+}
+
+// Router middleware to attach resolved agencyId to req
+router.use(async (req, res, next) => {
+  try {
+    req.agencyId = await resolveAgencyId(req);
+    next();
+  } catch (e) {
+    req.agencyId = 1;
+    next();
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════════
 //  WHATSAPP
@@ -12,23 +52,63 @@ router.use(authMiddleware, roleMiddleware("AGENCY", "ADMIN"));
 
 router.get("/channels/whatsapp", async (req, res) => {
   try {
+    const agencyId = req.agencyId || await resolveAgencyId(req);
     const [rows] = await pool.query(
       "SELECT * FROM integrations WHERE agency_id = ? AND platform = 'WHATSAPP' ORDER BY created_at DESC",
-      [req.user.agencyId]
+      [agencyId]
     );
+
+    // Auto-backfill wa_display_phone for accounts that are missing it
+    const backfillPromises = rows
+      .filter(acc => !acc.wa_display_phone && acc.wa_phone_number_id && acc.access_token?.startsWith('EAA') && acc.access_token.length > 20)
+      .map(async (acc) => {
+        try {
+          const url = `https://graph.facebook.com/v21.0/${acc.wa_phone_number_id}?fields=display_phone_number,verified_name&access_token=${acc.access_token}`;
+          const r = await fetch(url);
+          const d = await r.json();
+          if (d.display_phone_number) {
+            await pool.query(
+              "UPDATE integrations SET wa_display_phone = ? WHERE id = ?",
+              [d.display_phone_number, acc.id]
+            );
+            acc.wa_display_phone = d.display_phone_number;
+          }
+        } catch (_) { /* silently skip if fetch fails */ }
+      });
+
+    await Promise.allSettled(backfillPromises);
+
     return res.json({ success: true, accounts: rows });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
 router.post("/channels/whatsapp", async (req, res) => {
-  const { name, accessToken, verifyToken, waPhoneNumberId, waBusinessAccId } = req.body;
-  if (!name || !accessToken || !waPhoneNumberId)
-    return res.status(400).json({ success: false, message: "Name, access token and phone number ID are required" });
+  const { name, accessToken: inputToken, verifyToken, waPhoneNumberId, waBusinessAccId, waDisplayPhone } = req.body;
+  if (!name || !waPhoneNumberId)
+    return res.status(400).json({ success: false, message: "Account Name and WhatsApp Phone Number ID are required" });
   try {
+    const agencyId = req.agencyId || await resolveAgencyId(req);
+    await assertModuleAccess(agencyId, "channel_whatsapp");
+    await assertLimit(agencyId, "max_bot_accounts");
+
+    let accessToken = inputToken?.trim() || null;
+    if (!accessToken) {
+      const [appRows] = await pool.query(
+        "SELECT system_user_token FROM meta_app_settings WHERE agency_id = ? AND is_configured = 1 LIMIT 1",
+        [agencyId]
+      );
+      if (appRows.length && appRows[0].system_user_token) {
+        accessToken = appRows[0].system_user_token.trim();
+      }
+    }
+    if (!accessToken) {
+      accessToken = "manual_placeholder";
+    }
     await pool.query(
-      `INSERT INTO integrations (agency_id, platform, name, access_token, verify_token, wa_phone_number_id, wa_business_acc_id)
-       VALUES (?, 'WHATSAPP', ?, ?, ?, ?, ?)`,
-      [req.user.agencyId, name, accessToken, verifyToken || null, waPhoneNumberId, waBusinessAccId || null]
+      `INSERT INTO integrations 
+         (agency_id, platform, name, access_token, verify_token, wa_phone_number_id, wa_display_phone, wa_business_acc_id, with_catalog, connection_method) 
+       VALUES (?, 'WHATSAPP', ?, ?, ?, ?, ?, ?, 0, 'MANUAL')`,
+      [agencyId, name, accessToken, verifyToken || null, waPhoneNumberId, waDisplayPhone || null, waBusinessAccId || null]
     );
     return res.status(201).json({ success: true, message: "WhatsApp account connected" });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
@@ -36,25 +116,128 @@ router.post("/channels/whatsapp", async (req, res) => {
 
 router.delete("/channels/whatsapp/:id", async (req, res) => {
   try {
+    const agencyId = req.agencyId || await resolveAgencyId(req);
     await pool.query("DELETE FROM integrations WHERE id = ? AND agency_id = ? AND platform = 'WHATSAPP'",
-      [req.params.id, req.user.agencyId]);
+      [req.params.id, agencyId]);
     return res.json({ success: true, message: "WhatsApp account removed" });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
-// ─── WHATSAPP EMBEDDED SIGNUP (AUTOMATED OAUTH & TOKEN EXCHANGE) ─────────────
-router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
-  const { code, wabaId, phoneNumberId, botId, name, accessToken: clientAccessToken, phoneNumber } = req.body;
-  const agencyId = req.user.agencyId;
+const isValidMetaToken = (t) => Boolean(t && typeof t === 'string' && t.startsWith('EAA') && t.length > 20);
+
+// ─── REGISTER WHATSAPP NUMBER VIA META CLOUD API ────────────────────────────
+router.post("/channels/whatsapp/:id/register", async (req, res) => {
+  const { pin, accessToken: bodyToken } = req.body;
+  const agencyId = req.agencyId || await resolveAgencyId(req);
+
+  if (!pin || !/^\d{6}$/.test(pin)) {
+    return res.status(400).json({ success: false, message: "A valid 6-digit numeric PIN is required." });
+  }
 
   try {
+    const [rows] = await pool.query(
+      "SELECT * FROM integrations WHERE id = ? AND agency_id = ? AND platform = 'WHATSAPP'",
+      [req.params.id, agencyId]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, message: "WhatsApp account not found" });
+
+    const integration = rows[0];
+    const phoneNumberId = integration.wa_phone_number_id;
+
+    // Priority:
+    // 1) valid token provided directly in request body
+    // 2) valid stored integration.access_token
+    // 3) valid system_user_token in meta_app_settings
+    let accessToken = null;
+    if (isValidMetaToken(bodyToken?.trim())) {
+      accessToken = bodyToken.trim();
+    } else if (isValidMetaToken(integration.access_token)) {
+      accessToken = integration.access_token.trim();
+    } else {
+      const [appRows] = await pool.query(
+        "SELECT system_user_token FROM meta_app_settings WHERE agency_id = ? AND is_configured = 1 LIMIT 1",
+        [agencyId]
+      );
+      if (isValidMetaToken(appRows[0]?.system_user_token)) {
+        accessToken = appRows[0].system_user_token.trim();
+        await pool.query("UPDATE integrations SET access_token = ? WHERE id = ?", [accessToken, integration.id]);
+      }
+    }
+
+    if (!accessToken) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid Meta Access Token (starting with 'EAA...') is required. Please paste your token from Meta Dashboard → WhatsApp → API Setup or connect via Embedded Signup.",
+        requiresToken: true
+      });
+    }
+
+    // If user provided a new valid token in body, persist it
+    if (isValidMetaToken(bodyToken?.trim()) && bodyToken.trim() !== integration.access_token) {
+      await pool.query(
+        "UPDATE integrations SET access_token = ? WHERE id = ?",
+        [bodyToken.trim(), integration.id]
+      );
+      await pool.query(
+        "UPDATE meta_app_settings SET system_user_token = ? WHERE agency_id = ? AND is_configured = 1",
+        [bodyToken.trim(), agencyId]
+      );
+      console.log(`[WA Register] Updated and saved access_token for integration ${integration.id}`);
+    }
+
+    const regUrl = `https://graph.facebook.com/v21.0/${phoneNumberId}/register`;
+    const regRes = await fetch(regUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${accessToken}`
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        pin
+      })
+    });
+
+    const regData = await regRes.json();
+    console.log("[WA Register] Meta response:", JSON.stringify(regData));
+
+    if (regData.error) {
+      return res.status(400).json({
+        success: false,
+        message: regData.error.message || "Registration failed with Meta",
+        error: regData.error
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "WhatsApp phone number successfully registered and activated with Meta Cloud API!",
+      data: regData
+    });
+  } catch (err) {
+    console.error("WhatsApp registration error:", err);
+    return res.status(500).json({ success: false, message: err.message || "Server error" });
+  }
+});
+
+
+// ─── WHATSAPP EMBEDDED SIGNUP (AUTOMATED OAUTH & TOKEN EXCHANGE) ─────────────
+router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
+  const { code, wabaId, phoneNumberId, botId, name, accessToken: clientAccessToken, phoneNumber, withCatalog } = req.body;
+  const agencyId = req.agencyId || await resolveAgencyId(req);
+  const catalogFlag = withCatalog ? 1 : 0;
+
+  try {
+    await assertModuleAccess(agencyId, "channel_whatsapp");
+    await assertLimit(agencyId, "max_bot_accounts");
+
     // 1. Fetch Meta App credentials for this agency
     const [appRows] = await pool.query(
-      "SELECT app_id, app_secret, verify_token FROM meta_app_settings WHERE agency_id = ? AND is_configured = 1 LIMIT 1",
+      "SELECT app_id, app_secret, system_user_token, verify_token FROM meta_app_settings WHERE agency_id = ? AND is_configured = 1 LIMIT 1",
       [agencyId]
     );
 
-    let accessToken = clientAccessToken || null;
+    let accessToken = isValidMetaToken(clientAccessToken) ? clientAccessToken.trim() : null;
     let appId = appRows[0]?.app_id || process.env.META_APP_ID;
     let appSecret = appRows[0]?.app_secret || process.env.META_APP_SECRET;
     let verifyToken = appRows[0]?.verify_token || "nexa_meta_verify_token";
@@ -65,24 +248,69 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
         const exchangeUrl = `https://graph.facebook.com/v21.0/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&code=${code}`;
         const exRes = await fetch(exchangeUrl);
         const exData = await exRes.json();
-        if (exData.access_token) {
+        if (isValidMetaToken(exData.access_token)) {
           accessToken = exData.access_token;
           console.log("[WhatsApp Embedded Signup] Successfully exchanged code for system token!");
         } else {
-          console.warn("[WhatsApp Embedded Token Exchange] Warning:", exData);
+          console.warn("[WhatsApp Embedded Token Exchange] Notice:", exData);
         }
       } catch (exErr) {
         console.warn("Token exchange failed:", exErr.message);
       }
     }
 
-    // 3. Fetch phone number details from Meta Graph API if token available
+    if (!accessToken && isValidMetaToken(appRows[0]?.system_user_token)) {
+      accessToken = appRows[0].system_user_token.trim();
+    }
+
+    // Save valid token to meta_app_settings for workspace reuse
+    if (isValidMetaToken(accessToken)) {
+      try {
+        await pool.query(
+          "UPDATE meta_app_settings SET system_user_token = ? WHERE agency_id = ? AND is_configured = 1",
+          [accessToken, agencyId]
+        );
+      } catch (setErr) {
+        console.warn("Could not save system_user_token:", setErr.message);
+      }
+    }
+
+    let effectivePhoneNumberId = phoneNumberId;
+    let effectiveWabaId = wabaId;
     let phoneDisplay = phoneNumber || phoneNumberId || "WhatsApp Business";
     let verifiedName = name || null;
 
-    if (phoneNumberId && accessToken) {
+    // Auto-discover WABA and Phone Number ID from Meta if not supplied
+    if ((!effectivePhoneNumberId || !effectiveWabaId) && isValidMetaToken(accessToken)) {
       try {
-        const phoneUrl = `https://graph.facebook.com/v21.0/${phoneNumberId}?fields=display_phone_number,verified_name,code_verification_status,quality_rating&access_token=${accessToken}`;
+        const bRes = await fetch(`https://graph.facebook.com/v21.0/me/businesses?fields=id,name&access_token=${accessToken}`);
+        const bData = await bRes.json();
+        if (Array.isArray(bData.data)) {
+          for (const biz of bData.data) {
+            const wRes = await fetch(`https://graph.facebook.com/v21.0/${biz.id}/client_whatsapp_business_accounts?fields=id,name,phone_numbers{id,display_phone_number,verified_name}&access_token=${accessToken}`);
+            const wData = await wRes.json();
+            if (Array.isArray(wData.data) && wData.data.length > 0) {
+              const firstWaba = wData.data[0];
+              effectiveWabaId = effectiveWabaId || firstWaba.id;
+              if (firstWaba.phone_numbers?.data?.length > 0) {
+                const firstPhone = firstWaba.phone_numbers.data[0];
+                effectivePhoneNumberId = effectivePhoneNumberId || firstPhone.id;
+                if (firstPhone.display_phone_number) phoneDisplay = firstPhone.display_phone_number;
+                if (firstPhone.verified_name) verifiedName = firstPhone.verified_name;
+              }
+              break;
+            }
+          }
+        }
+      } catch (discErr) {
+        console.warn("[WhatsApp Embedded] Auto-discovery notice:", discErr.message);
+      }
+    }
+
+    // 3. Fetch phone number details from Meta Graph API if valid token available
+    if (effectivePhoneNumberId && isValidMetaToken(accessToken)) {
+      try {
+        const phoneUrl = `https://graph.facebook.com/v21.0/${effectivePhoneNumberId}?fields=display_phone_number,verified_name,code_verification_status,quality_rating&access_token=${accessToken}`;
         const pRes = await fetch(phoneUrl);
         const pData = await pRes.json();
         if (pData.display_phone_number) phoneDisplay = pData.display_phone_number;
@@ -93,26 +321,52 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
     }
 
     // 4. Auto-subscribe WABA to Meta App webhooks
-    if (wabaId && accessToken) {
+    if (effectiveWabaId && isValidMetaToken(accessToken)) {
       try {
-        const subUrl = `https://graph.facebook.com/v21.0/${wabaId}/subscribed_apps`;
+        const subUrl = `https://graph.facebook.com/v21.0/${effectiveWabaId}/subscribed_apps`;
         await fetch(subUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ access_token: accessToken })
         });
-        console.log(`[WhatsApp Embedded] Subscribed WABA ${wabaId} to webhooks successfully!`);
+        console.log(`[WhatsApp Embedded] Subscribed WABA ${effectiveWabaId} to webhooks successfully!`);
       } catch (subErr) {
         console.warn("Webhook subscription notice:", subErr.message);
       }
     }
 
-    // 5. Insert or Update in integrations table
+    // 5. Auto-register phone number with Meta Cloud API to activate it
+    if (effectivePhoneNumberId && isValidMetaToken(accessToken)) {
+      try {
+        const regUrl = `https://graph.facebook.com/v21.0/${effectivePhoneNumberId}/register`;
+        const regRes = await fetch(regUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${accessToken}`
+          },
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            pin: "123456"
+          })
+        });
+        const regData = await regRes.json();
+        if (regData.success) {
+          console.log(`[WhatsApp Embedded] Auto-registered phone number ${effectivePhoneNumberId} successfully!`);
+        } else {
+          console.warn("[WhatsApp Embedded] Auto-register notice:", regData);
+        }
+      } catch (regErr) {
+        console.warn("[WhatsApp Embedded] Auto-register notice:", regErr.message);
+      }
+    }
+
+    // 6. Insert or Update in integrations table
     const accountName = verifiedName || `${phoneDisplay} (WhatsApp)`;
-    const pId = phoneNumberId || `wa_${Date.now()}`;
+    const pId = effectivePhoneNumberId || `wa_${Date.now()}`;
 
     const [existing] = await pool.query(
-      "SELECT id FROM integrations WHERE agency_id = ? AND platform = 'WHATSAPP' AND (wa_phone_number_id = ? OR name = ?)",
+      "SELECT id, access_token FROM integrations WHERE agency_id = ? AND platform = 'WHATSAPP' AND (wa_phone_number_id = ? OR name = ?)",
       [agencyId, pId, accountName]
     );
 
@@ -120,28 +374,36 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
     if (existing.length) {
       integrationId = existing[0].id;
       await pool.query(
-        `UPDATE integrations SET name = ?, access_token = ?, verify_token = ?, wa_phone_number_id = ?, wa_business_acc_id = ?, is_active = 1, updated_at = NOW()
+        `UPDATE integrations
+           SET name = ?, access_token = ?, verify_token = ?, wa_phone_number_id = ?,
+               wa_display_phone = ?, wa_business_acc_id = ?, is_active = 1, with_catalog = ?,
+               connection_method = 'EMBEDDED', updated_at = NOW()
          WHERE id = ?`,
-        [accountName, accessToken || existing[0].access_token || "embedded_token", verifyToken, pId, wabaId || null, integrationId]
+        [accountName, accessToken || existing[0].access_token || "embedded_token",
+         verifyToken, pId, phoneDisplay || null, effectiveWabaId || null, catalogFlag, integrationId]
       );
     } else {
       const [ins] = await pool.query(
-        `INSERT INTO integrations (agency_id, platform, name, access_token, verify_token, wa_phone_number_id, wa_business_acc_id, is_active)
-         VALUES (?, 'WHATSAPP', ?, ?, ?, ?, ?, 1)`,
-        [agencyId, accountName, accessToken || "embedded_token", verifyToken, pId, wabaId || null]
+        `INSERT INTO integrations
+           (agency_id, platform, name, access_token, verify_token,
+            wa_phone_number_id, wa_display_phone, wa_business_acc_id, is_active, with_catalog, connection_method)
+         VALUES (?, 'WHATSAPP', ?, ?, ?, ?, ?, ?, 1, ?, 'EMBEDDED')`,
+        [agencyId, accountName, accessToken || "embedded_token",
+         verifyToken, pId, phoneDisplay || null, effectiveWabaId || null, catalogFlag]
       );
       integrationId = ins.insertId;
     }
 
     return res.status(201).json({
       success: true,
-      message: "WhatsApp Business Account connected via Embedded Signup successfully!",
+      message: "WhatsApp Business Account connected and activated successfully!",
       integration: {
         id: integrationId,
         name: accountName,
         phoneDisplay,
         phoneNumberId: pId,
-        wabaId,
+        wabaId: effectiveWabaId,
+
       }
     });
   } catch (err) {
@@ -214,7 +476,7 @@ router.get("/channels/facebook", async (req, res) => {
   try {
     const [rows] = await pool.query(
       "SELECT * FROM integrations WHERE agency_id = ? AND platform = 'FACEBOOK' ORDER BY created_at DESC",
-      [req.user.agencyId]
+      [req.agencyId]
     );
     return res.json({ success: true, pages: rows });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
@@ -226,12 +488,15 @@ router.post("/channels/facebook", async (req, res) => {
     return res.status(400).json({ success: false, message: "Name, access token and page ID are required" });
 
   try {
+    await assertModuleAccess(req.agencyId, "channel_facebook");
+    await assertLimit(req.agencyId, "max_bot_accounts");
+
     // Try auto-exchanging for a permanent never-expiring Page Access Token
     let finalAccessToken = accessToken;
     try {
       const [appRows] = await pool.query(
         "SELECT app_id, app_secret FROM meta_app_settings WHERE agency_id = ? AND is_configured = 1 LIMIT 1",
-        [req.user.agencyId]
+        [req.agencyId]
       );
       if (appRows.length && appRows[0].app_id && appRows[0].app_secret) {
         const { app_id, app_secret } = appRows[0];
@@ -277,7 +542,7 @@ router.post("/channels/facebook", async (req, res) => {
     // 2. Check if already exists (update or insert)
     const [existing] = await pool.query(
       "SELECT id FROM integrations WHERE agency_id = ? AND platform = 'FACEBOOK' AND fb_page_id = ?",
-      [req.user.agencyId, fbPageId]
+      [req.agencyId, fbPageId]
     );
 
     if (existing.length) {
@@ -290,7 +555,7 @@ router.post("/channels/facebook", async (req, res) => {
       await pool.query(
         `INSERT INTO integrations (agency_id, platform, name, access_token, verify_token, fb_page_id, fb_page_name, is_active)
          VALUES (?, 'FACEBOOK', ?, ?, ?, ?, ?, 1)`,
-        [req.user.agencyId, name, finalAccessToken, verifyToken || null, fbPageId, fbPageName || null]
+        [req.agencyId, name, finalAccessToken, verifyToken || null, fbPageId, fbPageName || null]
       );
     }
 
@@ -310,6 +575,9 @@ router.post("/channels/facebook/quick-connect", async (req, res) => {
   const agencyId = req.user?.agencyId || 1;
 
   try {
+    await assertModuleAccess(agencyId, "channel_facebook");
+    await assertLimit(agencyId, "max_bot_accounts");
+
     const [settings] = await pool.query(
       "SELECT app_id, app_secret FROM meta_app_settings WHERE agency_id = ? OR is_configured = 1 LIMIT 1",
       [agencyId]
@@ -408,7 +676,7 @@ router.post("/channels/facebook/sync-subscriptions", async (req, res) => {
   try {
     const [pages] = await pool.query(
       "SELECT * FROM integrations WHERE agency_id = ? AND platform = 'FACEBOOK' AND is_active = 1",
-      [req.user.agencyId]
+      [req.agencyId]
     );
     const results = [];
     for (const page of pages) {
@@ -564,7 +832,7 @@ router.post("/channels/facebook/import-pages", async (req, res) => {
 router.delete("/channels/facebook/:id", async (req, res) => {
   try {
     await pool.query("DELETE FROM integrations WHERE id = ? AND agency_id = ? AND platform = 'FACEBOOK'",
-      [req.params.id, req.user.agencyId]);
+      [req.params.id, req.agencyId]);
     return res.json({ success: true, message: "Facebook page removed" });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
@@ -577,30 +845,64 @@ router.get("/channels/instagram", async (req, res) => {
   try {
     const [rows] = await pool.query(
       "SELECT * FROM integrations WHERE agency_id = ? AND platform = 'INSTAGRAM' ORDER BY created_at DESC",
-      [req.user.agencyId]
+      [req.agencyId]
     );
     return res.json({ success: true, accounts: rows });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
 router.post("/channels/instagram", async (req, res) => {
-  const { name, accessToken, verifyToken, igAccountId, igUsername } = req.body;
+  const { name, accessToken, verifyToken, igAccountId, igUsername, pageId, pageAccessToken } = req.body;
   if (!name || !accessToken || !igAccountId)
     return res.status(400).json({ success: false, message: "Name, access token and account ID are required" });
   try {
-    await pool.query(
-      `INSERT INTO integrations (agency_id, platform, name, access_token, verify_token, ig_account_id, ig_username)
-       VALUES (?, 'INSTAGRAM', ?, ?, ?, ?, ?)`,
-      [req.user.agencyId, name, accessToken, verifyToken || null, igAccountId, igUsername || null]
+    await assertModuleAccess(req.agencyId, "channel_instagram");
+    await assertLimit(req.agencyId, "max_bot_accounts");
+
+    // Check if account already exists for this agency
+    const [existing] = await pool.query(
+      "SELECT id FROM integrations WHERE agency_id = ? AND platform = 'INSTAGRAM' AND ig_account_id = ?",
+      [req.agencyId, igAccountId]
     );
-    return res.status(201).json({ success: true, message: "Instagram account connected" });
-  } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
+
+    if (existing.length > 0) {
+      await pool.query(
+        `UPDATE integrations 
+         SET name = ?, access_token = ?, verify_token = ?, ig_username = ?, fb_page_id = COALESCE(?, fb_page_id), is_active = 1
+         WHERE id = ?`,
+        [name, accessToken, verifyToken || null, igUsername || null, pageId || null, existing[0].id]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO integrations (agency_id, platform, name, access_token, verify_token, ig_account_id, ig_username, fb_page_id)
+         VALUES (?, 'INSTAGRAM', ?, ?, ?, ?, ?, ?)`,
+        [req.agencyId, name, accessToken, verifyToken || null, igAccountId, igUsername || null, pageId || null]
+      );
+    }
+
+    // Auto-subscribe the connected Page to Instagram webhooks
+    const tokenToUse = pageAccessToken || accessToken;
+    if (pageId && tokenToUse) {
+      try {
+        await fetch(`https://graph.facebook.com/v19.0/${pageId}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_reactions,message_reads,standby&access_token=${tokenToUse}`, {
+          method: 'POST',
+        });
+      } catch (subErr) {
+        console.error('[IG subscribed_apps error]:', subErr);
+      }
+    }
+
+    return res.status(201).json({ success: true, message: "Instagram account connected successfully" });
+  } catch (err) {
+    console.error("[Instagram connect error]:", err);
+    return res.status(500).json({ success: false, message: err.message || "Server error" });
+  }
 });
 
 router.delete("/channels/instagram/:id", async (req, res) => {
   try {
     await pool.query("DELETE FROM integrations WHERE id = ? AND agency_id = ? AND platform = 'INSTAGRAM'",
-      [req.params.id, req.user.agencyId]);
+      [req.params.id, req.agencyId]);
     return res.json({ success: true, message: "Instagram account removed" });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
@@ -613,7 +915,7 @@ router.get("/channels/telegram", async (req, res) => {
   try {
     const [rows] = await pool.query(
       "SELECT * FROM telegram_bots WHERE agency_id = ? ORDER BY created_at DESC",
-      [req.user.agencyId]
+      [req.agencyId]
     );
     return res.json({ success: true, bots: rows });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
@@ -621,59 +923,182 @@ router.get("/channels/telegram", async (req, res) => {
 
 router.post("/channels/telegram", async (req, res) => {
   const { botToken } = req.body;
-  if (!botToken) return res.status(400).json({ success: false, message: "Bot token is required" });
+  if (!botToken || !String(botToken).trim()) {
+    return res.status(400).json({ success: false, message: "Bot token is required" });
+  }
+
+  // Clean token: trim and remove optional "bot" prefix if pasted
+  let cleanToken = String(botToken).trim();
+  if (cleanToken.toLowerCase().startsWith("bot") && cleanToken.includes(":")) {
+    cleanToken = cleanToken.slice(3).trim();
+  }
+
   try {
+    await assertModuleAccess(req.agencyId, "channel_telegram");
+    await assertLimit(req.agencyId, "max_bot_accounts");
+
     // Verify token with Telegram API
-    const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
-    const tgData = await tgRes.json();
-    if (!tgData.ok) return res.status(400).json({ success: false, message: "Invalid Telegram bot token" });
+    let tgData;
+    try {
+      const tgRes = await fetch(`https://api.telegram.org/bot${cleanToken}/getMe`, {
+        signal: AbortSignal.timeout(10000),
+      });
+      tgData = await tgRes.json();
+    } catch (fetchErr) {
+      console.error("[Telegram] getMe network error:", fetchErr);
+      return res.status(400).json({
+        success: false,
+        message: `Could not reach Telegram API: ${fetchErr.message || "Network error"}. Please check your internet connection.`,
+      });
+    }
+
+    if (!tgData || !tgData.ok) {
+      console.error("[Telegram] getMe invalid response:", tgData);
+      const desc = tgData?.description || "Invalid Telegram bot token. Please verify token from @BotFather.";
+      return res.status(400).json({ success: false, message: desc });
+    }
 
     const { first_name, username } = tgData.result;
+    const botName = first_name || username || "Telegram Bot";
 
-    // Create integration record
-    const [integ] = await pool.query(
-      `INSERT INTO integrations (agency_id, platform, name, access_token, verify_token)
-       VALUES (?, 'TELEGRAM', ?, ?, ?)`,
-      [req.user.agencyId, `${first_name} (@${username})`, botToken, null]
+    // Check if telegram bot already exists for this agency
+    const [existing] = await pool.query(
+      "SELECT id, integration_id FROM telegram_bots WHERE agency_id = ? AND bot_username = ?",
+      [req.agencyId, username]
     );
 
-    // Save telegram bot record
-    const [result] = await pool.query(
-      `INSERT INTO telegram_bots (agency_id, integration_id, bot_token, bot_username, bot_name, is_active)
-       VALUES (?, ?, ?, ?, ?, 1)`,
-      [req.user.agencyId, integ.insertId, botToken, username, first_name]
-    );
+    let integrationId;
+    let botRecordId;
+
+    if (existing.length > 0) {
+      integrationId = existing[0].integration_id;
+      botRecordId = existing[0].id;
+      await pool.query(
+        "UPDATE integrations SET name = ?, access_token = ?, is_active = 1 WHERE id = ?",
+        [`${botName} (@${username})`, cleanToken, integrationId]
+      );
+      await pool.query(
+        "UPDATE telegram_bots SET bot_token = ?, bot_name = ?, is_active = 1 WHERE id = ?",
+        [cleanToken, botName, botRecordId]
+      );
+    } else {
+      // Create integration record
+      const [integ] = await pool.query(
+        `INSERT INTO integrations (agency_id, platform, name, access_token, verify_token)
+         VALUES (?, 'TELEGRAM', ?, ?, ?)`,
+        [req.agencyId, `${botName} (@${username})`, cleanToken, null]
+      );
+      integrationId = integ.insertId;
+
+      // Save telegram bot record
+      const [result] = await pool.query(
+        `INSERT INTO telegram_bots (agency_id, integration_id, bot_token, bot_username, bot_name, is_active)
+         VALUES (?, ?, ?, ?, ?, 1)`,
+        [req.agencyId, integrationId, cleanToken, username, botName]
+      );
+      botRecordId = result.insertId;
+    }
 
     // Set webhook
-    const webhookUrl = `${process.env.BACKEND_URL || `http://localhost:5000`}/api/v1/webhook/telegram/${req.user.agencyId}/${integ.insertId}`;
-    const webhookRes = await fetch(`https://api.telegram.org/bot${botToken}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
-    const webhookData = await webhookRes.json();
-
-    if (webhookData.ok) {
-      await pool.query("UPDATE telegram_bots SET webhook_set = 1 WHERE id = ?", [result.insertId]);
+    const backendBase = process.env.BACKEND_URL || process.env.PUBLIC_URL || `http://localhost:5000`;
+    const webhookUrl = `${backendBase}/api/v1/webhook/telegram/${req.agencyId}/${integrationId}`;
+    
+    let webhookSet = false;
+    try {
+      const webhookRes = await fetch(`https://api.telegram.org/bot${cleanToken}/setWebhook?url=${encodeURIComponent(webhookUrl)}`, {
+        signal: AbortSignal.timeout(10000),
+      });
+      const webhookData = await webhookRes.json();
+      webhookSet = Boolean(webhookData.ok);
+      if (webhookSet) {
+        await pool.query("UPDATE telegram_bots SET webhook_set = 1 WHERE id = ?", [botRecordId]);
+      }
+    } catch (whErr) {
+      console.error("[Telegram] setWebhook error:", whErr);
     }
 
     return res.status(201).json({
       success: true,
-      message: `Telegram bot @${username} connected`,
-      botName: first_name,
+      message: `Telegram bot @${username} connected successfully`,
+      botName,
       botUsername: username,
-      webhookSet: webhookData.ok,
+      webhookSet,
     });
-  } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
+  } catch (err) {
+    console.error("[Telegram connect error]:", err);
+    return res.status(500).json({ success: false, message: err.message || "Server error" });
+  }
 });
 
 router.delete("/channels/telegram/:id", async (req, res) => {
   try {
     const [rows] = await pool.query(
       "SELECT bot_token FROM telegram_bots WHERE id = ? AND agency_id = ?",
-      [req.params.id, req.user.agencyId]
+      [req.params.id, req.agencyId]
     );
     if (rows.length) {
       await fetch(`https://api.telegram.org/bot${rows[0].bot_token}/deleteWebhook`).catch(() => {});
     }
-    await pool.query("DELETE FROM telegram_bots WHERE id = ? AND agency_id = ?", [req.params.id, req.user.agencyId]);
+    await pool.query("DELETE FROM telegram_bots WHERE id = ? AND agency_id = ?", [req.params.id, req.agencyId]);
     return res.json({ success: true, message: "Telegram bot removed" });
+  } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+//  TIKTOK
+// ═══════════════════════════════════════════════════════════════════
+
+router.get("/channels/tiktok", async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT * FROM integrations WHERE agency_id = ? AND platform = 'TIKTOK' ORDER BY created_at DESC",
+      [req.agencyId]
+    );
+    return res.json({ success: true, accounts: rows });
+  } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
+});
+
+router.post("/channels/tiktok", async (req, res) => {
+  const { name, accessToken, verifyToken, tiktokOpenId, tiktokUsername } = req.body;
+  if (!name || (!accessToken && !tiktokOpenId)) {
+    return res.status(400).json({ success: false, message: "Account name and TikTok Open ID or Access Token are required" });
+  }
+  try {
+    await assertModuleAccess(req.agencyId, "channel_tiktok");
+    await assertLimit(req.agencyId, "max_bot_accounts");
+
+    const [existing] = await pool.query(
+      "SELECT id FROM integrations WHERE agency_id = ? AND platform = 'TIKTOK' AND (tiktok_open_id = ? OR (tiktok_username = ? AND tiktok_username IS NOT NULL))",
+      [req.agencyId, tiktokOpenId || name, tiktokUsername || name]
+    );
+
+    if (existing.length > 0) {
+      await pool.query(
+        `UPDATE integrations
+         SET name = ?, access_token = ?, verify_token = ?, tiktok_open_id = ?, tiktok_username = ?, is_active = 1
+         WHERE id = ?`,
+        [name, accessToken || null, verifyToken || null, tiktokOpenId || null, tiktokUsername || null, existing[0].id]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO integrations (agency_id, platform, name, access_token, verify_token, tiktok_open_id, tiktok_username)
+         VALUES (?, 'TIKTOK', ?, ?, ?, ?, ?)`,
+        [req.agencyId, name, accessToken || null, verifyToken || null, tiktokOpenId || null, tiktokUsername || null]
+      );
+    }
+
+    return res.status(201).json({ success: true, message: "TikTok account connected successfully" });
+  } catch (err) {
+    console.error("[TikTok connect error]:", err);
+    return res.status(500).json({ success: false, message: err.message || "Server error" });
+  }
+});
+
+router.delete("/channels/tiktok/:id", async (req, res) => {
+  try {
+    await pool.query("DELETE FROM integrations WHERE id = ? AND agency_id = ? AND platform = 'TIKTOK'",
+      [req.params.id, req.agencyId]);
+    return res.json({ success: true, message: "TikTok account removed" });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
@@ -685,7 +1110,7 @@ router.get("/channels/webchat", async (req, res) => {
   try {
     const [rows] = await pool.query(
       "SELECT * FROM webchat_widgets WHERE agency_id = ? ORDER BY created_at DESC",
-      [req.user.agencyId]
+      [req.agencyId]
     );
     return res.json({ success: true, widgets: rows });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
@@ -698,14 +1123,14 @@ router.post("/channels/webchat", async (req, res) => {
     // Create integration record
     const [integ] = await pool.query(
       "INSERT INTO integrations (agency_id, platform, name, is_active) VALUES (?, 'WEBCHAT', ?, 1)",
-      [req.user.agencyId, name]
+      [req.agencyId, name]
     );
 
-    const widgetKey = `wc_${req.user.agencyId}_${Date.now()}`;
+    const widgetKey = `wc_${req.agencyId}_${Date.now()}`;
     await pool.query(
       `INSERT INTO webchat_widgets (agency_id, integration_id, name, widget_key, primary_color, greeting_message, placeholder_text, allowed_domains)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [req.user.agencyId, integ.insertId, name, widgetKey,
+      [req.agencyId, integ.insertId, name, widgetKey,
         primaryColor || "#6366f1", greetingMessage || "Hello! How can we help you today?",
         placeholderText || "Type a message…", allowedDomains || null]
     );
@@ -719,7 +1144,7 @@ router.put("/channels/webchat/:id", async (req, res) => {
     await pool.query(
       `UPDATE webchat_widgets SET name=?, primary_color=?, greeting_message=?, placeholder_text=?, allowed_domains=?, is_active=?
        WHERE id=? AND agency_id=?`,
-      [name, primaryColor, greetingMessage, placeholderText, allowedDomains, isActive ?? 1, req.params.id, req.user.agencyId]
+      [name, primaryColor, greetingMessage, placeholderText, allowedDomains, isActive ?? 1, req.params.id, req.agencyId]
     );
     return res.json({ success: true, message: "Widget updated" });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
@@ -761,7 +1186,7 @@ router.get("/channels/facebook/comment-rules", async (req, res) => {
        LEFT JOIN integrations i ON i.id = r.integration_id 
        WHERE r.agency_id = ? 
        ORDER BY r.created_at DESC`,
-      [req.user.agencyId]
+      [req.agencyId]
     );
     return res.json({ success: true, rules: rows });
   } catch (err) {
@@ -799,7 +1224,7 @@ router.post("/channels/facebook/comment-rules", async (req, res) => {
         enable_like_comment, enable_hide_comment, is_active, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW())`,
       [
-        req.user.agencyId,
+        req.agencyId,
         integrationId || null,
         campaignName,
         postId || "ALL_POSTS",
@@ -850,7 +1275,7 @@ router.put("/channels/facebook/comment-rules/:id", async (req, res) => {
         enableLikeComment ? 1 : 0,
         enableHideComment ? 1 : 0,
         req.params.id,
-        req.user.agencyId,
+        req.agencyId,
       ]
     );
     return res.json({ success: true, message: "Comment campaign updated" });
@@ -865,13 +1290,13 @@ router.patch("/channels/facebook/comment-rules/:id/toggle", async (req, res) => 
   try {
     const [rows] = await pool.query(
       "SELECT is_active FROM fb_comment_rules WHERE id = ? AND agency_id = ?",
-      [req.params.id, req.user.agencyId]
+      [req.params.id, req.agencyId]
     );
     if (!rows.length) return res.status(404).json({ success: false, message: "Rule not found" });
     const newStatus = rows[0].is_active ? 0 : 1;
     await pool.query(
       "UPDATE fb_comment_rules SET is_active = ? WHERE id = ? AND agency_id = ?",
-      [newStatus, req.params.id, req.user.agencyId]
+      [newStatus, req.params.id, req.agencyId]
     );
     return res.json({ success: true, isActive: newStatus === 1 });
   } catch (err) {
@@ -885,7 +1310,7 @@ router.delete("/channels/facebook/comment-rules/:id", async (req, res) => {
   try {
     await pool.query(
       "DELETE FROM fb_comment_rules WHERE id = ? AND agency_id = ?",
-      [req.params.id, req.user.agencyId]
+      [req.params.id, req.agencyId]
     );
     return res.json({ success: true, message: "Comment campaign deleted" });
   } catch (err) {

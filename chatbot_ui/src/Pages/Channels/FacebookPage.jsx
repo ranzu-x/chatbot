@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import AppLayout from '../../Layout/AppLayout';
 import { channelAPI } from '../../services/api';
 import useFacebookSDK from '../../hooks/useFacebookSDK';
+import { showAlert, notify } from '../../utils/alerts';
 import {
   Facebook, MessageSquare, Heart, EyeOff, Plus, CheckCircle2,
   Trash2, Edit2, RefreshCw, Zap, Shield, Sparkles, Key, ExternalLink,
@@ -72,8 +73,8 @@ export default function FacebookPage({ embedded = false }) {
   const { fbReady, sdkError } = useFacebookSDK();
 
   const showToast = (msg, type = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
+    if (type === 'error') notify.error(msg);
+    else notify.success(msg);
   };
 
   // ── Load Connected Pages ──
@@ -216,20 +217,23 @@ export default function FacebookPage({ embedded = false }) {
   };
 
   const handleDeleteRule = async (id) => {
-    if (!window.confirm('Delete this comment automation campaign?')) return;
+    const ok = await showAlert.confirm({
+      title: 'Delete Campaign?',
+      text: 'Are you sure you want to delete this comment automation campaign?',
+      confirmButtonText: 'Yes, Delete',
+    });
+    if (!ok) return;
     try {
       await channelAPI.deleteFBCommentRule(id);
-      showToast('Campaign deleted');
+      notify.success('Campaign deleted successfully');
       fetchCommentRules();
     } catch {
-      showToast('Failed to delete campaign', 'error');
+      notify.error('Failed to delete campaign');
     }
   };
 
-  const LayoutWrapper = embedded ? ({ children }) => <div>{children}</div> : AppLayout;
-
-  return (
-    <LayoutWrapper>
+  const pageContent = (
+    <div>
       <style>{`
         .fb-tab-btn {
           padding: 10px 18px;
@@ -1047,7 +1051,10 @@ export default function FacebookPage({ embedded = false }) {
         >
           {toast.msg}
         </div>
-      )}
-    </LayoutWrapper>
+        )}
+      </div>
   );
+
+  if (embedded) return pageContent;
+  return <AppLayout>{pageContent}</AppLayout>;
 }

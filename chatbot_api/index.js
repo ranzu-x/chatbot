@@ -15,6 +15,7 @@ import integrationRoutes from "./routes/integrations.js";
 import channelRoutes from "./routes/channels.js";
 import botRoutes from "./routes/bots.js";
 import metaAppRoutes from "./routes/metaapp.js";
+import tiktokAppRoutes from "./routes/tiktokapp.js";
 import webhookRoutes from "./routes/webhook.js";
 import flowRoutes from "./routes/flows.js";
 import webchatRoutes from "./routes/webchat.js";
@@ -24,6 +25,14 @@ import templateRoutes from "./routes/templates.js";
 import cannedResponseRoutes from "./routes/cannedResponses.js";
 import campaignRoutes from "./routes/campaigns.js";
 import sequenceRoutes from "./routes/sequences.js";
+import domainRoutes from "./routes/domains.js";
+import commentRoutes from "./routes/comments.js";
+import packageRoutes from "./routes/packages.js";
+import billingRoutes from "./routes/billing.js";
+import aiRoutes from "./routes/ai.js";
+import flowWebhookRoutes from "./routes/flowWebhooks.js";
+import chatPaymentRoutes from "./routes/chatPayments.js";
+import notificationRoutes from "./routes/notifications.js";
 
 import http from "http";
 import { initSocket } from "./utils/socket.js";
@@ -94,6 +103,7 @@ app.use("/api/v1", integrationRoutes);
 app.use("/api/v1", channelRoutes);
 app.use("/api/v1", botRoutes);
 app.use("/api/v1", metaAppRoutes);
+app.use("/api/v1", tiktokAppRoutes);
 app.use("/api/v1", flowRoutes);
 app.use("/api/v1", contactRoutes);
 app.use("/api/v1", uploadRoutes);
@@ -101,6 +111,14 @@ app.use("/api/v1", templateRoutes);
 app.use("/api/v1", cannedResponseRoutes);
 app.use("/api/v1", campaignRoutes);
 app.use("/api/v1", sequenceRoutes);
+app.use("/api/v1", domainRoutes);
+app.use("/api/v1", commentRoutes);
+app.use("/api/v1", packageRoutes);
+app.use("/api/v1", billingRoutes);
+app.use("/api/v1", aiRoutes);
+app.use("/api/v1", flowWebhookRoutes);
+app.use("/api/v1", chatPaymentRoutes);
+app.use("/api/v1", notificationRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {

@@ -1,244 +1,335 @@
-import React, { useState } from 'react';
-import { User, Mail, Lock, Users, Building, Eye, EyeOff } from 'lucide-react';
-import { useNavigate } from 'react-router';
-import { useAuth } from '../../Provider/AuthContexProvider';
+import React, { useState, useEffect } from 'react';
+import { User, Mail, Lock, Eye, EyeOff, Sparkles, CheckCircle2, ArrowRight } from 'lucide-react';
+import { useNavigate, useSearchParams, Link } from 'react-router';
+import { useAuth } from '../../Provider/AuthContext';
+import { authAPI, tenantAPI } from '../../services/api';
 
-
-
-
-const Register = () => {
+export default function Register() {
+  const [searchParams] = useSearchParams();
   const [formData, setFormData] = useState({
-    firstname: '',
-    lastname: '',
+    name: '',
     email: '',
     password: '',
     confirmPassword: '',
   });
 
+  const [tenant, setTenant] = useState({
+    brandName: 'Nexa Chatbot',
+    tagline: 'Sign up to your AI & multichannel marketing workspace',
+    logoUrl: '',
+    primaryColor: '#2563eb',
+    allowUserRegistration: true,
+  });
+
+  const [loadingTenant, setLoadingTenant] = useState(true);
   const [errors, setErrors] = useState({});
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const { setUser } = useAuth();
+  const [submitting, setSubmitting] = useState(false);
+  const [serverError, setServerError] = useState('');
+
+  const { login } = useAuth();
   const navigate = useNavigate();
+
+  // Resolve Tenant Branding on Mount
+  useEffect(() => {
+    const domainParam = searchParams.get('domain');
+    const hostToResolve = domainParam || window.location.hostname;
+
+    tenantAPI.resolveTenant(hostToResolve)
+      .then((res) => {
+        if (res.data?.agency) {
+          const a = res.data.agency;
+          setTenant({
+            brandName: a.brandName || a.name || 'Nexa Chatbot',
+            tagline: a.tagline || `Join the ${a.name} workspace`,
+            logoUrl: a.logoUrl || '',
+            primaryColor: a.primaryColor || '#2563eb',
+            allowUserRegistration: a.allowUserRegistration !== false,
+          });
+          document.title = `Sign Up | ${a.brandName || a.name}`;
+        }
+      })
+      .catch((err) => console.error('Tenant resolve error:', err))
+      .finally(() => setLoadingTenant(false));
+  }, [searchParams]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData({
-      ...formData,
-      [name]: value,
-    });
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
-
-
-  // Signup form validation
 
   const validate = () => {
-    let tempErrors = {};
-    if (!formData.firstname) tempErrors.firstname = 'First Name is required.';
-    if (!formData.lastname) tempErrors.lastname = 'Last Name is required.';
-    if (!formData.email) {
-      tempErrors.email = 'Email is required.';
+    const temp = {};
+    if (!formData.name.trim()) temp.name = 'Full Name is required.';
+    if (!formData.email.trim()) {
+      temp.email = 'Email is required.';
     } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      tempErrors.email = 'Email is not valid.';
+      temp.email = 'Enter a valid email address.';
     }
     if (!formData.password) {
-      tempErrors.password = 'Password is required.';
-    } else if (formData.password.length < 8) {
-      tempErrors.password = 'Password must be at least 8 characters long.';
-    } else if (!/(?=.*[A-Z])/.test(formData.password)) {
-      tempErrors.password = 'Password must contain at least one uppercase letter.';
-    } else if (!/(?=.*[a-z])/.test(formData.password)) {
-      tempErrors.password = 'Password must contain at least one lowercase letter.';
-    } else if (!/(?=.*\d)/.test(formData.password)) {
-      tempErrors.password = 'Password must contain at least one number.';
-    } else if (!/(?=.*[!@#$%^&*])/.test(formData.password)) {
-      tempErrors.password = 'Password must contain at least one special character (!@#$%^&*).';
+      temp.password = 'Password is required.';
+    } else if (formData.password.length < 6) {
+      temp.password = 'Password must be at least 6 characters.';
     }
     if (formData.password !== formData.confirmPassword) {
-      tempErrors.confirmPassword = 'Passwords do not match.';
+      temp.confirmPassword = 'Passwords do not match.';
     }
-    setErrors(tempErrors);
-    return Object.keys(tempErrors).length === 0;
+    setErrors(temp);
+    return Object.keys(temp).length === 0;
   };
 
-  // Signup form submit fundtion
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setServerError('');
     if (!validate()) return;
 
+    setSubmitting(true);
     try {
-      const response = await fetch("http://localhost:5000/api/v1/hospital-admin/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include", // ✅ crucial
-        body: JSON.stringify(formData),
-      });
+      const domainParam = searchParams.get('domain');
+      const targetHost = domainParam || window.location.host;
 
-      const data = await response.json();
+      const payload = {
+        name: formData.name.trim(),
+        email: formData.email.trim(),
+        password: formData.password,
+        domain: targetHost,
+        host: targetHost,
+      };
 
-      if (response.ok) {
-        alert("User Registered Successfully!");
-        console.log("Form submitted successfully:", data);
+      const res = await authAPI.register(payload);
 
-        // ✅ Save logged-in user
-        setUser(data.user);
-
-        // ✅ Go to dashboard
-        navigate("/dashboard");
-
-        // ✅ Reset form
-        setFormData({
-          firstname: "",
-          lastname: "",
-          email: "",
-          password: "",
-          confirmPassword: "",
-        });
-        setErrors({});
-      } else {
-        alert(data.message || "Registration failed");
+      if (res.data?.token) {
+        localStorage.setItem('auth_token', res.data.token);
       }
-    } catch (error) {
-      console.error("Error:", error);
-      alert("Something went wrong, please try again later.");
+
+      // Redirect to login or auto-login
+      navigate('/inbox');
+    } catch (err) {
+      console.error(err);
+      setServerError(err.response?.data?.message || 'Registration failed. Please try again.');
+    } finally {
+      setSubmitting(false);
     }
   };
 
+  if (!tenant.allowUserRegistration) {
+    return (
+      <div className="login-page">
+        <div className="login-card" style={{ textAlign: 'center', padding: '40px 24px' }}>
+          <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>🔒</div>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', marginBottom: 8 }}>
+            Registration Closed
+          </h2>
+          <p style={{ fontSize: '0.84rem', color: '#64748b', marginBottom: 20 }}>
+            Public user registration is currently disabled for <strong>{tenant.brandName}</strong>. Please contact your workspace administrator for access.
+          </p>
+          <Link to="/login" className="btn btn-primary" style={{ padding: '8px 20px' }}>
+            Back to Sign In
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-100 to-indigo-200 flex items-center justify-center p-4">
-      <div className="bg-white p-8 sm:p-10 rounded-2xl shadow-lg w-full max-w-lg">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-800">Create an Account</h1>
-          <p className="text-gray-500 mt-2">Join our hospital management system</p>
+    <div className="login-page">
+      {/* Background orbs */}
+      <div
+        className="login-bg-orb"
+        style={{
+          width: 480,
+          height: 480,
+          background: `radial-gradient(circle, ${tenant.primaryColor}80, transparent)`,
+          top: '-120px',
+          left: '-160px',
+        }}
+      />
+      <div
+        className="login-bg-orb"
+        style={{
+          width: 360,
+          height: 360,
+          background: 'radial-gradient(circle, #22d3ee80, transparent)',
+          bottom: '-80px',
+          right: '-100px',
+        }}
+      />
+
+      <div className="login-card animate-slide-up" style={{ maxWidth: 460 }}>
+        {/* Logo / Brand Header */}
+        <div className="login-logo" style={{ textAlign: 'center', marginBottom: 20 }}>
+          {tenant.logoUrl ? (
+            <img
+              src={tenant.logoUrl}
+              alt={tenant.brandName}
+              style={{ maxHeight: 48, maxWidth: 180, objectFit: 'contain', margin: '0 auto 12px', display: 'block' }}
+              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+            />
+          ) : (
+            <div
+              className="login-logo-icon"
+              style={{
+                background: `linear-gradient(135deg, ${tenant.primaryColor} 0%, #1e40af 100%)`,
+                color: '#fff',
+                width: 44,
+                height: 44,
+                borderRadius: 12,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 10px',
+                boxShadow: `0 4px 12px ${tenant.primaryColor}40`,
+              }}
+            >
+              <Sparkles size={20} />
+            </div>
+          )}
+
+          <h1 className="login-title" style={{ fontSize: '1.4rem', fontWeight: 800, color: '#0f172a' }}>
+            {tenant.brandName}
+          </h1>
+          <p className="login-sub" style={{ fontSize: '0.8rem', color: '#64748b', marginTop: 4 }}>
+            {tenant.tagline}
+          </p>
         </div>
-        <div>
-          {/* First Name Input */}
-          <div className="mb-4 relative">
-            <User className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
-            <input
-              className={`pl-10 pr-4 py-2 w-full border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400 transition-all ${errors.firstname ? 'border-red-500' : 'border-gray-300'}`}
-              id="firstname"
-              type="text"
-              name="firstname"
-              value={formData.firstname}
-              onChange={handleChange}
-              placeholder="First Name"
-            />
-            {errors.firstname && <p className="text-red-500 text-xs italic mt-1">{errors.firstname}</p>}
-          </div>
 
-          {/* Last Name Input */}
-          <div className="mb-4 relative">
-            <User className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
-            <input
-              className={`pl-10 pr-4 py-2 w-full border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400 transition-all ${errors.lastname ? 'border-red-500' : 'border-gray-300'}`}
-              id="lastname"
-              type="text"
-              name="lastname"
-              value={formData.lastname}
-              onChange={handleChange}
-              placeholder="Last Name"
-            />
-            {errors.lastname && <p className="text-red-500 text-xs italic mt-1">{errors.lastname}</p>}
+        {/* Server Error Alert */}
+        {serverError && (
+          <div className="login-error" style={{ marginBottom: 14 }}>
+            {serverError}
           </div>
+        )}
 
-          {/* Email Address Input */}
-          <div className="mb-4 relative">
-            <Mail className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
-            <input
-              className={`pl-10 pr-4 py-2 w-full border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400 transition-all ${errors.email ? 'border-red-500' : 'border-gray-300'}`}
-              id="email"
-              type="email"
-              name="email"
-              value={formData.email}
-              onChange={handleChange}
-              placeholder="Email Address"
-            />
-            {errors.email && <p className="text-red-500 text-xs italic mt-1">{errors.email}</p>}
-          </div>
-
-          {/* Password Input */}
-          <div className="mb-4">
-            <div className="relative">
-              <Lock className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
+        {/* Form */}
+        <form className="login-form" onSubmit={handleSubmit}>
+          {/* Full Name */}
+          <div className="form-group">
+            <label className="form-label" htmlFor="register-name">Full Name</label>
+            <div style={{ position: 'relative' }}>
+              <User size={15} color="#94a3b8" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
               <input
-                className={`pl-10 pr-12 py-2 w-full border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400 transition-all ${errors.password ? 'border-red-500' : 'border-gray-300'}`}
-                id="password"
-                type={showPassword ? "text" : "password"}
+                id="register-name"
+                type="text"
+                name="name"
+                className="form-input"
+                placeholder="John Doe"
+                value={formData.name}
+                onChange={handleChange}
+                style={{ paddingLeft: 34 }}
+                required
+              />
+            </div>
+            {errors.name && <span style={{ fontSize: '0.72rem', color: '#ef4444', marginTop: 2, display: 'block' }}>{errors.name}</span>}
+          </div>
+
+          {/* Email */}
+          <div className="form-group">
+            <label className="form-label" htmlFor="register-email">Email Address</label>
+            <div style={{ position: 'relative' }}>
+              <Mail size={15} color="#94a3b8" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+              <input
+                id="register-email"
+                type="email"
+                name="email"
+                className="form-input"
+                placeholder="you@example.com"
+                value={formData.email}
+                onChange={handleChange}
+                style={{ paddingLeft: 34 }}
+                required
+              />
+            </div>
+            {errors.email && <span style={{ fontSize: '0.72rem', color: '#ef4444', marginTop: 2, display: 'block' }}>{errors.email}</span>}
+          </div>
+
+          {/* Password */}
+          <div className="form-group">
+            <label className="form-label" htmlFor="register-password">Password</label>
+            <div style={{ position: 'relative' }}>
+              <Lock size={15} color="#94a3b8" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+              <input
+                id="register-password"
+                type={showPassword ? 'text' : 'password'}
                 name="password"
+                className="form-input"
+                placeholder="••••••••"
                 value={formData.password}
                 onChange={handleChange}
-                placeholder="Password"
+                style={{ paddingLeft: 34, paddingRight: 34 }}
+                required
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-3 text-gray-400 hover:text-gray-600"
+                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
               >
-                {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
             </div>
-            {errors.password && <p className="text-red-500 text-xs italic mt-1">{errors.password}</p>}
-            {formData.password && !errors.password && (
-              <div className="mt-2 text-xs space-y-1">
-                <div className={`${formData.password.length >= 8 ? 'text-green-600' : 'text-gray-500'}`}>
-                  ✓ At least 8 characters
-                </div>
-                <div className={`${/(?=.*[A-Z])/.test(formData.password) ? 'text-green-600' : 'text-gray-500'}`}>
-                  ✓ One uppercase letter
-                </div>
-                <div className={`${/(?=.*[a-z])/.test(formData.password) ? 'text-green-600' : 'text-gray-500'}`}>
-                  ✓ One lowercase letter
-                </div>
-                <div className={`${/(?=.*\d)/.test(formData.password) ? 'text-green-600' : 'text-gray-500'}`}>
-                  ✓ One number
-                </div>
-                <div className={`${/(?=.*[!@#$%^&*])/.test(formData.password) ? 'text-green-600' : 'text-gray-500'}`}>
-                  ✓ One special character (!@#$%^&*)
-                </div>
-              </div>
-            )}
+            {errors.password && <span style={{ fontSize: '0.72rem', color: '#ef4444', marginTop: 2, display: 'block' }}>{errors.password}</span>}
           </div>
 
-          {/* Confirm Password Input */}
-          <div className="mb-6">
-            <div className="relative">
-              <Lock className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
+          {/* Confirm Password */}
+          <div className="form-group">
+            <label className="form-label" htmlFor="register-confirm">Confirm Password</label>
+            <div style={{ position: 'relative' }}>
+              <Lock size={15} color="#94a3b8" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
               <input
-                className={`pl-10 pr-12 py-2 w-full border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400 transition-all ${errors.confirmPassword ? 'border-red-500' : 'border-gray-300'}`}
-                id="confirmPassword"
-                type={showConfirmPassword ? "text" : "password"}
+                id="register-confirm"
+                type={showConfirmPassword ? 'text' : 'password'}
                 name="confirmPassword"
+                className="form-input"
+                placeholder="••••••••"
                 value={formData.confirmPassword}
                 onChange={handleChange}
-                placeholder="Confirm Password"
+                style={{ paddingLeft: 34, paddingRight: 34 }}
+                required
               />
               <button
                 type="button"
                 onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                className="absolute right-3 top-3 text-gray-400 hover:text-gray-600"
+                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
               >
-                {showConfirmPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                {showConfirmPassword ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
             </div>
-            {errors.confirmPassword && <p className="text-red-500 text-xs italic mt-1">{errors.confirmPassword}</p>}
+            {errors.confirmPassword && <span style={{ fontSize: '0.72rem', color: '#ef4444', marginTop: 2, display: 'block' }}>{errors.confirmPassword}</span>}
           </div>
 
-          {/* Submit Button */}
-          <div className="flex items-center justify-center">
-            <button
-              className="w-full bg-gradient-to-r from-indigo-500 to-blue-500 hover:from-indigo-600 hover:to-blue-600 text-white font-bold py-3 px-4 rounded-lg focus:outline-none focus:shadow-outline transform transition-all duration-300 ease-in-out hover:scale-105"
-              type="submit"
-              onClick={handleSubmit}
-            >
-              Register Account
-            </button>
-          </div>
+          <button
+            type="submit"
+            disabled={submitting}
+            style={{
+              width: '100%',
+              padding: '10px',
+              borderRadius: 8,
+              background: tenant.primaryColor || '#2563eb',
+              color: '#ffffff',
+              border: 'none',
+              fontWeight: 800,
+              fontSize: '0.88rem',
+              cursor: submitting ? 'not-allowed' : 'pointer',
+              boxShadow: `0 4px 12px ${tenant.primaryColor}35`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              marginTop: 6,
+            }}
+          >
+            {submitting ? 'Creating Account...' : 'Create Account'}
+            {!submitting && <ArrowRight size={15} />}
+          </button>
+        </form>
+
+        <div style={{ textAlign: 'center', marginTop: 18, fontSize: '0.8rem', color: '#64748b' }}>
+          Already have an account?{' '}
+          <Link to="/login" style={{ color: tenant.primaryColor, fontWeight: 700, textDecoration: 'none' }}>
+            Sign in
+          </Link>
         </div>
       </div>
     </div>
   );
-};
-
-export default Register;
+}

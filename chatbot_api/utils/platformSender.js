@@ -72,7 +72,7 @@ export async function sendPlatformMessage(platform, integration, contactExternal
       }
 
       const response = await axios.post(url, payload, {
-        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
       });
       return response.data?.messages?.[0]?.id || null;
     }
@@ -279,6 +279,28 @@ export async function sendPlatformMessage(platform, integration, contactExternal
       const url = `https://api.telegram.org/bot${accessToken}/${endpoint}`;
       const response = await axios.post(url, payload);
       return response.data?.result?.message_id?.toString() || null;
+    }
+
+    if (platform === "TIKTOK") {
+      if (accessToken) {
+        try {
+          const url = `https://business-api.tiktok.com/open_api/v1.3/im/message/send/`;
+          const payload = {
+            from_user_id: integration.tiktok_open_id,
+            to_user_id: contactExternalId,
+            msg_type: type === "IMAGE" ? "image" : "text",
+            content: { text: body },
+          };
+          const response = await axios.post(url, payload, {
+            headers: { 'Access-Token': accessToken, 'Content-Type': 'application/json' }
+          });
+          return response.data?.data?.message_id || `tt_out_${Date.now()}`;
+        } catch (e) {
+          console.warn("[TikTok outbound API notice]:", e.response?.data || e.message);
+          return `tt_out_${Date.now()}`;
+        }
+      }
+      return `tt_out_${Date.now()}`;
     }
 
     if (platform === "WEBCHAT") {

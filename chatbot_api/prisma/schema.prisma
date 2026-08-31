@@ -25,6 +25,8 @@ enum Platform {
   WHATSAPP
   FACEBOOK
   INSTAGRAM
+  TELEGRAM
+  WEBCHAT
 }
 
 enum ConversationStatus {
@@ -86,9 +88,15 @@ model Agency {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  // The User who owns/manages this agency (role=AGENCY)
+  // The User who owns/manages this agency (role=AGENCY or ADMIN)
   ownerId     Int      @unique
   owner       User     @relation("AgencyOwner", fields: [ownerId], references: [id])
+
+  // Parent agency — for sub-agencies created under an ADMIN owner.
+  // NULL = top-level owner workspace. Non-null = Agency created under an ADMIN.
+  parentAgencyId Int?
+  parentAgency   Agency?  @relation("AgencyChildren", fields: [parentAgencyId], references: [id])
+  childAgencies  Agency[] @relation("AgencyChildren")
 
   // Agents belonging to this agency
   agents      AgentProfile[]
@@ -116,6 +124,9 @@ model AgentProfile {
   agencyId  Int
   agency    Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
   isOnline  Boolean  @default(false)
+  // OWNER_USER = end-user created directly under the Owner/ADMIN
+  // AGENCY_USER = end-user created under an Agency
+  userType  String   @default("AGENCY_USER")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

@@ -18,11 +18,11 @@ router.get("/conversations", async (req, res) => {
 
     let query = `
       SELECT cv.*, 
+             i.platform as platform, i.platform as integrationPlatform, i.name as integrationName,
              c.name as contactName, c.phone as contactPhone, c.email as contactEmail,
              c.avatar as contactAvatar, c.platform as contactPlatform, c.external_id as contactExternalId,
              c.tags as contactTags, c.bot_paused as contactBotPaused,
              u.name as assignedAgentName,
-             i.name as integrationName,
              m.body as lastMessageBody, m.direction as lastMessageDirection, m.created_at as lastMessageTime
       FROM conversations cv
       JOIN contacts c ON c.id = cv.contact_id
@@ -47,11 +47,23 @@ router.get("/conversations", async (req, res) => {
       }
     }
 
-    if (status) { query += " AND cv.status = ?"; params.push(status); }
-    if (platform) { query += " AND c.platform = ?"; params.push(platform); }
+    if (status) {
+      if (status.toUpperCase() === "OPEN") {
+        query += " AND cv.status IN ('OPEN', 'ASSIGNED')";
+      } else if (status.toUpperCase() === "RESOLVED") {
+        query += " AND cv.status IN ('RESOLVED', 'CLOSED')";
+      } else {
+        query += " AND cv.status = ?";
+        params.push(status);
+      }
+    }
+    if (platform && platform !== "ALL") {
+      query += " AND (i.platform = ? OR c.platform = ?)";
+      params.push(platform, platform);
+    }
     if (search) {
-      query += " AND (c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ?)";
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      query += " AND (c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR i.name LIKE ?)";
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
 
     query += " ORDER BY COALESCE(cv.last_message_at, cv.created_at) DESC";
@@ -69,10 +81,11 @@ router.get("/conversations/:id", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
     const [rows] = await pool.query(`
-      SELECT cv.*, c.name as contactName, c.phone as contactPhone, c.email as contactEmail,
+      SELECT cv.*, 
+             i.platform as platform, i.platform as integrationPlatform, i.name as integrationName,
+             c.name as contactName, c.phone as contactPhone, c.email as contactEmail,
              c.avatar as contactAvatar, c.platform as contactPlatform, c.external_id as contactExternalId,
              c.tags as contactTags, c.bot_paused as contactBotPaused,
-             i.name as integrationName, i.platform as integrationPlatform,
              u.name as assignedAgentName
       FROM conversations cv
       JOIN contacts c ON c.id = cv.contact_id
@@ -214,8 +227,23 @@ router.post("/conversations/:id/messages", async (req, res) => {
       });
     } catch (apiErr) {
       console.error("API send failed:", apiErr.message);
-      return res.status(502).json({ success: false, message: "Failed to deliver message via platform API" });
+      // Extract Meta's real error message if available
+      const metaError = apiErr?.response?.data?.error;
+      let friendlyMsg = "Failed to deliver message via platform API.";
+      if (metaError) {
+        if (metaError.error_subcode === 2388094 || metaError.code === 131056) {
+          friendlyMsg = "WhatsApp message not delivered: 24-hour messaging window expired. Send a Template message to re-open the window.";
+        } else if (metaError.code === 190 || metaError.error_subcode === 460) {
+          friendlyMsg = "Invalid or expired Access Token. Go to WhatsApp Settings → Activate Number to update your token.";
+        } else if (metaError.code === 100) {
+          friendlyMsg = `WhatsApp API error: ${metaError.message || "Phone number not registered or not active."}`;
+        } else {
+          friendlyMsg = metaError.message || friendlyMsg;
+        }
+      }
+      return res.status(502).json({ success: false, message: friendlyMsg, metaError });
     }
+
 
     // Save outbound message to DB
     const [msgResult] = await pool.query(

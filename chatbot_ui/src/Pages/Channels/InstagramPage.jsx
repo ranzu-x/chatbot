@@ -148,6 +148,8 @@ export default function InstagramPage({ embedded = false }) {
           igUsername: acc.username,
           accessToken: acc.pageAccessToken,
           verifyToken: `ig_${acc.id}`,
+          pageId: acc.pageId,
+          pageAccessToken: acc.pageAccessToken,
         });
       }
       showToast(`✅ ${selected.length} Instagram account(s) connected!`);

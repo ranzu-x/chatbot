@@ -5,23 +5,39 @@ import { emitToAgency, emitToConversation } from "./socket.js";
 /**
  * Find or create a Contact in DB
  */
-export async function findOrCreateContact(agencyId, platform, externalId, name, phone) {
+export async function findOrCreateContact(agencyId, platform, externalId, name, phone, avatar = null) {
   const [existingContact] = await pool.query(
     "SELECT * FROM contacts WHERE agency_id = ? AND platform = ? AND external_id = ?",
     [agencyId, platform, externalId]
   );
   if (existingContact.length) {
-    return existingContact[0];
+    const contact = existingContact[0];
+    const isIdName = !contact.name || contact.name === externalId || /^\d+$/.test(contact.name);
+    const hasBetterName = name && name !== externalId && !/^\d+$/.test(name);
+    const hasNewAvatar = avatar && avatar !== contact.avatar;
+
+    if ((isIdName && hasBetterName) || hasNewAvatar) {
+      const updatedName = hasBetterName ? name : contact.name;
+      const updatedAvatar = avatar || contact.avatar;
+      await pool.query(
+        "UPDATE contacts SET name = ?, avatar = COALESCE(?, avatar), phone = COALESCE(?, phone) WHERE id = ?",
+        [updatedName, updatedAvatar, phone || null, contact.id]
+      );
+      contact.name = updatedName;
+      contact.avatar = updatedAvatar;
+    }
+    return contact;
   }
 
   const [newContact] = await pool.query(
-    "INSERT INTO contacts (agency_id, platform, external_id, name, phone, created_at) VALUES (?, ?, ?, ?, ?, NOW())",
-    [agencyId, platform, externalId, name || externalId, phone || null]
+    "INSERT INTO contacts (agency_id, platform, external_id, name, avatar, phone, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())",
+    [agencyId, platform, externalId, name || externalId, avatar || null, phone || null]
   );
 
   const [createdContact] = await pool.query("SELECT * FROM contacts WHERE id = ?", [newContact.insertId]);
   return createdContact[0];
 }
+
 
 /**
  * Find or create an open Conversation in DB
