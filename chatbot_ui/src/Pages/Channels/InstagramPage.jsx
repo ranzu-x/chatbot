@@ -91,6 +91,9 @@ export default function InstagramPage({ embedded = false }) {
   const [selected, setSelected]           = useState([]);
   const [importing, setImporting]         = useState(false);
   const [loginLoading, setLoginLoading]   = useState(false);
+  const [quickToken, setQuickToken]       = useState('');
+  const [quickLoading, setQuickLoading]   = useState(false);
+  const [syncingFb, setSyncingFb]         = useState(false);
   const [toast, setToast]                 = useState(null);
 
   // Manual connect fallback
@@ -112,8 +115,38 @@ export default function InstagramPage({ embedded = false }) {
     setTimeout(() => setToast(null), 4000);
   };
 
+  // 1-Click Token Quick Connect
+  const handleQuickConnect = async () => {
+    if (!quickToken.trim()) return;
+    setQuickLoading(true);
+    try {
+      const res = await channelAPI.quickConnectInstagram(quickToken.trim());
+      showToast(res.data?.message || 'Instagram connected successfully!');
+      setQuickToken('');
+      fetchConnected();
+    } catch (err) {
+      showToast(err.response?.data?.message || 'Failed to connect Instagram account', 'error');
+    } finally {
+      setQuickLoading(false);
+    }
+  };
+
+  // 1-Click Sync from Connected Facebook Pages
+  const handleSyncFromFacebook = async () => {
+    setSyncingFb(true);
+    try {
+      const res = await channelAPI.syncInstagramFromFacebook();
+      showToast(res.data?.message || 'Instagram accounts synced successfully!');
+      fetchConnected();
+    } catch (err) {
+      showToast(err.response?.data?.message || 'Failed to sync Instagram accounts', 'error');
+    } finally {
+      setSyncingFb(false);
+    }
+  };
+
   // Instagram needs different scopes than Facebook
-  const IG_SCOPES = 'pages_show_list,instagram_basic,instagram_manage_messages,pages_read_engagement,pages_messaging';
+  const IG_SCOPES = 'pages_show_list,instagram_basic,instagram_manage_messages,pages_read_engagement,pages_messaging,pages_manage_engagement,instagram_manage_comments';
 
   const handleIGLogin = () => {
     setLoginLoading(true);
@@ -278,18 +311,82 @@ export default function InstagramPage({ embedded = false }) {
               </div>
             )}
 
+            {/* Auto-Sync from Connected Facebook Pages */}
+            <div className="card" style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <span style={{ fontSize: '1.2rem' }}>🔄</span>
+                <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#0f172a' }}>Auto-Sync from Facebook</div>
+              </div>
+              <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '0 0 12px 0', lineHeight: 1.5 }}>
+                Already have Facebook Pages connected? Import their linked Instagram Professional accounts instantly with 1 click.
+              </p>
+              <button
+                type="button"
+                className="btn btn-primary w-full"
+                disabled={syncingFb}
+                onClick={handleSyncFromFacebook}
+                style={{
+                  background: '#1877f2',
+                  border: 'none',
+                  fontSize: '0.84rem',
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                }}
+              >
+                {syncingFb ? <span className="loading-spinner" style={{ width: 14, height: 14, borderColor: 'rgba(255,255,255,0.3)', borderTopColor: '#fff' }} /> : '🔄 Auto-Sync from Connected Facebook'}
+              </button>
+            </div>
+
+            {/* 1-Click Permanent Token Connect */}
+            <div className="card" style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 10, padding: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <span style={{ fontSize: '1.2rem' }}>⚡</span>
+                <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#0f172a' }}>1-Click Token Connect</div>
+              </div>
+              <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '0 0 12px 0', lineHeight: 1.5 }}>
+                Paste any Meta User Token or Page Token to auto-discover and connect all linked Instagram accounts permanently.
+              </p>
+              <textarea
+                className="form-input w-full"
+                rows={2}
+                placeholder="Paste Access Token (EAAB...)"
+                value={quickToken}
+                onChange={(e) => setQuickToken(e.target.value)}
+                style={{ fontSize: '0.78rem', marginBottom: 10, resize: 'vertical' }}
+              />
+              <button
+                type="button"
+                className="btn w-full"
+                disabled={quickLoading || !quickToken.trim()}
+                onClick={handleQuickConnect}
+                style={{
+                  background: 'linear-gradient(135deg, #833ab4, #e1306c)',
+                  color: '#fff',
+                  border: 'none',
+                  fontSize: '0.84rem',
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                }}
+              >
+                {quickLoading ? <span className="loading-spinner" style={{ width: 14, height: 14, borderColor: 'rgba(255,255,255,0.3)', borderTopColor: '#fff' }} /> : '🚀 Connect & Auto-Detect Instagram'}
+              </button>
+            </div>
+
             {(step === 'idle' || step === 'done') && (
               <div className="card" style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>📷</div>
-                <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: 6 }}>Connect Instagram Account</div>
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 20, lineHeight: 1.6 }}>
-                  Login with Facebook to discover Instagram Business accounts linked to your Pages.
+                <div style={{ fontSize: '2rem', marginBottom: 8 }}>📷</div>
+                <div style={{ fontWeight: 700, fontSize: '0.95rem', marginBottom: 6 }}>Continue with Facebook Login</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 16, lineHeight: 1.5 }}>
+                  Login with Facebook SDK to discover Instagram accounts linked to your Pages.
                 </div>
                 <IGLoginButton onClick={handleIGLogin} loading={loginLoading} disabled={!!sdkError || !fbReady || loginLoading} />
-                {!fbReady && !sdkError && <div style={{ marginTop: 10, fontSize: '0.78rem', color: 'var(--text-muted)' }}>Loading SDK…</div>}
-                <div style={{ marginTop: 16, fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                  Required: <code>instagram_basic</code>, <code>instagram_manage_messages</code>
-                </div>
+                {!fbReady && !sdkError && <div style={{ marginTop: 8, fontSize: '0.75rem', color: 'var(--text-muted)' }}>Loading SDK…</div>}
               </div>
             )}
 
@@ -334,7 +431,7 @@ export default function InstagramPage({ embedded = false }) {
             )}
 
             <button className="btn btn-secondary w-full" onClick={() => setShowManual(true)} style={{ fontSize: '0.8rem' }}>
-              ✏️ Connect manually with Access Token
+              ✏️ Connect manually with ID & Token
             </button>
           </div>
         </div>

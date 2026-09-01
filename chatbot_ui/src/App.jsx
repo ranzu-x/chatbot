@@ -50,6 +50,7 @@ import FlowBuilderPage  from './Pages/Flows/FlowBuilderPage';
 // Contacts & Campaigns
 import ContactsPage          from './Pages/Contacts/ContactsPage';
 import CampaignListPage      from './Pages/Campaigns/CampaignListPage';
+import SocialPostingPage     from './Pages/Publishing/SocialPostingPage';
 
 import { Toaster } from 'react-hot-toast';
 
@@ -108,6 +109,8 @@ export default function App() {
             <Route path="/flows/:id" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
             <Route path="/flows/:id/edit" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
             <Route path="/campaigns" element={<ProtectedRoute roles={ADMIN_AGENCY}><CampaignListPage /></ProtectedRoute>} />
+            <Route path="/social-posting" element={<ProtectedRoute roles={ADMIN_AGENCY}><SocialPostingPage /></ProtectedRoute>} />
+            <Route path="/publishing" element={<ProtectedRoute roles={ADMIN_AGENCY}><SocialPostingPage /></ProtectedRoute>} />
             <Route path="/ai-agent" element={<ProtectedRoute roles={ADMIN_AGENCY}><AIAgentPage /></ProtectedRoute>} />
             <Route path="/ai" element={<ProtectedRoute roles={ADMIN_AGENCY}><AIAgentPage /></ProtectedRoute>} />
             <Route path="/webhooks" element={<ProtectedRoute roles={ADMIN_AGENCY}><WebhooksManagerPage /></ProtectedRoute>} />

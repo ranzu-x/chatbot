@@ -141,18 +141,39 @@ router.get("/settings/meta-app/app-id", async (req, res) => {
   }
 });
 
-// ─── IMPORT INSTAGRAM ACCOUNTS VIA USER TOKEN ─────────────────────
-// Fetches all FB Pages the user manages, then checks each for a linked IG Business account
+// ─── IMPORT INSTAGRAM ACCOUNTS VIA TOKEN (USER OR PAGE TOKEN) ───────────
 router.post("/channels/instagram/import-accounts", async (req, res) => {
   const { userAccessToken } = req.body;
-  if (!userAccessToken) return res.status(400).json({ success: false, message: "User access token required" });
+  if (!userAccessToken) return res.status(400).json({ success: false, message: "Access token is required" });
   try {
     const pageMap = new Map();
+    const igAccounts = [];
+    const seenIgIds = new Set();
 
-    // Step 1: get all pages the user manages from /me/accounts
+    // 1. Check if token is a direct Page Access Token with linked IG account
+    try {
+      const directMeRes = await fetch(
+        `https://graph.facebook.com/v21.0/me?fields=id,name,access_token,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${userAccessToken}`
+      );
+      const directMeData = await directMeRes.json();
+      const directIg = directMeData.instagram_business_account || directMeData.connected_instagram_account;
+      if (directIg && directIg.id) {
+        seenIgIds.add(directIg.id);
+        igAccounts.push({
+          ...directIg,
+          pageId: directMeData.id,
+          pageName: directMeData.name,
+          pageAccessToken: userAccessToken,
+        });
+      }
+    } catch (directErr) {
+      console.warn("[IG import] direct /me check warning:", directErr.message || directErr);
+    }
+
+    // 2. Fetch all pages the user manages from /me/accounts (if token is a User token)
     try {
       const pagesRes = await fetch(
-        `https://graph.facebook.com/v19.0/me/accounts?fields=id,name,access_token,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${userAccessToken}`,
+        `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${userAccessToken}`,
         { signal: AbortSignal.timeout(10000) }
       );
       const pagesData = await pagesRes.json();
@@ -160,45 +181,10 @@ router.post("/channels/instagram/import-accounts", async (req, res) => {
         pagesData.data.forEach(p => { if (p.id) pageMap.set(p.id, p); });
       }
     } catch (e) {
-      console.error("[IG import] me/accounts fetch error:", e.message || e);
+      console.warn("[IG import] me/accounts fetch warning:", e.message || e);
     }
 
-    // Step 2: Also check /debug_token granular scopes if me/accounts was empty
-    if (pageMap.size === 0) {
-      try {
-        const inspectRes = await fetch(
-          `https://graph.facebook.com/debug_token?input_token=${userAccessToken}&access_token=${userAccessToken}`,
-          { signal: AbortSignal.timeout(6000) }
-        );
-        const inspectData = await inspectRes.json();
-        const granular = inspectData.data?.granular_scopes || [];
-        for (const scope of granular) {
-          if (Array.isArray(scope.target_ids)) {
-            for (const targetId of scope.target_ids) {
-              if (!pageMap.has(targetId)) {
-                try {
-                  const pRes = await fetch(
-                    `https://graph.facebook.com/v19.0/${targetId}?fields=id,name,access_token,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${userAccessToken}`,
-                    { signal: AbortSignal.timeout(5000) }
-                  );
-                  const pData = await pRes.json();
-                  if (pData.id && !pData.error) {
-                    pageMap.set(pData.id, pData);
-                  }
-                } catch (_) {}
-              }
-            }
-          }
-        }
-      } catch (de) {
-        console.error("[IG import] debug_token error:", de.message || de);
-      }
-    }
-
-    const igAccounts = [];
-    const seenIgIds = new Set();
-
-    // Step 3: For each page, collect linked IG account
+    // 3. For each page in pageMap, extract linked IG account
     for (const page of pageMap.values()) {
       const ig = page.instagram_business_account || page.connected_instagram_account;
       if (ig && ig.id && !seenIgIds.has(ig.id)) {
@@ -210,11 +196,11 @@ router.post("/channels/instagram/import-accounts", async (req, res) => {
           pageAccessToken: page.access_token || userAccessToken,
         });
       } else if (!ig && page.access_token) {
-        // Direct query to page node for instagram_business_account
+        // Query page node directly with page's access_token
         try {
           const igRes = await fetch(
-            `https://graph.facebook.com/v19.0/${page.id}?fields=instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${page.access_token}`,
-            { signal: AbortSignal.timeout(5000) }
+            `https://graph.facebook.com/v21.0/${page.id}?fields=id,name,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${page.access_token}`,
+            { signal: AbortSignal.timeout(6000) }
           );
           const igData = await igRes.json();
           const foundIg = igData.instagram_business_account || igData.connected_instagram_account;
@@ -231,10 +217,10 @@ router.post("/channels/instagram/import-accounts", async (req, res) => {
       }
     }
 
-    return res.json({ success: true, accounts: igAccounts });
+    return res.json({ success: true, accounts: igAccounts, count: igAccounts.length });
   } catch (err) {
     console.error("[IG import-accounts error]:", err);
-    return res.status(500).json({ success: false, message: "Failed to fetch Instagram accounts" });
+    return res.status(500).json({ success: false, message: "Failed to fetch Instagram accounts: " + err.message });
   }
 });
 

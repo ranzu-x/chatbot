@@ -3,6 +3,7 @@ import axios from "axios";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
+import { getMetaSampleHandle } from "../utils/metaMediaHandle.js";
 
 const router = express.Router();
 router.use(authMiddleware, roleMiddleware("AGENCY", "ADMIN", "AGENT"));
@@ -13,7 +14,7 @@ const META_API_VERSION = process.env.META_API_VERSION || "v21.0";
 router.get("/templates/whatsapp", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    const { category, status, search, integrationId } = req.query;
+    const { category, status, search, integrationId, templateType } = req.query;
 
     let query = `
       SELECT t.*, i.name as integration_name, i.wa_phone_number_id, i.wa_business_acc_id
@@ -36,6 +37,11 @@ router.get("/templates/whatsapp", async (req, res) => {
     if (status && status !== "ALL") {
       query += " AND t.status = ?";
       params.push(status);
+    }
+
+    if (templateType && templateType !== "ALL") {
+      query += " AND t.template_type = ?";
+      params.push(templateType);
     }
 
     if (search) {
@@ -108,6 +114,7 @@ router.post("/templates/whatsapp/sync", async (req, res) => {
       const rejectionReason = tpl.reason || tpl.quality_score?.reasons?.[0] || null;
 
       // Extract components
+      let templateType = "STANDARD";
       let headerType = "NONE";
       let headerText = null;
       let headerMediaUrl = null;
@@ -115,6 +122,7 @@ router.post("/templates/whatsapp/sync", async (req, res) => {
       let footerText = null;
       let buttons = [];
       let variables = [];
+      let carouselCards = [];
 
       const components = tpl.components || [];
       for (const comp of components) {
@@ -138,6 +146,9 @@ router.post("/templates/whatsapp/sync", async (req, res) => {
           footerText = comp.text || null;
         } else if (comp.type === "BUTTONS") {
           buttons = comp.buttons || [];
+        } else if (comp.type === "CAROUSEL") {
+          templateType = "CAROUSEL";
+          carouselCards = comp.cards || [];
         }
       }
 
@@ -150,19 +161,21 @@ router.post("/templates/whatsapp/sync", async (req, res) => {
       if (existing.length) {
         await pool.query(
           `UPDATE whatsapp_templates 
-           SET integration_id = ?, category = ?, header_type = ?, header_text = ?, header_media_url = ?,
-               body_text = ?, footer_text = ?, buttons_json = ?, variables_json = ?, status = ?,
+           SET integration_id = ?, category = ?, template_type = ?, header_type = ?, header_text = ?, header_media_url = ?,
+               body_text = ?, footer_text = ?, buttons_json = ?, carousel_cards_json = ?, variables_json = ?, status = ?,
                rejection_reason = ?, meta_template_id = ?
            WHERE id = ?`,
           [
             integration.id,
             category,
+            templateType,
             headerType,
             headerText,
             headerMediaUrl,
             bodyText,
             footerText,
             JSON.stringify(buttons),
+            JSON.stringify(carouselCards),
             JSON.stringify(variables),
             status,
             rejectionReason,
@@ -173,21 +186,23 @@ router.post("/templates/whatsapp/sync", async (req, res) => {
       } else {
         await pool.query(
           `INSERT INTO whatsapp_templates 
-           (agency_id, integration_id, template_name, language, category, header_type, header_text, header_media_url,
-            body_text, footer_text, buttons_json, variables_json, status, rejection_reason, meta_template_id, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+           (agency_id, integration_id, template_name, language, category, template_type, header_type, header_text, header_media_url,
+            body_text, footer_text, buttons_json, carousel_cards_json, variables_json, status, rejection_reason, meta_template_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
           [
             agencyId,
             integration.id,
             templateName,
             language,
             category,
+            templateType,
             headerType,
             headerText,
             headerMediaUrl,
             bodyText,
             footerText,
             JSON.stringify(buttons),
+            JSON.stringify(carouselCards),
             JSON.stringify(variables),
             status,
             rejectionReason,
@@ -220,6 +235,7 @@ router.post("/templates/whatsapp", async (req, res) => {
     const {
       integrationId,
       templateName,
+      templateType = "STANDARD", // STANDARD or CAROUSEL
       language = "en_US",
       category = "MARKETING",
       headerType = "NONE",
@@ -229,12 +245,19 @@ router.post("/templates/whatsapp", async (req, res) => {
       bodyText,
       footerText,
       buttons = [],
+      carouselCards = [],
       variables = [],
       submitToMeta = false,
     } = req.body;
 
     if (!templateName || !bodyText) {
       return res.status(400).json({ success: false, message: "Template name and body text are required" });
+    }
+
+    const isCarousel = templateType === "CAROUSEL";
+
+    if (isCarousel && (!carouselCards || carouselCards.length < 2)) {
+      return res.status(400).json({ success: false, message: "Carousel templates require at least 2 cards (up to 10 cards max)." });
     }
 
     // Clean template name (lowercase letters, numbers, and underscores only)
@@ -269,98 +292,174 @@ router.post("/templates/whatsapp", async (req, res) => {
       // Construct Meta Components array
       const components = [];
 
-      // 1. Header Component
-      if (headerType && headerType !== "NONE") {
-        if (headerType === "TEXT" && headerText) {
-          const headerComp = { type: "HEADER", format: "TEXT", text: headerText.trim() };
-          if (headerText.includes("{{1}}") && headerSample) {
-            headerComp.example = { header_text: [String(headerSample).trim()] };
+      if (isCarousel) {
+        // ─── CAROUSEL TEMPLATE PAYLOAD ───
+        // 1. Top Body component
+        const topBodyComp = { type: "BODY", text: bodyText.trim() };
+        const varMatches = bodyText.match(/\{\{(\d+)\}\}/g);
+        if (varMatches && varMatches.length > 0) {
+          const sampleValues = [];
+          const count = new Set(varMatches).size;
+          for (let i = 1; i <= count; i++) {
+            const found = variables.find((v) => v.param === `{{${i}}}`);
+            sampleValues.push(found?.sample || (i === 1 ? "Customer" : "Value"));
           }
-          components.push(headerComp);
-        } else if (["IMAGE", "VIDEO", "DOCUMENT"].includes(headerType)) {
-          components.push({
-            type: "HEADER",
-            format: headerType,
-          });
-        } else if (headerType === "LOCATION") {
-          components.push({ type: "HEADER", format: "LOCATION" });
+          topBodyComp.example = { body_text: [sampleValues] };
         }
-      }
+        components.push(topBodyComp);
 
-      // 2. Body Component
-      const bodyComp = { type: "BODY", text: bodyText.trim() };
-      // Check for variables {{1}}, {{2}}, etc.
-      const varMatches = bodyText.match(/\{\{(\d+)\}\}/g);
-      if (varMatches && varMatches.length > 0) {
-        // Collect samples in order
-        const sampleValues = [];
-        const count = new Set(varMatches).size;
-        for (let i = 1; i <= count; i++) {
-          const found = variables.find(v => v.param === `{{${i}}}`);
-          sampleValues.push(found?.sample || (i === 1 ? "Customer" : (i === 2 ? "12345" : "Sample")));
-        }
-        bodyComp.example = { body_text: [sampleValues] };
-      }
-      components.push(bodyComp);
+        // 2. Carousel Component with Cards
+        const metaCards = await Promise.all(
+          carouselCards.slice(0, 10).map(async (card, idx) => {
+            const cardComponents = [];
 
-      // 3. Footer Component
-      if (footerText && footerText.trim()) {
-        components.push({ type: "FOOTER", text: footerText.trim() });
-      }
+            // Card Header (IMAGE or VIDEO)
+            const cFormat = (card.headerType || "IMAGE").toUpperCase();
+            const sampleHandle = await getMetaSampleHandle(accessToken, cFormat, card.mediaUrl);
 
-      // 4. Buttons Component
-      if (buttons && buttons.length > 0) {
-        const metaButtons = [];
-        for (const btn of buttons) {
-          const type = (btn.type || "QUICK_REPLY").toUpperCase();
-          if (type === "QUICK_REPLY") {
-            metaButtons.push({
-              type: "QUICK_REPLY",
-              text: btn.text.substring(0, 25),
+            cardComponents.push({
+              type: "HEADER",
+              format: cFormat,
+              example: {
+                header_handle: [sampleHandle],
+              },
             });
-          } else if (type === "PHONE_NUMBER") {
-            metaButtons.push({
-              type: "PHONE_NUMBER",
-              text: btn.text.substring(0, 25),
-              phone_number: btn.phoneNumber || btn.phone_number || "+1234567890",
-            });
-          } else if (type === "URL") {
-            const urlObj = {
-              type: "URL",
-              text: btn.text.substring(0, 25),
-              url: btn.url || "https://example.com",
-            };
-            if (btn.url && btn.url.includes("{{1}}")) {
-              urlObj.example = [btn.sampleUrl || "https://example.com/order/123"];
+
+            // Card Body
+            if (card.bodyText && card.bodyText.trim()) {
+              cardComponents.push({
+                type: "BODY",
+                text: card.bodyText.trim().substring(0, 160),
+              });
             }
-            metaButtons.push(urlObj);
-          } else if (type === "COPY_CODE") {
-            metaButtons.push({
-              type: "COPY_CODE",
-              example: btn.couponCode || btn.code || "SAVE20",
+
+            // Card Buttons (up to 2 buttons)
+            if (card.buttons && card.buttons.length > 0) {
+              const cBtns = card.buttons.slice(0, 2).map((btn) => {
+                const bType = (btn.type || "URL").toUpperCase();
+                if (bType === "QUICK_REPLY") {
+                  return { type: "QUICK_REPLY", text: (btn.text || "Select").substring(0, 20) };
+                }
+                if (bType === "PHONE_NUMBER") {
+                  return { type: "PHONE_NUMBER", text: (btn.text || "Call Us").substring(0, 25), phone_number: btn.phoneNumber || "+1234567890" };
+                }
+                const bUrl = btn.url || "https://example.com";
+                const btnObj = { type: "URL", text: (btn.text || "View").substring(0, 25), url: bUrl };
+                if (bUrl.includes("{{1}}")) {
+                  btnObj.example = [btn.sampleUrl || bUrl.replace("{{1}}", "123")];
+                }
+                return btnObj;
+              });
+              cardComponents.push({ type: "BUTTONS", buttons: cBtns });
+            }
+
+            return {
+              card_index: idx,
+              components: cardComponents,
+            };
+          })
+        );
+
+        components.push({
+          type: "CAROUSEL",
+          cards: metaCards,
+        });
+      } else {
+        // ─── STANDARD / MIXED TEMPLATE PAYLOAD ───
+        // 1. Header Component
+        if (headerType && headerType !== "NONE") {
+          if (headerType === "TEXT" && headerText) {
+            const headerComp = { type: "HEADER", format: "TEXT", text: headerText.trim() };
+            if (headerText.includes("{{1}}")) {
+              headerComp.example = { header_text: [String(headerSample || "Welcome").trim()] };
+            }
+            components.push(headerComp);
+          } else if (["IMAGE", "VIDEO", "DOCUMENT"].includes(headerType)) {
+            // Generate authentic Meta resumable upload handle for the sample media
+            const sampleHandle = await getMetaSampleHandle(accessToken, headerType, headerMediaUrl);
+            components.push({
+              type: "HEADER",
+              format: headerType,
+              example: { header_handle: [sampleHandle] },
             });
-          } else if (type === "FLOW") {
-            metaButtons.push({
-              type: "FLOW",
-              text: btn.text.substring(0, 25),
-              flow_id: btn.flowId || btn.flow_id,
-              flow_action: btn.flowAction || "navigate",
-              navigate_screen: btn.navigateScreen || "START",
-            });
-          } else if (type === "CATALOG") {
-            metaButtons.push({
-              type: "CATALOG",
-              text: (btn.text || "View catalog").substring(0, 25),
-            });
-          } else if (type === "MPM") {
-            metaButtons.push({
-              type: "MPM",
-              text: (btn.text || "View items").substring(0, 25),
-            });
+          } else if (headerType === "LOCATION") {
+            components.push({ type: "HEADER", format: "LOCATION" });
           }
         }
-        if (metaButtons.length > 0) {
-          components.push({ type: "BUTTONS", buttons: metaButtons });
+
+        // 2. Body Component
+        const bodyComp = { type: "BODY", text: bodyText.trim() };
+        const varMatches = bodyText.match(/\{\{(\d+)\}\}/g);
+        if (varMatches && varMatches.length > 0) {
+          const sampleValues = [];
+          const count = new Set(varMatches).size;
+          for (let i = 1; i <= count; i++) {
+            const found = variables.find((v) => v.param === `{{${i}}}`);
+            sampleValues.push(found?.sample || (i === 1 ? "Customer" : (i === 2 ? "12345" : "Sample")));
+          }
+          bodyComp.example = { body_text: [sampleValues] };
+        }
+        components.push(bodyComp);
+
+        // 3. Footer Component
+        if (footerText && footerText.trim()) {
+          components.push({ type: "FOOTER", text: footerText.trim() });
+        }
+
+        // 4. Buttons Component (Up to 10 mixed buttons)
+        if (buttons && buttons.length > 0) {
+          const metaButtons = [];
+          for (const btn of buttons) {
+            const type = (btn.type || "QUICK_REPLY").toUpperCase();
+            if (type === "QUICK_REPLY") {
+              metaButtons.push({
+                type: "QUICK_REPLY",
+                text: btn.text.substring(0, 20),
+              });
+            } else if (type === "PHONE_NUMBER") {
+              metaButtons.push({
+                type: "PHONE_NUMBER",
+                text: btn.text.substring(0, 25),
+                phone_number: btn.phoneNumber || btn.phone_number || "+1234567890",
+              });
+            } else if (type === "URL") {
+              const urlObj = {
+                type: "URL",
+                text: btn.text.substring(0, 25),
+                url: btn.url || "https://example.com",
+              };
+              if (btn.url && btn.url.includes("{{1}}")) {
+                urlObj.example = [btn.sampleUrl || btn.url.replace("{{1}}", "example-123")];
+              }
+              metaButtons.push(urlObj);
+            } else if (type === "COPY_CODE") {
+              metaButtons.push({
+                type: "COPY_CODE",
+                example: btn.couponCode || btn.code || "SAVE20",
+              });
+            } else if (type === "FLOW") {
+              metaButtons.push({
+                type: "FLOW",
+                text: btn.text.substring(0, 25),
+                flow_id: btn.flowId || btn.flow_id,
+                flow_action: btn.flowAction || "navigate",
+                navigate_screen: btn.navigateScreen || "START",
+              });
+            } else if (type === "CATALOG") {
+              metaButtons.push({
+                type: "CATALOG",
+                text: (btn.text || "View catalog").substring(0, 25),
+              });
+            } else if (type === "MPM") {
+              metaButtons.push({
+                type: "MPM",
+                text: (btn.text || "View items").substring(0, 25),
+              });
+            }
+          }
+          if (metaButtons.length > 0) {
+            components.push({ type: "BUTTONS", buttons: metaButtons });
+          }
         }
       }
 
@@ -369,7 +468,7 @@ router.post("/templates/whatsapp", async (req, res) => {
       console.log(`[Meta Template Submission] Sending to ${metaUrl}:`, JSON.stringify({
         name: cleanName,
         language,
-        category,
+        category: isCarousel ? "MARKETING" : category,
         components,
       }, null, 2));
 
@@ -378,7 +477,7 @@ router.post("/templates/whatsapp", async (req, res) => {
         {
           name: cleanName,
           language,
-          category,
+          category: isCarousel ? "MARKETING" : category,
           components,
         },
         {
@@ -395,21 +494,23 @@ router.post("/templates/whatsapp", async (req, res) => {
     // Save to Database
     const [result] = await pool.query(
       `INSERT INTO whatsapp_templates 
-       (agency_id, integration_id, template_name, language, category, header_type, header_text, header_media_url,
-        body_text, footer_text, buttons_json, variables_json, status, meta_template_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+       (agency_id, integration_id, template_name, language, category, template_type, header_type, header_text, header_media_url,
+        body_text, footer_text, buttons_json, carousel_cards_json, variables_json, status, meta_template_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
         agencyId,
         integrationId && integrationId !== "all" ? integrationId : null,
         cleanName,
         language,
-        category,
-        headerType,
-        headerText || null,
-        headerMediaUrl || null,
+        isCarousel ? "MARKETING" : category,
+        templateType,
+        isCarousel ? "NONE" : headerType,
+        isCarousel ? null : (headerText || null),
+        isCarousel ? null : (headerMediaUrl || null),
         bodyText,
-        footerText || null,
+        isCarousel ? null : (footerText || null),
         JSON.stringify(buttons),
+        JSON.stringify(carouselCards),
         JSON.stringify(variables),
         status,
         metaTemplateId,

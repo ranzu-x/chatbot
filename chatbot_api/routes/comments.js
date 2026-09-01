@@ -45,12 +45,12 @@ router.get("/comments/posts", async (req, res) => {
     let rawPosts = [];
 
     if (isInstagram && integration.ig_account_id) {
-      // Instagram Media
+      // Instagram Media (Posts, Reels, Carousel)
       const igMediaUrl = `https://graph.facebook.com/${META_API_VERSION}/${integration.ig_account_id}/media`;
       const igRes = await axios.get(igMediaUrl, {
         params: {
           fields: "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count",
-          limit: 30,
+          limit: 100,
           access_token: pageToken,
         },
         timeout: 10000,
@@ -71,28 +71,24 @@ router.get("/comments/posts", async (req, res) => {
         platform: "INSTAGRAM",
       }));
     } else if (integration.fb_page_id) {
-      // Facebook Published Posts
-      const fbPostsUrl = `https://graph.facebook.com/${META_API_VERSION}/${integration.fb_page_id}/published_posts`;
-      const fbRes = await axios.get(fbPostsUrl, {
-        params: {
-          fields: "id,message,story,created_time,full_picture,permalink_url,shares,comments.summary(true),likes.summary(true)",
-          limit: 30,
-          access_token: pageToken,
-        },
-        timeout: 10000,
-      }).catch((err) => {
-        console.warn("Facebook posts fetch warning:", err.response?.data || err.message);
+      // Facebook: Fetch timeline feed posts (returns all 7+ photo, video, status, and published posts)
+      const pageId = integration.fb_page_id;
+      const feedRes = await axios.get(
+        `https://graph.facebook.com/${META_API_VERSION}/${pageId}/feed?fields=id,message,story,created_time,full_picture,permalink_url,shares&limit=100&access_token=${pageToken}`,
+        { timeout: 10000 }
+      ).catch((err) => {
+        console.warn("Facebook feed fetch warning:", err.response?.data || err.message);
         return { data: { data: [] } };
       });
 
-      rawPosts = (fbRes.data?.data || []).map((p) => ({
+      rawPosts = (feedRes.data?.data || []).map((p) => ({
         id: p.id,
         message: p.message || p.story || "Facebook Post",
         picture: p.full_picture || null,
         permalink: p.permalink_url || `https://facebook.com/${p.id}`,
         created_time: p.created_time,
-        likes_count: p.likes?.summary?.total_count || 0,
-        comments_count: p.comments?.summary?.total_count || 0,
+        likes_count: 0,
+        comments_count: 0,
         shares_count: p.shares?.count || 0,
         platform: "FACEBOOK",
       }));
@@ -109,7 +105,10 @@ router.get("/comments/posts", async (req, res) => {
 
     // Attach active rule to each post if assigned
     const postsWithRules = rawPosts.map((post) => {
-      const specificRule = rules.find((r) => r.post_id === post.id);
+      const specificRule = rules.find((r) =>
+        r.post_id === post.id ||
+        (post.id && (r.post_id.endsWith(`_${post.id}`) || post.id.endsWith(`_${r.post_id}`)))
+      );
       return {
         ...post,
         rule: specificRule || (pageWideRule ? { ...pageWideRule, isInherited: true } : null),
@@ -358,15 +357,458 @@ router.patch("/comments/campaigns/:id/toggle", async (req, res) => {
   }
 });
 
-// ─── DELETE COMMENT AUTOMATION CAMPAIGN ───────────────────────────────────────
-router.delete("/comments/campaigns/:id", async (req, res) => {
+// ─── HELPER: EXECUTE META GRAPH POST WITH DUAL TOKEN (PAGE & OWNER) ─────────
+async function executeMetaCommentAction(url, data, pageToken, userToken, postAs = "PAGE") {
+  if (postAs === "OWNER") {
+    if (!userToken) {
+      const err = new Error("Personal Facebook User Account is not linked yet. Please link your Facebook User Token to comment from your personal account.");
+      err.status = 400;
+      throw err;
+    }
+    // Directly post as Personal Account (Owner)
+    try {
+      const res = await axios.post(url, data, {
+        headers: { Authorization: `Bearer ${userToken}`, "Content-Type": "application/json" },
+        params: { access_token: userToken },
+      });
+      return { success: true, data: res.data, as: "OWNER" };
+    } catch (ownerErr) {
+      console.error("[Comments API] Error posting as Personal Account:", ownerErr.response?.data || ownerErr.message);
+      throw ownerErr;
+    }
+  }
+
+  // Otherwise post as PAGE (with fallback to owner if permission denied)
+  const primaryToken = pageToken || userToken;
+  try {
+    const res = await axios.post(url, data, {
+      headers: { Authorization: `Bearer ${primaryToken}`, "Content-Type": "application/json" },
+      params: { access_token: primaryToken },
+    });
+    return { success: true, data: res.data, as: "PAGE" };
+  } catch (err1) {
+    if (userToken && userToken !== primaryToken) {
+      console.log("[Comments API] Page token returned error. Retrying as Personal Account (Owner)...");
+      try {
+        const res2 = await axios.post(url, data, {
+          headers: { Authorization: `Bearer ${userToken}`, "Content-Type": "application/json" },
+          params: { access_token: userToken },
+        });
+        return { success: true, data: res2.data, as: "OWNER" };
+      } catch (err2) {
+        throw err2;
+      }
+    }
+    throw err1;
+  }
+}
+
+// ─── LINK PERSONAL FACEBOOK USER TOKEN TO INTEGRATION ───────────────────────
+router.post("/comments/link-user-token", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    await pool.query("DELETE FROM comment_automation_rules WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
-    return res.json({ success: true, message: "Campaign deleted successfully" });
+    const { integrationId, userAccessToken } = req.body;
+
+    if (!userAccessToken?.trim()) {
+      return res.status(400).json({ success: false, message: "userAccessToken is required" });
+    }
+
+    // Verify token with Meta Graph API
+    const testRes = await axios.get(`https://graph.facebook.com/${META_API_VERSION}/me`, {
+      params: { fields: "id,name", access_token: userAccessToken.trim() },
+    });
+
+    const userData = testRes.data;
+    if (!userData.id) {
+      return res.status(400).json({ success: false, message: "Invalid Facebook User Token" });
+    }
+
+    let query = "UPDATE integrations SET user_access_token = ? WHERE agency_id = ? AND platform = 'FACEBOOK'";
+    const params = [userAccessToken.trim(), agencyId];
+    if (integrationId && integrationId !== "all") {
+      query += " AND id = ?";
+      params.push(integrationId);
+    }
+
+    await pool.query(query, params);
+
+    return res.json({
+      success: true,
+      message: `Personal Facebook Account (${userData.name}) linked successfully! You can now comment from your personal account.`,
+      userName: userData.name,
+      userId: userData.id,
+    });
   } catch (err) {
-    console.error("Delete campaign error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
+    console.error("Link user token error:", err.response?.data || err.message);
+    return res.status(400).json({
+      success: false,
+      message: err.response?.data?.error?.message || err.message || "Failed to link personal Facebook token",
+    });
+  }
+});
+
+// ─── GET COMMENTS FOR A SPECIFIC POST ───────────────────────────────────────
+router.get("/comments/post-comments", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const { postId, integrationId, platform = "FACEBOOK" } = req.query;
+
+    if (!postId) {
+      return res.status(400).json({ success: false, message: "postId is required" });
+    }
+
+    let query = "SELECT * FROM integrations WHERE agency_id = ? AND is_active = 1";
+    const params = [agencyId];
+    if (integrationId && integrationId !== "all") {
+      query += " AND id = ?";
+      params.push(integrationId);
+    } else {
+      query += " AND platform = ?";
+      params.push(platform.toUpperCase());
+    }
+    query += " LIMIT 1";
+
+    const [integrations] = await pool.query(query, params);
+    if (!integrations.length) {
+      return res.status(404).json({ success: false, message: "No active channel integration found" });
+    }
+
+    const integration = integrations[0];
+    const pageToken = integration.access_token;
+    const userToken = integration.user_access_token;
+    const isInstagram = (integration.platform || "").toUpperCase() === "INSTAGRAM";
+
+    let comments = [];
+
+    if (isInstagram) {
+      const igRes = await axios.get(`https://graph.facebook.com/${META_API_VERSION}/${postId}/comments`, {
+        params: {
+          fields: "id,text,from,timestamp,like_count,replies{id,text,from,timestamp}",
+          limit: 50,
+          access_token: pageToken,
+        },
+        timeout: 10000,
+      });
+      comments = (igRes.data?.data || []).map((c) => ({
+        id: c.id,
+        message: c.text || "",
+        from: c.from || { name: "Instagram User", id: c.from?.id },
+        created_time: c.timestamp,
+        like_count: c.like_count || 0,
+        replies: (c.replies?.data || []).map((r) => ({
+          id: r.id,
+          message: r.text || "",
+          from: r.from || { name: "Instagram User" },
+          created_time: r.timestamp,
+        })),
+      }));
+    } else {
+      // Facebook Post Comments (Try Page Token, fallback to Owner User Token)
+      let fbRes;
+      try {
+        fbRes = await axios.get(`https://graph.facebook.com/${META_API_VERSION}/${postId}/comments`, {
+          params: {
+            fields: "id,message,from,created_time,like_count,user_likes,can_comment,can_like,can_hide,is_hidden,comments{id,message,from,created_time}",
+            limit: 50,
+            access_token: pageToken,
+          },
+          timeout: 10000,
+        });
+      } catch (fbErr) {
+        if (userToken && fbErr.response?.data?.error?.code === 200) {
+          fbRes = await axios.get(`https://graph.facebook.com/${META_API_VERSION}/${postId}/comments`, {
+            params: {
+              fields: "id,message,from,created_time,like_count,user_likes,can_comment,can_like,can_hide,is_hidden,comments{id,message,from,created_time}",
+              limit: 50,
+              access_token: userToken,
+            },
+            timeout: 10000,
+          });
+        } else {
+          throw fbErr;
+        }
+      }
+
+      comments = (fbRes?.data?.data || []).map((c) => ({
+        id: c.id,
+        message: c.message || "",
+        from: c.from || { name: "Facebook User", id: c.from?.id },
+        created_time: c.created_time,
+        like_count: c.like_count || 0,
+        user_likes: Boolean(c.user_likes),
+        can_comment: Boolean(c.can_comment),
+        can_like: Boolean(c.can_like),
+        can_hide: Boolean(c.can_hide),
+        is_hidden: Boolean(c.is_hidden),
+        replies: (c.comments?.data || []).map((r) => ({
+          id: r.id,
+          message: r.message || "",
+          from: r.from || { name: "Facebook User" },
+          created_time: r.created_time,
+        })),
+      }));
+    }
+
+    return res.json({ success: true, comments, count: comments.length, hasUserToken: Boolean(userToken) });
+  } catch (err) {
+    console.error("Get post comments error:", err.response?.data || err.message);
+    return res.status(err.response?.status || 500).json({
+      success: false,
+      message: err.response?.data?.error?.message || err.message || "Failed to fetch post comments",
+      metaError: err.response?.data?.error || null,
+    });
+  }
+});
+
+// ─── POST A COMMENT DIRECTLY TO A POST (MANUAL COMMENT) ─────────────────────
+router.post("/comments/post-comment", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const { postId, integrationId, platform = "FACEBOOK", message, postAs = "PAGE" } = req.body;
+
+    if (!postId || !message?.trim()) {
+      return res.status(400).json({ success: false, message: "postId and message are required" });
+    }
+
+    let query = "SELECT * FROM integrations WHERE agency_id = ? AND is_active = 1";
+    const params = [agencyId];
+    if (integrationId && integrationId !== "all") {
+      query += " AND id = ?";
+      params.push(integrationId);
+    } else {
+      query += " AND platform = ?";
+      params.push(platform.toUpperCase());
+    }
+    query += " LIMIT 1";
+
+    const [integrations] = await pool.query(query, params);
+    if (!integrations.length) {
+      return res.status(404).json({ success: false, message: "No active channel integration found" });
+    }
+
+    const integration = integrations[0];
+    const pageToken = integration.access_token;
+    const userToken = integration.user_access_token;
+
+    // Send comment to Meta Graph API with postAs preference (PAGE vs OWNER)
+    const result = await executeMetaCommentAction(
+      `https://graph.facebook.com/${META_API_VERSION}/${postId}/comments`,
+      { message: message.trim() },
+      pageToken,
+      userToken,
+      postAs
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: `Comment published successfully as ${result.as === "OWNER" ? "Facebook User Account" : "Facebook Page"}!`,
+      data: result.data,
+      publishedAs: result.as,
+    });
+  } catch (err) {
+    console.error("Manual post comment error:", err.response?.data || err.message);
+    return res.status(err.response?.status || 500).json({
+      success: false,
+      message: err.response?.data?.error?.message || err.message || "Failed to publish comment",
+      metaError: err.response?.data?.error || null,
+    });
+  }
+});
+
+// ─── REPLY TO A SPECIFIC COMMENT (MANUAL REPLY) ──────────────────────────────
+router.post("/comments/reply-comment", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const { commentId, integrationId, platform = "FACEBOOK", message, replyAs = "PAGE" } = req.body;
+
+    if (!commentId || !message?.trim()) {
+      return res.status(400).json({ success: false, message: "commentId and message are required" });
+    }
+
+    let query = "SELECT * FROM integrations WHERE agency_id = ? AND is_active = 1";
+    const params = [agencyId];
+    if (integrationId && integrationId !== "all") {
+      query += " AND id = ?";
+      params.push(integrationId);
+    } else {
+      query += " AND platform = ?";
+      params.push(platform.toUpperCase());
+    }
+    query += " LIMIT 1";
+
+    const [integrations] = await pool.query(query, params);
+    if (!integrations.length) {
+      return res.status(404).json({ success: false, message: "No active channel integration found" });
+    }
+
+    const integration = integrations[0];
+    const pageToken = integration.access_token;
+    const userToken = integration.user_access_token;
+
+    const result = await executeMetaCommentAction(
+      `https://graph.facebook.com/${META_API_VERSION}/${commentId}/comments`,
+      { message: message.trim() },
+      pageToken,
+      userToken,
+      replyAs
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: `Reply published successfully as ${result.as === "OWNER" ? "Facebook User Account" : "Facebook Page"}!`,
+      data: result.data,
+      publishedAs: result.as,
+    });
+  } catch (err) {
+    console.error("Manual reply comment error:", err.response?.data || err.message);
+    return res.status(err.response?.status || 500).json({
+      success: false,
+      message: err.response?.data?.error?.message || err.message || "Failed to publish reply",
+      metaError: err.response?.data?.error || null,
+    });
+  }
+});
+
+// ─── LIKE A COMMENT MANUALLY ────────────────────────────────────────────────
+router.post("/comments/like-comment", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const { commentId, integrationId, platform = "FACEBOOK" } = req.body;
+
+    if (!commentId) {
+      return res.status(400).json({ success: false, message: "commentId is required" });
+    }
+
+    let query = "SELECT * FROM integrations WHERE agency_id = ? AND is_active = 1";
+    const params = [agencyId];
+    if (integrationId && integrationId !== "all") {
+      query += " AND id = ?";
+      params.push(integrationId);
+    } else {
+      query += " AND platform = ?";
+      params.push(platform.toUpperCase());
+    }
+    query += " LIMIT 1";
+
+    const [integrations] = await pool.query(query, params);
+    if (!integrations.length) {
+      return res.status(404).json({ success: false, message: "No active channel integration found" });
+    }
+
+    const integration = integrations[0];
+    const pageToken = integration.access_token;
+    const userToken = integration.user_access_token;
+
+    await executeMetaCommentAction(
+      `https://graph.facebook.com/${META_API_VERSION}/${commentId}/likes`,
+      {},
+      pageToken,
+      userToken
+    );
+
+    return res.json({ success: true, message: "Comment liked successfully!" });
+  } catch (err) {
+    console.error("Manual like comment error:", err.response?.data || err.message);
+    return res.status(err.response?.status || 500).json({
+      success: false,
+      message: err.response?.data?.error?.message || err.message || "Failed to like comment",
+      metaError: err.response?.data?.error || null,
+    });
+  }
+});
+
+// ─── HIDE / UNHIDE A COMMENT ────────────────────────────────────────────────
+router.post("/comments/hide-comment", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const { commentId, integrationId, isHidden = true, platform = "FACEBOOK" } = req.body;
+
+    if (!commentId) {
+      return res.status(400).json({ success: false, message: "commentId is required" });
+    }
+
+    let query = "SELECT * FROM integrations WHERE agency_id = ? AND is_active = 1";
+    const params = [agencyId];
+    if (integrationId && integrationId !== "all") {
+      query += " AND id = ?";
+      params.push(integrationId);
+    } else {
+      query += " AND platform = ?";
+      params.push(platform.toUpperCase());
+    }
+    query += " LIMIT 1";
+
+    const [integrations] = await pool.query(query, params);
+    if (!integrations.length) {
+      return res.status(404).json({ success: false, message: "No active channel integration found" });
+    }
+
+    const integration = integrations[0];
+    const pageToken = integration.access_token;
+
+    await axios.post(
+      `https://graph.facebook.com/${META_API_VERSION}/${commentId}`,
+      null,
+      {
+        params: {
+          is_hidden: isHidden,
+          access_token: pageToken,
+        },
+      }
+    );
+
+    return res.json({
+      success: true,
+      message: isHidden ? "Comment hidden successfully" : "Comment unhidden successfully",
+    });
+  } catch (err) {
+    console.error("Hide comment error:", err.response?.data || err.message);
+    return res.status(err.response?.status || 500).json({
+      success: false,
+      message: err.response?.data?.error?.message || err.message || "Failed to update comment visibility",
+      metaError: err.response?.data?.error || null,
+    });
+  }
+});
+
+// ─── DELETE A COMMENT MANUALLY ──────────────────────────────────────────────
+router.delete("/comments/delete-comment/:commentId", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const { commentId } = req.params;
+    const { integrationId, platform = "FACEBOOK" } = req.query;
+
+    let query = "SELECT * FROM integrations WHERE agency_id = ? AND is_active = 1";
+    const params = [agencyId];
+    if (integrationId && integrationId !== "all") {
+      query += " AND id = ?";
+      params.push(integrationId);
+    } else {
+      query += " AND platform = ?";
+      params.push(platform.toUpperCase());
+    }
+    query += " LIMIT 1";
+
+    const [integrations] = await pool.query(query, params);
+    if (!integrations.length) {
+      return res.status(404).json({ success: false, message: "No active channel integration found" });
+    }
+
+    const integration = integrations[0];
+    const pageToken = integration.access_token;
+
+    await axios.delete(`https://graph.facebook.com/${META_API_VERSION}/${commentId}`, {
+      params: { access_token: pageToken },
+    });
+
+    return res.json({ success: true, message: "Comment deleted successfully" });
+  } catch (err) {
+    console.error("Delete comment error:", err.response?.data || err.message);
+    return res.status(err.response?.status || 500).json({
+      success: false,
+      message: err.response?.data?.error?.message || err.message || "Failed to delete comment",
+      metaError: err.response?.data?.error || null,
+    });
   }
 });
 

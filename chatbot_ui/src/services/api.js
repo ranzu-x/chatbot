@@ -138,6 +138,8 @@ export const channelAPI = {
   addInstagram: (data) => api.post('/channels/instagram', data),
   deleteInstagram: (id) => api.delete(`/channels/instagram/${id}`),
   importIGAccounts: (token) => api.post('/channels/instagram/import-accounts', { userAccessToken: token }),
+  quickConnectInstagram: (token) => api.post('/channels/instagram/quick-connect', { userAccessToken: token }),
+  syncInstagramFromFacebook: () => api.post('/channels/instagram/sync-from-facebook'),
   // Telegram
   getTelegram: () => api.get('/channels/telegram'),
   addTelegram: (token) => api.post('/channels/telegram', { botToken: token }),
@@ -153,7 +155,7 @@ export const channelAPI = {
   deleteWebchat: (id) => api.delete(`/channels/webchat/${id}`),
 };
 
-// ─── Comment Automation (FB & Instagram) ───────────────────────────
+// ─── Comment Automation & Moderator (FB & Instagram) ───────────────
 export const commentAPI = {
   getPosts: (params) => api.get('/comments/posts', { params }),
   getCampaigns: (params) => api.get('/comments/campaigns', { params }),
@@ -161,6 +163,22 @@ export const commentAPI = {
   updateCampaign: (id, data) => api.put(`/comments/campaigns/${id}`, data),
   toggleCampaign: (id) => api.patch(`/comments/campaigns/${id}/toggle`),
   deleteCampaign: (id) => api.delete(`/comments/campaigns/${id}`),
+  // Manual Comment Moderation & Publishing
+  getPostComments: (params) => api.get('/comments/post-comments', { params }),
+  postComment: (data) => api.post('/comments/post-comment', data),
+  replyComment: (data) => api.post('/comments/reply-comment', data),
+  likeComment: (data) => api.post('/comments/like-comment', data),
+  hideComment: (data) => api.post('/comments/hide-comment', data),
+  deleteComment: (commentId, params) => api.delete(`/comments/delete-comment/${commentId}`, { params }),
+  linkUserToken: (data) => api.post('/comments/link-user-token', data),
+};
+
+// ─── Social Post Publishing (Facebook & Instagram) ──────────────────
+export const socialPostAPI = {
+  getAll: (params) => api.get('/social-posts', { params }),
+  publish: (data) => api.post('/social-posts/publish', data),
+  schedule: (data) => api.post('/social-posts/schedule', data),
+  delete: (id) => api.delete(`/social-posts/${id}`),
 };
 
 // ─── Bots ──────────────────────────────────────────────────────────

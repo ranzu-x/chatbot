@@ -483,7 +483,7 @@ router.get("/channels/facebook", async (req, res) => {
 });
 
 router.post("/channels/facebook", async (req, res) => {
-  const { name, accessToken, verifyToken, fbPageId, fbPageName } = req.body;
+  const { name, accessToken, userAccessToken, verifyToken, fbPageId, fbPageName } = req.body;
   if (!name || !accessToken || !fbPageId)
     return res.status(400).json({ success: false, message: "Name, access token and page ID are required" });
 
@@ -493,6 +493,7 @@ router.post("/channels/facebook", async (req, res) => {
 
     // Try auto-exchanging for a permanent never-expiring Page Access Token
     let finalAccessToken = accessToken;
+    let finalUserToken = userAccessToken || null;
     try {
       const [appRows] = await pool.query(
         "SELECT app_id, app_secret FROM meta_app_settings WHERE agency_id = ? AND is_configured = 1 LIMIT 1",
@@ -502,11 +503,12 @@ router.post("/channels/facebook", async (req, res) => {
         const { app_id, app_secret } = appRows[0];
         
         // 1. Exchange token for long-lived user token
-        const exchangeUrl = `https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${app_id}&client_secret=${app_secret}&fb_exchange_token=${accessToken}`;
+        const exchangeUrl = `https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${app_id}&client_secret=${app_secret}&fb_exchange_token=${userAccessToken || accessToken}`;
         const exRes = await fetch(exchangeUrl);
         const exData = await exRes.json();
         
-        const longLivedUserToken = exData.access_token || accessToken;
+        const longLivedUserToken = exData.access_token || userAccessToken || accessToken;
+        finalUserToken = longLivedUserToken;
         
         // 2. Fetch page accounts with long-lived user token to get the NEVER-EXPIRING page token
         const accountsUrl = `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token&access_token=${longLivedUserToken}`;
@@ -529,7 +531,7 @@ router.post("/channels/facebook", async (req, res) => {
     let webhookSubscribed = false;
     try {
       const subRes = await fetch(
-        `https://graph.facebook.com/v21.0/${fbPageId}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads&access_token=${finalAccessToken}`,
+        `https://graph.facebook.com/v21.0/${fbPageId}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,feed&access_token=${finalAccessToken}`,
         { method: "POST" }
       );
       const subData = await subRes.json();
@@ -547,15 +549,15 @@ router.post("/channels/facebook", async (req, res) => {
 
     if (existing.length) {
       await pool.query(
-        `UPDATE integrations SET name = ?, access_token = ?, verify_token = ?, fb_page_name = ?, is_active = 1
+        `UPDATE integrations SET name = ?, access_token = ?, user_access_token = ?, verify_token = ?, fb_page_name = ?, is_active = 1
          WHERE id = ?`,
-        [name, finalAccessToken, verifyToken || null, fbPageName || null, existing[0].id]
+        [name, finalAccessToken, finalUserToken, verifyToken || null, fbPageName || null, existing[0].id]
       );
     } else {
       await pool.query(
-        `INSERT INTO integrations (agency_id, platform, name, access_token, verify_token, fb_page_id, fb_page_name, is_active)
-         VALUES (?, 'FACEBOOK', ?, ?, ?, ?, ?, 1)`,
-        [req.agencyId, name, finalAccessToken, verifyToken || null, fbPageId, fbPageName || null]
+        `INSERT INTO integrations (agency_id, platform, name, access_token, user_access_token, verify_token, fb_page_id, fb_page_name, is_active)
+         VALUES (?, 'FACEBOOK', ?, ?, ?, ?, ?, ?, 1)`,
+        [req.agencyId, name, finalAccessToken, finalUserToken, verifyToken || null, fbPageId, fbPageName || null]
       );
     }
 
@@ -634,7 +636,7 @@ router.post("/channels/facebook/quick-connect", async (req, res) => {
       // Subscribe to webhooks
       try {
         await fetch(
-          `https://graph.facebook.com/v21.0/${page.id}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads&access_token=${page.access_token}`,
+          `https://graph.facebook.com/v21.0/${page.id}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,feed&access_token=${page.access_token}`,
           { method: "POST" }
         );
       } catch (subErr) {}
@@ -647,14 +649,14 @@ router.post("/channels/facebook/quick-connect", async (req, res) => {
 
       if (existing.length) {
         await pool.query(
-          "UPDATE integrations SET name = ?, access_token = ?, fb_page_name = ?, is_active = 1 WHERE id = ?",
-          [page.name, page.access_token, page.name, existing[0].id]
+          "UPDATE integrations SET name = ?, access_token = ?, user_access_token = ?, fb_page_name = ?, is_active = 1 WHERE id = ?",
+          [page.name, page.access_token, effectiveToken, page.name, existing[0].id]
         );
         savedPages.push({ id: existing[0].id, name: page.name, fbPageId: page.id });
       } else {
         const [ins] = await pool.query(
-          "INSERT INTO integrations (agency_id, platform, name, access_token, verify_token, fb_page_id, fb_page_name, is_active) VALUES (?, 'FACEBOOK', ?, ?, ?, ?, ?, 1)",
-          [agencyId, page.name, page.access_token, `fb_${page.id}`, page.id, page.name]
+          "INSERT INTO integrations (agency_id, platform, name, access_token, user_access_token, verify_token, fb_page_id, fb_page_name, is_active) VALUES (?, 'FACEBOOK', ?, ?, ?, ?, ?, ?, 1)",
+          [agencyId, page.name, page.access_token, effectiveToken, `fb_${page.id}`, page.id, page.name]
         );
         savedPages.push({ id: ins.insertId, name: page.name, fbPageId: page.id });
       }
@@ -682,7 +684,7 @@ router.post("/channels/facebook/sync-subscriptions", async (req, res) => {
     for (const page of pages) {
       try {
         const subRes = await fetch(
-          `https://graph.facebook.com/v19.0/${page.fb_page_id}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads&access_token=${page.access_token}`,
+          `https://graph.facebook.com/v21.0/${page.fb_page_id}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,feed&access_token=${page.access_token}`,
           { method: "POST" }
         );
         const subData = await subRes.json();
@@ -884,7 +886,7 @@ router.post("/channels/instagram", async (req, res) => {
     const tokenToUse = pageAccessToken || accessToken;
     if (pageId && tokenToUse) {
       try {
-        await fetch(`https://graph.facebook.com/v19.0/${pageId}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_reactions,message_reads,standby&access_token=${tokenToUse}`, {
+        await fetch(`https://graph.facebook.com/v21.0/${pageId}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_reactions,message_reads,standby,comments,feed&access_token=${tokenToUse}`, {
           method: 'POST',
         });
       } catch (subErr) {
@@ -896,6 +898,222 @@ router.post("/channels/instagram", async (req, res) => {
   } catch (err) {
     console.error("[Instagram connect error]:", err);
     return res.status(500).json({ success: false, message: err.message || "Server error" });
+  }
+});
+
+// ─── Instagram 1-Click Permanent Token Connect ─────────────────────────────
+router.post("/channels/instagram/quick-connect", async (req, res) => {
+  const { userAccessToken } = req.body;
+  const agencyId = req.agencyId || req.user?.agencyId;
+
+  if (!userAccessToken?.trim()) {
+    return res.status(400).json({ success: false, message: "Access token is required" });
+  }
+
+  try {
+    await assertModuleAccess(agencyId, "channel_instagram");
+    const rawToken = userAccessToken.trim();
+
+    // 1. Fetch Meta App Credentials to auto-upgrade to long-lived token
+    let appId = null, appSecret = null;
+    try {
+      const [appRows] = await pool.query(
+        "SELECT app_id, app_secret FROM meta_app_settings WHERE agency_id = ? AND is_configured = 1 LIMIT 1",
+        [agencyId]
+      );
+      if (appRows.length && appRows[0].app_id && appRows[0].app_secret) {
+        appId = appRows[0].app_id;
+        appSecret = appRows[0].app_secret;
+      }
+    } catch (_) {}
+
+    let effectiveToken = rawToken;
+    if (appId && appSecret) {
+      try {
+        const exchangeRes = await fetch(
+          `https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${rawToken}`
+        );
+        const exchangeData = await exchangeRes.json();
+        if (exchangeData.access_token) {
+          effectiveToken = exchangeData.access_token;
+        }
+      } catch (e) {}
+    }
+
+    const discoveredIgAccounts = [];
+    const seenIds = new Set();
+
+    // 2. Direct /me check (if token is a Page Token with linked IG account)
+    try {
+      const meRes = await fetch(
+        `https://graph.facebook.com/v21.0/me?fields=id,name,access_token,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${effectiveToken}`
+      );
+      const meData = await meRes.json();
+      const ig = meData.instagram_business_account || meData.connected_instagram_account;
+      if (ig && ig.id) {
+        seenIds.add(ig.id);
+        discoveredIgAccounts.push({
+          ...ig,
+          pageId: meData.id,
+          pageName: meData.name,
+          pageAccessToken: effectiveToken,
+        });
+      }
+    } catch (_) {}
+
+    // 3. /me/accounts check (if token is a User Token managing multiple pages)
+    try {
+      const accRes = await fetch(
+        `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${effectiveToken}`
+      );
+      const accData = await accRes.json();
+      if (Array.isArray(accData.data)) {
+        for (const page of accData.data) {
+          const ig = page.instagram_business_account || page.connected_instagram_account;
+          if (ig && ig.id && !seenIds.has(ig.id)) {
+            seenIds.add(ig.id);
+            discoveredIgAccounts.push({
+              ...ig,
+              pageId: page.id,
+              pageName: page.name,
+              pageAccessToken: page.access_token || effectiveToken,
+            });
+          }
+        }
+      }
+    } catch (_) {}
+
+    if (!discoveredIgAccounts.length) {
+      return res.status(400).json({
+        success: false,
+        message: "No Instagram Business or Creator accounts found with this token. Make sure your Instagram account is switched to Professional/Business and linked to your Facebook Page.",
+      });
+    }
+
+    const savedAccounts = [];
+
+    // 4. Save and auto-subscribe all discovered accounts
+    for (const acc of discoveredIgAccounts) {
+      const displayName = acc.name || `@${acc.username}` || "Instagram Account";
+      const tokenToSave = acc.pageAccessToken || effectiveToken;
+
+      // Subscribe Page to Instagram webhooks
+      if (acc.pageId && tokenToSave) {
+        try {
+          await fetch(
+            `https://graph.facebook.com/v21.0/${acc.pageId}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_reactions,message_reads,standby,comments,feed&access_token=${tokenToSave}`,
+            { method: "POST" }
+          );
+        } catch (_) {}
+      }
+
+      const [existing] = await pool.query(
+        "SELECT id FROM integrations WHERE agency_id = ? AND platform = 'INSTAGRAM' AND ig_account_id = ?",
+        [agencyId, acc.id]
+      );
+
+      if (existing.length) {
+        await pool.query(
+          "UPDATE integrations SET name = ?, access_token = ?, user_access_token = ?, ig_username = ?, fb_page_id = ?, is_active = 1 WHERE id = ?",
+          [displayName, tokenToSave, effectiveToken, acc.username || null, acc.pageId || null, existing[0].id]
+        );
+        savedAccounts.push({ id: existing[0].id, name: displayName, username: acc.username, igAccountId: acc.id });
+      } else {
+        const [ins] = await pool.query(
+          "INSERT INTO integrations (agency_id, platform, name, access_token, user_access_token, verify_token, ig_account_id, ig_username, fb_page_id, is_active) VALUES (?, 'INSTAGRAM', ?, ?, ?, ?, ?, ?, ?, 1)",
+          [agencyId, displayName, tokenToSave, effectiveToken, `ig_${acc.id}`, acc.id, acc.username || null, acc.pageId || null]
+        );
+        savedAccounts.push({ id: ins.insertId, name: displayName, username: acc.username, igAccountId: acc.id });
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: `Successfully connected ${savedAccounts.length} Instagram Professional account(s)!`,
+      accounts: savedAccounts,
+    });
+  } catch (err) {
+    console.error("[IG Quick Connect Error]", err);
+    return res.status(500).json({ success: false, message: "Server error connecting Instagram: " + err.message });
+  }
+});
+
+// ─── Auto-Sync Linked Instagram Accounts from Existing Facebook Pages ──────
+router.post("/channels/instagram/sync-from-facebook", async (req, res) => {
+  const agencyId = req.agencyId || req.user?.agencyId;
+  try {
+    const [fbIntegrations] = await pool.query(
+      "SELECT * FROM integrations WHERE agency_id = ? AND platform = 'FACEBOOK' AND is_active = 1",
+      [agencyId]
+    );
+
+    if (!fbIntegrations.length) {
+      return res.status(400).json({ success: false, message: "No active Facebook Pages found. Connect a Facebook Page first." });
+    }
+
+    const connectedIgList = [];
+
+    for (const fb of fbIntegrations) {
+      const pageToken = fb.access_token;
+      if (!pageToken) continue;
+
+      try {
+        const checkRes = await fetch(
+          `https://graph.facebook.com/v21.0/me?fields=id,name,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${pageToken}`
+        );
+        const checkData = await checkRes.json();
+        const ig = checkData.instagram_business_account || checkData.connected_instagram_account;
+
+        if (ig && ig.id) {
+          const displayName = ig.name || `@${ig.username}` || `${fb.name} Instagram`;
+
+          // Subscribe Page to Instagram webhooks
+          try {
+            await fetch(
+              `https://graph.facebook.com/v21.0/${fb.fb_page_id || checkData.id}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_reactions,message_reads,standby,comments,feed&access_token=${pageToken}`,
+              { method: "POST" }
+            );
+          } catch (_) {}
+
+          const [existing] = await pool.query(
+            "SELECT id FROM integrations WHERE agency_id = ? AND platform = 'INSTAGRAM' AND ig_account_id = ?",
+            [agencyId, ig.id]
+          );
+
+          if (existing.length) {
+            await pool.query(
+              "UPDATE integrations SET name = ?, access_token = ?, user_access_token = ?, ig_username = ?, fb_page_id = ?, is_active = 1 WHERE id = ?",
+              [displayName, pageToken, fb.user_access_token || pageToken, ig.username || null, fb.fb_page_id || checkData.id, existing[0].id]
+            );
+            connectedIgList.push({ id: existing[0].id, username: ig.username, name: displayName });
+          } else {
+            const [ins] = await pool.query(
+              "INSERT INTO integrations (agency_id, platform, name, access_token, user_access_token, verify_token, ig_account_id, ig_username, fb_page_id, is_active) VALUES (?, 'INSTAGRAM', ?, ?, ?, ?, ?, ?, ?, 1)",
+              [agencyId, displayName, pageToken, fb.user_access_token || pageToken, `ig_${ig.id}`, ig.id, ig.username || null, fb.fb_page_id || checkData.id]
+            );
+            connectedIgList.push({ id: ins.insertId, username: ig.username, name: displayName });
+          }
+        }
+      } catch (err) {
+        console.warn(`[Sync IG from Page ${fb.name}] warning:`, err.message);
+      }
+    }
+
+    if (!connectedIgList.length) {
+      return res.status(400).json({
+        success: false,
+        message: "No linked Instagram Business accounts found on your connected Facebook Pages. Please ensure your Instagram account is linked to your Facebook Page in Facebook Page Settings → Linked Accounts.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: `Successfully synced and connected ${connectedIgList.length} Instagram account(s)!`,
+      accounts: connectedIgList,
+    });
+  } catch (err) {
+    console.error("[Sync IG error]", err);
+    return res.status(500).json({ success: false, message: "Failed to sync Instagram accounts: " + err.message });
   }
 });
 

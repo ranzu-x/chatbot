@@ -46,6 +46,23 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' 
   const [editingCampaignId, setEditingCampaignId] = useState(null);
   const [saving, setSaving] = useState(false);
 
+  // Manual Post Comments & Moderator Modal State
+  const [commentsModalOpen, setCommentsModalOpen] = useState(false);
+  const [activePostForComments, setActivePostForComments] = useState(null);
+  const [postComments, setPostComments] = useState([]);
+  const [loadingComments, setLoadingComments] = useState(false);
+  const [newCommentText, setNewCommentText] = useState('');
+  const [postingComment, setPostingComment] = useState(false);
+  const [replyingCommentId, setReplyingCommentId] = useState(null);
+  const [replyText, setReplyText] = useState('');
+  const [submittingReply, setSubmittingReply] = useState(false);
+  const [postAsIdentity, setPostAsIdentity] = useState('PAGE'); // 'PAGE' | 'OWNER'
+  const [replyAsIdentity, setReplyAsIdentity] = useState('PAGE'); // 'PAGE' | 'OWNER'
+  const [hasUserToken, setHasUserToken] = useState(false);
+  const [inputUserToken, setInputUserToken] = useState('');
+  const [linkingUserToken, setLinkingUserToken] = useState(false);
+  const [showTokenInput, setShowTokenInput] = useState(false);
+
   // Campaign Form State
   const [form, setForm] = useState({
     campaignName: '',
@@ -255,6 +272,154 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' 
       ...form,
       commentVariations: updated,
     });
+  };
+
+  // ─── MANUAL POST COMMENTS & MODERATOR HANDLERS ───
+  const handleOpenCommentsModal = (post) => {
+    setActivePostForComments(post);
+    setNewCommentText('');
+    setReplyingCommentId(null);
+    setReplyText('');
+    setCommentsModalOpen(true);
+    fetchPostComments(post.id);
+  };
+
+  const fetchPostComments = async (postId) => {
+    if (!postId) return;
+    setLoadingComments(true);
+    try {
+      const res = await commentAPI.getPostComments({
+        postId,
+        integrationId: selectedIntegrationId,
+        platform,
+      });
+      setPostComments(res.data?.comments || []);
+      if (res.data?.hasUserToken !== undefined) {
+        setHasUserToken(Boolean(res.data.hasUserToken));
+      }
+    } catch (err) {
+      console.error(err);
+      const metaMsg = err.response?.data?.message || err.message;
+      showToast(metaMsg, 'error');
+    } finally {
+      setLoadingComments(false);
+    }
+  };
+
+  const handlePostNewComment = async (e) => {
+    e.preventDefault();
+    if (!newCommentText.trim() || !activePostForComments) return;
+    setPostingComment(true);
+    try {
+      const res = await commentAPI.postComment({
+        postId: activePostForComments.id,
+        integrationId: selectedIntegrationId,
+        platform,
+        message: newCommentText.trim(),
+        postAs: postAsIdentity,
+      });
+      showToast(res.data?.message || 'Comment published successfully!');
+      setNewCommentText('');
+      fetchPostComments(activePostForComments.id);
+    } catch (err) {
+      console.error(err);
+      showToast(err.response?.data?.message || 'Failed to post comment', 'error');
+    } finally {
+      setPostingComment(false);
+    }
+  };
+
+  const handleReplyToComment = async (commentId) => {
+    if (!replyText.trim() || !commentId) return;
+    setSubmittingReply(true);
+    try {
+      const res = await commentAPI.replyComment({
+        commentId,
+        integrationId: selectedIntegrationId,
+        platform,
+        message: replyText.trim(),
+        replyAs: replyAsIdentity,
+      });
+      showToast(res.data?.message || 'Reply published successfully!');
+      setReplyingCommentId(null);
+      setReplyText('');
+      fetchPostComments(activePostForComments.id);
+    } catch (err) {
+      console.error(err);
+      showToast(err.response?.data?.message || 'Failed to post reply', 'error');
+    } finally {
+      setSubmittingReply(false);
+    }
+  };
+
+  const handleLinkUserToken = async (e) => {
+    e?.preventDefault();
+    if (!inputUserToken.trim()) return;
+    setLinkingUserToken(true);
+    try {
+      const res = await commentAPI.linkUserToken({
+        integrationId: selectedIntegrationId,
+        userAccessToken: inputUserToken.trim(),
+      });
+      showToast(res.data?.message || 'Personal Facebook Account linked successfully!');
+      setHasUserToken(true);
+      setShowTokenInput(false);
+      setInputUserToken('');
+      if (activePostForComments) {
+        fetchPostComments(activePostForComments.id);
+      }
+    } catch (err) {
+      console.error(err);
+      showToast(err.response?.data?.message || 'Failed to link user token', 'error');
+    } finally {
+      setLinkingUserToken(false);
+    }
+  };
+
+  const handleLikeComment = async (commentId) => {
+    try {
+      await commentAPI.likeComment({
+        commentId,
+        integrationId: selectedIntegrationId,
+        platform,
+      });
+      showToast('Comment liked successfully! ❤️');
+      setPostComments(prev => prev.map(c => c.id === commentId ? { ...c, user_likes: true, like_count: (c.like_count || 0) + 1 } : c));
+    } catch (err) {
+      console.error(err);
+      showToast(err.response?.data?.message || 'Failed to like comment', 'error');
+    }
+  };
+
+  const handleHideComment = async (commentId, isCurrentlyHidden) => {
+    try {
+      await commentAPI.hideComment({
+        commentId,
+        integrationId: selectedIntegrationId,
+        isHidden: !isCurrentlyHidden,
+        platform,
+      });
+      showToast(!isCurrentlyHidden ? 'Comment hidden' : 'Comment unhidden');
+      setPostComments(prev => prev.map(c => c.id === commentId ? { ...c, is_hidden: !isCurrentlyHidden } : c));
+    } catch (err) {
+      console.error(err);
+      showToast(err.response?.data?.message || 'Failed to update visibility', 'error');
+    }
+  };
+
+  const handleDeleteComment = async (commentId) => {
+    if (!window.confirm('Are you sure you want to delete this comment permanently?')) return;
+    try {
+      await commentAPI.deleteComment(commentId, {
+        integrationId: selectedIntegrationId,
+        platform,
+      });
+      showToast('Comment deleted successfully');
+      setPostComments(prev => prev.filter(c => c.id !== commentId));
+    } catch (err) {
+      console.error(err);
+      showToast(err.response?.data?.message || 'Failed to delete comment', 'error');
+    }
   };
 
   return (
@@ -543,7 +708,16 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' 
                           </span>
                         )}
 
-                        <div style={{ display: 'flex', gap: 6 }}>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenCommentsModal(post)}
+                            title="View live comments and post new comments directly to this post"
+                            style={{ padding: '5px 10px', borderRadius: 6, background: '#f1f5f9', border: '1px solid #cbd5e1', color: '#334155', fontSize: '0.74rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                          >
+                            <MessageSquare size={11} color="#059669" /> Comments
+                          </button>
+
                           {hasRule && !isInherited ? (
                             <button
                               type="button"
@@ -558,7 +732,7 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' 
                               onClick={() => handleOpenCreateModal(post)}
                               style={{ padding: '5px 12px', borderRadius: 6, background: '#2563eb', color: '#ffffff', border: 'none', fontSize: '0.74rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
                             >
-                              <Plus size={11} /> Set Automation
+                              <Plus size={11} /> Automate
                             </button>
                           )}
                         </div>
@@ -859,7 +1033,7 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' 
 
                 {/* 4. Private DM Auto-Reply */}
                 <div style={{ background: '#f8fafc', padding: 14, borderRadius: 10, border: '1px solid #e2e8f0' }}>
-                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: '#334155', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', fontWeight: 700, color: '#334155', marginBottom: 4 }}>
                     <Send size={14} color="#059669" /> Private DM Reply (Direct to Messenger / IG Inbox)
                   </label>
                   <p style={{ fontSize: '0.72rem', color: '#64748b', margin: '0 0 8px 0' }}>
@@ -877,7 +1051,7 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' 
 
                 {/* 5. Offensive Comments Moderation */}
                 <div style={{ background: '#fff1f2', padding: 14, borderRadius: 10, border: '1px solid #fecdd3' }}>
-                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: '#9f1239', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', fontWeight: 700, color: '#9f1239', marginBottom: 4 }}>
                     <Shield size={14} color="#e11d48" /> Offensive Comments Moderation
                   </label>
 
@@ -964,6 +1138,645 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' 
                 style={{ padding: '8px 22px', borderRadius: 8, background: '#2563eb', color: '#ffffff', border: 'none', fontSize: '0.82rem', fontWeight: 800, cursor: saving ? 'not-allowed' : 'pointer', boxShadow: '0 4px 12px rgba(37, 99, 235, 0.25)' }}
               >
                 {saving ? 'Saving Campaign...' : (editingCampaignId ? 'Update Campaign' : 'Save & Activate Campaign')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── MODAL 2: POST COMMENTS & MANUAL COMMENT MODERATOR ─── */}
+      {commentsModalOpen && activePostForComments && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.7)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1500,
+            padding: 16,
+          }}
+          onClick={() => setCommentsModalOpen(false)}
+        >
+          <div
+            style={{
+              background: '#ffffff',
+              borderRadius: 16,
+              width: '100%',
+              maxWidth: 720,
+              maxHeight: '90vh',
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
+              overflow: 'hidden',
+              animation: 'fadeIn 0.2s ease-out',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div
+              style={{
+                padding: '16px 20px',
+                borderBottom: '1px solid #e2e8f0',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                background: '#ffffff',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 10,
+                    background: platform === 'FACEBOOK' ? '#1877f215' : '#e1306c15',
+                    color: platform === 'FACEBOOK' ? '#1877f2' : '#e1306c',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <MessageSquare size={18} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>
+                    Post Comments & Manual Publisher
+                  </h3>
+                  <p style={{ fontSize: '0.74rem', color: '#64748b', margin: 0 }}>
+                    Post manual comments from your Page, reply directly to customers, and moderate comments.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCommentsModalOpen(false)}
+                style={{
+                  background: '#f1f5f9',
+                  border: 'none',
+                  borderRadius: 8,
+                  width: 32,
+                  height: 32,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  color: '#64748b',
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Scrollable Body */}
+            <div style={{ padding: 20, overflowY: 'auto', flex: 1 }}>
+              {/* Post Reference Card */}
+              <div
+                style={{
+                  background: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 12,
+                  padding: 12,
+                  display: 'flex',
+                  gap: 12,
+                  alignItems: 'center',
+                  marginBottom: 16,
+                }}
+              >
+                {activePostForComments.picture && (
+                  <img
+                    src={activePostForComments.picture}
+                    alt="Post"
+                    style={{ width: 54, height: 54, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }}
+                  />
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p
+                    style={{
+                      fontSize: '0.8rem',
+                      fontWeight: 700,
+                      color: '#1e293b',
+                      margin: '0 0 4px 0',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {activePostForComments.message || 'Facebook Post'}
+                  </p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.72rem', color: '#64748b' }}>
+                    <span>{activePostForComments.created_time ? new Date(activePostForComments.created_time).toLocaleString() : ''}</span>
+                    {activePostForComments.permalink && (
+                      <a
+                        href={activePostForComments.permalink}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: '#2563eb', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3, textDecoration: 'none' }}
+                      >
+                        <ExternalLink size={11} /> Open on {platform}
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* ✍️ Post a Comment as Page or User Account (Composer) */}
+              <form
+                onSubmit={handlePostNewComment}
+                style={{
+                  background: '#ffffff',
+                  border: '1.5px solid #3b82f6',
+                  borderRadius: 12,
+                  padding: 14,
+                  marginBottom: 20,
+                  boxShadow: '0 2px 8px rgba(59, 130, 246, 0.08)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.82rem', fontWeight: 800, color: '#1e40af' }}>
+                    <Send size={14} /> Post a Comment
+                  </div>
+
+                  {/* Identity Selector: Page vs Personal Account */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: '#f1f5f9', padding: '3px 4px', borderRadius: 8, fontSize: '0.72rem' }}>
+                    <span style={{ fontWeight: 700, color: '#475569', padding: '0 4px' }}>Post as:</span>
+                    <button
+                      type="button"
+                      onClick={() => setPostAsIdentity('PAGE')}
+                      style={{
+                        padding: '4px 9px',
+                        borderRadius: 6,
+                        fontWeight: 700,
+                        border: 'none',
+                        cursor: 'pointer',
+                        background: postAsIdentity === 'PAGE' ? '#2563eb' : 'transparent',
+                        color: postAsIdentity === 'PAGE' ? '#ffffff' : '#475569',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        boxShadow: postAsIdentity === 'PAGE' ? '0 1px 3px rgba(37,99,235,0.2)' : 'none',
+                      }}
+                    >
+                      🏢 {platform === 'FACEBOOK' ? 'Facebook Page' : 'Instagram Profile'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPostAsIdentity('OWNER')}
+                      style={{
+                        padding: '4px 9px',
+                        borderRadius: 6,
+                        fontWeight: 700,
+                        border: 'none',
+                        cursor: 'pointer',
+                        background: postAsIdentity === 'OWNER' ? '#059669' : 'transparent',
+                        color: postAsIdentity === 'OWNER' ? '#ffffff' : '#475569',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        boxShadow: postAsIdentity === 'OWNER' ? '0 1px 3px rgba(5,150,105,0.2)' : 'none',
+                      }}
+                    >
+                      👤 Personal Account (Owner)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Personal Account Token Link Helper Banner */}
+                {postAsIdentity === 'OWNER' && (!hasUserToken || showTokenInput) && (
+                  <div
+                    style={{
+                      background: '#ecfdf5',
+                      border: '1px solid #a7f3d0',
+                      borderRadius: 10,
+                      padding: 12,
+                      marginBottom: 12,
+                    }}
+                  >
+                    <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#065f46', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Sparkles size={14} color="#059669" /> Link Personal Facebook User Token
+                    </div>
+                    <p style={{ fontSize: '0.72rem', color: '#047857', margin: '0 0 8px 0', lineHeight: 1.4 }}>
+                      To comment on posts from your personal Facebook profile / Admin account, paste your Facebook User Access Token below:
+                    </p>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <input
+                        type="password"
+                        className="form-input w-full"
+                        placeholder="Paste Facebook User Token (EAA...)..."
+                        value={inputUserToken}
+                        onChange={(e) => setInputUserToken(e.target.value)}
+                        style={{ fontSize: '0.76rem', height: 36 }}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleLinkUserToken}
+                        disabled={linkingUserToken || !inputUserToken.trim()}
+                        style={{
+                          padding: '0 14px',
+                          height: 36,
+                          borderRadius: 8,
+                          background: '#059669',
+                          color: '#ffffff',
+                          border: 'none',
+                          fontSize: '0.76rem',
+                          fontWeight: 700,
+                          whiteSpace: 'nowrap',
+                          cursor: linkingUserToken || !inputUserToken.trim() ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        {linkingUserToken ? 'Linking...' : 'Link Account'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {postAsIdentity === 'OWNER' && hasUserToken && !showTokenInput && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f0fdf4', border: '1px solid #bbf7d0', padding: '6px 12px', borderRadius: 8, marginBottom: 10, fontSize: '0.72rem', color: '#166534' }}>
+                    <span>✅ Personal Facebook Account token is linked & active.</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowTokenInput(true)}
+                      style={{ background: 'none', border: 'none', color: '#15803d', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer', fontSize: '0.72rem' }}
+                    >
+                      Update Token
+                    </button>
+                  </div>
+                )}
+
+                <textarea
+                  rows={2}
+                  className="form-input w-full"
+                  placeholder={postAsIdentity === 'PAGE' ? 'Type comment to publish directly as your Page / Brand...' : 'Type comment to publish directly as your Personal Facebook Account...'}
+                  value={newCommentText}
+                  onChange={(e) => setNewCommentText(e.target.value)}
+                  style={{ fontSize: '0.82rem', marginBottom: 10, resize: 'vertical' }}
+                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.72rem', color: postAsIdentity === 'OWNER' ? '#059669' : '#2563eb', fontWeight: 600 }}>
+                    {postAsIdentity === 'OWNER' ? '👤 Publishing with your Admin / Personal Account' : '🏢 Publishing with your Page Profile'}
+                  </span>
+                  <button
+                    type="submit"
+                    disabled={postingComment || !newCommentText.trim()}
+                    style={{
+                      padding: '7px 16px',
+                      borderRadius: 8,
+                      background: postAsIdentity === 'OWNER' ? '#059669' : '#2563eb',
+                      color: '#ffffff',
+                      border: 'none',
+                      fontSize: '0.78rem',
+                      fontWeight: 700,
+                      cursor: postingComment || !newCommentText.trim() ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
+                  >
+                    {postingComment ? (
+                      <>
+                        <RefreshCw size={13} className="animate-spin" /> Publishing...
+                      </>
+                    ) : (
+                      <>
+                        <Send size={13} /> {postAsIdentity === 'OWNER' ? 'Publish as Account' : 'Publish as Page'}
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+
+              {/* Existing Comments Header & Refresh */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <h4 style={{ fontSize: '0.88rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>
+                  Live Comments ({postComments.length})
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => fetchPostComments(activePostForComments.id)}
+                  disabled={loadingComments}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: 6,
+                    background: '#f1f5f9',
+                    border: '1px solid #cbd5e1',
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                    color: '#475569',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}
+                >
+                  <RefreshCw size={11} className={loadingComments ? 'animate-spin' : ''} /> Refresh
+                </button>
+              </div>
+
+              {/* Comments Stream */}
+              {loadingComments ? (
+                <div style={{ padding: 40, textAlign: 'center', color: '#64748b', fontSize: '0.8rem' }}>
+                  <div className="loading-spinner" style={{ margin: '0 auto 8px' }} />
+                  Loading comments from Meta...
+                </div>
+              ) : postComments.length === 0 ? (
+                <div style={{ padding: 36, textAlign: 'center', background: '#f8fafc', borderRadius: 12, border: '1px dashed #cbd5e1' }}>
+                  <MessageSquare size={28} color="#94a3b8" style={{ margin: '0 auto 8px' }} />
+                  <p style={{ fontSize: '0.8rem', color: '#64748b', margin: 0, fontWeight: 600 }}>
+                    No comments found on this post yet.
+                  </p>
+                  <p style={{ fontSize: '0.72rem', color: '#94a3b8', margin: '4px 0 0 0' }}>
+                    Use the composer above to publish the first comment!
+                  </p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {postComments.map((comment) => {
+                    const isReplying = replyingCommentId === comment.id;
+
+                    return (
+                      <div
+                        key={comment.id}
+                        style={{
+                          background: comment.is_hidden ? '#f1f5f9' : '#ffffff',
+                          border: `1px solid ${comment.is_hidden ? '#cbd5e1' : '#e2e8f0'}`,
+                          borderRadius: 12,
+                          padding: 14,
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
+                        }}
+                      >
+                        {/* Comment Header */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div
+                              style={{
+                                width: 28,
+                                height: 28,
+                                borderRadius: '50%',
+                                background: '#3b82f620',
+                                color: '#2563eb',
+                                fontWeight: 800,
+                                fontSize: '0.74rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}
+                            >
+                              {(comment.from?.name || 'U').charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <strong style={{ fontSize: '0.8rem', color: '#0f172a' }}>
+                                {comment.from?.name || 'Customer'}
+                              </strong>
+                              <span style={{ fontSize: '0.68rem', color: '#94a3b8', marginLeft: 8 }}>
+                                {comment.created_time ? new Date(comment.created_time).toLocaleString() : ''}
+                              </span>
+                            </div>
+                          </div>
+
+                          {comment.is_hidden && (
+                            <span style={{ fontSize: '0.66rem', padding: '2px 6px', borderRadius: 6, background: '#fee2e2', color: '#991b1b', fontWeight: 700 }}>
+                              Hidden
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Comment Message */}
+                        <p style={{ fontSize: '0.82rem', color: '#334155', margin: '0 0 10px 0', lineHeight: 1.4 }}>
+                          {comment.message}
+                        </p>
+
+                        {/* Comment Action Bar */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          {/* Reply Button */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (isReplying) {
+                                setReplyingCommentId(null);
+                                setReplyText('');
+                              } else {
+                                setReplyingCommentId(comment.id);
+                                setReplyText('');
+                              }
+                            }}
+                            style={{
+                              padding: '4px 8px',
+                              borderRadius: 6,
+                              background: isReplying ? '#2563eb' : '#f1f5f9',
+                              color: isReplying ? '#ffffff' : '#475569',
+                              border: 'none',
+                              fontSize: '0.72rem',
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 4,
+                            }}
+                          >
+                            <MessageSquare size={11} /> {isReplying ? 'Cancel Reply' : 'Reply'}
+                          </button>
+
+                          {/* Like Button */}
+                          <button
+                            type="button"
+                            onClick={() => handleLikeComment(comment.id)}
+                            style={{
+                              padding: '4px 8px',
+                              borderRadius: 6,
+                              background: comment.user_likes ? '#eff6ff' : '#f1f5f9',
+                              color: comment.user_likes ? '#2563eb' : '#475569',
+                              border: `1px solid ${comment.user_likes ? '#bfdbfe' : 'transparent'}`,
+                              fontSize: '0.72rem',
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 4,
+                            }}
+                          >
+                            <ThumbsUp size={11} /> {comment.like_count ? `${comment.like_count} Likes` : 'Like'}
+                          </button>
+
+                          {/* Hide / Unhide Button */}
+                          <button
+                            type="button"
+                            onClick={() => handleHideComment(comment.id, comment.is_hidden)}
+                            style={{
+                              padding: '4px 8px',
+                              borderRadius: 6,
+                              background: '#f1f5f9',
+                              color: '#64748b',
+                              border: 'none',
+                              fontSize: '0.72rem',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 4,
+                            }}
+                          >
+                            {comment.is_hidden ? <Eye size={11} /> : <EyeOff size={11} />}
+                            {comment.is_hidden ? 'Unhide' : 'Hide'}
+                          </button>
+
+                          {/* Delete Button */}
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteComment(comment.id)}
+                            style={{
+                              padding: '4px 8px',
+                              borderRadius: 6,
+                              background: '#fff1f2',
+                              color: '#e11d48',
+                              border: 'none',
+                              fontSize: '0.72rem',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              marginLeft: 'auto',
+                            }}
+                          >
+                            <Trash2 size={11} /> Delete
+                          </button>
+                        </div>
+
+                        {/* Inline Reply Box */}
+                        {isReplying && (
+                          <div
+                            style={{
+                              marginTop: 12,
+                              padding: 10,
+                              background: '#eff6ff',
+                              borderRadius: 8,
+                              border: '1px solid #bfdbfe',
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+                              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1e40af' }}>
+                                Reply to {comment.from?.name || 'user'}:
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: '#ffffff', padding: '2px 4px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: '0.68rem' }}>
+                                <span style={{ fontWeight: 700, color: '#64748b', padding: '0 2px' }}>Reply as:</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setReplyAsIdentity('PAGE')}
+                                  style={{
+                                    padding: '2px 6px',
+                                    borderRadius: 4,
+                                    fontWeight: 700,
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    background: replyAsIdentity === 'PAGE' ? '#2563eb' : 'transparent',
+                                    color: replyAsIdentity === 'PAGE' ? '#ffffff' : '#475569',
+                                  }}
+                                >
+                                  🏢 Page
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setReplyAsIdentity('OWNER')}
+                                  style={{
+                                    padding: '2px 6px',
+                                    borderRadius: 4,
+                                    fontWeight: 700,
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    background: replyAsIdentity === 'OWNER' ? '#059669' : 'transparent',
+                                    color: replyAsIdentity === 'OWNER' ? '#ffffff' : '#475569',
+                                  }}
+                                >
+                                  👤 Account
+                                </button>
+                              </div>
+                            </div>
+
+                            <textarea
+                              rows={2}
+                              className="form-input w-full"
+                              placeholder={`Write reply as ${replyAsIdentity === 'PAGE' ? 'Page' : 'Personal Account'} to ${comment.from?.name || 'user'}...`}
+                              value={replyText}
+                              onChange={(e) => setReplyText(e.target.value)}
+                              style={{ fontSize: '0.78rem', marginBottom: 8 }}
+                            />
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setReplyingCommentId(null);
+                                  setReplyText('');
+                                }}
+                                style={{
+                                  padding: '5px 10px',
+                                  borderRadius: 6,
+                                  background: '#ffffff',
+                                  border: '1px solid #cbd5e1',
+                                  fontSize: '0.72rem',
+                                  fontWeight: 600,
+                                  color: '#475569',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleReplyToComment(comment.id)}
+                                disabled={submittingReply || !replyText.trim()}
+                                style={{
+                                  padding: '5px 12px',
+                                  borderRadius: 6,
+                                  background: replyAsIdentity === 'OWNER' ? '#059669' : '#2563eb',
+                                  color: '#ffffff',
+                                  border: 'none',
+                                  fontSize: '0.72rem',
+                                  fontWeight: 700,
+                                  cursor: submittingReply || !replyText.trim() ? 'not-allowed' : 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                }}
+                              >
+                                {submittingReply ? 'Sending...' : (replyAsIdentity === 'OWNER' ? 'Send as Account' : 'Send as Page')}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Nested Replies Stream (if any) */}
+                        {comment.replies && comment.replies.length > 0 && (
+                          <div style={{ marginTop: 10, paddingLeft: 12, borderLeft: '2px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {comment.replies.map((reply) => (
+                              <div key={reply.id} style={{ background: '#f8fafc', padding: '8px 10px', borderRadius: 8, fontSize: '0.76rem' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                                  <strong style={{ color: '#0f172a' }}>{reply.from?.name || 'Reply'}</strong>
+                                  <span style={{ fontSize: '0.66rem', color: '#94a3b8' }}>
+                                    {reply.created_time ? new Date(reply.created_time).toLocaleString() : ''}
+                                  </span>
+                                </div>
+                                <p style={{ color: '#334155', margin: 0 }}>{reply.message}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div style={{ padding: '12px 20px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end', background: '#f8fafc' }}>
+              <button
+                type="button"
+                onClick={() => setCommentsModalOpen(false)}
+                style={{ padding: '7px 16px', borderRadius: 8, background: '#ffffff', border: '1px solid #cbd5e1', color: '#475569', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer' }}
+              >
+                Close
               </button>
             </div>
           </div>

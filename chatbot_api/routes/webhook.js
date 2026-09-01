@@ -349,22 +349,52 @@ async function processCommentAutomation({ commentId, postId, senderId, senderNam
   try {
     if (!commentId || !commentText || !integration?.access_token) return;
 
+    console.log(`\n💬 [Comment Automation] Incoming ${platform} comment (${commentId}) on post (${postId}) from ${senderName} (${senderId}): "${commentText}"`);
+
     // Do not reply to our own comments
     if (senderId && (senderId === integration.fb_page_id || senderId === integration.ig_account_id)) {
+      console.log(`[Comment Automation] Skipping own comment from page/account (${senderId})`);
       return;
     }
 
-    // Find active comment rules for this integration
+    // Find all active comment rules for this agency and platform
     const [rules] = await pool.query(
       `SELECT * FROM comment_automation_rules
        WHERE agency_id = ? AND (integration_id = ? OR integration_id IS NULL)
-         AND platform = ? AND is_active = 1
-       ORDER BY CASE WHEN post_id = ? THEN 1 ELSE 2 END, id DESC`,
-      [agencyId, integrationId, platform, postId || ""]
+         AND platform = ? AND is_active = 1`,
+      [agencyId, integrationId, platform]
     );
 
-    if (!rules.length) return;
-    const rule = rules[0]; // best match (post-specific or ALL_POSTS)
+    if (!rules.length) {
+      console.log(`[Comment Automation] No active comment automation rules found for ${platform} (agency: ${agencyId})`);
+      return;
+    }
+
+    // 1. Try to find a rule matching the specific post ID
+    let selectedRule = null;
+    const specificRules = rules.filter(r => r.post_id && r.post_id !== "ALL_POSTS");
+    for (const r of specificRules) {
+      if (
+        r.post_id === postId ||
+        (postId && (r.post_id.endsWith(`_${postId}`) || postId.endsWith(`_${r.post_id}`) || r.post_id.includes(postId) || postId.includes(r.post_id)))
+      ) {
+        selectedRule = r;
+        break;
+      }
+    }
+
+    // 2. Fallback to an ALL_POSTS rule if no post-specific rule was found
+    if (!selectedRule) {
+      selectedRule = rules.find(r => r.post_id === "ALL_POSTS" || !r.post_id);
+    }
+
+    if (!selectedRule) {
+      console.log(`[Comment Automation] No matching rule found for post ${postId} on ${platform}`);
+      return;
+    }
+
+    const rule = selectedRule;
+    console.log(`[Comment Automation] 🎯 Matched campaign "${rule.campaign_name}" (Rule ID: ${rule.id}) for post ${rule.post_id}`);
 
     const lowerComment = commentText.toLowerCase().trim();
 
@@ -380,26 +410,28 @@ async function processCommentAutomation({ commentId, postId, senderId, senderNam
             `https://graph.facebook.com/v21.0/${commentId}?is_hidden=true`,
             {},
             { headers: { Authorization: `Bearer ${integration.access_token}` } }
-          ).catch(e => console.warn("Hide comment warning:", e.message));
+          ).catch(e => console.warn("Hide comment warning:", e.response?.data || e.message));
         } else if (rule.offensive_action === "DELETE") {
           await axios.delete(
             `https://graph.facebook.com/v21.0/${commentId}`,
             { headers: { Authorization: `Bearer ${integration.access_token}` } }
-          ).catch(e => console.warn("Delete comment warning:", e.message));
+          ).catch(e => console.warn("Delete comment warning:", e.response?.data || e.message));
         }
 
         if (rule.offensive_reply_message) {
           const privateText = rule.offensive_reply_message
             .replace(/\{\{name\}\}/gi, senderName || "there")
             .replace(/\{\{first_name\}\}/gi, (senderName || "").split(" ")[0] || "there");
+
           await axios.post(
             `https://graph.facebook.com/v21.0/me/messages`,
             { recipient: { comment_id: commentId }, message: { text: privateText } },
             { headers: { Authorization: `Bearer ${integration.access_token}` } }
-          ).catch(e => console.warn("Offensive DM warning:", e.message));
+          ).catch(e => console.warn("Offensive DM warning:", e.response?.data || e.message));
         }
 
         await pool.query("UPDATE comment_automation_rules SET total_offensive_moderated = total_offensive_moderated + 1 WHERE id = ?", [rule.id]);
+        emitToAgency(agencyId, "comment_automation_updated", { ruleId: rule.id, type: "OFFENSIVE_MODERATED" });
         return; // Halt further processing
       }
     }
@@ -408,32 +440,54 @@ async function processCommentAutomation({ commentId, postId, senderId, senderNam
     if (rule.exclude_keywords) {
       const excludeList = rule.exclude_keywords.split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
       if (excludeList.some(k => lowerComment.includes(k))) {
+        console.log(`[Comment Automation] Comment contains excluded keyword. Skipping automation.`);
         return;
       }
     }
 
     // 3. Check Trigger Keywords
-    if (rule.trigger_type === "KEYWORDS" && rule.trigger_keywords) {
+    const triggerType = (rule.trigger_type || "ALL").toUpperCase();
+    if (triggerType === "KEYWORDS" && rule.trigger_keywords) {
       const keywords = rule.trigger_keywords.split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
       let matched = false;
-      if (rule.match_type === "EXACT") {
+      if ((rule.match_type || "CONTAINS").toUpperCase() === "EXACT") {
         matched = keywords.includes(lowerComment);
       } else {
         matched = keywords.some(k => lowerComment.includes(k));
       }
-      if (!matched) return;
+      if (!matched) {
+        console.log(`[Comment Automation] Comment did not match required keywords "${rule.trigger_keywords}". Skipping.`);
+        return;
+      }
     }
 
-    // 4. Auto-Like Comment
+    // 4. Auto-Like Comment (tries Page token, falls back to Page Owner token)
     if (rule.enable_like_comment) {
-      await axios.post(
-        `https://graph.facebook.com/v21.0/${commentId}/likes`,
-        {},
-        { headers: { Authorization: `Bearer ${integration.access_token}` } }
-      ).catch(e => console.warn("Auto-like comment warning:", e.message));
+      const tokensToTry = [integration.access_token, integration.user_access_token].filter(Boolean);
+      let liked = false;
+      for (const tok of tokensToTry) {
+        if (liked) break;
+        try {
+          await axios.post(
+            `https://graph.facebook.com/v21.0/${commentId}/likes`,
+            {},
+            {
+              headers: { Authorization: `Bearer ${tok}` },
+              params: { access_token: tok },
+            }
+          );
+          console.log(`[Comment Automation] ❤️ Auto-liked comment (${commentId})`);
+          liked = true;
+        } catch (e) {
+          // If permission error and another token is available, loop continues
+        }
+      }
+      if (!liked) {
+        console.warn(`[Comment Automation] Could not like comment (${commentId}) due to permissions.`);
+      }
     }
 
-    // 5. Public Comment Reply (with rotating variations)
+    // 5. Public Comment Reply (with rotating variations, tries Page token, falls back to Page Owner token)
     let replyText = rule.auto_reply_comment || "";
     let variations = [];
     try {
@@ -450,14 +504,48 @@ async function processCommentAutomation({ commentId, postId, senderId, senderNam
         .replace(/\{\{name\}\}/gi, senderName || "there")
         .replace(/\{\{first_name\}\}/gi, (senderName || "").split(" ")[0] || "there");
 
-      await axios.post(
-        `https://graph.facebook.com/v21.0/${commentId}/comments`,
-        { message: formattedReply },
-        { headers: { Authorization: `Bearer ${integration.access_token}` } }
-      ).then(() => {
-        pool.query("UPDATE comment_automation_rules SET total_comment_replies = total_comment_replies + 1 WHERE id = ?", [rule.id]);
+      const tokensToTry = [integration.access_token, integration.user_access_token].filter(Boolean);
+      let replySuccess = false;
+
+      for (const tok of tokensToTry) {
+        if (replySuccess) break;
+        try {
+          await axios.post(
+            `https://graph.facebook.com/v21.0/${commentId}/comments`,
+            { message: formattedReply },
+            {
+              headers: {
+                Authorization: `Bearer ${tok}`,
+                "Content-Type": "application/json",
+              },
+              params: { access_token: tok },
+            }
+          );
+          replySuccess = true;
+        } catch (postErr) {
+          // Try URL encoded params format
+          try {
+            await axios.post(
+              `https://graph.facebook.com/v21.0/${commentId}/comments`,
+              null,
+              {
+                params: {
+                  message: formattedReply,
+                  access_token: tok,
+                },
+              }
+            );
+            replySuccess = true;
+          } catch (postErr2) {}
+        }
+      }
+
+      if (replySuccess) {
+        await pool.query("UPDATE comment_automation_rules SET total_comment_replies = total_comment_replies + 1 WHERE id = ?", [rule.id]);
         console.log(`[Comment Automation] ✅ Public comment reply sent on ${platform} (${commentId}): "${formattedReply}"`);
-      }).catch(e => console.warn("Public comment reply warning:", e.response?.data || e.message));
+      } else {
+        console.warn(`[Comment Automation] Public reply could not be sent for (${commentId}) due to token permissions.`);
+      }
     }
 
     // 6. Private DM Reply
@@ -466,15 +554,20 @@ async function processCommentAutomation({ commentId, postId, senderId, senderNam
         .replace(/\{\{name\}\}/gi, senderName || "there")
         .replace(/\{\{first_name\}\}/gi, (senderName || "").split(" ")[0] || "there");
 
-      await axios.post(
-        `https://graph.facebook.com/v21.0/me/messages`,
-        { recipient: { comment_id: commentId }, message: { text: formattedPrivate } },
-        { headers: { Authorization: `Bearer ${integration.access_token}` } }
-      ).then(() => {
-        pool.query("UPDATE comment_automation_rules SET total_private_replies = total_private_replies + 1 WHERE id = ?", [rule.id]);
+      try {
+        await axios.post(
+          `https://graph.facebook.com/v21.0/me/messages`,
+          { recipient: { comment_id: commentId }, message: { text: formattedPrivate } },
+          { headers: { Authorization: `Bearer ${integration.access_token}` } }
+        );
+        await pool.query("UPDATE comment_automation_rules SET total_private_replies = total_private_replies + 1 WHERE id = ?", [rule.id]);
         console.log(`[Comment Automation] 📩 Private DM reply sent on ${platform} to ${senderName} (${commentId})`);
-      }).catch(e => console.warn("Private DM reply warning:", e.response?.data || e.message));
+      } catch (e) {
+        console.error("[Comment Automation] ❌ Private DM reply failed:", JSON.stringify(e.response?.data || e.message, null, 2));
+      }
     }
+
+    emitToAgency(agencyId, "comment_automation_updated", { ruleId: rule.id, type: "REPLIED" });
   } catch (err) {
     console.error("Comment automation processor error:", err);
   }

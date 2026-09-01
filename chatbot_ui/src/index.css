@@ -585,3 +585,12 @@ tr:hover td { background: #f8fafc; }
     padding: 28px 20px;
   }
 }
+
+/* ─── SweetAlert2 Modal Z-Index (Always on top of all application modals) ─── */
+.swal2-container {
+  z-index: 9999999 !important;
+}
+.swal2-popup {
+  font-family: inherit !important;
+  border-radius: 16px !important;
+}

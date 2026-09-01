@@ -45,6 +45,7 @@ export default function FacebookPage({ embedded = false }) {
   const [step, setStep] = useState('idle');
   const [fetchedPages, setFetchedPages] = useState([]);
   const [selected, setSelected] = useState([]);
+  const [fbUserToken, setFbUserToken] = useState('');
   const [importing, setImporting] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [showManual, setShowManual] = useState(false);
@@ -120,12 +121,13 @@ export default function FacebookPage({ embedded = false }) {
         showToast('Facebook login was cancelled or failed', 'error');
       }
     }, {
-      scope: 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata',
+      scope: 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_manage_engagement,pages_manage_posts',
       return_scopes: true,
     });
   };
 
   const fetchUserPages = (userAccessToken) => {
+    setFbUserToken(userAccessToken);
     setStep('fetching');
     window.FB.api('/me/accounts', { access_token: userAccessToken, fields: 'id,name,access_token,category,tasks' }, (res) => {
       if (res && !res.error) {
@@ -147,11 +149,12 @@ export default function FacebookPage({ embedded = false }) {
         await channelAPI.addFacebook({
           name: page.name,
           accessToken: page.access_token,
+          userAccessToken: fbUserToken || null,
           fbPageId: page.id,
           fbPageName: page.name,
         });
       }
-      showToast(`Connected ${selected.length} Facebook page(s)!`);
+      showToast(`Connected ${selected.length} Facebook page(s) with Personal Account!`);
       setStep('done');
       setSelected([]);
       fetchConnected();
@@ -498,7 +501,7 @@ export default function FacebookPage({ embedded = false }) {
                 Connect via Facebook Login
               </div>
               <div style={{ fontSize: '0.8rem', color: '#5c5c80', marginBottom: 16, lineHeight: 1.5 }}>
-                Log in to select and import pages with <code>pages_messaging</code> permissions.
+                Log in to select and import pages with <code>pages_messaging</code>, <code>pages_manage_engagement</code>, and <code>pages_manage_posts</code> permissions for full DM & comment automation.
               </div>
               <FBLoginButton onClick={handleFBLogin} loading={loginLoading} disabled={loginLoading} />
             </div>
@@ -509,7 +512,7 @@ export default function FacebookPage({ embedded = false }) {
                 <Zap size={16} /> 1-Click Permanent Token Connect
               </div>
               <p style={{ fontSize: '0.78rem', color: '#5c5c80', margin: '0 0 10px 0', lineHeight: 1.4 }}>
-                Paste any token from Graph API Explorer. We automatically upgrade it to a <strong>Permanent Never-Expiring Token</strong>.
+                Paste any token with <code>pages_manage_engagement, pages_manage_posts, pages_messaging</code>. We automatically upgrade it to a <strong>Permanent Never-Expiring Token</strong>.
               </p>
               <textarea
                 id="fb-quick-token-input"
