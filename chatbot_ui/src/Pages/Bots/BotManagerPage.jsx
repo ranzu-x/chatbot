@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
 import { flowAPI, integrationAPI, channelAPI, botAPI, templateAPI } from '../../services/api';
 import WhatsAppTemplateManager from '../../Components/Templates/WhatsAppTemplateManager';
+import FacebookUtilityTemplateManager from '../../Components/Templates/FacebookUtilityTemplateManager';
 import CommentAutomationManager from '../../Components/Comments/CommentAutomationManager';
 import {
   Bot,
@@ -311,13 +312,17 @@ export default function BotManagerPage() {
     loadAllData();
   }, [loadAllData]);
 
-  // Filter sub-tabs dynamically per channel platform (Message Templates only for WhatsApp)
+  // Filter sub-tabs dynamically per channel platform (Message Templates for WhatsApp & Facebook)
   const currentSubTabs = useMemo(() => {
     const list = SUB_TABS[activeCategory] || [];
     const platform = (selectedAccount?.platform || 'WHATSAPP').toUpperCase();
     return list.filter((sub) => {
-      // Message Templates & WhatsApp specific tools ONLY for WhatsApp
-      if (['messageTemplates', 'whatsappCalling', 'catalogSync', 'productMessages'].includes(sub.id)) {
+      // Message Templates available for WhatsApp (HSM) and Facebook (Utility Templates)
+      if (sub.id === 'messageTemplates') {
+        return ['WHATSAPP', 'FACEBOOK'].includes(platform);
+      }
+      // WhatsApp specific tools ONLY for WhatsApp
+      if (['whatsappCalling', 'catalogSync', 'productMessages'].includes(sub.id)) {
         return platform === 'WHATSAPP';
       }
       // Comments / Story mentions ONLY for Facebook / Instagram
@@ -334,7 +339,10 @@ export default function BotManagerPage() {
     const list = SUB_TABS[catId] || [];
     const platform = (selectedAccount?.platform || 'WHATSAPP').toUpperCase();
     const available = list.filter((sub) => {
-      if (['messageTemplates', 'whatsappCalling', 'catalogSync', 'productMessages'].includes(sub.id)) {
+      if (sub.id === 'messageTemplates') {
+        return ['WHATSAPP', 'FACEBOOK'].includes(platform);
+      }
+      if (['whatsappCalling', 'catalogSync', 'productMessages'].includes(sub.id)) {
         return platform === 'WHATSAPP';
       }
       if (['commentAutomation', 'storyMentions'].includes(sub.id)) {
@@ -347,12 +355,52 @@ export default function BotManagerPage() {
     }
   };
 
-  // When selected account or platform changes, ensure activeSubTab is valid for the current platform
+  // Track previous selected account ID to reset tab to default Automation tab when switching bot accounts
+  const prevAccountIdRef = useRef(selectedAccount?.id);
+  useEffect(() => {
+    if (prevAccountIdRef.current !== undefined && selectedAccount?.id && prevAccountIdRef.current !== selectedAccount.id) {
+      setActiveCategory('automation');
+      setActiveSubTab('keywordReplies');
+      setCurrentPage(1);
+      setFolderFilter('All Folders');
+      setTableSearch('');
+    }
+    prevAccountIdRef.current = selectedAccount?.id;
+  }, [selectedAccount?.id]);
+
+  const handleSelectAccount = (acc) => {
+    setSelectedAccount(acc);
+    setActiveCategory('automation');
+    setActiveSubTab('keywordReplies');
+    setCurrentPage(1);
+    setFolderFilter('All Folders');
+    setTableSearch('');
+  };
+
+  const handleChannelFilterChange = (channel) => {
+    setChannelFilter(channel);
+    if (channel !== 'ALL') {
+      const currentPlat = (selectedAccount?.platform || '').toUpperCase();
+      if (currentPlat !== channel) {
+        const firstMatch = integrations.find(
+          (acc) => (acc.platform || 'WHATSAPP').toUpperCase() === channel
+        );
+        if (firstMatch) {
+          handleSelectAccount(firstMatch);
+        }
+      }
+    }
+  };
+
+  // When platform changes within activeCategory, ensure activeSubTab is valid
   useEffect(() => {
     const list = SUB_TABS[activeCategory] || [];
     const platform = (selectedAccount?.platform || 'WHATSAPP').toUpperCase();
     const available = list.filter((sub) => {
-      if (['messageTemplates', 'whatsappCalling', 'catalogSync', 'productMessages'].includes(sub.id)) {
+      if (sub.id === 'messageTemplates') {
+        return ['WHATSAPP', 'FACEBOOK'].includes(platform);
+      }
+      if (['whatsappCalling', 'catalogSync', 'productMessages'].includes(sub.id)) {
         return platform === 'WHATSAPP';
       }
       if (['commentAutomation', 'storyMentions'].includes(sub.id)) {
@@ -366,6 +414,7 @@ export default function BotManagerPage() {
       setActiveSubTab(available[0].id);
     }
   }, [selectedAccount, activeCategory, activeSubTab]);
+
 
 
 
@@ -853,37 +902,37 @@ export default function BotManagerPage() {
           <div className="bm-channel-pills">
             <button
               className={`bm-pill ${channelFilter === 'ALL' ? 'active' : ''}`}
-              onClick={() => setChannelFilter('ALL')}
+              onClick={() => handleChannelFilterChange('ALL')}
             >
               All {channelCounts.ALL}
             </button>
             <button
               className={`bm-pill ${channelFilter === 'WHATSAPP' ? 'active' : ''}`}
-              onClick={() => setChannelFilter('WHATSAPP')}
+              onClick={() => handleChannelFilterChange('WHATSAPP')}
             >
               💬 {channelCounts.WHATSAPP}
             </button>
             <button
               className={`bm-pill ${channelFilter === 'TELEGRAM' ? 'active' : ''}`}
-              onClick={() => setChannelFilter('TELEGRAM')}
+              onClick={() => handleChannelFilterChange('TELEGRAM')}
             >
               ✈️ {channelCounts.TELEGRAM}
             </button>
             <button
               className={`bm-pill ${channelFilter === 'FACEBOOK' ? 'active' : ''}`}
-              onClick={() => setChannelFilter('FACEBOOK')}
+              onClick={() => handleChannelFilterChange('FACEBOOK')}
             >
               📘 {channelCounts.FACEBOOK}
             </button>
             <button
               className={`bm-pill ${channelFilter === 'INSTAGRAM' ? 'active' : ''}`}
-              onClick={() => setChannelFilter('INSTAGRAM')}
+              onClick={() => handleChannelFilterChange('INSTAGRAM')}
             >
               📸 {channelCounts.INSTAGRAM}
             </button>
             <button
               className={`bm-pill ${channelFilter === 'WEBCHAT' ? 'active' : ''}`}
-              onClick={() => setChannelFilter('WEBCHAT')}
+              onClick={() => handleChannelFilterChange('WEBCHAT')}
             >
               🌐 {channelCounts.WEBCHAT}
             </button>
@@ -906,7 +955,7 @@ export default function BotManagerPage() {
                   <div
                     key={acc.id}
                     className={`bm-account-item ${isSelected ? 'active' : ''}`}
-                    onClick={() => setSelectedAccount(acc)}
+                    onClick={() => handleSelectAccount(acc)}
                   >
                     <div
                       className="bm-avatar-circle"
@@ -1395,9 +1444,34 @@ export default function BotManagerPage() {
           )}
 
           {/* ═════════════════════════════════════════════════════════════════
+              VIEW 2B: FACEBOOK UTILITY TEMPLATES (pages_utility_messaging)
+              ═════════════════════════════════════════════════════════════════ */}
+          {activeCategory === 'automation' && activeSubTab === 'messageTemplates' && (selectedAccount?.platform || '').toUpperCase() === 'FACEBOOK' && (
+            <FacebookUtilityTemplateManager
+              selectedAccount={selectedAccount}
+              showToast={showToast}
+            />
+          )}
+
+          {/* ═════════════════════════════════════════════════════════════════
+              VIEW 2C: MESSAGE TEMPLATES WHEN NO ACCOUNT SELECTED
+              ═════════════════════════════════════════════════════════════════ */}
+          {activeCategory === 'automation' && activeSubTab === 'messageTemplates' && !selectedAccount && (
+            <div className="bm-content-card" style={{ padding: '60px 20px', textAlign: 'center' }}>
+              <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>📋</div>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#1a1a2e', marginBottom: 6 }}>
+                Select a Bot Account to View Templates
+              </h3>
+              <p style={{ fontSize: '0.86rem', color: '#64748b', maxWidth: 440, margin: '0 auto 16px' }}>
+                Please select a connected <strong>WhatsApp</strong> or <strong>Facebook Page</strong> from the left panel to manage its message templates.
+              </p>
+            </div>
+          )}
+
+          {/* ═════════════════════════════════════════════════════════════════
               VIEW 4: DEFAULT FALLBACK VIEW FOR OTHER SUB-TABS
               ═════════════════════════════════════════════════════════════════ */}
-          {!['keywordReplies', 'messageTemplates'].includes(activeSubTab) && activeCategory !== 'engagement' && activeCategory !== 'ai' && (
+          {!['keywordReplies', 'messageTemplates'].includes(activeSubTab) && (activeCategory !== 'engagement' || activeSubTab !== 'commentAutomation') && activeCategory !== 'ai' && (
             <div className="bm-content-card">
               <div className="bm-card-header">
                 <h3 className="bm-card-title">{activeSubTab.replace(/([A-Z])/g, ' $1').trim()}</h3>

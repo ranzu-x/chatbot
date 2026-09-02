@@ -118,10 +118,17 @@ export async function getAgencyEntitlements(agencyId, userId = null) {
       );
       usedSubscribers = Number(totalContacts || 0);
 
-      // Count team members / agents
+      // Count team members / agents (avoid double-counting members that match both conditions)
       const [[{ totalAgents }]] = await pool.query(
-        "SELECT COUNT(*) as totalAgents FROM agent_profiles WHERE agency_id = ?",
+        "SELECT COUNT(DISTINCT id) as totalAgents FROM agent_profiles WHERE agency_id = ?",
         [agencyId]
+      );
+      usedTeamMembers = Number(totalAgents || 0);
+    } else if (userId) {
+      // Count team members for direct End User accounts
+      const [[{ totalAgents }]] = await pool.query(
+        "SELECT COUNT(*) as totalAgents FROM agent_profiles WHERE owner_user_id = ?",
+        [userId]
       );
       usedTeamMembers = Number(totalAgents || 0);
     }

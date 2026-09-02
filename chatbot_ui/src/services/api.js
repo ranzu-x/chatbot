@@ -5,8 +5,9 @@ const api = axios.create({
   withCredentials: true,
 });
 
-// Inject stored token as Authorization header on every request
+// Inject stored token as Authorization header on every request + bypass ngrok interstitial on API calls
 api.interceptors.request.use((config) => {
+  config.headers["ngrok-skip-browser-warning"] = "true";
   const token = localStorage.getItem("auth_token");
   if (token) {
     config.headers["Authorization"] = `Bearer ${token}`;
@@ -91,6 +92,17 @@ export const agencyAPI = {
   deleteAgent: (userId) => api.delete(`/agency/agents/${userId}`),
 };
 
+// ─── Team Members ─────────────────────────────────────────────────
+export const teamAPI = {
+  getAll: (params) => api.get("/team-members", { params }),
+  getOne: (id) => api.get(`/team-members/${id}`),
+  create: (data) => api.post("/team-members", data),
+  update: (id, data) => api.put(`/team-members/${id}`, data),
+  toggle: (id) => api.patch(`/team-members/${id}/toggle`),
+  delete: (id) => api.delete(`/team-members/${id}`),
+};
+
+
 // ─── Integrations ─────────────────────────────────────────────────
 export const integrationAPI = {
   getAll: () => api.get("/integrations"),
@@ -133,6 +145,9 @@ export const channelAPI = {
   updateFBCommentRule: (id, data) => api.put(`/channels/facebook/comment-rules/${id}`, data),
   toggleFBCommentRule: (id) => api.patch(`/channels/facebook/comment-rules/${id}/toggle`),
   deleteFBCommentRule: (id) => api.delete(`/channels/facebook/comment-rules/${id}`),
+  // Facebook Utility Messaging
+  getFBUtilityTemplates: (integrationId) => api.get(`/channels/facebook/${integrationId}/utility-templates`),
+  sendFBUtilityMessage: (integrationId, data) => api.post(`/channels/facebook/${integrationId}/send-utility`, data),
   // Instagram
   getInstagram: () => api.get('/channels/instagram'),
   addInstagram: (data) => api.post('/channels/instagram', data),

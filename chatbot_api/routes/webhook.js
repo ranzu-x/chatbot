@@ -609,7 +609,7 @@ async function handleFacebookPayload(body, agencyId, integrationId, integration)
         if (event.postback) {
           msgBody = event.postback.title || event.postback.payload || "";
         } else {
-          msgBody = event.message?.text || "";
+          msgBody = event.message?.quick_reply?.payload || event.message?.text || "";
           if (event.message?.attachments && event.message.attachments.length > 0) {
             const att = event.message.attachments[0];
             const attType = (att.type || "image").toUpperCase();
@@ -682,7 +682,7 @@ async function handleInstagramPayload(body, agencyId, integrationId, integration
         if (event.postback) {
           msgBody = event.postback.title || event.postback.payload || "";
         } else {
-          msgBody = event.message?.text || "";
+          msgBody = event.message?.quick_reply?.payload || event.message?.text || "";
           if (event.message?.attachments && event.message.attachments.length > 0) {
             const att = event.message.attachments[0];
             const attType = (att.type || "image").toUpperCase();

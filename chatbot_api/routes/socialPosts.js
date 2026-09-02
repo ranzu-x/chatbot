@@ -71,78 +71,117 @@ async function publishToFacebook({ pageId, pageToken, userToken, postType, messa
 }
 
 // ─── HELPER: PUBLISH TO INSTAGRAM ACCOUNT ────────────────────────────────────
-async function publishToInstagram({ igAccountId, token, postType, message, mediaUrls = [] }) {
+async function publishToInstagram({ igAccountId, token, userToken, postType, message, mediaUrls = [] }) {
   if (!igAccountId) {
     throw new Error("Instagram Account ID is missing or not connected");
   }
   if (!mediaUrls || mediaUrls.length === 0) {
-    throw new Error("Instagram requires at least one image or video to publish a post");
+    throw new Error("Instagram requires at least one image or video to publish a post. Please attach a photo or video.");
   }
 
-  try {
-    let creationId = null;
+  const tokensToTry = [token, userToken].filter(Boolean);
+  let lastErr = null;
 
-    if (postType === "VIDEO") {
-      // Instagram Reel / Video
-      const containerRes = await axios.post(
-        `https://graph.facebook.com/${META_API_VERSION}/${igAccountId}/media`,
-        {
-          media_type: "REELS",
-          video_url: mediaUrls[0],
-          caption: message || "",
-        },
-        { headers: { Authorization: `Bearer ${token}` }, params: { access_token: token } }
-      );
-      creationId = containerRes.data?.id;
-    } else if (mediaUrls.length > 1) {
-      // Carousel Post
-      const childIds = [];
-      for (const imgUrl of mediaUrls) {
-        const itemRes = await axios.post(
+  for (const activeToken of tokensToTry) {
+    try {
+      let creationId = null;
+
+      if (postType === "VIDEO") {
+        // Instagram Reel / Video
+        const containerRes = await axios.post(
           `https://graph.facebook.com/${META_API_VERSION}/${igAccountId}/media`,
-          { is_carousel_item: true, image_url: imgUrl },
-          { headers: { Authorization: `Bearer ${token}` }, params: { access_token: token } }
+          {
+            media_type: "REELS",
+            video_url: mediaUrls[0],
+            caption: message || "",
+          },
+          { headers: { Authorization: `Bearer ${activeToken}` }, params: { access_token: activeToken } }
         );
-        if (itemRes.data?.id) childIds.push(itemRes.data.id);
+        creationId = containerRes.data?.id;
+      } else if (mediaUrls.length > 1) {
+        // Carousel Post
+        const childIds = [];
+        for (const imgUrl of mediaUrls) {
+          const itemRes = await axios.post(
+            `https://graph.facebook.com/${META_API_VERSION}/${igAccountId}/media`,
+            { is_carousel_item: true, image_url: imgUrl },
+            { headers: { Authorization: `Bearer ${activeToken}` }, params: { access_token: activeToken } }
+          );
+          if (itemRes.data?.id) childIds.push(itemRes.data.id);
+        }
+
+        const carRes = await axios.post(
+          `https://graph.facebook.com/${META_API_VERSION}/${igAccountId}/media`,
+          { media_type: "CAROUSEL", children: childIds, caption: message || "" },
+          { headers: { Authorization: `Bearer ${activeToken}` }, params: { access_token: activeToken } }
+        );
+        creationId = carRes.data?.id;
+      } else {
+        // Single Image Post
+        const containerRes = await axios.post(
+          `https://graph.facebook.com/${META_API_VERSION}/${igAccountId}/media`,
+          { image_url: mediaUrls[0], caption: message || "" },
+          { headers: { Authorization: `Bearer ${activeToken}` }, params: { access_token: activeToken } }
+        );
+        creationId = containerRes.data?.id;
       }
 
-      const carRes = await axios.post(
-        `https://graph.facebook.com/${META_API_VERSION}/${igAccountId}/media`,
-        { media_type: "CAROUSEL", children: childIds, caption: message || "" },
-        { headers: { Authorization: `Bearer ${token}` }, params: { access_token: token } }
+      if (!creationId) {
+        throw new Error("Failed to create Instagram media container");
+      }
+
+      // Check media container processing status before publishing (poll up to 5 times)
+      let readyToPublish = false;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        try {
+          const statusRes = await axios.get(
+            `https://graph.facebook.com/${META_API_VERSION}/${creationId}?fields=status_code`,
+            { headers: { Authorization: `Bearer ${activeToken}` }, params: { access_token: activeToken } }
+          );
+          const statusCode = statusRes.data?.status_code;
+          if (statusCode === "FINISHED") {
+            readyToPublish = true;
+            break;
+          } else if (statusCode === "ERROR" || statusCode === "EXPIRED") {
+            throw new Error(`Media container processing failed with status: ${statusCode}`);
+          }
+        } catch (statusErr) {
+          // If status_code field is not supported on this container type, proceed to publish
+          readyToPublish = true;
+          break;
+        }
+      }
+
+      // Publish the container
+      const pubRes = await axios.post(
+        `https://graph.facebook.com/${META_API_VERSION}/${igAccountId}/media_publish`,
+        { creation_id: creationId },
+        { headers: { Authorization: `Bearer ${activeToken}` }, params: { access_token: activeToken } }
       );
-      creationId = carRes.data?.id;
-    } else {
-      // Single Image Post
-      const containerRes = await axios.post(
-        `https://graph.facebook.com/${META_API_VERSION}/${igAccountId}/media`,
-        { image_url: mediaUrls[0], caption: message || "" },
-        { headers: { Authorization: `Bearer ${token}` }, params: { access_token: token } }
-      );
-      creationId = containerRes.data?.id;
+
+      const igMediaId = pubRes.data?.id;
+      return { success: true, postId: igMediaId, permalink: `https://instagram.com/p/${igMediaId}` };
+    } catch (err) {
+      lastErr = err;
+      const errDetail = err.response?.data?.error?.message || err.message;
+      console.warn(`[IG Publish Token Attempt] Failed with token:`, errDetail);
     }
-
-    if (!creationId) {
-      throw new Error("Failed to create Instagram media container");
-    }
-
-    // Wait 2 seconds for container to process
-    await new Promise((r) => setTimeout(r, 2000));
-
-    // Publish the container
-    const pubRes = await axios.post(
-      `https://graph.facebook.com/${META_API_VERSION}/${igAccountId}/media_publish`,
-      { creation_id: creationId },
-      { headers: { Authorization: `Bearer ${token}` }, params: { access_token: token } }
-    );
-
-    const igMediaId = pubRes.data?.id;
-    return { success: true, postId: igMediaId, permalink: `https://instagram.com/p/${igMediaId}` };
-  } catch (err) {
-    console.error("[IG Publish Error]", err.response?.data || err.message);
-    throw err;
   }
+
+  // Format actionable error
+  const fbErr = lastErr?.response?.data?.error;
+  if (fbErr?.code === 10 || fbErr?.message?.includes("instagram_content_publish")) {
+    const customErr = new Error(
+      "Instagram requires 'instagram_content_publish' permission. Please reconnect your Facebook Page or Instagram in Connect Accounts to grant posting permission."
+    );
+    customErr.code = "PERMISSION_MISSING";
+    throw customErr;
+  }
+
+  throw lastErr || new Error("Failed to publish post to Instagram account");
 }
+
 
 // ─── GET ALL SOCIAL POSTS ───────────────────────────────────────────────────
 router.get("/social-posts", async (req, res) => {
@@ -237,6 +276,7 @@ router.post("/social-posts/publish", async (req, res) => {
           publishResult = await publishToInstagram({
             igAccountId: integ.ig_account_id || integ.fb_page_id,
             token: integ.access_token,
+            userToken: integ.user_access_token,
             postType,
             message,
             mediaUrls,

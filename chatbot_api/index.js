@@ -34,6 +34,7 @@ import flowWebhookRoutes from "./routes/flowWebhooks.js";
 import chatPaymentRoutes from "./routes/chatPayments.js";
 import notificationRoutes from "./routes/notifications.js";
 import socialPostRoutes from "./routes/socialPosts.js";
+import teamRoutes from "./routes/team.js";
 
 import http from "http";
 import { initSocket } from "./utils/socket.js";
@@ -121,6 +122,7 @@ app.use("/api/v1", flowWebhookRoutes);
 app.use("/api/v1", chatPaymentRoutes);
 app.use("/api/v1", notificationRoutes);
 app.use("/api/v1", socialPostRoutes);
+app.use("/api/v1", teamRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {

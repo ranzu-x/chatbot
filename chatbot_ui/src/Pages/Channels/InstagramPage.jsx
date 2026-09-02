@@ -145,8 +145,8 @@ export default function InstagramPage({ embedded = false }) {
     }
   };
 
-  // Instagram needs different scopes than Facebook
-  const IG_SCOPES = 'pages_show_list,instagram_basic,instagram_manage_messages,pages_read_engagement,pages_messaging,pages_manage_engagement,instagram_manage_comments';
+  // Instagram needs different scopes than Facebook, including content publishing
+  const IG_SCOPES = 'pages_show_list,instagram_basic,instagram_manage_messages,pages_read_engagement,pages_messaging,pages_manage_engagement,instagram_manage_comments,instagram_content_publish';
 
   const handleIGLogin = () => {
     setLoginLoading(true);
@@ -212,10 +212,8 @@ export default function InstagramPage({ embedded = false }) {
 
   const connectedIds = new Set(connected.map(c => c.ig_account_id));
 
-  const LayoutWrapper = embedded ? ({ children }) => <div>{children}</div> : AppLayout;
-
-  return (
-    <LayoutWrapper>
+  const pageContent = (
+    <div>
       {toast && <div className="toast-container"><div className={`toast ${toast.type}`}>{toast.msg}</div></div>}
 
       {/* Manual Connect Modal */}
@@ -436,6 +434,9 @@ export default function InstagramPage({ embedded = false }) {
           </div>
         </div>
       </div>
-    </LayoutWrapper>
+    </div>
   );
+
+  if (embedded) return pageContent;
+  return <AppLayout>{pageContent}</AppLayout>;
 }

@@ -34,6 +34,7 @@ import {
   X,
   Lock,
   Video,
+  ShoppingBag,
 } from 'lucide-react';
 
 const CHANNELS = [
@@ -59,7 +60,15 @@ function getPlatformBadge(platform = '') {
 
 export default function ConnectAccountsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = searchParams.get('tab') || 'all';
+  const [activeTab, setActiveTab] = useState(() => searchParams.get('tab') || 'all');
+
+  // Synchronize activeTab if URL query params change (e.g. back/forward navigation)
+  useEffect(() => {
+    const tabFromUrl = searchParams.get('tab') || 'all';
+    if (tabFromUrl !== activeTab) {
+      setActiveTab(tabFromUrl);
+    }
+  }, [searchParams]);
 
   const [integrations, setIntegrations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -86,7 +95,8 @@ export default function ConnectAccountsPage() {
   }, []);
 
   const setTab = (tabId) => {
-    setSearchParams({ tab: tabId });
+    setActiveTab(tabId);
+    setSearchParams({ tab: tabId }, { replace: true });
   };
 
   const handleCopyWebhook = (id, url) => {

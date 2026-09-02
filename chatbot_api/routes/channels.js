@@ -531,7 +531,7 @@ router.post("/channels/facebook", async (req, res) => {
     let webhookSubscribed = false;
     try {
       const subRes = await fetch(
-        `https://graph.facebook.com/v21.0/${fbPageId}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,feed&access_token=${finalAccessToken}`,
+        `https://graph.facebook.com/v21.0/${fbPageId}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,feed,messaging_customer_information,message_template_status_update&access_token=${finalAccessToken}`,
         { method: "POST" }
       );
       const subData = await subRes.json();
@@ -636,7 +636,7 @@ router.post("/channels/facebook/quick-connect", async (req, res) => {
       // Subscribe to webhooks
       try {
         await fetch(
-          `https://graph.facebook.com/v21.0/${page.id}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,feed&access_token=${page.access_token}`,
+          `https://graph.facebook.com/v21.0/${page.id}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,feed,messaging_customer_information,message_template_status_update&access_token=${page.access_token}`,
           { method: "POST" }
         );
       } catch (subErr) {}
@@ -684,7 +684,7 @@ router.post("/channels/facebook/sync-subscriptions", async (req, res) => {
     for (const page of pages) {
       try {
         const subRes = await fetch(
-          `https://graph.facebook.com/v21.0/${page.fb_page_id}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,feed&access_token=${page.access_token}`,
+          `https://graph.facebook.com/v21.0/${page.fb_page_id}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,feed,messaging_customer_information,message_template_status_update&access_token=${page.access_token}`,
           { method: "POST" }
         );
         const subData = await subRes.json();
@@ -697,6 +697,177 @@ router.post("/channels/facebook/sync-subscriptions", async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── Utility Messaging: List Page Utility Templates ───────────────
+router.get("/channels/facebook/:integrationId/utility-templates", async (req, res) => {
+  const { integrationId } = req.params;
+  const agencyId = req.agencyId;
+
+  try {
+    // 1. Resolve the page access token for this integration
+    const [rows] = await pool.query(
+      "SELECT * FROM integrations WHERE id = ? AND platform = 'FACEBOOK' AND agency_id = ? LIMIT 1",
+      [integrationId, agencyId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: "Facebook page integration not found" });
+    }
+
+    const page = rows[0];
+    const pageToken = page.access_token;
+    const pageId = page.fb_page_id;
+
+    if (!pageToken || !pageId) {
+      return res.status(400).json({ success: false, message: "Page has no access token or page ID stored" });
+    }
+
+    // 2. Fetch utility message templates from Graph API
+    // Message templates require the Page Access Token and the pages_utility_messaging permission
+    const graphUrl = `https://graph.facebook.com/v21.0/${pageId}/message_templates?category=UTILITY&fields=name,status,language,components&access_token=${pageToken}`;
+    const graphRes = await fetch(graphUrl);
+    const graphData = await graphRes.json();
+
+    if (graphData.error) {
+      console.warn("[FB Utility Templates] Graph API error:", graphData.error);
+      // Return graceful empty list with the error message for the UI to display
+      return res.json({
+        success: true,
+        templates: [],
+        graphError: graphData.error.message || "Could not fetch templates from Meta",
+        note: "Ensure the connected page has pages_utility_messaging permission approved in your Meta App.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      templates: graphData.data || [],
+      paging: graphData.paging || null,
+      pageId,
+      pageName: page.name,
+    });
+  } catch (err) {
+    console.error("[FB Utility Templates Error]", err);
+    return res.status(500).json({ success: false, message: "Server error fetching utility templates" });
+  }
+});
+
+// ─── Utility Messaging: Send a Utility Message to a PSID ──────────
+router.post("/channels/facebook/:integrationId/send-utility", async (req, res) => {
+  const { integrationId } = req.params;
+  const { recipientId, templateName, languageCode = "en_US", components = [] } = req.body;
+  const agencyId = req.agencyId;
+
+  if (!recipientId || !templateName) {
+    return res.status(400).json({
+      success: false,
+      message: "recipientId (Facebook PSID) and templateName are required",
+    });
+  }
+
+  try {
+    // 1. Resolve integration
+    const [rows] = await pool.query(
+      "SELECT * FROM integrations WHERE id = ? AND platform = 'FACEBOOK' AND agency_id = ? LIMIT 1",
+      [integrationId, agencyId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: "Facebook page integration not found" });
+    }
+
+    const page = rows[0];
+    const pageToken = page.access_token;
+    const pageId = page.fb_page_id;
+
+    if (!pageToken || !pageId) {
+      return res.status(400).json({ success: false, message: "Page has no access token or page ID stored" });
+    }
+
+    // 2. Send the utility template message via Messenger Send API
+    // Utility messages use message_type: "UTILITY" with template payload
+    const sendPayload = {
+      recipient: { id: recipientId },
+      message: {
+        attachment: {
+          type: "template",
+          payload: {
+            template_type: "one_time_notif_req",  // or generic template depending on setup
+            // For utility messaging the correct approach is using the text message with messaging_type UTILITY
+          },
+        },
+      },
+      messaging_type: "UTILITY",
+    };
+
+    // Utility messages are sent as structured template_type "generic" or as plain text UTILITY type
+    // Most utility messages are plain structured text outside the 24h window
+    const utilityPayload = {
+      recipient: { id: recipientId },
+      messaging_type: "UTILITY",
+      message: {
+        text: components.length > 0
+          ? components.map(c => c.text || '').join('\n')
+          : `Utility notification from ${page.name || page.fb_page_name}`,
+      },
+    };
+
+    // If template components were provided, use template attachment format
+    const finalPayload = templateName && components.length > 0 ? {
+      recipient: { id: recipientId },
+      messaging_type: "UTILITY",
+      message: {
+        attachment: {
+          type: "template",
+          payload: {
+            template_type: "generic",
+            elements: [
+              {
+                title: components.find(c => c.type === "HEADER")?.text || templateName,
+                subtitle: components.find(c => c.type === "BODY")?.text || "",
+                buttons: (components.find(c => c.type === "BUTTONS")?.buttons || []).map(b => ({
+                  type: "web_url",
+                  url: b.url || "#",
+                  title: b.text || "View",
+                })),
+              },
+            ],
+          },
+        },
+      },
+    } : utilityPayload;
+
+    const sendRes = await fetch(
+      `https://graph.facebook.com/v21.0/me/messages?access_token=${pageToken}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(finalPayload),
+      }
+    );
+    const sendData = await sendRes.json();
+
+    if (sendData.error) {
+      console.error("[FB Send Utility] Graph error:", sendData.error);
+      return res.status(400).json({
+        success: false,
+        message: sendData.error.message || "Failed to send utility message",
+        code: sendData.error.code,
+        fbError: sendData.error,
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Utility message sent successfully",
+      messageId: sendData.message_id,
+      recipientId: sendData.recipient_id,
+    });
+  } catch (err) {
+    console.error("[FB Send Utility Error]", err);
+    return res.status(500).json({ success: false, message: "Server error sending utility message" });
   }
 });
 

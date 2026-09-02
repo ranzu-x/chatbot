@@ -73,6 +73,16 @@ export default function FacebookPage({ embedded = false }) {
   const [toast, setToast] = useState(null);
   const { fbReady, sdkError } = useFacebookSDK();
 
+  // Utility Messaging State
+  const [utilityPageId, setUtilityPageId] = useState('');
+  const [utilityTemplates, setUtilityTemplates] = useState([]);
+  const [utilityTemplatesLoading, setUtilityTemplatesLoading] = useState(false);
+  const [utilityTemplatesError, setUtilityTemplatesError] = useState('');
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
+  const [utilityForm, setUtilityForm] = useState({ recipientId: '', templateName: '', components: [] });
+  const [utilitySending, setUtilitySending] = useState(false);
+  const [utilitySendResult, setUtilitySendResult] = useState(null);
+
   const showToast = (msg, type = 'success') => {
     if (type === 'error') notify.error(msg);
     else notify.success(msg);
@@ -121,7 +131,7 @@ export default function FacebookPage({ embedded = false }) {
         showToast('Facebook login was cancelled or failed', 'error');
       }
     }, {
-      scope: 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_manage_engagement,pages_manage_posts',
+      scope: 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_manage_engagement,pages_manage_posts,pages_utility_messaging,instagram_basic,instagram_content_publish,instagram_manage_comments,instagram_manage_messages',
       return_scopes: true,
     });
   };
@@ -232,6 +242,54 @@ export default function FacebookPage({ embedded = false }) {
       fetchCommentRules();
     } catch {
       notify.error('Failed to delete campaign');
+    }
+  };
+
+  // ── Utility Messaging: Fetch Templates for Selected Page ──
+  const fetchUtilityTemplates = async (integrationId) => {
+    if (!integrationId) { setUtilityTemplates([]); return; }
+    setUtilityTemplatesLoading(true);
+    setUtilityTemplatesError('');
+    setSelectedTemplate(null);
+    try {
+      const res = await channelAPI.getFBUtilityTemplates(integrationId);
+      if (res.data.graphError) {
+        setUtilityTemplatesError(res.data.graphError);
+        setUtilityTemplates([]);
+      } else {
+        setUtilityTemplates(res.data.templates || []);
+      }
+    } catch (err) {
+      setUtilityTemplatesError(err?.response?.data?.message || 'Failed to load utility templates');
+      setUtilityTemplates([]);
+    } finally {
+      setUtilityTemplatesLoading(false);
+    }
+  };
+
+  // ── Utility Messaging: Send Message ──
+  const handleSendUtilityMessage = async (e) => {
+    e.preventDefault();
+    setUtilitySendResult(null);
+    if (!utilityPageId) { showToast('Please select a Facebook Page first', 'error'); return; }
+    if (!utilityForm.recipientId) { showToast('Please enter the Recipient PSID', 'error'); return; }
+    if (!utilityForm.templateName) { showToast('Please select a template', 'error'); return; }
+    setUtilitySending(true);
+    try {
+      const res = await channelAPI.sendFBUtilityMessage(utilityPageId, {
+        recipientId: utilityForm.recipientId,
+        templateName: utilityForm.templateName,
+        components: selectedTemplate?.components || [],
+      });
+      setUtilitySendResult({ success: true, messageId: res.data.messageId });
+      showToast('Utility message sent successfully!');
+      setUtilityForm(f => ({ ...f, recipientId: '' }));
+    } catch (err) {
+      const msg = err?.response?.data?.message || 'Failed to send utility message';
+      setUtilitySendResult({ success: false, error: msg });
+      showToast(msg, 'error');
+    } finally {
+      setUtilitySending(false);
     }
   };
 
@@ -368,6 +426,12 @@ export default function FacebookPage({ embedded = false }) {
         >
           <MessageSquare size={16} /> Comment Automation ({commentRules.length})
         </button>
+        <button
+          className={`fb-tab-btn ${activeTab === 'utility' ? 'active' : ''}`}
+          onClick={() => setActiveTab('utility')}
+        >
+          <Zap size={16} /> Utility Messaging
+        </button>
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════
@@ -501,7 +565,7 @@ export default function FacebookPage({ embedded = false }) {
                 Connect via Facebook Login
               </div>
               <div style={{ fontSize: '0.8rem', color: '#5c5c80', marginBottom: 16, lineHeight: 1.5 }}>
-                Log in to select and import pages with <code>pages_messaging</code>, <code>pages_manage_engagement</code>, and <code>pages_manage_posts</code> permissions for full DM & comment automation.
+                Log in to select and import pages with <code>pages_messaging</code>, <code>pages_manage_engagement</code>, <code>pages_manage_posts</code>, and <code>pages_utility_messaging</code> permissions for full DM, comment automation & utility messaging outside the 24h window.
               </div>
               <FBLoginButton onClick={handleFBLogin} loading={loginLoading} disabled={loginLoading} />
             </div>
@@ -795,6 +859,278 @@ export default function FacebookPage({ embedded = false }) {
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          TAB 3: UTILITY MESSAGING
+          ═══════════════════════════════════════════════════════════════════ */}
+      {activeTab === 'utility' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 20, alignItems: 'start' }}>
+
+          {/* ── Left: Templates Panel ── */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+            {/* Info Banner */}
+            <div style={{ padding: '14px 18px', borderRadius: 12, background: 'rgba(99,102,241,0.06)', border: '1.5px solid rgba(99,102,241,0.2)', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+              <Zap size={18} color="#6366f1" style={{ flexShrink: 0, marginTop: 2 }} />
+              <div>
+                <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#1a1a2e', marginBottom: 3 }}>
+                  About <code>pages_utility_messaging</code>
+                </div>
+                <p style={{ margin: 0, fontSize: '0.78rem', color: '#5c5c80', lineHeight: 1.5 }}>
+                  Utility messages are transactional notifications (receipts, order updates, appointment reminders) that can be sent to users <strong>outside the 24-hour messaging window</strong>. Templates must be pre-approved in your{' '}
+                  <a href="https://business.facebook.com" target="_blank" rel="noreferrer" style={{ color: '#1877f2' }}>Meta Business Suite</a> before they can be used here.
+                </p>
+              </div>
+            </div>
+
+            {/* Page Selector */}
+            <div style={{ background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, padding: 20 }}>
+              <h3 style={{ fontSize: '0.92rem', fontWeight: 700, margin: '0 0 12px 0', color: '#1a1a2e' }}>
+                Step 1 — Select a Facebook Page
+              </h3>
+              {connected.length === 0 ? (
+                <div style={{ fontSize: '0.82rem', color: '#5c5c80', padding: '10px 0' }}>
+                  No Facebook Pages connected yet. Go to the <strong>Connected Pages</strong> tab to connect a page first.
+                </div>
+              ) : (
+                <select
+                  className="form-input w-full"
+                  value={utilityPageId}
+                  onChange={(e) => {
+                    setUtilityPageId(e.target.value);
+                    setUtilityForm(f => ({ ...f, templateName: '' }));
+                    setSelectedTemplate(null);
+                    fetchUtilityTemplates(e.target.value);
+                  }}
+                  style={{ marginBottom: 0 }}
+                >
+                  <option value="">— Choose a Page —</option>
+                  {connected.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {/* Templates List */}
+            <div style={{ background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, overflow: 'hidden' }}>
+              <div style={{ padding: '14px 20px', borderBottom: '1px solid #e4e4f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3 style={{ fontSize: '0.92rem', fontWeight: 700, margin: 0, color: '#1a1a2e' }}>
+                  Step 2 — Browse Utility Templates
+                </h3>
+                {utilityPageId && (
+                  <button
+                    onClick={() => fetchUtilityTemplates(utilityPageId)}
+                    style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid #e4e4f0', background: '#fff', fontSize: '0.78rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, color: '#5c5c80' }}
+                  >
+                    <RefreshCw size={12} /> Refresh
+                  </button>
+                )}
+              </div>
+
+              {!utilityPageId ? (
+                <div style={{ padding: '40px 20px', textAlign: 'center', color: '#94a3b8', fontSize: '0.84rem' }}>
+                  Select a page above to load its utility templates.
+                </div>
+              ) : utilityTemplatesLoading ? (
+                <div style={{ padding: '40px 20px', textAlign: 'center' }}>
+                  <div className="loading-spinner" style={{ margin: '0 auto 8px' }} />
+                  <div style={{ color: '#5c5c80', fontSize: '0.82rem' }}>Fetching templates from Meta Graph API…</div>
+                </div>
+              ) : utilityTemplatesError ? (
+                <div style={{ padding: '20px', margin: 12, borderRadius: 8, background: '#fef2f2', border: '1px solid #fecaca', fontSize: '0.8rem', color: '#dc2626' }}>
+                  <strong>⚠ Graph API Error:</strong> {utilityTemplatesError}
+                  <div style={{ marginTop: 6, color: '#5c5c80', fontSize: '0.76rem' }}>
+                    Make sure your Meta App has <code>pages_utility_messaging</code> approved, and utility templates are created in Meta Business Suite.
+                  </div>
+                </div>
+              ) : utilityTemplates.length === 0 ? (
+                <div style={{ padding: '40px 20px', textAlign: 'center' }}>
+                  <div style={{ fontSize: '2rem', marginBottom: 8 }}>📋</div>
+                  <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#1a1a2e', marginBottom: 4 }}>No Utility Templates Found</div>
+                  <p style={{ fontSize: '0.8rem', color: '#5c5c80', margin: 0 }}>
+                    Create UTILITY category message templates in{' '}
+                    <a href="https://business.facebook.com" target="_blank" rel="noreferrer" style={{ color: '#1877f2' }}>Meta Business Suite</a>{' '}
+                    and they will appear here once approved.
+                  </p>
+                </div>
+              ) : (
+                <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {utilityTemplates.map((tmpl) => {
+                    const isSelected = utilityForm.templateName === tmpl.name;
+                    const headerComp = tmpl.components?.find(c => c.type === 'HEADER');
+                    const bodyComp = tmpl.components?.find(c => c.type === 'BODY');
+                    const statusColor = tmpl.status === 'APPROVED' ? '#10b981' : tmpl.status === 'PENDING' ? '#f59e0b' : '#ef4444';
+                    return (
+                      <div
+                        key={tmpl.name}
+                        onClick={() => {
+                          setSelectedTemplate(tmpl);
+                          setUtilityForm(f => ({ ...f, templateName: tmpl.name }));
+                        }}
+                        style={{
+                          padding: '12px 14px',
+                          borderRadius: 10,
+                          border: `1.5px solid ${isSelected ? '#1877f2' : '#e4e4f0'}`,
+                          background: isSelected ? 'rgba(24,119,242,0.04)' : '#fafafa',
+                          cursor: 'pointer',
+                          transition: 'all 0.15s',
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                          <div style={{ fontWeight: 700, fontSize: '0.84rem', color: '#1a1a2e' }}>{tmpl.name}</div>
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                            {tmpl.language && (
+                              <span style={{ fontSize: '0.7rem', background: '#f1f5f9', color: '#64748b', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>
+                                {tmpl.language}
+                              </span>
+                            )}
+                            <span style={{ fontSize: '0.7rem', fontWeight: 700, color: statusColor, background: statusColor + '15', padding: '2px 8px', borderRadius: 10 }}>
+                              {tmpl.status || 'UNKNOWN'}
+                            </span>
+                          </div>
+                        </div>
+                        {headerComp?.text && (
+                          <div style={{ fontSize: '0.76rem', fontWeight: 600, color: '#475569', marginBottom: 2 }}>{headerComp.text}</div>
+                        )}
+                        {bodyComp?.text && (
+                          <div style={{ fontSize: '0.75rem', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {bodyComp.text}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── Right: Send Form ── */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
+              <h3 style={{ fontSize: '0.92rem', fontWeight: 700, margin: '0 0 16px 0', color: '#1a1a2e' }}>
+                Step 3 — Send Utility Message
+              </h3>
+
+              <form onSubmit={handleSendUtilityMessage} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: 5, color: '#374151' }}>
+                    Recipient Facebook PSID *
+                  </label>
+                  <input
+                    required
+                    className="form-input w-full"
+                    placeholder="e.g. 1234567890123456"
+                    value={utilityForm.recipientId}
+                    onChange={(e) => setUtilityForm(f => ({ ...f, recipientId: e.target.value }))}
+                  />
+                  <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: 4 }}>
+                    The Page-Scoped User ID (PSID) of the recipient. Found in conversation webhook events.
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: 5, color: '#374151' }}>
+                    Selected Template
+                  </label>
+                  {selectedTemplate ? (
+                    <div style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(24,119,242,0.06)', border: '1px solid rgba(24,119,242,0.2)', fontSize: '0.82rem' }}>
+                      <div style={{ fontWeight: 700, color: '#1877f2' }}>{selectedTemplate.name}</div>
+                      {selectedTemplate.components?.find(c => c.type === 'BODY')?.text && (
+                        <div style={{ color: '#475569', fontSize: '0.76rem', marginTop: 4 }}>
+                          {selectedTemplate.components.find(c => c.type === 'BODY').text}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ padding: '10px 12px', borderRadius: 8, background: '#f8fafc', border: '1px dashed #cbd5e1', fontSize: '0.82rem', color: '#94a3b8' }}>
+                      ← Select a template from the list on the left
+                    </div>
+                  )}
+                </div>
+
+                {/* Preview section when template selected */}
+                {selectedTemplate && (
+                  <div style={{ padding: '12px 14px', borderRadius: 10, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#475569', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      Message Preview
+                    </div>
+                    {selectedTemplate.components?.map((comp, i) => (
+                      <div key={i} style={{ marginBottom: 6 }}>
+                        <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginRight: 6 }}>{comp.type}</span>
+                        <span style={{ fontSize: '0.8rem', color: '#374151' }}>{comp.text || (comp.buttons ? `${comp.buttons.length} button(s)` : '—')}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Send result */}
+                {utilitySendResult && (
+                  <div style={{
+                    padding: '10px 14px',
+                    borderRadius: 8,
+                    background: utilitySendResult.success ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+                    border: `1px solid ${utilitySendResult.success ? '#a7f3d0' : '#fecaca'}`,
+                    fontSize: '0.8rem',
+                    color: utilitySendResult.success ? '#065f46' : '#dc2626',
+                  }}>
+                    {utilitySendResult.success
+                      ? `✓ Message sent! Message ID: ${utilitySendResult.messageId || 'N/A'}`
+                      : `✗ Failed: ${utilitySendResult.error}`}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={utilitySending || !selectedTemplate || !utilityForm.recipientId}
+                  style={{
+                    padding: '10px 18px',
+                    borderRadius: 8,
+                    background: (!selectedTemplate || !utilityForm.recipientId) ? '#e2e8f0' : '#1877f2',
+                    color: (!selectedTemplate || !utilityForm.recipientId) ? '#94a3b8' : '#ffffff',
+                    border: 'none',
+                    fontWeight: 700,
+                    fontSize: '0.86rem',
+                    cursor: (!selectedTemplate || !utilityForm.recipientId) ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {utilitySending ? (
+                    <><span className="loading-spinner" style={{ width: 14, height: 14, borderColor: 'rgba(255,255,255,0.3)', borderTopColor: '#fff' }} />Sending…</>
+                  ) : (
+                    <><Zap size={15} />Send Utility Message</>
+                  )}
+                </button>
+              </form>
+            </div>
+
+            {/* Permission Checklist Card */}
+            <div style={{ background: '#fff', border: '1px solid #e4e4f0', borderRadius: 12, padding: 18 }}>
+              <div style={{ fontWeight: 700, fontSize: '0.84rem', color: '#1a1a2e', marginBottom: 10 }}>
+                Requirements Checklist
+              </div>
+              {[
+                { label: 'pages_utility_messaging permission approved in Meta App', ok: true },
+                { label: 'Page reconnected with new permission scope (re-login required)', ok: null },
+                { label: 'Utility templates created & approved in Meta Business Suite', ok: utilityTemplates.length > 0 },
+                { label: 'Page Access Token is permanent (never-expiring)', ok: null },
+              ].map((item, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 8, fontSize: '0.78rem' }}>
+                  <span style={{ color: item.ok === true ? '#10b981' : item.ok === false ? '#ef4444' : '#f59e0b', fontSize: '1rem', lineHeight: 1 }}>
+                    {item.ok === true ? '✓' : item.ok === false ? '✗' : '○'}
+                  </span>
+                  <span style={{ color: '#475569' }}>{item.label}</span>
+                </div>
+              ))}
             </div>
           </div>
         </div>

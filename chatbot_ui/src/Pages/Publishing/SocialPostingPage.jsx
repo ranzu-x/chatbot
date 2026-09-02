@@ -141,6 +141,12 @@ export default function SocialPostingPage() {
       showToast('Carousel requires at least 2 image URLs', 'error');
       return;
     }
+    const hasInstagram = selectedIntegrationIds.some(id => integrations.find(i => i.id === id)?.platform === 'INSTAGRAM');
+    if (hasInstagram && (!filteredMedia || !filteredMedia.length)) {
+      showToast('Instagram posts require at least one photo or video URL. Please attach media.', 'error');
+      return;
+    }
+
     if (postType === 'TEXT' && !message.trim()) {
       showToast('Please write a message caption for your post', 'error');
       return;
@@ -331,10 +337,20 @@ export default function SocialPostingPage() {
                             }}
                           >
                             {isFb ? <Facebook size={14} color="#1877f2" /> : <Instagram size={14} color="#e1306c" />}
-                            {integ.name || integ.fb_page_name || 'Account'}
+                            <span>{integ.name || integ.fb_page_name || 'Account'}</span>
+                            <span style={{ fontSize: '0.68rem', opacity: 0.75, fontWeight: 500 }}>
+                              {isFb ? '(Page)' : integ.ig_username ? `(@${integ.ig_username})` : '(Instagram)'}
+                            </span>
                           </button>
                         );
                       })}
+                    </div>
+                  )}
+
+                  {selectedIntegrationIds.some(id => integrations.find(i => i.id === id)?.platform === 'INSTAGRAM') && ['TEXT', 'LINK'].includes(postType) && (
+                    <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: '#fdf2f8', border: '1px solid #fbcfe8', fontSize: '0.76rem', color: '#be185d', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <AlertCircle size={14} style={{ flexShrink: 0 }} />
+                      <span><strong>Instagram Notice:</strong> Instagram requires an image or video for all posts. Please choose <strong>Photo</strong>, <strong>Carousel</strong>, or <strong>Video</strong> format.</span>
                     </div>
                   )}
                 </div>

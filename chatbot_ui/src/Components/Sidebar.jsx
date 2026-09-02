@@ -13,7 +13,6 @@ import {
   Clock,
   Settings,
   Building2,
-  UserCheck,
   Plug,
   Sparkles,
   ChevronLeft,
@@ -47,7 +46,7 @@ const NAV_CONFIG = {
       { label: 'Custom Domain',    icon: Globe,           path: '/agency/domain-settings', moduleKey: 'feature_custom_domain' },
       { label: 'Agencies',         icon: Building2,       path: '/admin/agencies' },
       { label: 'User Manager',     icon: Users,           path: '/admin/users' },
-      { label: 'Agents',           icon: UserCheck,       path: '/admin/agents' },
+      { label: 'Team Members',     icon: Users,           path: '/admin/team' },
     ]},
   ],
   AGENCY: [
@@ -68,13 +67,14 @@ const NAV_CONFIG = {
       { label: 'Webhooks & Zapier', icon: Globe,          path: '/webhooks' },
       { label: 'Custom Domain',    icon: Globe,           path: '/agency/domain-settings', moduleKey: 'feature_custom_domain' },
       { label: 'User Manager',     icon: Users,           path: '/admin/users' },
-      { label: 'Agents',           icon: UserCheck,       path: '/agency/agents' },
+      { label: 'Team Members',     icon: Users,           path: '/agency/team' },
     ]},
   ],
   AGENT: [
     { section: 'Main', items: [
-      { label: 'Live Chat',   icon: MessageSquare, path: '/inbox',      moduleKey: 'feature_live_chat' },
-      { label: 'Subscribers', icon: Users,         path: '/contacts',   moduleKey: 'feature_subscribers' },
+      { label: 'Live Chat',    icon: MessageSquare, path: '/inbox',      moduleKey: 'feature_live_chat' },
+      { label: 'Subscribers',  icon: Users,         path: '/contacts',   moduleKey: 'feature_subscribers' },
+      { label: 'Team Members', icon: Users,         path: '/team' },
     ]},
   ],
 };

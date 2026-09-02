@@ -16,7 +16,7 @@ import AdminDashboard   from './Pages/Dashboard/AdminDashboard';
 import AgencyDashboard  from './Pages/Dashboard/AgencyDashboard';
 import AgenciesPage     from './Pages/SuperAdmin/AgenciesPage';
 import UsersPage        from './Pages/SuperAdmin/UsersPage';
-import AgentsPage       from './Pages/Agency/AgentsPage';
+import TeamMembersPage  from './Pages/Team/TeamMembersPage';
 import IntegrationsPage from './Pages/Agency/IntegrationsPage';
 import PackagesPage     from './Pages/SuperAdmin/PackagesPage';
 import DomainSettingsPage from './Pages/Agency/DomainSettingsPage';
@@ -77,7 +77,8 @@ export default function App() {
               <Route path="/admin/agencies" element={<ProtectedRoute roles={['ADMIN']}><AgenciesPage /></ProtectedRoute>} />
               <Route path="/admin/users" element={<ProtectedRoute roles={ADMIN_AGENCY}><UsersPage /></ProtectedRoute>} />
               <Route path="/users" element={<ProtectedRoute roles={ADMIN_AGENCY}><UsersPage /></ProtectedRoute>} />
-              <Route path="/admin/agents" element={<ProtectedRoute roles={['ADMIN']}><AgentsPage /></ProtectedRoute>} />
+              <Route path="/admin/agents" element={<ProtectedRoute roles={['ADMIN']}><TeamMembersPage /></ProtectedRoute>} />
+              <Route path="/admin/team" element={<ProtectedRoute roles={['ADMIN']}><TeamMembersPage /></ProtectedRoute>} />
               <Route path="/admin/integrations" element={<ProtectedRoute roles={['ADMIN']}><IntegrationsPage /></ProtectedRoute>} />
 
             {/* ── Agency ── */}
@@ -85,10 +86,13 @@ export default function App() {
             <Route path="/agency/plan" element={<ProtectedRoute roles={ADMIN_AGENCY}><MyPlanPage /></ProtectedRoute>} />
             <Route path="/plan" element={<ProtectedRoute roles={ADMIN_AGENCY}><MyPlanPage /></ProtectedRoute>} />
             <Route path="/billing/success" element={<ProtectedRoute roles={ADMIN_AGENCY}><BillingSuccessPage /></ProtectedRoute>} />
-            <Route path="/agency/agents" element={<ProtectedRoute roles={['AGENCY']}><AgentsPage /></ProtectedRoute>} />
-            <Route path="/agency/integrations" element={<ProtectedRoute roles={['AGENCY']}><IntegrationsPage /></ProtectedRoute>} />
+            <Route path="/agency/agents" element={<ProtectedRoute roles={['AGENCY']}><TeamMembersPage /></ProtectedRoute>} />
+            <Route path="/agency/team" element={<ProtectedRoute roles={['AGENCY']}><TeamMembersPage /></ProtectedRoute>} />
+            <Route path="/team" element={<ProtectedRoute roles={ALL_ROLES}><TeamMembersPage /></ProtectedRoute>} />
+            <Route path="/team-members" element={<ProtectedRoute roles={ALL_ROLES}><TeamMembersPage /></ProtectedRoute>} />
             <Route path="/agency/domain-settings" element={<ProtectedRoute roles={ADMIN_AGENCY}><DomainSettingsPage /></ProtectedRoute>} />
             <Route path="/domain-settings" element={<ProtectedRoute roles={ADMIN_AGENCY}><DomainSettingsPage /></ProtectedRoute>} />
+
 
             {/* ── Connect Account Central Hub (Admin + Agency) ── */}
             <Route path="/connect-accounts"   element={<ProtectedRoute roles={ADMIN_AGENCY}><ConnectAccountsPage /></ProtectedRoute>} />

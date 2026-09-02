@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router';
+import { useParams, useNavigate, useSearchParams } from 'react-router';
 import {
   ReactFlow, Background, Controls, MiniMap,
   Handle, Position, useNodesState, useEdgesState,
@@ -14,41 +14,151 @@ import {
   CircleStop, Play, Type, GripVertical, X, Plus, Trash2,
   ChevronRight, Zap, MousePointerClick, Mail, Phone,
   User, Settings2, CornerDownRight, Image, Upload,
-  Video, Music, FileText, Globe
+  Video, Music, FileText, Globe, ExternalLink
 } from 'lucide-react';
 import { flowAPI, uploadAPI, integrationAPI } from '../../services/api';
+import Swal from 'sweetalert2';
 
 /* ═══════════════════════════════════════════════════════════════════
    CONSTANTS
    ═══════════════════════════════════════════════════════════════════ */
 
 const PLATFORM_RULES = {
-  WHATSAPP:  { text: true, image: true, video: true, audio: true, file: true, buttons: 3, quickReplies: false, listMenu: 10, card: false, carousel: false },
-  FACEBOOK:  { text: true, image: true, video: true, audio: true, file: true, buttons: 3, quickReplies: 13, listMenu: false, card: true, carousel: 10 },
-  INSTAGRAM: { text: true, image: true, video: true, audio: true, file: true, buttons: false, quickReplies: 13, listMenu: false, card: true, carousel: false },
-  TELEGRAM:  { text: true, image: true, video: true, audio: true, file: true, buttons: true, quickReplies: false, listMenu: true, card: true, carousel: false },
-  WEBCHAT:   { text: true, image: true, video: true, audio: true, file: true, buttons: true, quickReplies: true, listMenu: true, card: true, carousel: true },
+  WHATSAPP: {
+    text: true,
+    image: true,
+    video: true,
+    audio: true,
+    file: true,
+    buttons: 3,        // WhatsApp Interactive Reply Buttons (max 3)
+    quickReplies: false, // WhatsApp uses buttons or listMenu
+    listMenu: 10,      // WhatsApp Interactive List Message (max 10 items)
+    card: false,
+    carousel: false,
+    collectInput: true,
+    condition: true,
+    delay: true,
+    webhook: true,
+    payment: true,
+    handoff: true,
+    end: true,
+  },
+  FACEBOOK: {
+    text: true,
+    image: true,
+    video: true,
+    audio: true,
+    file: true,
+    buttons: 3,        // Messenger Button Template (max 3)
+    quickReplies: 13,  // Messenger Quick Replies (max 13)
+    listMenu: false,
+    card: true,        // Generic Template Card
+    carousel: 10,      // Generic Template Carousel (max 10 cards)
+    collectInput: true,
+    condition: true,
+    delay: true,
+    webhook: true,
+    payment: true,
+    handoff: true,
+    end: true,
+  },
+  INSTAGRAM: {
+    text: true,
+    image: true,
+    video: true,
+    audio: true,
+    file: false,       // Instagram DM does not support file docs
+    buttons: false,    // Standalone buttons not supported outside card
+    quickReplies: 13,  // Instagram Quick Replies (max 13)
+    listMenu: false,
+    card: true,        // Generic Template Card
+    carousel: 10,      // Generic Template Carousel (max 10 cards)
+    collectInput: true,
+    condition: true,
+    delay: true,
+    webhook: true,
+    payment: false,
+    handoff: true,
+    end: true,
+  },
+  TELEGRAM: {
+    text: true,
+    image: true,
+    video: true,
+    audio: true,
+    file: true,
+    buttons: true,     // Inline Keyboard
+    quickReplies: true,// Reply Keyboard
+    listMenu: false,
+    card: true,
+    carousel: false,
+    collectInput: true,
+    condition: true,
+    delay: true,
+    webhook: true,
+    payment: true,
+    handoff: true,
+    end: true,
+  },
+  TIKTOK: {
+    text: true,
+    image: true,
+    video: true,
+    audio: false,
+    file: false,
+    buttons: false,
+    quickReplies: 3,   // Suggestions
+    listMenu: false,
+    card: false,
+    carousel: false,
+    collectInput: true,
+    condition: true,
+    delay: true,
+    webhook: true,
+    payment: false,
+    handoff: true,
+    end: true,
+  },
+  WEBCHAT: {
+    text: true,
+    image: true,
+    video: true,
+    audio: true,
+    file: true,
+    buttons: true,
+    quickReplies: true,
+    listMenu: true,
+    card: true,
+    carousel: true,
+    collectInput: true,
+    condition: true,
+    delay: true,
+    webhook: true,
+    payment: true,
+    handoff: true,
+    end: true,
+  },
 };
 
 const NODE_COLORS = {
-  start: '#10b981',
-  text: '#6366f1',
-  image: '#ec4899',
-  video: '#f43f5e',
-  audio: '#06b6d4',
-  file: '#64748b',
-  buttons: '#f59e0b',
-  quickReplies: '#22d3ee',
-  listMenu: '#8b5cf6',
-  card: '#a855f7',
-  carousel: '#d946ef',
-  collectInput: '#14b8a6',
-  condition: '#f97316',
-  delay: '#64748b',
-  webhook: '#0284c7',
-  payment: '#10b981',
-  handoff: '#6366f1',
-  end: '#ef4444',
+  start: '#059669',        // Fresh emerald
+  text: '#4f46e5',         // Soft indigo
+  image: '#db2777',        // Soft pink
+  video: '#e11d48',        // Soft rose
+  audio: '#0891b2',        // Soft cyan
+  file: '#475569',         // Slate
+  buttons: '#d97706',      // Warm amber
+  quickReplies: '#0284c7', // Sky blue
+  listMenu: '#7c3aed',     // Violet
+  card: '#9333ea',         // Purple
+  carousel: '#c026d3',     // Fuchsia
+  collectInput: '#0d9488', // Teal
+  condition: '#ea580c',    // Warm orange
+  delay: '#64748b',        // Slate
+  webhook: '#2563eb',      // Royal blue
+  payment: '#16a34a',      // Green
+  handoff: '#6366f1',      // Indigo
+  end: '#dc2626',          // Soft red
 };
 
 const NODE_ICONS = {
@@ -162,19 +272,25 @@ const builderStyles = `
     box-shadow: 0 1px 4px rgba(0,0,0,0.06);
   }
   .fb-toolbar-back {
-    width: 36px; height: 36px;
-    display: flex; align-items: center; justify-content: center;
+    height: 36px;
+    padding: 0 14px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
     border-radius: 8px;
-    background: transparent;
-    border: 1px solid #e4e4f0;
-    color: #5c5c80;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    color: #334155;
+    font-size: 13px;
+    font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
+    flex-shrink: 0;
   }
   .fb-toolbar-back:hover {
-    background: #f0f0fa;
-    color: #1a1a2e;
-    border-color: #c4c4e0;
+    background: #f1f5f9;
+    color: #0f172a;
+    border-color: #cbd5e1;
   }
   .fb-toolbar-name {
     font-size: 16px;
@@ -464,8 +580,9 @@ const builderStyles = `
 
   /* ── Custom Node Styles ────────────────────────────────────── */
   .fb-node {
-    min-width: 180px;
-    max-width: 260px;
+    width: 220px;
+    min-width: 220px;
+    max-width: 220px;
     border-radius: 12px;
     background: #ffffff;
     border: 1.5px solid #e4e4f0;
@@ -481,6 +598,11 @@ const builderStyles = `
   .fb-node.selected {
     border-color: #6366f1;
     box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15), 0 6px 24px rgba(0,0,0,0.10);
+  }
+  .fb-node.has-error,
+  .fb-node-condition.has-error {
+    border-color: #ef4444 !important;
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.14), 0 2px 8px rgba(0,0,0,0.06) !important;
   }
   .fb-node-header {
     display: flex;
@@ -650,9 +772,10 @@ const builderStyles = `
    ═══════════════════════════════════════════════════════════════════ */
 
 function isNodeSupportedOnPlatform(nodeType, platform) {
-  if (!platform || !PLATFORM_RULES[platform]) return true;
-  const rules = PLATFORM_RULES[platform];
-  if (['start', 'end', 'condition', 'delay', 'handoff', 'collectInput'].includes(nodeType)) return true;
+  if (!platform) return true;
+  const p = (platform || 'WEBCHAT').toUpperCase();
+  const rules = PLATFORM_RULES[p] || PLATFORM_RULES.WEBCHAT;
+  if (nodeType === 'start') return true;
   const rule = rules[nodeType];
   return rule !== false && rule !== undefined;
 }
@@ -668,22 +791,402 @@ function generateNodeId(type) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   CUSTOM NODE COMPONENTS
+   HELPER: Component Data Validation
+   ═══════════════════════════════════════════════════════════════════ */
+
+function validateNodeData(node) {
+  if (!node) return null;
+  const data = node.data || {};
+  switch (node.type) {
+    case 'start':
+      if (data.trigger_type === 'keyword') {
+        const rawKw = data.keywords || (data.trigger_keyword ? data.trigger_keyword.split(',') : []);
+        const kwList = Array.isArray(rawKw) ? rawKw.filter((k) => k && String(k).trim()) : [];
+        if (kwList.length === 0) return 'Please set at least one trigger keyword';
+      }
+      return null;
+
+    case 'text':
+      if (!data.message || !data.message.trim()) {
+        return 'Text Message cannot be empty';
+      }
+      return null;
+
+    case 'image':
+      if (!(data.imageUrl || data.mediaUrl || '').trim()) {
+        return 'Image URL or uploaded image is required';
+      }
+      return null;
+
+    case 'video':
+      if (!(data.mediaUrl || '').trim()) {
+        return 'Video URL or uploaded video is required';
+      }
+      return null;
+
+    case 'audio':
+      if (!(data.mediaUrl || '').trim()) {
+        return 'Audio URL or uploaded audio is required';
+      }
+      return null;
+
+    case 'file':
+      if (!(data.mediaUrl || data.filename || '').trim()) {
+        return 'Document file or filename is required';
+      }
+      return null;
+
+    case 'buttons':
+      if (!data.message || !data.message.trim()) {
+        return 'Buttons prompt message cannot be empty';
+      }
+      const validBtns = (data.buttons || []).filter((b) => (typeof b === 'string' ? b : b?.title || '').trim());
+      if (validBtns.length === 0) {
+        return 'At least one button label is required';
+      }
+      return null;
+
+    case 'quickReplies':
+      if (!data.message || !data.message.trim()) {
+        return 'Quick replies message cannot be empty';
+      }
+      const validReplies = (data.replies || []).filter((r) => (typeof r === 'string' ? r : r?.title || '').trim());
+      if (validReplies.length === 0) {
+        return 'At least one quick reply option is required';
+      }
+      return null;
+
+    case 'listMenu':
+      if (!data.title || !data.title.trim()) {
+        return 'List Menu title cannot be empty';
+      }
+      const validItems = (data.items || []).filter((it) => (typeof it === 'string' ? it : it?.title || '').trim());
+      if (validItems.length === 0) {
+        return 'At least one menu option is required';
+      }
+      return null;
+
+    case 'card':
+      if (!(data.title || '').trim() && !(data.imageUrl || '').trim()) {
+        return 'Card requires at least a title or image';
+      }
+      return null;
+
+    case 'carousel':
+      if (!data.cards || data.cards.length === 0) {
+        return 'Carousel requires at least one card';
+      }
+      const hasValidCard = data.cards.some((c) => (c.title || '').trim() || (c.imageUrl || '').trim());
+      if (!hasValidCard) {
+        return 'At least one card needs a title or image';
+      }
+      return null;
+
+    case 'collectInput':
+      if (!data.variable || !data.variable.trim()) {
+        return 'Variable name to save input is required';
+      }
+      return null;
+
+    case 'condition':
+      if (!data.variable || !data.variable.trim()) {
+        return 'Variable to evaluate is required';
+      }
+      if (data.value === undefined || String(data.value).trim() === '') {
+        return 'Comparison value is required';
+      }
+      return null;
+
+    case 'delay':
+      if (!data.seconds || Number(data.seconds) <= 0) {
+        return 'Delay seconds must be greater than 0';
+      }
+      return null;
+
+    case 'webhook':
+      if (!data.url || !data.url.trim()) {
+        return 'Webhook URL endpoint is required';
+      }
+      return null;
+
+    case 'payment':
+      if (!data.productName || !data.productName.trim()) {
+        return 'Product or service name is required';
+      }
+      if (!data.amount || Number(data.amount) <= 0) {
+        return 'Payment amount must be greater than 0';
+      }
+      return null;
+
+    default:
+      return null;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   HELPER: Auto-Layout (Overlap-Free, Handle-Ordered Left-to-Right Flow)
+   ═══════════════════════════════════════════════════════════════════ */
+
+function getNodeDimensions(node) {
+  const width = 220;
+  if (!node) return { width, height: 110 };
+
+  switch (node.type) {
+    case 'start': {
+      const kws = node.data?.keywords || [];
+      return { width, height: kws.length > 2 ? 120 : 100 };
+    }
+    case 'text':
+      return { width, height: (node.data?.message?.length || 0) > 60 ? 140 : 110 };
+    case 'image': {
+      const hasCap = Boolean(node.data?.caption);
+      // Give image node ample allocated height and extra breathing room
+      return { width, height: hasCap ? 205 : 175 };
+    }
+    case 'quickReplies': {
+      const count = (node.data?.replies || []).length;
+      return { width, height: 95 + Math.max(1, count) * 34 };
+    }
+    case 'buttons': {
+      const count = (node.data?.buttons || []).length;
+      return { width, height: 90 + Math.max(1, count) * 34 };
+    }
+    case 'listMenu': {
+      const count = (node.data?.items || []).length;
+      return { width, height: 90 + Math.max(1, count) * 34 };
+    }
+    case 'card':
+      return { width, height: 185 };
+    case 'condition':
+      return { width, height: 145 };
+    case 'collectInput':
+    case 'payment':
+    case 'webhook':
+      return { width, height: 130 };
+    case 'delay':
+    case 'video':
+    case 'audio':
+    case 'file':
+      return { width, height: 120 };
+    case 'handoff':
+    case 'end':
+    default:
+      return { width, height: 100 };
+  }
+}
+
+function getAutoLayoutedNodes(nodes, edges) {
+  if (!nodes || nodes.length === 0) return [];
+
+  const H_GAP = 70; // Ample, clean horizontal gap between stages
+  const V_GAP = 36; // Generous vertical gap between adjacent cards to prevent any cramping
+
+  // Calculate actual dimensions for each node
+  const dimMap = {};
+  nodes.forEach((n) => {
+    dimMap[n.id] = getNodeDimensions(n);
+  });
+
+  // Build edge mappings and handle-aware child ordering
+  const inDegree = {};
+  const outgoingEdges = {};
+  nodes.forEach((n) => {
+    inDegree[n.id] = 0;
+    outgoingEdges[n.id] = [];
+  });
+
+  edges.forEach((e) => {
+    if (inDegree[e.target] !== undefined) {
+      inDegree[e.target] += 1;
+    }
+    if (outgoingEdges[e.source] !== undefined) {
+      outgoingEdges[e.source].push(e);
+    }
+  });
+
+  // Sort outgoing edges strictly by handle order so child nodes match the UI handles top-to-bottom
+  nodes.forEach((n) => {
+    const list = outgoingEdges[n.id];
+    if (!list || list.length <= 1) return;
+
+    list.sort((a, b) => {
+      const hA = a.sourceHandle || '';
+      const hB = b.sourceHandle || '';
+
+      const getIdx = (h, prefix) => {
+        if (!h.startsWith(prefix)) return 999;
+        const num = parseInt(h.replace(prefix, ''), 10);
+        return isNaN(num) ? 999 : num;
+      };
+
+      if (hA.startsWith('qr-') || hB.startsWith('qr-')) {
+        return getIdx(hA, 'qr-') - getIdx(hB, 'qr-');
+      }
+      if (hA.startsWith('btn-') || hB.startsWith('btn-')) {
+        return getIdx(hA, 'btn-') - getIdx(hB, 'btn-');
+      }
+      if (hA.startsWith('item-') || hB.startsWith('item-')) {
+        return getIdx(hA, 'item-') - getIdx(hB, 'item-');
+      }
+      if (hA === 'yes' || hB === 'yes' || hA === 'no' || hB === 'no') {
+        if (hA === 'yes' && hB === 'no') return -1;
+        if (hA === 'no' && hB === 'yes') return 1;
+      }
+      return 0;
+    });
+  });
+
+  // Map of unique ordered child nodes
+  const childrenMap = {};
+  nodes.forEach((n) => {
+    childrenMap[n.id] = [];
+    const list = outgoingEdges[n.id] || [];
+    list.forEach((e) => {
+      if (!childrenMap[n.id].includes(e.target)) {
+        childrenMap[n.id].push(e.target);
+      }
+    });
+  });
+
+  // Identify root nodes (prefer start node)
+  let rootNodes = nodes.filter((n) => n.type === 'start');
+  if (rootNodes.length === 0) {
+    rootNodes = nodes.filter((n) => inDegree[n.id] === 0);
+  }
+  if (rootNodes.length === 0 && nodes.length > 0) {
+    rootNodes = [nodes[0]];
+  }
+
+  // Layout assignment with global monotonic Y tracking (guarantees zero overlap)
+  const positions = {};
+  const visited = new Set();
+  let globalCurrentY = 60;
+
+  function layoutSubtree(nodeId, depthX) {
+    if (visited.has(nodeId)) {
+      if (positions[nodeId]) {
+        positions[nodeId].x = Math.max(positions[nodeId].x, depthX);
+      }
+      return positions[nodeId] ? positions[nodeId].y : globalCurrentY;
+    }
+    visited.add(nodeId);
+
+    const children = childrenMap[nodeId] || [];
+    const myDim = dimMap[nodeId] || { width: 220, height: 110 };
+
+    if (children.length === 0) {
+      // Leaf node: place at current available global Y
+      const nodeY = globalCurrentY;
+      positions[nodeId] = { x: Math.round(depthX), y: Math.round(nodeY) };
+      globalCurrentY += myDim.height + V_GAP;
+      return nodeY;
+    }
+
+    if (children.length === 1) {
+      // Single child: layout child in next column and align vertical centers
+      const childId = children[0];
+      const childDim = dimMap[childId] || { width: 220, height: 110 };
+      const nextX = depthX + myDim.width + H_GAP;
+      const childY = layoutSubtree(childId, nextX);
+      const parentY = Math.round(childY + (childDim.height - myDim.height) / 2);
+      positions[nodeId] = { x: Math.round(depthX), y: parentY };
+      return parentY;
+    }
+
+    // Multiple children (branching node like Quick Replies, Buttons, Condition):
+    const nextX = depthX + myDim.width + H_GAP;
+    const childYs = [];
+
+    children.forEach((childId) => {
+      const cY = layoutSubtree(childId, nextX);
+      childYs.push(cY);
+    });
+
+    // Parent is vertically centered between first and last child
+    const firstY = childYs[0];
+    const lastY = childYs[childYs.length - 1];
+    const parentY = Math.round((firstY + lastY) / 2);
+
+    positions[nodeId] = { x: Math.round(depthX), y: parentY };
+    return parentY;
+  }
+
+  // Layout all root trees
+  rootNodes.forEach((root) => {
+    layoutSubtree(root.id, 60);
+    globalCurrentY += 40;
+  });
+
+  // Handle any disconnected orphan nodes
+  const unreached = nodes.filter((n) => !positions[n.id]);
+  if (unreached.length > 0) {
+    unreached.forEach((n) => {
+      const myDim = dimMap[n.id] || { width: 230, height: 110 };
+      positions[n.id] = { x: 60, y: Math.round(globalCurrentY) };
+      globalCurrentY += myDim.height + V_GAP;
+    });
+  }
+
+  return nodes.map((node) => ({
+    ...node,
+    sourcePosition: Position.Right,
+    targetPosition: Position.Left,
+    position: positions[node.id] || node.position,
+  }));
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   CUSTOM NODE COMPONENTS (Clean Light Theme)
    ═══════════════════════════════════════════════════════════════════ */
 
 /* ── Base wrapper for standard nodes ─────────────────────────── */
 function NodeWrapper({ children, color, label, icon: Icon, selected, data, type }) {
   const unsupported = data?._unsupported;
+  const validationError = data?._validationError;
+
   return (
-    <div className={`fb-node${selected ? ' selected' : ''}`}>
-      {unsupported && (
-        <div className="fb-node-warning" title="Not supported on this platform">
+    <div
+      className={`fb-node${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
+      style={{
+        borderColor: validationError ? '#ef4444' : selected ? color : '#e2e8f0',
+        background: '#ffffff',
+      }}
+    >
+      {validationError ? (
+        <div
+          className="fb-node-warning"
+          style={{ background: '#ef4444' }}
+          title={`Missing Data: ${validationError}`}
+        >
           <AlertTriangle size={12} color="#fff" />
         </div>
-      )}
-      <div className="fb-node-header" style={{ background: color }}>
-        {Icon && <Icon size={14} />}
-        <span>{label}</span>
+      ) : unsupported ? (
+        <div className="fb-node-warning" title="Not permitted on current channel">
+          <AlertTriangle size={12} color="#fff" />
+        </div>
+      ) : null}
+      <div
+        className="fb-node-header"
+        style={{
+          background: validationError ? '#fef2f2' : `${color}12`,
+          borderBottom: `1px solid ${validationError ? '#fecaca' : `${color}22`}`,
+        }}
+      >
+        <div
+          style={{
+            width: 22,
+            height: 22,
+            borderRadius: 6,
+            background: validationError ? '#fee2e2' : `${color}1e`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          {Icon && <Icon size={13} style={{ color: validationError ? '#ef4444' : color }} />}
+        </div>
+        <span style={{ fontWeight: 700, fontSize: '11.5px', color: validationError ? '#b91c1c' : '#1e293b' }}>{label}</span>
       </div>
       {children}
     </div>
@@ -701,7 +1204,7 @@ function StartNode({ data, selected }) {
       <div className="fb-node-body">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
           <span style={{ fontSize: 11, opacity: 0.8 }}>Trigger:</span>
-          <span style={{ fontWeight: 700, color: '#10b981', textTransform: 'capitalize', fontSize: 11 }}>
+          <span style={{ fontWeight: 700, color: '#059669', textTransform: 'capitalize', fontSize: 11 }}>
             {triggerType === 'keyword' ? '🔑 Keywords' : triggerType === 'first_message' ? '👋 First Message' : triggerType === 'any_message' ? '💬 Any Message' : triggerType}
           </span>
         </div>
@@ -717,8 +1220,8 @@ function StartNode({ data, selected }) {
                   style={{
                     padding: '2px 6px',
                     borderRadius: 4,
-                    background: 'rgba(16, 185, 129, 0.15)',
-                    color: '#10b981',
+                    background: 'rgba(5, 150, 105, 0.12)',
+                    color: '#059669',
                     fontSize: 10,
                     fontWeight: 600,
                   }}
@@ -733,7 +1236,7 @@ function StartNode({ data, selected }) {
           </div>
         )}
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.start }} />
+      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.start, width: 8, height: 8, border: '2px solid #ffffff' }} />
     </NodeWrapper>
   );
 }
@@ -742,13 +1245,13 @@ function StartNode({ data, selected }) {
 function TextNode({ data, selected }) {
   return (
     <NodeWrapper color={NODE_COLORS.text} label="Text Message" icon={Type} selected={selected} data={data} type="text">
-      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.text }} />
+      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.text, width: 8, height: 8, border: '2px solid #ffffff' }} />
       <div className="fb-node-body">
         <div className="fb-node-body-preview">
           {data.message || <span style={{ opacity: 0.5, fontStyle: 'italic' }}>No message set</span>}
         </div>
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.text }} />
+      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.text, width: 8, height: 8, border: '2px solid #ffffff' }} />
     </NodeWrapper>
   );
 }
@@ -763,28 +1266,28 @@ function ImageNode({ data, selected }) {
 
   return (
     <NodeWrapper color={NODE_COLORS.image} label="Image" icon={Image} selected={selected} data={data} type="image">
-      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.image }} />
+      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.image, width: 8, height: 8, border: '2px solid #ffffff' }} />
       <div className="fb-node-body">
         {fullUrl ? (
           <img
             src={fullUrl}
             alt="Preview"
-            style={{ width: '100%', maxHeight: 90, borderRadius: 6, objectFit: 'cover', display: 'block', marginBottom: 6 }}
+            style={{ width: '100%', height: 80, borderRadius: 6, objectFit: 'cover', display: 'block', marginBottom: 6 }}
           />
         ) : (
           <div style={{
-            width: '100%', height: 50, borderRadius: 6, marginBottom: 6,
-            background: 'rgba(255,255,255,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
+            width: '100%', height: 60, borderRadius: 6, marginBottom: 6,
+            background: '#f8fafc', border: '1px dashed #cbd5e1', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
           }}>
-            <Image size={16} style={{ opacity: 0.3 }} />
-            <span style={{ fontSize: 10, opacity: 0.4 }}>No image set</span>
+            <Image size={16} style={{ color: '#94a3b8' }} />
+            <span style={{ fontSize: 10, color: '#94a3b8' }}>No image set</span>
           </div>
         )}
         {data.caption && (
-          <div style={{ fontSize: 11, color: 'var(--text-secondary)' }} className="fb-node-body-preview">{data.caption}</div>
+          <div style={{ fontSize: 11, color: '#475569' }} className="fb-node-body-preview">{data.caption}</div>
         )}
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.image }} />
+      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.image, width: 8, height: 8, border: '2px solid #ffffff' }} />
     </NodeWrapper>
   );
 }
@@ -793,15 +1296,15 @@ function ImageNode({ data, selected }) {
 function VideoNode({ data, selected }) {
   return (
     <NodeWrapper color={NODE_COLORS.video} label="Video" icon={Video} selected={selected} data={data} type="video">
-      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.video }} />
+      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.video, width: 8, height: 8, border: '2px solid #ffffff' }} />
       <div className="fb-node-body" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <Video size={16} style={{ color: NODE_COLORS.video, flexShrink: 0 }} />
         <div style={{ overflow: 'hidden' }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>Video Message</div>
-          <div style={{ fontSize: 10, opacity: 0.6 }} className="truncate">{data.mediaUrl ? 'Video linked' : 'No video attached'}</div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#1e293b' }}>Video Message</div>
+          <div style={{ fontSize: 10, color: '#64748b' }} className="truncate">{data.mediaUrl ? 'Video linked' : 'No video attached'}</div>
         </div>
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.video }} />
+      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.video, width: 8, height: 8, border: '2px solid #ffffff' }} />
     </NodeWrapper>
   );
 }
@@ -810,15 +1313,15 @@ function VideoNode({ data, selected }) {
 function AudioNode({ data, selected }) {
   return (
     <NodeWrapper color={NODE_COLORS.audio} label="Audio" icon={Music} selected={selected} data={data} type="audio">
-      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.audio }} />
+      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.audio, width: 8, height: 8, border: '2px solid #ffffff' }} />
       <div className="fb-node-body" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <Music size={16} style={{ color: NODE_COLORS.audio, flexShrink: 0 }} />
         <div style={{ overflow: 'hidden' }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>Audio Note</div>
-          <div style={{ fontSize: 10, opacity: 0.6 }} className="truncate">{data.mediaUrl ? 'Audio linked' : 'No audio attached'}</div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#1e293b' }}>Audio Note</div>
+          <div style={{ fontSize: 10, color: '#64748b' }} className="truncate">{data.mediaUrl ? 'Audio linked' : 'No audio attached'}</div>
         </div>
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.audio }} />
+      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.audio, width: 8, height: 8, border: '2px solid #ffffff' }} />
     </NodeWrapper>
   );
 }
@@ -827,15 +1330,15 @@ function AudioNode({ data, selected }) {
 function FileNode({ data, selected }) {
   return (
     <NodeWrapper color={NODE_COLORS.file} label="File / Document" icon={FileText} selected={selected} data={data} type="file">
-      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.file }} />
+      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.file, width: 8, height: 8, border: '2px solid #ffffff' }} />
       <div className="fb-node-body" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <FileText size={16} style={{ color: NODE_COLORS.file, flexShrink: 0 }} />
         <div style={{ overflow: 'hidden' }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)' }}>{data.filename || 'Document'}</div>
-          <div style={{ fontSize: 10, opacity: 0.6 }} className="truncate">{data.mediaUrl ? 'File linked' : 'No file attached'}</div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#1e293b' }}>{data.filename || 'Document'}</div>
+          <div style={{ fontSize: 10, color: '#64748b' }} className="truncate">{data.mediaUrl ? 'File linked' : 'No file attached'}</div>
         </div>
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.file }} />
+      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.file, width: 8, height: 8, border: '2px solid #ffffff' }} />
     </NodeWrapper>
   );
 }
@@ -845,25 +1348,29 @@ function ButtonsNode({ data, selected }) {
   const buttons = data.buttons || [];
   return (
     <NodeWrapper color={NODE_COLORS.buttons} label="Buttons" icon={MousePointerClick} selected={selected} data={data} type="buttons">
-      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.buttons }} />
+      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.buttons, width: 8, height: 8, border: '2px solid #ffffff' }} />
       {data.message && (
-        <div className="fb-node-body">
+        <div className="fb-node-body" style={{ paddingBottom: buttons.length ? 6 : 10 }}>
           <div className="fb-node-body-preview">{data.message}</div>
         </div>
       )}
-      <div className="fb-node-btn-list">
+      <div className="fb-node-btn-list" style={{ marginTop: 2 }}>
         {buttons.map((btn, i) => (
-          <div key={i} className="fb-node-btn-chip">
-            <span>{btn || `Button ${i + 1}`}</span>
-            <ChevronRight size={12} style={{ opacity: 0.5 }} />
+          <div key={i} className="fb-node-btn-chip" style={{ background: 'rgba(217, 119, 6, 0.08)', borderColor: 'rgba(217, 119, 6, 0.2)', color: '#b45309' }}>
+            <span style={{ fontSize: '11px', fontWeight: 600 }}>{btn || `Button ${i + 1}`}</span>
+            <ChevronRight size={12} style={{ opacity: 0.6 }} />
             <Handle
               type="source"
               position={Position.Right}
               id={`btn-${i}`}
               style={{
-                background: NODE_COLORS.buttons,
-                top: 'auto',
+                background: '#d97706',
+                top: '50%',
                 right: -6,
+                transform: 'translateY(-50%)',
+                width: 8,
+                height: 8,
+                border: '2px solid #ffffff',
               }}
             />
           </div>
@@ -873,48 +1380,82 @@ function ButtonsNode({ data, selected }) {
   );
 }
 
-/* ── Quick Replies Node ──────────────────────────────────────── */
+/* ── Quick Replies Node (With individual branch handles) ─────── */
 function QuickRepliesNode({ data, selected }) {
   const replies = data.replies || [];
   return (
     <NodeWrapper color={NODE_COLORS.quickReplies} label="Quick Replies" icon={Keyboard} selected={selected} data={data} type="quickReplies">
-      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.quickReplies }} />
+      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.quickReplies, width: 8, height: 8, border: '2px solid #ffffff' }} />
       {data.message && (
-        <div className="fb-node-body">
+        <div className="fb-node-body" style={{ paddingBottom: replies.length ? 6 : 10 }}>
           <div className="fb-node-body-preview">{data.message}</div>
         </div>
       )}
-      <div className="fb-node-reply-chips">
+      <div className="fb-node-btn-list" style={{ marginTop: 2 }}>
         {replies.map((r, i) => (
-          <span key={i} className="fb-node-reply-chip">{r || `Reply ${i + 1}`}</span>
+          <div key={i} className="fb-node-btn-chip" style={{ background: 'rgba(2, 132, 199, 0.08)', borderColor: 'rgba(2, 132, 199, 0.2)', color: '#0369a1' }}>
+            <span style={{ fontSize: '11px', fontWeight: 600 }}>{r || `Reply ${i + 1}`}</span>
+            <ChevronRight size={12} style={{ opacity: 0.6 }} />
+            <Handle
+              type="source"
+              position={Position.Right}
+              id={`qr-${i}`}
+              style={{
+                background: '#0284c7',
+                top: '50%',
+                right: -6,
+                transform: 'translateY(-50%)',
+                width: 8,
+                height: 8,
+                border: '2px solid #ffffff',
+              }}
+            />
+          </div>
         ))}
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.quickReplies }} />
+      <div style={{ padding: '4px 10px 8px', fontSize: '9.5px', color: '#64748b', textAlign: 'center', borderTop: '1px dashed #e2e8f0' }}>
+        Connect reply to each button 👉
+      </div>
     </NodeWrapper>
   );
 }
 
-/* ── List Menu Node ──────────────────────────────────────────── */
+/* ── List Menu Node (WhatsApp Interactive List) ──────────────── */
 function ListMenuNode({ data, selected }) {
   const items = data.items || [];
   return (
     <NodeWrapper color={NODE_COLORS.listMenu} label="List Menu" icon={ListOrdered} selected={selected} data={data} type="listMenu">
-      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.listMenu }} />
-      <div className="fb-node-body">
-        <div style={{ fontWeight: 600, marginBottom: 6, color: 'var(--text-primary, #e2e8f0)' }}>
-          {data.title || 'Menu'}
+      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.listMenu, width: 8, height: 8, border: '2px solid #ffffff' }} />
+      <div className="fb-node-body" style={{ paddingBottom: 6 }}>
+        <div style={{ fontWeight: 700, fontSize: 11, color: '#1e293b' }}>
+          {data.title || 'Menu Options'}
         </div>
-        {items.slice(0, 4).map((item, i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-            <div style={{ width: 4, height: 4, borderRadius: '50%', background: NODE_COLORS.listMenu, flexShrink: 0 }} />
-            <span style={{ fontSize: 11 }}>{item || `Item ${i + 1}`}</span>
+      </div>
+      <div className="fb-node-btn-list" style={{ marginTop: 2 }}>
+        {items.map((item, i) => (
+          <div key={i} className="fb-node-btn-chip" style={{ background: 'rgba(124, 58, 237, 0.08)', borderColor: 'rgba(124, 58, 237, 0.2)', color: '#6d28d9' }}>
+            <span style={{ fontSize: '11px', fontWeight: 600 }}>{item || `Option ${i + 1}`}</span>
+            <ChevronRight size={12} style={{ opacity: 0.6 }} />
+            <Handle
+              type="source"
+              position={Position.Right}
+              id={`item-${i}`}
+              style={{
+                background: '#7c3aed',
+                top: '50%',
+                right: -6,
+                transform: 'translateY(-50%)',
+                width: 8,
+                height: 8,
+                border: '2px solid #ffffff',
+              }}
+            />
           </div>
         ))}
-        {items.length > 4 && (
-          <span style={{ fontSize: 10, opacity: 0.5 }}>+{items.length - 4} more</span>
-        )}
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.listMenu }} />
+      <div style={{ padding: '4px 10px 8px', fontSize: '9.5px', color: '#64748b', textAlign: 'center', borderTop: '1px dashed #e2e8f0' }}>
+        Connect reply to each option 👉
+      </div>
     </NodeWrapper>
   );
 }
@@ -923,13 +1464,13 @@ function ListMenuNode({ data, selected }) {
 function CardNode({ data, selected }) {
   return (
     <NodeWrapper color={NODE_COLORS.card} label="Card" icon={CreditCard} selected={selected} data={data} type="card">
-      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.card }} />
+      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.card, width: 8, height: 8, border: '2px solid #ffffff' }} />
       <div className="fb-node-body">
         {data.imageUrl && (
           <div style={{
             width: '100%', height: 60, borderRadius: 6, marginBottom: 8,
             background: `url(${data.imageUrl}) center/cover no-repeat`,
-            backgroundColor: 'rgba(255,255,255,0.05)',
+            backgroundColor: '#f8fafc',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
             {!data.imageUrl && <Image size={20} style={{ opacity: 0.3 }} />}
@@ -938,20 +1479,20 @@ function CardNode({ data, selected }) {
         {!data.imageUrl && (
           <div style={{
             width: '100%', height: 50, borderRadius: 6, marginBottom: 8,
-            background: 'rgba(255,255,255,0.04)',
+            background: '#f8fafc', border: '1px dashed #cbd5e1',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <Image size={18} style={{ opacity: 0.25, color: 'var(--text-secondary)' }} />
+            <Image size={18} style={{ opacity: 0.35, color: '#64748b' }} />
           </div>
         )}
-        <div style={{ fontWeight: 600, color: 'var(--text-primary, #e2e8f0)', marginBottom: 2 }}>
+        <div style={{ fontWeight: 600, color: '#1e293b', marginBottom: 2 }}>
           {data.title || <span style={{ opacity: 0.4, fontStyle: 'italic' }}>No title</span>}
         </div>
         {data.subtitle && (
-          <div style={{ fontSize: 11, opacity: 0.6 }}>{data.subtitle}</div>
+          <div style={{ fontSize: 11, opacity: 0.7, color: '#475569' }}>{data.subtitle}</div>
         )}
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.card }} />
+      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.card, width: 8, height: 8, border: '2px solid #ffffff' }} />
     </NodeWrapper>
   );
 }
@@ -961,19 +1502,19 @@ function CarouselNode({ data, selected }) {
   const cardCount = data.cards?.length || 0;
   return (
     <NodeWrapper color={NODE_COLORS.carousel} label="Carousel" icon={Layers} selected={selected} data={data} type="carousel">
-      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.carousel }} />
+      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.carousel, width: 8, height: 8, border: '2px solid #ffffff' }} />
       <div className="fb-node-body" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{
-          width: 36, height: 36, borderRadius: 8,
-          background: 'rgba(244, 114, 182, 0.15)',
+          width: 34, height: 34, borderRadius: 8,
+          background: 'rgba(192, 38, 211, 0.12)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontWeight: 800, fontSize: 16, color: NODE_COLORS.carousel,
+          fontWeight: 800, fontSize: 15, color: NODE_COLORS.carousel,
         }}>
           {cardCount}
         </div>
-        <span>{cardCount === 1 ? '1 card' : `${cardCount} cards`}</span>
+        <span style={{ fontWeight: 600, color: '#1e293b' }}>{cardCount === 1 ? '1 card' : `${cardCount} cards`}</span>
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.carousel }} />
+      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.carousel, width: 8, height: 8, border: '2px solid #ffffff' }} />
     </NodeWrapper>
   );
 }
@@ -984,19 +1525,19 @@ function CollectInputNode({ data, selected }) {
   const TypeIcon = typeIcons[data.inputType] || Settings2;
   return (
     <NodeWrapper color={NODE_COLORS.collectInput} label="Collect Input" icon={Mail} selected={selected} data={data} type="collectInput">
-      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.collectInput }} />
+      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.collectInput, width: 8, height: 8, border: '2px solid #ffffff' }} />
       <div className="fb-node-body" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <TypeIcon size={16} style={{ color: NODE_COLORS.collectInput, flexShrink: 0 }} />
         <div>
-          <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 12 }}>
+          <div style={{ fontWeight: 600, color: '#1e293b', fontSize: 12 }}>
             {data.inputType || 'custom'}
           </div>
           {data.variable && (
-            <div style={{ fontSize: 10, opacity: 0.6 }}>→ {data.variable}</div>
+            <div style={{ fontSize: 10, color: '#64748b' }}>→ {data.variable}</div>
           )}
         </div>
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.collectInput }} />
+      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.collectInput, width: 8, height: 8, border: '2px solid #ffffff' }} />
     </NodeWrapper>
   );
 }
@@ -1004,43 +1545,79 @@ function CollectInputNode({ data, selected }) {
 /* ── Condition Node ──────────────────────────────────────────── */
 function ConditionNode({ data, selected }) {
   const unsupported = data?._unsupported;
+  const validationError = data?._validationError;
+
   return (
-    <div className={`fb-node-condition${selected ? ' selected' : ''}`}>
-      {unsupported && (
-        <div className="fb-node-warning" title="Not supported on this platform">
+    <div
+      className={`fb-node-condition${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
+      style={{
+        background: '#ffffff',
+        borderColor: validationError ? '#ef4444' : selected ? NODE_COLORS.condition : '#e2e8f0',
+      }}
+    >
+      {validationError ? (
+        <div className="fb-node-warning" style={{ background: '#ef4444' }} title={`Missing Data: ${validationError}`}>
           <AlertTriangle size={12} color="#fff" />
         </div>
-      )}
-      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.condition }} />
-      <div className="fb-node-header" style={{ background: NODE_COLORS.condition, borderRadius: '11px 11px 0 0' }}>
-        <GitBranch size={14} />
-        <span>Condition</span>
+      ) : unsupported ? (
+        <div className="fb-node-warning" title="Not permitted on current channel">
+          <AlertTriangle size={12} color="#fff" />
+        </div>
+      ) : null}
+      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.condition, width: 8, height: 8, border: '2px solid #ffffff' }} />
+      <div
+        className="fb-node-header"
+        style={{
+          background: validationError ? '#fef2f2' : `${NODE_COLORS.condition}12`,
+          borderBottom: `1px solid ${validationError ? '#fecaca' : `${NODE_COLORS.condition}22`}`,
+          borderRadius: '11px 11px 0 0',
+        }}
+      >
+        <div
+          style={{
+            width: 22,
+            height: 22,
+            borderRadius: 6,
+            background: validationError ? '#fee2e2' : `${NODE_COLORS.condition}1e`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <GitBranch size={13} style={{ color: validationError ? '#ef4444' : NODE_COLORS.condition }} />
+        </div>
+        <span style={{ fontWeight: 700, fontSize: '11.5px', color: validationError ? '#b91c1c' : '#1e293b' }}>Condition</span>
       </div>
       <div className="fb-node-body">
         {data.variable ? (
-          <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-primary)' }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: '#1e293b' }}>
             {data.variable} {data.operator || '=='} {data.value || '?'}
           </span>
         ) : (
-          <span style={{ opacity: 0.4, fontStyle: 'italic', fontSize: 11 }}>No condition set</span>
+          <span style={{ opacity: 0.5, fontStyle: 'italic', fontSize: 11, color: '#64748b' }}>No condition set</span>
         )}
       </div>
-      <div className="fb-condition-outputs">
-        <span className="fb-condition-label fb-condition-yes">Yes</span>
-        <span className="fb-condition-label fb-condition-no">No</span>
+      <div className="fb-condition-outputs" style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 12px 10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
+          <span className="fb-condition-label fb-condition-yes">Yes / True</span>
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="yes"
+            style={{ background: '#059669', right: -6, width: 8, height: 8, border: '2px solid #ffffff' }}
+          />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
+          <span className="fb-condition-label fb-condition-no">No / False</span>
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="no"
+            style={{ background: '#dc2626', right: -6, width: 8, height: 8, border: '2px solid #ffffff' }}
+          />
+        </div>
       </div>
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        id="yes"
-        style={{ background: '#10b981', left: '30%' }}
-      />
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        id="no"
-        style={{ background: '#ef4444', left: '70%' }}
-      />
     </div>
   );
 }
@@ -1049,17 +1626,17 @@ function ConditionNode({ data, selected }) {
 function DelayNode({ data, selected }) {
   return (
     <NodeWrapper color={NODE_COLORS.delay} label="Delay" icon={Clock} selected={selected} data={data} type="delay">
-      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.delay }} />
+      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.delay, width: 8, height: 8, border: '2px solid #ffffff' }} />
       <div className="fb-node-body" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <Clock size={18} style={{ color: NODE_COLORS.delay, flexShrink: 0 }} />
         <div>
-          <span style={{ fontWeight: 700, fontSize: 18, color: 'var(--text-primary)' }}>
+          <span style={{ fontWeight: 700, fontSize: 18, color: '#1e293b' }}>
             {data.seconds || 0}
           </span>
-          <span style={{ fontSize: 11, marginLeft: 4, opacity: 0.6 }}>seconds</span>
+          <span style={{ fontSize: 11, marginLeft: 4, color: '#64748b' }}>seconds</span>
         </div>
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.delay }} />
+      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.delay, width: 8, height: 8, border: '2px solid #ffffff' }} />
     </NodeWrapper>
   );
 }
@@ -1068,13 +1645,13 @@ function DelayNode({ data, selected }) {
 function WebhookNode({ data, selected }) {
   return (
     <NodeWrapper color={NODE_COLORS.webhook} label="Webhook / Zapier" icon={Globe} selected={selected} data={data} type="webhook">
-      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.webhook }} />
+      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.webhook, width: 8, height: 8, border: '2px solid #ffffff' }} />
       <div className="fb-node-body">
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-          <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 4, background: '#0284c7', color: '#ffffff' }}>
+          <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 4, background: '#2563eb', color: '#ffffff' }}>
             {data.method || 'POST'}
           </span>
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>
             {data.url ? data.url.replace(/^https?:\/\//, '') : 'Set Endpoint URL'}
           </span>
         </div>
@@ -1082,7 +1659,7 @@ function WebhookNode({ data, selected }) {
           {data.payloadMode === 'CUSTOM_JSON' ? '📦 Custom JSON Payload' : '⚡ All Contact Variables'}
         </div>
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.webhook }} />
+      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.webhook, width: 8, height: 8, border: '2px solid #ffffff' }} />
     </NodeWrapper>
   );
 }
@@ -1091,13 +1668,13 @@ function WebhookNode({ data, selected }) {
 function PaymentNode({ data, selected }) {
   return (
     <NodeWrapper color={NODE_COLORS.payment} label="In-Chat Payment" icon={CreditCard} selected={selected} data={data} type="payment">
-      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.payment }} />
+      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.payment, width: 8, height: 8, border: '2px solid #ffffff' }} />
       <div className="fb-node-body">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-          <strong style={{ fontSize: 11, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }}>
+          <strong style={{ fontSize: 11, color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }}>
             {data.productName || 'Order Product'}
           </strong>
-          <span style={{ fontSize: 10, fontWeight: 800, padding: '1px 6px', borderRadius: 4, background: '#10b98120', color: '#059669' }}>
+          <span style={{ fontSize: 10, fontWeight: 800, padding: '1px 6px', borderRadius: 4, background: 'rgba(22, 163, 74, 0.12)', color: '#16a34a' }}>
             ${Number(data.amount || 0).toFixed(2)}
           </span>
         </div>
@@ -1105,7 +1682,7 @@ function PaymentNode({ data, selected }) {
           {data.buttonLabel || '💳 Pay Now'}
         </div>
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: NODE_COLORS.payment }} />
+      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.payment, width: 8, height: 8, border: '2px solid #ffffff' }} />
     </NodeWrapper>
   );
 }
@@ -1114,14 +1691,14 @@ function PaymentNode({ data, selected }) {
 function HandoffNode({ data, selected }) {
   return (
     <NodeWrapper color={NODE_COLORS.handoff} label="Agent Handoff" icon={Headphones} selected={selected} data={data} type="handoff">
-      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.handoff }} />
+      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.handoff, width: 8, height: 8, border: '2px solid #ffffff' }} />
       <div className="fb-node-body">
         {data.message ? (
           <div className="fb-node-body-preview">{data.message}</div>
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Headphones size={16} style={{ opacity: 0.4 }} />
-            <span style={{ opacity: 0.5, fontStyle: 'italic', fontSize: 11 }}>Transfer to agent</span>
+            <Headphones size={16} style={{ opacity: 0.4, color: '#6366f1' }} />
+            <span style={{ opacity: 0.6, fontStyle: 'italic', fontSize: 11, color: '#64748b' }}>Transfer to agent</span>
           </div>
         )}
       </div>
@@ -1133,12 +1710,12 @@ function HandoffNode({ data, selected }) {
 function EndNode({ data, selected }) {
   return (
     <NodeWrapper color={NODE_COLORS.end} label="End" icon={CircleStop} selected={selected} data={data} type="end">
-      <Handle type="target" position={Position.Top} style={{ background: NODE_COLORS.end }} />
+      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.end, width: 8, height: 8, border: '2px solid #ffffff' }} />
       <div className="fb-node-body">
         {data.message ? (
           <div className="fb-node-body-preview">{data.message}</div>
         ) : (
-          <span style={{ opacity: 0.5, fontStyle: 'italic', fontSize: 11 }}>End of flow</span>
+          <span style={{ opacity: 0.6, fontStyle: 'italic', fontSize: 11, color: '#64748b' }}>End of flow</span>
         )}
       </div>
     </NodeWrapper>
@@ -1626,9 +2203,23 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete }) {
               />
             </div>
             <div className="fb-field">
-              <label>Quick Replies</label>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                <label>Quick Replies</label>
+                <span style={{ fontSize: '10px', color: '#0284c7', fontWeight: 700 }}>
+                  {(data.replies || []).length} replies
+                </span>
+              </div>
+              <div style={{ fontSize: '11px', color: '#0369a1', marginBottom: 8, lineHeight: 1.45, background: 'rgba(2, 132, 199, 0.08)', border: '1px solid rgba(2, 132, 199, 0.2)', padding: '8px 10px', borderRadius: '8px' }}>
+                <strong>📌 Meta Platform Rule:</strong> Quick replies pause and wait for the user to tap an option. Immediate automatic follow-up replies are prohibited because Meta instantly dismisses quick replies if another message is sent. Connect your responses directly to each individual option handle on the right.
+              </div>
               {(data.replies || []).map((reply, i) => (
                 <div key={i} className="fb-list-item">
+                  <div style={{
+                    width: 22, height: 22, borderRadius: 5, background: 'rgba(2, 132, 199, 0.1)',
+                    color: '#0284c7', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                  }}>
+                    {i + 1}
+                  </div>
                   <input
                     value={reply}
                     onChange={(e) => {
@@ -2067,35 +2658,54 @@ function NodePalette({ platform }) {
     event.dataTransfer.effectAllowed = 'move';
   };
 
+  const permittedCategories = useMemo(() => {
+    return PALETTE_CATEGORIES.map((cat) => ({
+      ...cat,
+      items: cat.items.filter((item) => isNodeSupportedOnPlatform(item.type, platform)),
+    })).filter((cat) => cat.items.length > 0);
+  }, [platform]);
+
+  const channelLabel = (platform || 'WEBCHAT').toUpperCase();
+
   return (
     <div className="fb-palette">
-      <div className="fb-palette-header">Node Palette</div>
-      {PALETTE_CATEGORIES.map((cat) => (
+      <div className="fb-palette-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span>Components</span>
+        <span
+          style={{
+            fontSize: '9.5px',
+            fontWeight: 700,
+            color: '#4f46e5',
+            background: 'rgba(79, 70, 229, 0.08)',
+            padding: '2px 7px',
+            borderRadius: '4px',
+            letterSpacing: '0.4px',
+          }}
+        >
+          {channelLabel}
+        </span>
+      </div>
+      {permittedCategories.map((cat) => (
         <React.Fragment key={cat.label}>
           <div className="fb-palette-category">{cat.label}</div>
           {cat.items.map((item) => {
             const Icon = NODE_ICONS[item.type];
             const color = NODE_COLORS[item.type];
-            const supported = isNodeSupportedOnPlatform(item.type, platform);
             return (
               <div
                 key={item.type}
                 className="fb-palette-item"
                 draggable
                 onDragStart={(e) => onDragStart(e, item.type)}
-                style={{ opacity: supported ? 1 : 0.45 }}
-                title={supported ? item.label : `Not supported on ${platform}`}
+                title={item.label}
               >
-                <div className="fb-palette-item-icon" style={{ background: `${color}20` }}>
-                  <Icon size={16} style={{ color }} />
+                <div className="fb-palette-item-icon" style={{ background: `${color}14`, color }}>
+                  <Icon size={15} style={{ color }} />
                 </div>
                 <span>{item.label}</span>
-                {!supported && <AlertTriangle size={13} style={{ color: 'var(--warning, #f59e0b)', marginLeft: 'auto' }} />}
-                {supported && (
-                  <span className="fb-palette-item-grip">
-                    <GripVertical size={14} />
-                  </span>
-                )}
+                <span className="fb-palette-item-grip">
+                  <GripVertical size={13} />
+                </span>
               </div>
             );
           })}
@@ -2144,14 +2754,19 @@ function RemovableEdge({
   selected,
 }) {
   const { setEdges } = useReactFlow();
+
+  // Force pure horizontal Left-to-Right edge routing (source exits right, target enters left)
+  const actualSourcePos = (sourcePosition === Position.Bottom || !sourcePosition) ? Position.Right : sourcePosition;
+  const actualTargetPos = (targetPosition === Position.Top || !targetPosition) ? Position.Left : targetPosition;
+
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX,
     sourceY,
-    sourcePosition,
+    sourcePosition: actualSourcePos,
     targetX,
     targetY,
-    targetPosition,
-    borderRadius: 16,
+    targetPosition: actualTargetPos,
+    borderRadius: 12,
   });
 
   const onEdgeDelete = (e) => {
@@ -2254,6 +2869,7 @@ function QuickComponentPicker({ position, onClose, onSelect, platform }) {
       ...cat,
       items: cat.items.filter((item) => {
         if (item.type === 'start') return false; // don't spawn multiple start nodes
+        if (!isNodeSupportedOnPlatform(item.type, platform)) return false; // strictly only permitted on platform
         if (search.trim()) {
           return (
             item.label.toLowerCase().includes(search.toLowerCase()) ||
@@ -2263,7 +2879,7 @@ function QuickComponentPicker({ position, onClose, onSelect, platform }) {
         return true;
       }),
     })).filter((cat) => cat.items.length > 0);
-  }, [search]);
+  }, [search, platform]);
 
   return (
     <div
@@ -2427,17 +3043,60 @@ const defaultEdgeOptions = {
   style: { stroke: 'rgba(99, 102, 241, 0.5)', strokeWidth: 2 },
 };
 
+function getPlatformUrl(account, platform) {
+  const p = (platform || account?.platform || '').toUpperCase();
+  switch (p) {
+    case 'INSTAGRAM': {
+      const username = account?.ig_username || (account?.name && !account.name.includes(' ') ? account.name : '');
+      return username
+        ? `https://www.instagram.com/${username.replace('@', '')}/`
+        : 'https://www.instagram.com/';
+    }
+    case 'FACEBOOK': {
+      if (account?.fb_page_id) {
+        return `https://www.facebook.com/${account.fb_page_id}`;
+      }
+      return 'https://www.facebook.com/';
+    }
+    case 'WHATSAPP': {
+      const phone = account?.wa_display_phone || account?.wa_phone_number_id;
+      const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, '') : '';
+      if (cleanPhone && cleanPhone.length >= 7 && cleanPhone.length <= 15) {
+        return `https://wa.me/${cleanPhone}`;
+      }
+      return 'https://business.facebook.com/wa/manage/home/';
+    }
+    case 'TELEGRAM': {
+      const tgName = account?.name ? account.name.replace('@', '') : '';
+      return tgName ? `https://t.me/${tgName}` : 'https://web.telegram.org/';
+    }
+    case 'TIKTOK': {
+      const ttName = account?.name ? account.name.replace('@', '') : '';
+      return ttName ? `https://www.tiktok.com/@${ttName}` : 'https://www.tiktok.com/';
+    }
+    case 'WEBCHAT':
+    default:
+      return '/channels/webchat';
+  }
+}
+
 function FlowBuilderInner() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { screenToFlowPosition } = useReactFlow();
+  const [searchParams] = useSearchParams();
+  const { screenToFlowPosition, fitView } = useReactFlow();
 
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [flowData, setFlowData] = useState(null);
   const [flowName, setFlowName] = useState('');
-  const [platform, setPlatform] = useState('WEBCHAT');
-  const [integrationId, setIntegrationId] = useState(null);
+  const [platform, setPlatform] = useState(() => {
+    const q = searchParams.get('platform');
+    return q ? q.toUpperCase() : 'WEBCHAT';
+  });
+  const [integrationId, setIntegrationId] = useState(() => {
+    return searchParams.get('integration_id') || searchParams.get('integrationId') || null;
+  });
   const [integrations, setIntegrations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -2449,6 +3108,33 @@ function FlowBuilderInner() {
   const edgesRef = useRef(edges);
   nodesRef.current = nodes;
   edgesRef.current = edges;
+
+  // Resolve the exact connected page / account name for this flow
+  const currentAccount = useMemo(() => {
+    if (integrationId) {
+      const matched = integrations.find((i) => String(i.id) === String(integrationId));
+      if (matched) return matched;
+    }
+    if (flowData?.integration_id) {
+      const matched = integrations.find((i) => String(i.id) === String(flowData.integration_id));
+      if (matched) return matched;
+    }
+    return null;
+  }, [integrationId, flowData, integrations]);
+
+  const currentAccountName = useMemo(() => {
+    if (currentAccount) {
+      return currentAccount.fb_page_name || currentAccount.ig_username || currentAccount.name || currentAccount.wa_phone_number_id;
+    }
+    if (flowData?.fb_page_name) return flowData.fb_page_name;
+    if (flowData?.ig_username) return `@${flowData.ig_username}`;
+    if (flowData?.integration_name) return flowData.integration_name;
+    return null;
+  }, [currentAccount, flowData]);
+
+  const platformUrl = useMemo(() => {
+    return getPlatformUrl(currentAccount, platform);
+  }, [currentAccount, platform]);
 
   /* ── Mark unsupported nodes ──────────────────────────────── */
   useEffect(() => {
@@ -2473,15 +3159,41 @@ function FlowBuilderInner() {
           integrationAPI.getAll(),
         ]);
         if (intRes.status === 'fulfilled') {
-          setIntegrations(intRes.value.data?.integrations || []);
+          const allIntegrations = intRes.value.data?.integrations || [];
+          setIntegrations(allIntegrations);
+
+          // If an integration was requested in query params, resolve platform from it
+          const qIntId = searchParams.get('integration_id') || searchParams.get('integrationId');
+          if (qIntId) {
+            const matched = allIntegrations.find((i) => String(i.id) === String(qIntId));
+            if (matched?.platform) {
+              setPlatform(matched.platform.toUpperCase());
+            }
+          }
         }
 
         const flow = res.status === 'fulfilled' ? (res.value.data?.flow || res.value.data) : null;
-        if (!flow) return;
+        if (!flow) {
+          // Initialize empty flow with start node
+          setNodes([{
+            id: generateNodeId('start'),
+            type: 'start',
+            position: { x: 400, y: 100 },
+            data: { ...DEFAULT_NODE_DATA.start },
+          }]);
+          setLoading(false);
+          return;
+        }
 
         setFlowData(flow);
         setFlowName(flow.name || 'Untitled Flow');
-        setPlatform(flow.platform || 'WEBCHAT');
+        
+        let resolvedPlatform = flow.platform || 'WEBCHAT';
+        if (flow.integration_id && intRes.status === 'fulfilled') {
+          const matched = (intRes.value.data?.integrations || []).find((i) => String(i.id) === String(flow.integration_id));
+          if (matched?.platform) resolvedPlatform = matched.platform.toUpperCase();
+        }
+        setPlatform(resolvedPlatform);
         setIntegrationId(flow.integration_id || null);
 
         let loadedNodes = [];
@@ -2509,7 +3221,7 @@ function FlowBuilderInner() {
           }];
         }
 
-        // Ensure all nodes have proper data defaults merged
+        // Ensure all nodes have proper data defaults merged and Left-to-Right handle positions
         loadedNodes = loadedNodes.map((n) => {
           const nodeData = {
             ...(DEFAULT_NODE_DATA[n.type] || {}),
@@ -2527,8 +3239,22 @@ function FlowBuilderInner() {
             }
           }
 
-          return { ...n, data: nodeData };
+          return {
+            ...n,
+            sourcePosition: Position.Right,
+            targetPosition: Position.Left,
+            data: nodeData,
+          };
         });
+
+        // Normalize loaded edges to smoothstep with Left-to-Right orientation
+        loadedEdges = loadedEdges.map((e) => ({
+          ...e,
+          type: 'smoothstep',
+          animated: true,
+          sourceHandle: (e.sourceHandle === 'default' || e.sourceHandle === 'bottom') ? undefined : e.sourceHandle,
+          targetHandle: (e.targetHandle === 'default' || e.targetHandle === 'top') ? undefined : e.targetHandle,
+        }));
 
         setNodes(loadedNodes);
         setEdges(loadedEdges);
@@ -2547,19 +3273,30 @@ function FlowBuilderInner() {
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(async () => {
       try {
-        setAutoSaveStatus('saving');
+        if (!id || id === 'new') return;
         const currentNodes = nodesRef.current || [];
+        // Do not auto-save if any node has missing data
+        const hasErrors = currentNodes.some((n) => validateNodeData(n) !== null);
+        if (hasErrors) return;
+
+        setAutoSaveStatus('saving');
         const startNode = currentNodes.find((n) => n.type === 'start');
         const triggerType = (startNode?.data?.trigger_type || 'KEYWORD').toUpperCase();
-        const rawKeywords = startNode?.data?.keywords || (startNode?.data?.trigger_keyword ? startNode.data.trigger_keyword.split(',') : []);
-        const triggerKeyword = Array.isArray(rawKeywords) ? rawKeywords.join(',') : (rawKeywords || '');
+        let triggerKeyword = flowData?.trigger_keyword || '';
+        if (startNode?.data?.keywords) {
+          triggerKeyword = Array.isArray(startNode.data.keywords)
+            ? startNode.data.keywords.join(',')
+            : startNode.data.keywords;
+        }
 
         await flowAPI.update(id, {
           name: flowName,
-          triggerType,
-          triggerKeyword,
+          platform,
+          integration_id: integrationId || null,
+          trigger_type: triggerType,
+          trigger_keyword: triggerKeyword,
           nodes_json: JSON.stringify(currentNodes.map((n) => {
-            const { _unsupported, ...rest } = n.data;
+            const { _unsupported, _validationError, ...rest } = n.data;
             return { ...n, data: rest };
           })),
           edges_json: JSON.stringify(edgesRef.current),
@@ -2571,7 +3308,7 @@ function FlowBuilderInner() {
         setAutoSaveStatus('');
       }
     }, 2000);
-  }, [id, flowName]);
+  }, [id, flowName, platform, integrationId, flowData]);
 
   /* ── Trigger auto-save on changes ───────────────────────── */
   useEffect(() => {
@@ -2583,33 +3320,116 @@ function FlowBuilderInner() {
     };
   }, [nodes, edges, triggerAutoSave, loading, flowData]);
 
-  /* ── Manual save ────────────────────────────────────────── */
+  /* ── Auto-Layout / Rearrange Flow ───────────────────────── */
+  const handleAutoLayout = useCallback(() => {
+    const currentNodes = nodesRef.current || nodes;
+    const currentEdges = edgesRef.current || edges;
+    const layouted = getAutoLayoutedNodes(currentNodes, currentEdges);
+    setNodes(layouted);
+    setEdges((eds) =>
+      eds.map((e) => ({
+        ...e,
+        type: 'smoothstep',
+        animated: true,
+        sourceHandle: (e.sourceHandle === 'default' || e.sourceHandle === 'bottom') ? undefined : e.sourceHandle,
+        targetHandle: (e.targetHandle === 'default' || e.targetHandle === 'top') ? undefined : e.targetHandle,
+      }))
+    );
+    setTimeout(() => {
+      fitView({ padding: 0.25, duration: 400 });
+    }, 50);
+  }, [nodes, edges, setNodes, setEdges, fitView]);
+
+  /* ── Manual save (with strict data validation) ─────────── */
   const handleSave = async () => {
     try {
+      // 1. Validate all components have required data
+      const currentNodes = nodesRef.current || [];
+      const invalidList = [];
+      currentNodes.forEach((n) => {
+        const err = validateNodeData(n);
+        if (err) invalidList.push({ node: n, error: err });
+      });
+
+      if (invalidList.length > 0) {
+        // Highlight invalid nodes on canvas
+        setNodes((nds) =>
+          nds.map((n) => {
+            const err = validateNodeData(n);
+            return {
+              ...n,
+              data: {
+                ...n.data,
+                _validationError: err || null,
+              },
+            };
+          })
+        );
+
+        const first = invalidList[0];
+        setSelectedNode(first.node);
+
+        Swal.fire({
+          title: 'Missing Component Data',
+          html: `
+            <div style="text-align: left; font-size: 13px; color: #475569; line-height: 1.5;">
+              <p style="margin-bottom: 8px;">The flow cannot be saved because some components have missing data:</p>
+              <div style="background: #fef2f2; border: 1px solid #fee2e2; border-radius: 8px; padding: 10px 12px; color: #b91c1c; font-weight: 600;">
+                <strong>${first.node.data?.label || first.node.type}</strong>: ${first.error}
+              </div>
+              ${invalidList.length > 1 ? `<p style="margin-top: 8px; font-size: 11px; color: #94a3b8;">+ ${invalidList.length - 1} other component(s) need attention.</p>` : ''}
+            </div>
+          `,
+          icon: 'warning',
+          confirmButtonText: 'Fill In Data',
+          confirmButtonColor: '#4f46e5',
+        });
+        return;
+      }
+
       setSaving(true);
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
 
-      const startNode = nodes.find((n) => n.type === 'start');
+      let triggerKeyword = flowData?.trigger_keyword || '';
+      const startNode = currentNodes.find((n) => n.type === 'start');
       const triggerType = (startNode?.data?.trigger_type || 'KEYWORD').toUpperCase();
-      const rawKeywords = startNode?.data?.keywords || (startNode?.data?.trigger_keyword ? startNode.data.trigger_keyword.split(',') : []);
-      const triggerKeyword = Array.isArray(rawKeywords) ? rawKeywords.join(',') : (rawKeywords || '');
+      if (startNode?.data?.keywords) {
+        triggerKeyword = Array.isArray(startNode.data.keywords)
+          ? startNode.data.keywords.join(',')
+          : startNode.data.keywords;
+      }
 
       await flowAPI.update(id, {
         name: flowName,
         platform,
-        integrationId: integrationId ? Number(integrationId) : null,
-        triggerType,
-        triggerKeyword,
-        nodes_json: JSON.stringify(nodes.map((n) => {
-          const { _unsupported, ...rest } = n.data;
+        integration_id: integrationId || null,
+        trigger_type: triggerType,
+        trigger_keyword: triggerKeyword,
+        nodes_json: JSON.stringify(currentNodes.map((n) => {
+          const { _unsupported, _validationError, ...rest } = n.data;
           return { ...n, data: rest };
         })),
         edges_json: JSON.stringify(edges),
       });
       setAutoSaveStatus('saved');
       setTimeout(() => setAutoSaveStatus(''), 2500);
+
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Flow saved successfully!',
+        showConfirmButton: false,
+        timer: 2000,
+      });
     } catch (err) {
       console.error('Save failed:', err);
+      Swal.fire({
+        title: 'Save Failed',
+        text: err?.response?.data?.message || err.message || 'Could not save flow.',
+        icon: 'error',
+        confirmButtonColor: '#4f46e5',
+      });
     } finally {
       setSaving(false);
     }
@@ -2620,7 +3440,13 @@ function FlowBuilderInner() {
 
   /* ── Edge connection ────────────────────────────────────── */
   const onConnect = useCallback(
-    (params) => setEdges((eds) => addEdge({ ...params, type: 'smoothstep', animated: true }, eds)),
+    (params) =>
+      setEdges((eds) => {
+        const filtered = eds.filter(
+          (edge) => !(edge.source === params.source && (edge.sourceHandle || null) === (params.sourceHandle || null))
+        );
+        return addEdge({ ...params, type: 'smoothstep', animated: true }, filtered);
+      }),
     [setEdges]
   );
 
@@ -2665,6 +3491,8 @@ function FlowBuilderInner() {
         id: newNodeId,
         type,
         position: quickPicker.flowPosition,
+        sourcePosition: Position.Right,
+        targetPosition: Position.Left,
         data: {
           ...DEFAULT_NODE_DATA[type],
           _unsupported: !isNodeSupportedOnPlatform(type, platform),
@@ -2681,7 +3509,12 @@ function FlowBuilderInner() {
       };
 
       setNodes((nds) => [...nds, newNode]);
-      setEdges((eds) => [...eds, newEdge]);
+      setEdges((eds) => {
+        const filtered = eds.filter(
+          (edge) => !(edge.source === quickPicker.sourceNodeId && (edge.sourceHandle || null) === (quickPicker.sourceHandleId || null))
+        );
+        return [...filtered, newEdge];
+      });
       setSelectedNode(newNode);
       setQuickPicker(null);
     },
@@ -2719,6 +3552,8 @@ function FlowBuilderInner() {
         id: generateNodeId(type),
         type,
         position,
+        sourcePosition: Position.Right,
+        targetPosition: Position.Left,
         data: {
           ...DEFAULT_NODE_DATA[type],
           _unsupported: !isNodeSupportedOnPlatform(type, platform),
@@ -2734,16 +3569,36 @@ function FlowBuilderInner() {
   const handleUpdateNodeData = useCallback(
     (nodeId, newData) => {
       setNodes((nds) =>
-        nds.map((n) =>
-          n.id === nodeId ? { ...n, data: { ...newData, _unsupported: !isNodeSupportedOnPlatform(n.type, platform) } } : n
-        )
+        nds.map((n) => {
+          if (n.id === nodeId) {
+            const updated = {
+              ...n,
+              data: {
+                ...newData,
+                _unsupported: !isNodeSupportedOnPlatform(n.type, platform),
+              },
+            };
+            const err = validateNodeData(updated);
+            updated.data._validationError = err || null;
+            return updated;
+          }
+          return n;
+        })
       );
       // Keep selectedNode in sync
-      setSelectedNode((prev) =>
-        prev && prev.id === nodeId
-          ? { ...prev, data: { ...newData, _unsupported: !isNodeSupportedOnPlatform(prev.type, platform) } }
-          : prev
-      );
+      setSelectedNode((prev) => {
+        if (!prev || prev.id !== nodeId) return prev;
+        const updated = {
+          ...prev,
+          data: {
+            ...newData,
+            _unsupported: !isNodeSupportedOnPlatform(prev.type, platform),
+          },
+        };
+        const err = validateNodeData(updated);
+        updated.data._validationError = err || null;
+        return updated;
+      });
     },
     [setNodes, platform]
   );
@@ -2786,13 +3641,13 @@ function FlowBuilderInner() {
       {/* ── Toolbar ─────────────────────────────────────────── */}
       <div className="fb-toolbar">
         <button
+          type="button"
           className="fb-toolbar-back"
           onClick={() => navigate('/bots')}
           title="Back to Bot Manager"
-          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8 }}
         >
           <ArrowLeft size={16} />
-          <span style={{ fontSize: 13, fontWeight: 600 }}>Bot Manager</span>
+          <span>Bot Manager</span>
         </button>
         <input
           className="fb-toolbar-name"
@@ -2801,55 +3656,6 @@ function FlowBuilderInner() {
           onBlur={triggerAutoSave}
           spellCheck={false}
         />
-        <select
-          value={integrationId ? `integ_${integrationId}` : `plat_${platform}`}
-          onChange={(e) => {
-            const val = e.target.value;
-            if (val.startsWith('integ_')) {
-              const selId = val.replace('integ_', '');
-              const matched = integrations.find((i) => String(i.id) === String(selId));
-              setIntegrationId(selId);
-              if (matched?.platform) setPlatform(matched.platform.toUpperCase());
-            } else if (val.startsWith('plat_')) {
-              setIntegrationId(null);
-              setPlatform(val.replace('plat_', ''));
-            }
-            triggerAutoSave();
-          }}
-          className="fb-platform-badge"
-          style={{
-            padding: '6px 14px',
-            borderRadius: 8,
-            fontSize: 12,
-            fontWeight: 700,
-            background: '#f0f0fa',
-            border: '1px solid #e4e4f0',
-            color: '#4f46e5',
-            cursor: 'pointer',
-            outline: 'none',
-          }}
-          title="Assigned Page / Channel (Click to switch)"
-        >
-          {integrations.length > 0 && (
-            <optgroup label="Connected Pages & Channels" style={{ background: '#ffffff', color: '#1a1a2e' }}>
-              {integrations.map((i) => {
-                const icon = i.platform === 'FACEBOOK' ? '📘' : i.platform === 'INSTAGRAM' ? '📸' : i.platform === 'WHATSAPP' ? '💬' : '🌐';
-                return (
-                  <option key={i.id} value={`integ_${i.id}`} style={{ background: '#ffffff', color: '#1a1a2e' }}>
-                    {icon} {i.fb_page_name || i.name} ({i.platform})
-                  </option>
-                );
-              })}
-            </optgroup>
-          )}
-          <optgroup label="General Platform (All Pages)" style={{ background: '#ffffff', color: '#1a1a2e' }}>
-            <option value="plat_FACEBOOK" style={{ background: '#ffffff', color: '#1a1a2e' }}>📘 Facebook (All Pages)</option>
-            <option value="plat_INSTAGRAM" style={{ background: '#ffffff', color: '#1a1a2e' }}>📸 Instagram (All Accounts)</option>
-            <option value="plat_WHATSAPP" style={{ background: '#ffffff', color: '#1a1a2e' }}>💬 WhatsApp (All Numbers)</option>
-            <option value="plat_TELEGRAM" style={{ background: '#ffffff', color: '#1a1a2e' }}>✈️ Telegram</option>
-            <option value="plat_WEBCHAT" style={{ background: '#ffffff', color: '#1a1a2e' }}>🌐 Website Live Chat</option>
-          </optgroup>
-        </select>
         <div className="fb-toolbar-spacer" />
         <div className={`fb-autosave-indicator ${autoSaveStatus ? 'visible' : ''}`}>
           {autoSaveStatus === 'saving' && (
@@ -2865,6 +3671,97 @@ function FlowBuilderInner() {
             </>
           )}
         </div>
+        <button
+          onClick={handleAutoLayout}
+          className="fb-rearrange-btn"
+          title="Auto-rearrange all components to save space and look uniform"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '7px 14px',
+            borderRadius: 8,
+            border: '1px solid #e2e8f0',
+            background: '#ffffff',
+            color: '#334155',
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: 'pointer',
+            transition: 'all 0.15s',
+            height: 35,
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = '#f8fafc';
+            e.currentTarget.style.borderColor = '#cbd5e1';
+            e.currentTarget.style.color = '#0f172a';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = '#ffffff';
+            e.currentTarget.style.borderColor = '#e2e8f0';
+            e.currentTarget.style.color = '#334155';
+          }}
+        >
+          <LayoutGrid size={14} style={{ color: '#4f46e5' }} />
+          <span>Auto Layout</span>
+        </button>
+
+        {/* Connected Platform & Account (Opens live platform profile in new tab) */}
+        <a
+          href={platformUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="fb-account-link"
+          title={`Open ${currentAccountName || platform} in new tab`}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 7,
+            padding: '6px 13px',
+            borderRadius: 8,
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
+            color: '#334155',
+            fontSize: 12,
+            textDecoration: 'none',
+            fontWeight: 600,
+            height: 35,
+            boxSizing: 'border-box',
+            transition: 'all 0.15s ease-in-out',
+            flexShrink: 0,
+            boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = '#f0f2ff';
+            e.currentTarget.style.borderColor = '#c7d2fe';
+            e.currentTarget.style.color = '#4f46e5';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = '#ffffff';
+            e.currentTarget.style.borderColor = '#e2e8f0';
+            e.currentTarget.style.color = '#334155';
+          }}
+        >
+          <span style={{ fontSize: 13 }}>
+            {platform === 'FACEBOOK' ? '📘' : platform === 'INSTAGRAM' ? '📸' : platform === 'WHATSAPP' ? '💬' : platform === 'TELEGRAM' ? '✈️' : platform === 'TIKTOK' ? '🎵' : '🌐'}
+          </span>
+          <span style={{ fontWeight: 700, color: '#0f172a' }}>
+            {currentAccountName || `${platform.charAt(0) + platform.slice(1).toLowerCase()} Channel`}
+          </span>
+          <span style={{
+            fontSize: 10,
+            fontWeight: 700,
+            padding: '1px 6px',
+            borderRadius: 4,
+            background: '#f1f5f9',
+            color: '#475569',
+            textTransform: 'uppercase',
+            letterSpacing: '0.4px',
+          }}>
+            {platform}
+          </span>
+          <ExternalLink size={12} style={{ color: '#94a3b8', marginLeft: 1 }} />
+        </a>
+
         <button className="fb-save-btn" onClick={handleSave} disabled={saving}>
           {saving ? (
             <Loader2 size={15} className="spin" />
@@ -2897,8 +3794,10 @@ function FlowBuilderInner() {
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             defaultEdgeOptions={defaultEdgeOptions}
+            defaultSourcePosition={Position.Right}
+            defaultTargetPosition={Position.Left}
             fitView
-            fitViewOptions={{ padding: 0.4, maxZoom: 0.72 }}
+            fitViewOptions={{ padding: 0.25, maxZoom: 0.85 }}
             proOptions={{ hideAttribution: true }}
             deleteKeyCode={['Backspace', 'Delete']}
             minZoom={0.15}
