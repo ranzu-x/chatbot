@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import AppLayout from '../../Layout/AppLayout';
-import { contactAPI } from '../../services/api';
+import { contactAPI, labelAPI } from '../../services/api';
 import { useNavigate } from 'react-router';
 import {
   Users,
@@ -54,6 +54,72 @@ function getPlatform(p) {
 
 function getInitials(name = '') {
   return (name || '').trim().split(/\s+/).map((w) => w[0]).join('').toUpperCase().slice(0, 2) || '?';
+}
+
+function resolveMediaUrl(url) {
+  if (!url) return '';
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('blob:') || url.startsWith('data:')) {
+    return url;
+  }
+  const cleanUrl = url.startsWith('/') ? url : `/${url}`;
+  const apiUrl = import.meta.env.VITE_API_URL || '';
+  if (apiUrl.startsWith('http')) {
+    const baseUrl = apiUrl.replace('/api/v1', '').replace(/\/+$/, '');
+    return `${baseUrl}${cleanUrl}`;
+  }
+  return cleanUrl;
+}
+
+function SubscriberAvatar({ name, avatar, size = 36, platform, style = {} }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const initials = getInitials(name);
+  const pInfo = getPlatform(platform);
+
+  useEffect(() => {
+    setImgFailed(false);
+  }, [avatar]);
+
+  if (avatar && !imgFailed) {
+    return (
+      <img
+        src={resolveMediaUrl(avatar)}
+        alt={name || 'Avatar'}
+        style={{
+          width: size,
+          height: size,
+          borderRadius: '50%',
+          objectFit: 'cover',
+          display: 'block',
+          border: '1px solid #e2e8f0',
+          flexShrink: 0,
+          ...style,
+        }}
+        onError={() => setImgFailed(true)}
+      />
+    );
+  }
+
+  return (
+    <div
+      style={{
+        width: size,
+        height: size,
+        borderRadius: '50%',
+        background: pInfo.bg || 'rgba(100,116,139,0.1)',
+        color: pInfo.color || '#64748b',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: '0.85rem',
+        fontWeight: 700,
+        border: '1px solid #e2e8f0',
+        flexShrink: 0,
+        ...style,
+      }}
+    >
+      {initials}
+    </div>
+  );
 }
 
 function fmtDate(dateStr) {
@@ -462,7 +528,21 @@ export default function ContactsPage() {
   // Filters
   const [search, setSearch] = useState('');
   const [platformFilter, setPlatformFilter] = useState('');
+  const [labelFilter, setLabelFilter] = useState('');
+  const [availableLabels, setAvailableLabels] = useState([]);
   const searchTimeout = useRef(null);
+
+  // Label Management Modal State
+  const [showLabelModal, setShowLabelModal] = useState(false);
+  const [newLabelName, setNewLabelName] = useState('');
+  const [newLabelColor, setNewLabelColor] = useState('#2563eb');
+  const [editingLabelItem, setEditingLabelItem] = useState(null);
+  const [labelSaving, setLabelSaving] = useState(false);
+
+  // Bulk Label State
+  const [bulkLabelModal, setBulkLabelModal] = useState(false);
+  const [selectedBulkLabelId, setSelectedBulkLabelId] = useState('');
+  const [applyingBulkLabel, setApplyingBulkLabel] = useState(false);
 
   // Selection
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -481,6 +561,20 @@ export default function ContactsPage() {
     setTimeout(() => setToast(null), 3500);
   };
 
+  // Load Unified Labels
+  const loadLabels = useCallback(async () => {
+    try {
+      const res = await labelAPI.getAll();
+      setAvailableLabels(res.data.labels || []);
+    } catch (err) {
+      console.error('Failed to load labels', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLabels();
+  }, [loadLabels]);
+
   // Load Contacts
   const loadContacts = useCallback(async () => {
     setLoading(true);
@@ -488,6 +582,7 @@ export default function ContactsPage() {
       const res = await contactAPI.getAll({
         search,
         platform: platformFilter,
+        labelId: labelFilter,
         page: pagination.page,
         limit: pagination.limit,
       });
@@ -498,7 +593,7 @@ export default function ContactsPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, platformFilter, pagination.page, pagination.limit]);
+  }, [search, platformFilter, labelFilter, pagination.page, pagination.limit]);
 
   useEffect(() => {
     loadContacts();
@@ -564,7 +659,7 @@ export default function ContactsPage() {
 
   const handleExportCSV = async () => {
     try {
-      const res = await contactAPI.exportCSV({ platform: platformFilter });
+      const res = await contactAPI.exportCSV({ platform: platformFilter, labelId: labelFilter });
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const a = document.createElement('a');
       a.href = url;
@@ -575,6 +670,76 @@ export default function ContactsPage() {
       showToast('Exported subscribers to CSV');
     } catch {
       showToast('Export failed', 'error');
+    }
+  };
+
+  // Label Management Handlers
+  const handleSaveLabel = async (e) => {
+    e.preventDefault();
+    if (!newLabelName.trim()) return;
+    setLabelSaving(true);
+    try {
+      if (editingLabelItem) {
+        await labelAPI.update(editingLabelItem.id, { name: newLabelName.trim(), color: newLabelColor });
+        showToast('Label updated');
+      } else {
+        await labelAPI.create({ name: newLabelName.trim(), color: newLabelColor });
+        showToast('Label created');
+      }
+      setNewLabelName('');
+      setNewLabelColor('#2563eb');
+      setEditingLabelItem(null);
+      loadLabels();
+      loadContacts();
+    } catch (err) {
+      showToast(err.response?.data?.message || 'Failed to save label', 'error');
+    } finally {
+      setLabelSaving(false);
+    }
+  };
+
+  const handleDeleteLabel = async (labelId) => {
+    if (!window.confirm('Are you sure you want to delete this label? It will be removed from all subscribers.')) return;
+    try {
+      await labelAPI.delete(labelId);
+      showToast('Label deleted');
+      if (labelFilter === String(labelId)) setLabelFilter('');
+      loadLabels();
+      loadContacts();
+    } catch (err) {
+      showToast(err.response?.data?.message || 'Failed to delete label', 'error');
+    }
+  };
+
+  const handleApplyBulkLabel = async () => {
+    if (!selectedBulkLabelId || selectedIds.size === 0) return;
+    setApplyingBulkLabel(true);
+    try {
+      await labelAPI.bulkAttach({ contactIds: Array.from(selectedIds), labelId: Number(selectedBulkLabelId) });
+      showToast(`Attached label to ${selectedIds.size} subscriber(s)`);
+      setBulkLabelModal(false);
+      setSelectedBulkLabelId('');
+      setSelectedIds(new Set());
+      loadLabels();
+      loadContacts();
+    } catch (err) {
+      showToast(err.response?.data?.message || 'Failed to apply label', 'error');
+    } finally {
+      setApplyingBulkLabel(false);
+    }
+  };
+
+  const [syncingAvatars, setSyncingAvatars] = useState(false);
+  const handleSyncAvatars = async () => {
+    setSyncingAvatars(true);
+    try {
+      const res = await contactAPI.syncAvatars();
+      showToast(`Synced ${res.data?.updated || 0} subscriber avatar(s)`);
+      loadContacts();
+    } catch (err) {
+      showToast(err.response?.data?.message || 'Avatar sync failed', 'error');
+    } finally {
+      setSyncingAvatars(false);
     }
   };
 
@@ -632,6 +797,27 @@ export default function ContactsPage() {
           </div>
 
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              onClick={handleSyncAvatars}
+              disabled={syncingAvatars}
+              className="btn btn-secondary"
+              style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.82rem', height: 34, padding: '0 12px' }}
+              title="Fetch and sync avatars from Telegram, Facebook, and Instagram"
+            >
+              <RefreshCw size={13} className={syncingAvatars ? 'animate-spin' : ''} />
+              {syncingAvatars ? 'Syncing...' : 'Sync Avatars'}
+            </button>
+
+            <button
+              onClick={() => setShowLabelModal(true)}
+              className="btn btn-secondary"
+              style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.82rem', height: 34, padding: '0 12px' }}
+              title="Manage Unified Subscriber Labels"
+            >
+              <Tag size={13} color="#8b5cf6" />
+              <span>Labels ({availableLabels.length})</span>
+            </button>
+
             <button
               onClick={handleExportCSV}
               className="btn btn-secondary"
@@ -710,7 +896,7 @@ export default function ContactsPage() {
           }}
         >
           {/* Platform Dropdown */}
-          <div style={{ minWidth: 170 }}>
+          <div style={{ minWidth: 160 }}>
             <select
               value={platformFilter}
               onChange={(e) => {
@@ -721,11 +907,12 @@ export default function ContactsPage() {
                 width: '100%',
                 padding: '6px 10px',
                 borderRadius: 6,
-                border: '1px solid #e2e8f0',
-                background: '#ffffff',
+                border: platformFilter ? '1px solid #2563eb' : '1px solid #e2e8f0',
+                background: platformFilter ? 'rgba(37, 99, 235, 0.04)' : '#ffffff',
                 color: '#0f172a',
                 fontSize: '0.82rem',
                 cursor: 'pointer',
+                fontWeight: platformFilter ? 600 : 400,
               }}
             >
               <option value="">All Channels</option>
@@ -734,6 +921,35 @@ export default function ContactsPage() {
               <option value="INSTAGRAM">Instagram</option>
               <option value="TELEGRAM">Telegram</option>
               <option value="WEBCHAT">Website Live Chat</option>
+            </select>
+          </div>
+
+          {/* Unified Label Dropdown */}
+          <div style={{ minWidth: 180 }}>
+            <select
+              value={labelFilter}
+              onChange={(e) => {
+                setLabelFilter(e.target.value);
+                setPagination((p) => ({ ...p, page: 1 }));
+              }}
+              style={{
+                width: '100%',
+                padding: '6px 10px',
+                borderRadius: 6,
+                border: labelFilter ? '1px solid #8b5cf6' : '1px solid #e2e8f0',
+                background: labelFilter ? 'rgba(139, 92, 246, 0.04)' : '#ffffff',
+                color: '#0f172a',
+                fontSize: '0.82rem',
+                cursor: 'pointer',
+                fontWeight: labelFilter ? 600 : 400,
+              }}
+            >
+              <option value="">All Labels ({availableLabels.length})</option>
+              {availableLabels.map((lbl) => (
+                <option key={lbl.id} value={lbl.id}>
+                  🏷️ {lbl.name} ({lbl.subscriberCount || 0})
+                </option>
+              ))}
             </select>
           </div>
 
@@ -750,6 +966,21 @@ export default function ContactsPage() {
             />
           </div>
 
+          {(platformFilter || labelFilter || search) && (
+            <button
+              onClick={() => {
+                setPlatformFilter('');
+                setLabelFilter('');
+                setSearch('');
+                setPagination((p) => ({ ...p, page: 1 }));
+              }}
+              className="btn btn-secondary btn-sm"
+              style={{ fontSize: '0.78rem', color: '#ef4444', borderColor: '#fca5a5', display: 'flex', alignItems: 'center', gap: 4, height: 32 }}
+            >
+              <X size={12} /> Clear
+            </button>
+          )}
+
           <button
             onClick={loadContacts}
             className="btn btn-secondary btn-sm"
@@ -758,6 +989,43 @@ export default function ContactsPage() {
             <RefreshCw size={13} className={loading ? 'spin' : ''} /> Refresh
           </button>
         </div>
+
+        {/* ── Bulk Actions Floating Bar ── */}
+        {selectedIds.size > 0 && (
+          <div
+            style={{
+              background: '#f8fafc',
+              border: '1px solid #cbd5e1',
+              borderRadius: 8,
+              padding: '8px 14px',
+              marginBottom: 12,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.03)',
+            }}
+          >
+            <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#1e293b' }}>
+              <span style={{ color: '#2563eb', fontWeight: 700 }}>{selectedIds.size}</span> subscriber(s) selected
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button
+                onClick={() => setBulkLabelModal(true)}
+                className="btn btn-primary btn-sm"
+                style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem' }}
+              >
+                <Tag size={12} /> Assign Label
+              </button>
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="btn btn-secondary btn-sm"
+                style={{ fontSize: '0.78rem' }}
+              >
+                Clear Selection
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ── Subscribers Table ── */}
         <div
@@ -783,6 +1051,7 @@ export default function ContactsPage() {
                   <th style={{ padding: '12px 16px', fontWeight: 700 }}>Avatar</th>
                   <th style={{ padding: '12px 16px', fontWeight: 700 }}>Name & Contact</th>
                   <th style={{ padding: '12px 16px', fontWeight: 700 }}>Channel</th>
+                  <th style={{ padding: '12px 16px', fontWeight: 700 }}>Labels</th>
                   <th style={{ padding: '12px 16px', fontWeight: 700 }}>Bot Mode</th>
                   <th style={{ padding: '12px 16px', fontWeight: 700 }}>Subscribed At</th>
                   <th style={{ padding: '12px 16px', fontWeight: 700, textAlign: 'right' }}>Actions</th>
@@ -791,14 +1060,14 @@ export default function ContactsPage() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={8} style={{ padding: 60, textAlign: 'center', color: '#64748b' }}>
+                    <td colSpan={9} style={{ padding: 60, textAlign: 'center', color: '#64748b' }}>
                       <div className="loading-spinner" style={{ margin: '0 auto 10px' }} />
                       Loading subscribers...
                     </td>
                   </tr>
                 ) : contacts.length === 0 ? (
                   <tr>
-                    <td colSpan={8} style={{ padding: 60, textAlign: 'center', color: '#94a3b8' }}>
+                    <td colSpan={9} style={{ padding: 60, textAlign: 'center', color: '#94a3b8' }}>
                       <Users size={36} color="#cbd5e1" style={{ margin: '0 auto 10px' }} />
                       <h3 style={{ fontSize: '0.96rem', fontWeight: 700, color: '#0f172a', margin: '0 0 4px 0' }}>
                         No subscribers found
@@ -845,22 +1114,12 @@ export default function ContactsPage() {
 
                         {/* AVATAR */}
                         <td style={{ padding: '14px 16px' }}>
-                          <div
-                            style={{
-                              width: 36,
-                              height: 36,
-                              borderRadius: '50%',
-                              background: pInfo.bg,
-                              color: pInfo.color,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: '0.85rem',
-                              fontWeight: 700,
-                            }}
-                          >
-                            {getInitials(c.name)}
-                          </div>
+                          <SubscriberAvatar
+                            name={c.name}
+                            avatar={c.avatar}
+                            size={36}
+                            platform={c.platform}
+                          />
                         </td>
 
                         {/* NAME & CONTACT */}
@@ -890,6 +1149,42 @@ export default function ContactsPage() {
                           >
                             <PlatformIcon size={12} /> {pInfo.label}
                           </span>
+                        </td>
+
+                        {/* LABELS */}
+                        <td style={{ padding: '14px 16px' }} onClick={(e) => e.stopPropagation()}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxWidth: 220 }}>
+                            {(!c.labels || c.labels.length === 0) ? (
+                              <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>—</span>
+                            ) : (
+                              c.labels.map((lbl) => (
+                                <span
+                                  key={lbl.id}
+                                  onClick={() => {
+                                    setLabelFilter(String(lbl.id));
+                                    setPagination((p) => ({ ...p, page: 1 }));
+                                  }}
+                                  title={`Filter by label: ${lbl.name}`}
+                                  style={{
+                                    fontSize: '0.72rem',
+                                    fontWeight: 600,
+                                    padding: '2px 7px',
+                                    borderRadius: 10,
+                                    background: `${lbl.color}15`,
+                                    color: lbl.color,
+                                    border: `1px solid ${lbl.color}40`,
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                  }}
+                                >
+                                  <span style={{ width: 5, height: 5, borderRadius: '50%', background: lbl.color }} />
+                                  {lbl.name}
+                                </span>
+                              ))
+                            )}
+                          </div>
                         </td>
 
                         {/* BOT STATUS */}
@@ -1197,6 +1492,291 @@ export default function ContactsPage() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* ── Unified Label Manager Modal ── */}
+        {showLabelModal && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 999,
+              background: 'rgba(15, 23, 42, 0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 16,
+              backdropFilter: 'blur(3px)',
+            }}
+            onClick={() => {
+              setShowLabelModal(false);
+              setEditingLabelItem(null);
+              setNewLabelName('');
+            }}
+          >
+            <div
+              style={{
+                width: 520,
+                maxWidth: '94vw',
+                background: '#ffffff',
+                borderRadius: 14,
+                padding: 24,
+                boxShadow: '0 20px 40px rgba(0,0,0,0.15)',
+                border: '1px solid #e2e8f0',
+                maxHeight: '90vh',
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <div>
+                  <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Tag size={18} color="#8b5cf6" /> Unified Subscriber Labels
+                  </h3>
+                  <p style={{ fontSize: '0.78rem', color: '#64748b', margin: '4px 0 0 0' }}>
+                    Labels are shared across all channels (WhatsApp, Facebook, Instagram, Telegram, Webchat).
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowLabelModal(false);
+                    setEditingLabelItem(null);
+                    setNewLabelName('');
+                  }}
+                  style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Form: Create or Edit Label */}
+              <form onSubmit={handleSaveLabel} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: 14, marginBottom: 18 }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#334155', marginBottom: 8 }}>
+                  {editingLabelItem ? 'Edit Label' : 'Create New Label'}
+                </div>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10 }}>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. VIP Customer, Hot Lead, Return Buyer..."
+                    value={newLabelName}
+                    onChange={(e) => setNewLabelName(e.target.value)}
+                    className="form-input"
+                    style={{ flex: 1, height: 34, fontSize: '0.82rem' }}
+                  />
+                  <button
+                    type="submit"
+                    disabled={labelSaving || !newLabelName.trim()}
+                    className="btn btn-primary btn-sm"
+                    style={{ height: 34, padding: '0 14px' }}
+                  >
+                    {labelSaving ? 'Saving...' : editingLabelItem ? 'Update' : '+ Add Label'}
+                  </button>
+                  {editingLabelItem && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingLabelItem(null);
+                        setNewLabelName('');
+                        setNewLabelColor('#2563eb');
+                      }}
+                      className="btn btn-secondary btn-sm"
+                      style={{ height: 34 }}
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+
+                {/* Color Palette Selector */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: '0.74rem', color: '#64748b', fontWeight: 600 }}>Color:</span>
+                  {[
+                    '#2563eb', // Blue
+                    '#8b5cf6', // Purple
+                    '#10b981', // Emerald
+                    '#ef4444', // Red
+                    '#f59e0b', // Amber
+                    '#06b6d4', // Cyan
+                    '#ec4899', // Pink
+                    '#64748b', // Slate
+                  ].map((hex) => (
+                    <button
+                      type="button"
+                      key={hex}
+                      onClick={() => setNewLabelColor(hex)}
+                      style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: '50%',
+                        background: hex,
+                        border: newLabelColor === hex ? '3px solid #0f172a' : '2px solid #ffffff',
+                        cursor: 'pointer',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+                        outline: 'none',
+                        padding: 0,
+                      }}
+                      title={hex}
+                    />
+                  ))}
+                  <input
+                    type="color"
+                    value={newLabelColor}
+                    onChange={(e) => setNewLabelColor(e.target.value)}
+                    style={{ width: 26, height: 26, border: 'none', background: 'none', cursor: 'pointer' }}
+                    title="Custom color"
+                  />
+                </div>
+              </form>
+
+              {/* Labels List */}
+              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginBottom: 4 }}>
+                  Existing Labels ({availableLabels.length})
+                </div>
+                {availableLabels.length === 0 ? (
+                  <div style={{ padding: '24px 0', textAlign: 'center', color: '#94a3b8', fontSize: '0.84rem' }}>
+                    No labels created yet. Add one above!
+                  </div>
+                ) : (
+                  availableLabels.map((lbl) => (
+                    <div
+                      key={lbl.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '8px 12px',
+                        borderRadius: 8,
+                        background: '#ffffff',
+                        border: '1px solid #f1f5f9',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ width: 10, height: 10, borderRadius: '50%', background: lbl.color }} />
+                        <span
+                          style={{
+                            fontSize: '0.82rem',
+                            fontWeight: 700,
+                            color: lbl.color,
+                            background: `${lbl.color}15`,
+                            padding: '2px 8px',
+                            borderRadius: 6,
+                            border: `1px solid ${lbl.color}35`,
+                          }}
+                        >
+                          {lbl.name}
+                        </span>
+                        <span style={{ fontSize: '0.74rem', color: '#94a3b8' }}>
+                          {lbl.subscriberCount || 0} subscriber(s)
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingLabelItem(lbl);
+                            setNewLabelName(lbl.name);
+                            setNewLabelColor(lbl.color || '#2563eb');
+                          }}
+                          className="btn btn-secondary btn-sm"
+                          style={{ padding: '3px 8px', fontSize: '0.74rem' }}
+                          title="Edit label"
+                        >
+                          <Edit2 size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteLabel(lbl.id)}
+                          className="btn btn-secondary btn-sm"
+                          style={{ padding: '3px 8px', fontSize: '0.74rem', color: '#ef4444' }}
+                          title="Delete label"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Bulk Assign Label Modal ── */}
+        {bulkLabelModal && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 999,
+              background: 'rgba(15, 23, 42, 0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 16,
+              backdropFilter: 'blur(3px)',
+            }}
+            onClick={() => setBulkLabelModal(false)}
+          >
+            <div
+              style={{
+                width: 420,
+                maxWidth: '92vw',
+                background: '#ffffff',
+                borderRadius: 14,
+                padding: 24,
+                boxShadow: '0 20px 40px rgba(0,0,0,0.15)',
+                border: '1px solid #e2e8f0',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Tag size={16} color="#2563eb" /> Assign Label to {selectedIds.size} Subscriber(s)
+                </h3>
+                <button onClick={() => setBulkLabelModal(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}>
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div style={{ marginBottom: 18 }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: '#475569', marginBottom: 6 }}>
+                  Select Label to Attach:
+                </label>
+                <select
+                  value={selectedBulkLabelId}
+                  onChange={(e) => setSelectedBulkLabelId(e.target.value)}
+                  className="form-input w-full"
+                  style={{ height: 38, fontSize: '0.84rem' }}
+                >
+                  <option value="">-- Choose a label --</option>
+                  {availableLabels.map((lbl) => (
+                    <option key={lbl.id} value={lbl.id}>
+                      🏷️ {lbl.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button type="button" onClick={() => setBulkLabelModal(false)} className="btn btn-secondary">
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={!selectedBulkLabelId || applyingBulkLabel}
+                  onClick={handleApplyBulkLabel}
+                  className="btn btn-primary"
+                >
+                  {applyingBulkLabel ? 'Assigning...' : 'Apply Label'}
+                </button>
+              </div>
             </div>
           </div>
         )}

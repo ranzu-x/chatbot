@@ -20,15 +20,54 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    // Try to restore session — works via cookie OR localStorage token (header)
+    const token = localStorage.getItem("auth_token");
+    if (!token) {
+      // If no token exists in localStorage, user is definitively logged out
+      setUser(null);
+      setEntitlements(null);
+      setLoading(false);
+      return;
+    }
+
+    // Validate stored token against the backend
     authAPI.me()
       .then((res) => {
         setUser(res.data.user);
         fetchEntitlements();
       })
-      .catch(() => setUser(null))
+      .catch(() => {
+        localStorage.removeItem("auth_token");
+        setUser(null);
+        setEntitlements(null);
+      })
       .finally(() => setLoading(false));
   }, [fetchEntitlements]);
+
+  // Listen for global 401 responses and cross-tab logout events
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      localStorage.removeItem("auth_token");
+      setUser(null);
+      setEntitlements(null);
+      setLoading(false);
+    };
+
+    const handleStorageChange = (e) => {
+      if (e.key === "auth_token" && !e.newValue) {
+        setUser(null);
+        setEntitlements(null);
+        setLoading(false);
+      }
+    };
+
+    window.addEventListener("auth:unauthorized", handleUnauthorized);
+    window.addEventListener("storage", handleStorageChange);
+
+    return () => {
+      window.removeEventListener("auth:unauthorized", handleUnauthorized);
+      window.removeEventListener("storage", handleStorageChange);
+    };
+  }, []);
 
   const login = async (email, password) => {
     const res = await authAPI.login({ email, password });
@@ -40,7 +79,11 @@ export function AuthProvider({ children }) {
   };
 
   const logout = async () => {
-    await authAPI.logout();
+    try {
+      await authAPI.logout();
+    } catch {
+      // Ignore network errors on logout
+    }
     localStorage.removeItem("auth_token");
     setUser(null);
     setEntitlements(null);

@@ -15,6 +15,23 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Handle 401 Unauthorized responses globally across all protected API requests
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && error.response.status === 401) {
+      const url = error.config?.url || "";
+      // Do not trigger global logout on public auth forms (so bad password messages display normally)
+      const isPublicAuth = url.includes("/auth/login") || url.includes("/auth/register") || url.includes("/auth/tenant");
+      if (!isPublicAuth) {
+        localStorage.removeItem("auth_token");
+        window.dispatchEvent(new Event("auth:unauthorized"));
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 // ─── Auth & Tenant ──────────────────────────────────────────────────
 export const authAPI = {
   login: (data) => api.post("/auth/login", data),
@@ -207,6 +224,11 @@ export const botAPI = {
   getRules: (id) => api.get(`/bots/${id}/rules`),
   addRule: (id, data) => api.post(`/bots/${id}/rules`, data),
   deleteRule: (botId, ruleId) => api.delete(`/bots/${botId}/rules/${ruleId}`),
+  // Bot Error Logs
+  getErrorLogs: (params) => api.get('/bots/errors', { params }),
+  deleteErrorLog: (id) => api.delete(`/bots/errors/${id}`),
+  clearErrorLogs: (params) => api.delete('/bots/errors', { params }),
+  createTestErrorLog: (data) => api.post('/bots/errors/test', data),
 };
 
 // ─── Meta App Settings ─────────────────────────────────────────────
@@ -248,7 +270,19 @@ export const contactAPI = {
   addNote: (id, note) => api.post(`/contacts/${id}/notes`, { note }),
   deleteNote: (contactId, noteId) => api.delete(`/contacts/${contactId}/notes/${noteId}`),
   toggleBot: (id) => api.patch(`/contacts/${id}/toggle-bot`),
+  syncAvatars: () => api.post('/contacts/sync-avatars'),
   exportCSV: (params) => api.get('/contacts/export/csv', { params, responseType: 'blob' }),
+};
+
+// ─── Unified Labels ───────────────────────────────────────────────────
+export const labelAPI = {
+  getAll: () => api.get('/labels'),
+  create: (data) => api.post('/labels', data),
+  update: (id, data) => api.put(`/labels/${id}`, data),
+  delete: (id) => api.delete(`/labels/${id}`),
+  attachToContact: (contactId, data) => api.post(`/contacts/${contactId}/labels`, data),
+  detachFromContact: (contactId, labelId) => api.delete(`/contacts/${contactId}/labels/${labelId}`),
+  bulkAttach: (data) => api.post('/contacts/bulk-labels', data),
 };
 
 // ─── Upload ─────────────────────────────────────────────────────────

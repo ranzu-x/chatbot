@@ -171,7 +171,8 @@ function getFallbackUnlimitedEntitlements() {
     enabledModules: [
       "channel_whatsapp", "channel_facebook", "channel_instagram", "channel_telegram", "channel_webchat", "channel_tiktok",
       "feature_live_chat", "feature_subscribers", "feature_bot_manager", "feature_comment_automation",
-      "feature_broadcasts", "feature_sequences", "feature_ai_agent", "feature_custom_domain"
+      "feature_broadcasts", "feature_sequences", "feature_ai_agent", "feature_custom_domain",
+      "feature_appointments"
     ],
     modulesMap: {},
   };

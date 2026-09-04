@@ -10,7 +10,7 @@ router.use(authMiddleware, roleMiddleware("AGENCY", "ADMIN", "AGENT"));
 router.get("/contacts", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    const { search, platform, limit = 50, page = 1 } = req.query;
+    const { search, platform, labelId, limit = 50, page = 1 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
     let query = `
@@ -27,6 +27,11 @@ router.get("/contacts", async (req, res) => {
       params.push(platform);
     }
 
+    if (labelId) {
+      query += " AND c.id IN (SELECT contact_id FROM contact_labels WHERE label_id = ?)";
+      params.push(labelId);
+    }
+
     if (search) {
       query += " AND (c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR c.external_id LIKE ?)";
       const searchPattern = `%${search}%`;
@@ -41,6 +46,31 @@ router.get("/contacts", async (req, res) => {
     params.push(parseInt(limit), parseInt(offset));
 
     const [contacts] = await pool.query(query, params);
+
+    // Fetch and attach structured labels for all contacts
+    if (contacts.length > 0) {
+      const contactIds = contacts.map((c) => c.id);
+      const [labelRows] = await pool.query(
+        `SELECT cl.contact_id, l.id as label_id, l.name, l.color
+         FROM contact_labels cl
+         JOIN labels l ON l.id = cl.label_id
+         WHERE cl.contact_id IN (?)
+         ORDER BY l.name ASC`,
+        [contactIds]
+      );
+      const labelsMap = {};
+      for (const row of labelRows) {
+        if (!labelsMap[row.contact_id]) labelsMap[row.contact_id] = [];
+        labelsMap[row.contact_id].push({
+          id: row.label_id,
+          name: row.name,
+          color: row.color,
+        });
+      }
+      for (const c of contacts) {
+        c.labels = labelsMap[c.id] || [];
+      }
+    }
 
     return res.json({
       success: true,
@@ -62,28 +92,42 @@ router.get("/contacts", async (req, res) => {
 router.get("/contacts/export/csv", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    const { platform } = req.query;
+    const { platform, labelId } = req.query;
 
-    let query = "SELECT name, platform, external_id, phone, email, created_at FROM contacts WHERE agency_id = ?";
+    let query = `
+      SELECT c.id, c.name, c.platform, c.external_id, c.phone, c.email, c.created_at,
+             (SELECT GROUP_CONCAT(l.name SEPARATOR '; ') 
+              FROM contact_labels cl 
+              JOIN labels l ON l.id = cl.label_id 
+              WHERE cl.contact_id = c.id) as labelNames
+      FROM contacts c 
+      WHERE c.agency_id = ?
+    `;
     const params = [agencyId];
 
     if (platform) {
-      query += " AND platform = ?";
+      query += " AND c.platform = ?";
       params.push(platform);
     }
 
-    query += " ORDER BY created_at DESC";
+    if (labelId) {
+      query += " AND c.id IN (SELECT contact_id FROM contact_labels WHERE label_id = ?)";
+      params.push(labelId);
+    }
+
+    query += " ORDER BY c.created_at DESC";
 
     const [contacts] = await pool.query(query, params);
 
     // Build CSV string
-    const headers = ["Name", "Platform", "External ID", "Phone", "Email", "Created At"];
+    const headers = ["Name", "Platform", "External ID", "Phone", "Email", "Labels", "Created At"];
     const rows = contacts.map(c => [
       `"${(c.name || '').replace(/"/g, '""')}"`,
       `"${c.platform || ''}"`,
       `"${c.external_id || ''}"`,
       `"${(c.phone || '').replace(/"/g, '""')}"`,
       `"${(c.email || '').replace(/"/g, '""')}"`,
+      `"${(c.labelNames || '').replace(/"/g, '""')}"`,
       `"${c.created_at ? new Date(c.created_at).toISOString() : ''}"`,
     ]);
 
@@ -173,7 +217,7 @@ router.put("/contacts/:id", async (req, res) => {
     const { name, phone, email, avatar } = req.body;
 
     const [existing] = await pool.query(
-      "SELECT id FROM contacts WHERE id = ? AND agency_id = ?",
+      "SELECT * FROM contacts WHERE id = ? AND agency_id = ?",
       [req.params.id, agencyId]
     );
 
@@ -181,9 +225,15 @@ router.put("/contacts/:id", async (req, res) => {
       return res.status(404).json({ success: false, message: "Contact not found" });
     }
 
+    const current = existing[0];
+    const newName = name !== undefined ? name : current.name;
+    const newPhone = phone !== undefined ? phone : current.phone;
+    const newEmail = email !== undefined ? email : current.email;
+    const newAvatar = avatar !== undefined ? avatar : current.avatar;
+
     await pool.query(
       `UPDATE contacts SET name = ?, phone = ?, email = ?, avatar = ? WHERE id = ? AND agency_id = ?`,
-      [name, phone || null, email || null, avatar || null, req.params.id, agencyId]
+      [newName, newPhone, newEmail, newAvatar, req.params.id, agencyId]
     );
 
     const [updated] = await pool.query("SELECT * FROM contacts WHERE id = ?", [req.params.id]);
@@ -312,6 +362,19 @@ router.patch("/contacts/:id/toggle-bot", async (req, res) => {
   } catch (err) {
     console.error("Toggle bot error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── SYNC SUBSCRIBER AVATARS ──────────────────────────────────────────────
+router.post("/contacts/sync-avatars", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const { syncAllSubscribersAvatars } = await import("../utils/avatarFetcher.js");
+    const result = await syncAllSubscribersAvatars(agencyId);
+    return res.json({ success: true, updated: result.updatedCount });
+  } catch (err) {
+    console.error("Sync avatars error:", err);
+    return res.status(500).json({ success: false, message: err.message });
   }
 });
 

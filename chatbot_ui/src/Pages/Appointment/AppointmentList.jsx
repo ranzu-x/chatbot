@@ -1,395 +1,578 @@
-import { useEffect, useState, useCallback } from "react";
-import { useNavigate } from "react-router";
-import Swal from "sweetalert2";
-import DataTable from "../../Components/Table Components/DataTable";
-import TableActions from "../../Components/Table Components/TableActionButtons";
-import { FaFilePrescription, FaCalendarPlus, FaInfoCircle } from "react-icons/fa";
-import { MdOutlineSmsFailed } from "react-icons/md";
+﻿import React, { useState, useEffect, useCallback } from "react";
+import { Link } from "react-router";
+import AppLayout from "../../Layout/AppLayout";
+import { useAuth } from "../../Provider/AuthContext";
 import toast from "react-hot-toast";
-import { usePermissions } from "../../hooks/usePermissions";
 import {
-  fetchAppointments as fetchAppointmentsAPI,
+  Calendar,
+  Clock,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+  Plus,
+  Search,
+  Filter,
+  RefreshCw,
+  Trash2,
+  Settings,
+  Copy,
+  ExternalLink,
+  MessageSquare,
+  Phone,
+  User,
+  CalendarCheck,
+} from "lucide-react";
+import {
+  fetchAppointments,
+  fetchAppointmentStats,
   updateAppointmentStatus,
   deleteAppointment,
+  createAppointment,
+  fetchAvailableSlots,
 } from "../../services/appointmentService";
+import api from "../../services/api";
 
-function AppointmentList() {
+export default function AppointmentList() {
+  const { user } = useAuth();
   const [appointments, setAppointments] = useState([]);
+  const [stats, setStats] = useState({ total: 0, today: 0, scheduled: 0, confirmed: 0, completed: 0, cancelled: 0 });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [currentPage, setCurrentPage] = useState(1);
-  const [appointmentsPerPage, setAppointmentsPerPage] = useState(10);
-  const [totalAppointments, setTotalAppointments] = useState(0);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [channelFilter, setChannelFilter] = useState("all");
+  const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [updating, setUpdating] = useState(null);
-  const navigate = useNavigate();
-  const { hasRole, can } = usePermissions();
+  const [totalItems, setTotalItems] = useState(0);
 
-  // ✅ Stable fetch function with pagination + search (using appointmentService)
-  const fetchAppointments = useCallback(async (page, limit, searchTerm) => {
+  // New appointment modal
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalLoading, setModalLoading] = useState(false);
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [formData, setFormData] = useState({
+    customer_name: "",
+    customer_phone: "",
+    customer_email: "",
+    service_name: "General Consultation",
+    appointment_date: new Date().toISOString().split("T")[0],
+    appointment_time: "10:00",
+    staff_id: "",
+    duration: 30,
+    fee: 0,
+    channel: "MANUAL",
+    notes: "",
+  });
+
+  const loadAppointments = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetchAppointmentsAPI(page, limit, searchTerm);
-
-      setAppointments(data.appointments);
-      setTotalAppointments(data.pagination.totalAppointments);
-      setTotalPages(data.pagination.totalPages);
-      setCurrentPage(data.pagination.currentPage);
+      const res = await fetchAppointments(page, 15, search);
+      setAppointments(res.appointments || []);
+      if (res.pagination) {
+        setTotalPages(res.pagination.totalPages || 1);
+        setTotalItems(res.pagination.total || 0);
+      }
     } catch (err) {
       console.error(err);
-      Swal.fire("Error", err.response?.data?.message || "Failed to load appointments", "error");
+      toast.error(err.response?.data?.message || "Failed to load appointments");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page, search]);
 
-  // ✅ Effect handles pagination, search, etc.
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      fetchAppointments(currentPage, appointmentsPerPage, search);
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [currentPage, appointmentsPerPage, search, fetchAppointments]);
-
-  const handlePageChange = (page) => setCurrentPage(page);
-
-  const handleItemsPerPageChange = (newSize) => {
-    setAppointmentsPerPage(parseInt(newSize));
-    setCurrentPage(1);
-  };
-
-  // ✅ Update status API (using appointmentService)
-  const updateStatus = async (id, newStatus, reason = null) => {
+  const loadStats = async () => {
     try {
-      setUpdating(id);
-
-      await updateAppointmentStatus(id, newStatus, reason);
-      setAppointments((prev) =>
-        prev.map((a) => (a.id === id ? { ...a, status: newStatus } : a))
-      );
-      toast.success(`Status updated to ${newStatus}`);
-    } catch (error) {
-      console.error(error);
-      toast.error(error.response?.data?.message || "Failed to update status");
-    } finally {
-      setUpdating(null);
-    }
-  };
-
-  // ✅ Smart status change handler
-  const handleStatusChange = async (appointment, newStatus) => {
-    // Block status changes for completed appointments (except hospital_admin)
-    if (appointment.status === "completed" && !hasRole("hospital_admin")) {
-      toast.error("Cannot change status of completed appointment");
-      return;
-    }
-
-    // Payment required for confirmation
-    if (newStatus === "confirmed" && appointment.payment_status !== "paid") {
-      const result = await Swal.fire({
-        title: "Payment Required",
-        text: "Appointment confirmation requires payment. Process payment now?",
-        icon: "question",
-        showCancelButton: true,
-        confirmButtonText: "Process Payment",
-        cancelButtonText: "Cancel"
-      });
-
-      if (result.isConfirmed) {
-        navigate(`/billing/new?appointment_id=${appointment.id}`);
-      }
-      return;
-    }
-
-    // Only doctors can mark as completed
-    if (newStatus === "completed" && !hasRole("doctor")) {
-      toast.error("Only doctors can complete appointments");
-      return;
-    }
-
-    // Payment check for completion
-    if (newStatus === "completed" && appointment.payment_status !== "paid") {
-      toast.error("Cannot complete appointment without payment");
-      return;
-    }
-
-    // Cancellation with reason
-    if (newStatus === "cancelled") {
-      const { value: reason } = await Swal.fire({
-        title: 'Cancel Appointment',
-        input: 'select',
-        inputOptions: {
-          'patient_request': 'Patient Request',
-          'doctor_unavailable': 'Doctor Unavailable',
-          'emergency': 'Emergency',
-          'rescheduled': 'Rescheduled',
-          'other': 'Other'
-        },
-        inputPlaceholder: 'Select cancellation reason',
-        showCancelButton: true,
-        confirmButtonText: 'Cancel Appointment',
-        confirmButtonColor: '#d33',
-      });
-
-      if (reason) {
-        if (appointment.payment_status === 'paid') {
-          Swal.fire({
-            title: 'Payment Refund',
-            text: 'This appointment has been paid. Refund process will be initiated.',
-            icon: 'warning',
-            confirmButtonText: 'Proceed with Cancellation'
-          });
-        }
-        await updateStatus(appointment.id, newStatus, reason);
-      }
-      return;
-    }
-
-    // Direct status update for other cases
-    await updateStatus(appointment.id, newStatus);
-  };
-
-  // ✅ Get status options with disabled states and reasons
-  const getStatusOptions = (appointment) => {
-    const baseOptions = [
-      { value: "scheduled", label: "Scheduled" },
-      { value: "confirmed", label: "Confirmed" },
-      { value: "completed", label: "Completed" },
-      { value: "cancelled", label: "Cancelled" }
-    ];
-
-    return baseOptions.map(option => {
-      let disabled = false;
-      let disabledReason = "";
-
-      // Hospital admin can change any status
-      if (hasRole("hospital_admin")) {
-        disabled = false;
-      }
-      // For completed appointments - no one can change except hospital_admin
-      else if (appointment.status === "completed") {
-        disabled = true;
-        disabledReason = "Completed appointments cannot be modified";
-      }
-      // Regular logic for other users
-      else {
-        switch (option.value) {
-          case "confirmed":
-            disabled = appointment.payment_status !== "paid";
-            disabledReason = disabled ? "Payment required" : "";
-            break;
-          case "completed":
-            disabled = !hasRole("doctor") || appointment.payment_status !== "paid";
-            disabledReason = disabled ?
-              (appointment.payment_status !== "paid" ? "Payment required" : "Only doctors can complete")
-              : "";
-            break;
-          case "scheduled":
-            disabled = appointment.status === "completed" ||
-              appointment.status === "cancelled" ||
-              appointment.status === "confirmed";
-            disabledReason = disabled ? "Cannot revert to scheduled" : "";
-            break;
-        }
-      }
-
-      return { ...option, disabled, disabledReason };
-    });
-  };
-
-  // ✅ Check if status dropdown should be shown
-  const shouldShowStatusDropdown = (appointment) => {
-    // Hospital admin can always change status
-    if (hasRole("hospital_admin")) return true;
-
-    // No one can change completed appointments except hospital_admin
-    if (appointment.status === "completed") return false;
-
-    // Doctors can change to completed, others can change to other statuses
-    return true;
-  };
-
-  // ✅ Reschedule from cancelled appointment
-  const handleRescheduleFromCancelled = (cancelledAppointment) => {
-    navigate('/appointments/new', {
-      state: {
-        patientId: cancelledAppointment.patient_id,
-        doctorId: cancelledAppointment.doctor_id,
-        prefillData: {
-          patient_name: cancelledAppointment.patient_name,
-          doctor_name: cancelledAppointment.doctor_name,
-        }
-      }
-    });
-  };
-
-  const handleView = (item) => navigate(`/appointments/view/${item.id}`);
-  const handleEdit = (item) => navigate(`/appointments/edit/${item.id}`);
-
-  const handleDelete = async (item) => {
-    const result = await Swal.fire({
-      title: "Are you sure?",
-      text: "This appointment will be permanently deleted.",
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonText: "Yes, delete it!",
-      confirmButtonColor: "#d33",
-    });
-
-    if (!result.isConfirmed) return;
-
-    try {
-      await deleteAppointment(item.id);
-      
-      // ✅ Fix pagination bug: validate current page still exists
-      // If we deleted an item, calculate max possible page and adjust if needed
-      const newTotal = totalAppointments - 1;
-      const maxPossiblePage = Math.ceil(newTotal / appointmentsPerPage);
-      const pageToFetch = currentPage > maxPossiblePage && maxPossiblePage > 0 ? maxPossiblePage : currentPage;
-      
-      fetchAppointments(pageToFetch, appointmentsPerPage, search);
-      Swal.fire("Deleted!", "Appointment has been deleted.", "success");
+      const res = await fetchAppointmentStats();
+      if (res.stats) setStats(res.stats);
     } catch (err) {
-      console.error(err);
-      Swal.fire("Error", err.response?.data?.message || "Failed to delete appointment", "error");
+      console.warn("Could not load stats:", err);
     }
   };
 
-  const columns = [
-    {
-      header: "#",
-      render: (row, index) =>
-        (currentPage - 1) * appointmentsPerPage + index + 1,
-    },
-    { header: "Patient", accessor: "patient_name" },
-    { header: "Doctor", accessor: "doctor_name" },
-    { header: "Date", accessor: "appointment_date" },
-    { header: "Time", accessor: "appointment_time" },
-    {
-      header: "Payment",
-      render: (row) => (
-        <div className="flex flex-col gap-2 items-center">
+  const loadTeamMembers = async () => {
+    try {
+      const res = await api.get("/team-members?limit=50");
+      setTeamMembers(res.data?.members || res.data?.users || []);
+    } catch (err) {
+      console.warn("Could not load team members:", err);
+    }
+  };
 
-          {/* Single Payment Button */}
-          <button
-            onClick={() => row.payment_status !== 'paid' && navigate(`/billing/new?appointment_id=${row.id}`)}
-            disabled={row.payment_status === 'paid' || row.status === 'cancelled'}
-            className={`w-24 text-xs px-2 py-1 rounded transition-colors ${row.payment_status === 'paid'
-              ? 'bg-green-200 text-gray-500 cursor-not-allowed'
-              : row.status === 'cancelled'
-              ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
-              : 'bg-blue-100 text-blue-700 hover:bg-blue-200 border border-blue-200'
-              }`}
-          >
-            {row.payment_status === 'paid' ? 'Paid' : 'Make Payment'}
-          </button>
-        </div>
-      ),
-    },
-    {
-      header: "Status",
-      render: (row) => (
-        <div className="flex flex-col gap-2">
-          {/* Current Status Badge */}
-          <span className={`text-xs font-medium px-2 py-1 rounded text-center ${row.status === 'scheduled' ? 'bg-yellow-100 text-yellow-800 border border-yellow-200' :
-            row.status === 'confirmed' ? 'bg-green-100 text-green-800 border border-green-200' :
-              row.status === 'completed' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
-                row.status === 'cancelled' ? 'bg-red-100 text-red-800 border border-red-200' :
-                  'bg-gray-100 text-gray-800 border border-gray-200'
-            }`}>
-            {row.status.toUpperCase()}
-          </span>
+  useEffect(() => {
+    loadAppointments();
+    loadStats();
+    loadTeamMembers();
+  }, [loadAppointments]);
 
-          {/* Smart Status Dropdown - Conditionally rendered */}
-          {updating === row.id ? (
-            <div className="flex items-center justify-center">
-              <div className="animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full"></div>
-            </div>
-          ) : shouldShowStatusDropdown(row) ? (
-            <select
-              value={row.status}
-              onChange={(e) => handleStatusChange(row, e.target.value)}
-              className="text-xs border border-gray-300 rounded p-1 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
-            >
-              {getStatusOptions(row).map(option => {
-                // Build option label with disabled reason if applicable
-                const optionLabel = option.disabled && option.disabledReason 
-                  ? `${option.label} (${option.disabledReason})` 
-                  : option.label;
-                
-                return (
-                  <option
-                    key={option.value}
-                    value={option.value}
-                    disabled={option.disabled}
-                    title={option.disabledReason || ""}
-                  >
-                    {optionLabel}
-                  </option>
-                );
-              })}
-            </select>
-          ) : (
-            // Show locked message for completed appointments
-            row.status === "completed" && (
-              <span className="text-xs text-gray-500 text-center">
-                Status Locked
-              </span>
-            )
-          )}
-        </div>
-      ),
-    },
-  ];
+  const handleStatusChange = async (id, newStatus) => {
+    try {
+      await updateAppointmentStatus(id, newStatus);
+      toast.success(`Appointment marked as ${newStatus}`);
+      loadAppointments();
+      loadStats();
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Failed to update status");
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this appointment?")) return;
+    try {
+      await deleteAppointment(id);
+      toast.success("Appointment deleted");
+      loadAppointments();
+      loadStats();
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Failed to delete appointment");
+    }
+  };
+
+  const handleCreateAppointment = async (e) => {
+    e.preventDefault();
+    if (!formData.customer_name || !formData.appointment_date || !formData.appointment_time) {
+      toast.error("Please fill in customer name, date and time");
+      return;
+    }
+
+    setModalLoading(true);
+    try {
+      await createAppointment(formData);
+      toast.success("Appointment scheduled successfully!");
+      setIsModalOpen(false);
+      setFormData({
+        customer_name: "",
+        customer_phone: "",
+        customer_email: "",
+        service_name: "General Consultation",
+        appointment_date: new Date().toISOString().split("T")[0],
+        appointment_time: "10:00",
+        staff_id: "",
+        duration: 30,
+        fee: 0,
+        channel: "MANUAL",
+        notes: "",
+      });
+      loadAppointments();
+      loadStats();
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Failed to create appointment");
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  const getStatusBadge = (st) => {
+    switch (st) {
+      case "confirmed":
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">Confirmed</span>;
+      case "completed":
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">Completed</span>;
+      case "cancelled":
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-100 text-rose-800">Cancelled</span>;
+      default:
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">Scheduled</span>;
+    }
+  };
+
+  const getChannelBadge = (ch) => {
+    const colors = {
+      WHATSAPP: "bg-green-50 text-green-700 border-green-200",
+      FACEBOOK: "bg-blue-50 text-blue-700 border-blue-200",
+      INSTAGRAM: "bg-pink-50 text-pink-700 border-pink-200",
+      TELEGRAM: "bg-sky-50 text-sky-700 border-sky-200",
+      WEBCHAT: "bg-indigo-50 text-indigo-700 border-indigo-200",
+      MANUAL: "bg-slate-50 text-slate-700 border-slate-200",
+    };
+    return (
+      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold border ${colors[ch] || colors.MANUAL}`}>
+        {ch || "WHATSAPP"}
+      </span>
+    );
+  };
+
+  const filteredAppointments = appointments.filter((a) => {
+    if (statusFilter !== "all" && a.status !== statusFilter) return false;
+    if (channelFilter !== "all" && a.channel !== channelFilter) return false;
+    return true;
+  });
 
   return (
-    <div className="p-4 sm:p-8 font-poppins">
-      <DataTable
-        title="Appointment"
-        columns={columns}
-        data={appointments}
-        loading={loading}
-        searchTerm={search}
-        setSearchTerm={setSearch}
-        onAddNew={() => navigate("/appointments/new")}
-        currentPage={currentPage}
-        totalPages={totalPages}
-        totalItems={totalAppointments}
-        itemsPerPage={appointmentsPerPage}
-        onItemsPerPageChange={handleItemsPerPageChange}
-        onPageChange={handlePageChange}
-        actions={(item) => (
-          <TableActions
-            item={item}
-            onView={handleView}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-            extraActions={[
-              // Reschedule for cancelled appointments
-              ...(item.status === 'cancelled' ? [
-                {
-                  key: "reschedule",
-                  label: "Create New Appointment",
-                  icon: <FaCalendarPlus className="text-green-600" />,
-                  onClick: (it) => handleRescheduleFromCancelled(it)
-                }
-              ] : []),
+    <AppLayout>
+      <div className="w-full p-4 md:p-6 space-y-6">
+        {/* Top Header */}
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold">
+                <CalendarCheck size={20} />
+              </div>
+              <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight">
+                Appointment & Booking Manager
+              </h1>
+            </div>
+            <p className="text-xs md:text-sm text-slate-500 mt-1">
+              Manage omnichannel bookings across WhatsApp, Messenger, Instagram, Webchat, and live agents.
+            </p>
+          </div>
 
-              // Prescription for doctors - only for non-cancelled appointments
-              ...(hasRole("doctor") && can("prescriptions", "create") && item.status !== 'cancelled' ? [
-                {
-                  key: "prescription",
-                  label: "Create Prescription",
-                  icon: <FaFilePrescription className="text-purple-600" />,
-                  onClick: (it) => navigate(`/prescription/new?patientId=${it.patient_id}&appointmentId=${it.id}`),
-                },
-              ] : []),
-            ]}
-          />
+          <div className="flex items-center flex-wrap gap-2.5">
+            <Link
+              to="/appointments/slots"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 shadow-sm transition"
+            >
+              <Settings size={14} /> Manage Slots
+            </Link>
+
+            <button
+              onClick={() => setIsModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm transition"
+            >
+              <Plus size={15} /> Book Appointment
+            </button>
+
+            <button
+              onClick={() => {
+                loadAppointments();
+                loadStats();
+              }}
+              title="Refresh"
+              className="p-2 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 shadow-sm transition"
+            >
+              <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
+            </button>
+          </div>
+        </div>
+
+        {/* Stats Metrics Cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total</span>
+            <p className="text-2xl font-black text-slate-800 mt-1">{stats.total || 0}</p>
+          </div>
+          <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+            <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">Today</span>
+            <p className="text-2xl font-black text-emerald-600 mt-1">{stats.today || 0}</p>
+          </div>
+          <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+            <span className="text-xs font-bold text-amber-600 uppercase tracking-wider">Scheduled</span>
+            <p className="text-2xl font-black text-amber-600 mt-1">{stats.scheduled || 0}</p>
+          </div>
+          <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+            <span className="text-xs font-bold text-blue-600 uppercase tracking-wider">Confirmed</span>
+            <p className="text-2xl font-black text-blue-600 mt-1">{stats.confirmed || 0}</p>
+          </div>
+          <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+            <span className="text-xs font-bold text-purple-600 uppercase tracking-wider">Completed</span>
+            <p className="text-2xl font-black text-purple-600 mt-1">{stats.completed || 0}</p>
+          </div>
+          <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+            <span className="text-xs font-bold text-rose-500 uppercase tracking-wider">Cancelled</span>
+            <p className="text-2xl font-black text-rose-500 mt-1">{stats.cancelled || 0}</p>
+          </div>
+        </div>
+
+        {/* Filters & Search */}
+        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col md:flex-row gap-3 items-center justify-between">
+          <div className="relative w-full md:w-80">
+            <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search customer, phone, service..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-9 pr-4 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
+            />
+          </div>
+
+          <div className="flex items-center gap-2.5 w-full md:w-auto">
+            <div className="flex items-center gap-1.5 text-xs text-slate-500">
+              <Filter size={14} /> Status:
+            </div>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="text-xs py-2 px-3 rounded-xl border border-slate-200 bg-white font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+            >
+              <option value="all">All Statuses</option>
+              <option value="scheduled">Scheduled</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="completed">Completed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+
+            <select
+              value={channelFilter}
+              onChange={(e) => setChannelFilter(e.target.value)}
+              className="text-xs py-2 px-3 rounded-xl border border-slate-200 bg-white font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+            >
+              <option value="all">All Channels</option>
+              <option value="WHATSAPP">WhatsApp</option>
+              <option value="FACEBOOK">Facebook</option>
+              <option value="INSTAGRAM">Instagram</option>
+              <option value="TELEGRAM">Telegram</option>
+              <option value="WEBCHAT">Webchat</option>
+              <option value="MANUAL">Manual / Agent</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Appointments Table */}
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-slate-100 bg-slate-50/50 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                  <th className="py-3 px-4">Customer</th>
+                  <th className="py-3 px-4">Service</th>
+                  <th className="py-3 px-4">Date & Time</th>
+                  <th className="py-3 px-4">Channel</th>
+                  <th className="py-3 px-4">Assigned Staff</th>
+                  <th className="py-3 px-4">Status</th>
+                  <th className="py-3 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50 text-xs text-slate-700 font-medium">
+                {loading ? (
+                  <tr>
+                    <td colSpan={7} className="py-12 text-center text-slate-400">
+                      <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-600 mb-2"></div>
+                      <p>Loading appointments...</p>
+                    </td>
+                  </tr>
+                ) : filteredAppointments.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-12 text-center text-slate-400">
+                      <Calendar size={32} className="mx-auto mb-2 opacity-30" />
+                      <p className="font-semibold">No appointments found</p>
+                      <p className="text-[11px] mt-1 text-slate-400">
+                        Bookings via WhatsApp, webchat, and direct links will appear here automatically.
+                      </p>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredAppointments.map((apt) => (
+                    <tr key={apt.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-xs">
+                            {apt.customer_name?.charAt(0)?.toUpperCase() || "C"}
+                          </div>
+                          <div>
+                            <p className="font-bold text-slate-900">{apt.customer_name || "Customer"}</p>
+                            <p className="text-[11px] text-slate-400 font-normal">{apt.customer_phone || "-"}</p>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="py-3 px-4">
+                        <span className="font-semibold text-slate-800">{apt.service_name}</span>
+                        {apt.fee > 0 && <span className="text-[11px] text-slate-400 block">${Number(apt.fee).toFixed(2)}</span>}
+                      </td>
+
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                          <Calendar size={13} className="text-indigo-500" />
+                          {apt.appointment_date}
+                        </div>
+                        <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-0.5">
+                          <Clock size={12} />
+                          {apt.appointment_time?.substring(0, 5)} ({apt.duration || 30}m)
+                        </div>
+                      </td>
+
+                      <td className="py-3 px-4">{getChannelBadge(apt.channel)}</td>
+
+                      <td className="py-3 px-4 text-slate-600">
+                        {apt.staff_name ? (
+                          <span className="inline-flex items-center gap-1">
+                            <User size={12} className="text-slate-400" /> {apt.staff_name}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 italic">Unassigned</span>
+                        )}
+                      </td>
+
+                      <td className="py-3 px-4">{getStatusBadge(apt.status)}</td>
+
+                      <td className="py-3 px-4 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {apt.status !== "confirmed" && apt.status !== "completed" && (
+                            <button
+                              onClick={() => handleStatusChange(apt.id, "confirmed")}
+                              title="Confirm"
+                              className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition"
+                            >
+                              <CheckCircle2 size={15} />
+                            </button>
+                          )}
+                          {apt.status === "confirmed" && (
+                            <button
+                              onClick={() => handleStatusChange(apt.id, "completed")}
+                              title="Complete"
+                              className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 transition"
+                            >
+                              <CheckCircle2 size={15} />
+                            </button>
+                          )}
+                          {apt.status !== "cancelled" && (
+                            <button
+                              onClick={() => handleStatusChange(apt.id, "cancelled")}
+                              title="Cancel"
+                              className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 transition"
+                            >
+                              <XCircle size={15} />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDelete(apt.id)}
+                            title="Delete"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-slate-100 transition"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Modal: Book Appointment */}
+        {isModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100">
+              <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+                <h3 className="font-extrabold text-slate-800 text-base flex items-center gap-2">
+                  <CalendarCheck className="text-indigo-600" size={18} /> Book New Appointment
+                </h3>
+                <button
+                  onClick={() => setIsModalOpen(false)}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-50 transition"
+                >
+                  <XCircle size={18} />
+                </button>
+              </div>
+
+              <form onSubmit={handleCreateAppointment} className="space-y-3.5 text-xs">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Customer Name *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. John Doe"
+                    value={formData.customer_name}
+                    onChange={(e) => setFormData({ ...formData, customer_name: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Phone Number</label>
+                    <input
+                      type="text"
+                      placeholder="+1234567890"
+                      value={formData.customer_phone}
+                      onChange={(e) => setFormData({ ...formData, customer_phone: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Email (optional)</label>
+                    <input
+                      type="email"
+                      placeholder="client@example.com"
+                      value={formData.customer_email}
+                      onChange={(e) => setFormData({ ...formData, customer_email: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Service</label>
+                    <input
+                      type="text"
+                      value={formData.service_name}
+                      onChange={(e) => setFormData({ ...formData, service_name: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Assigned Staff</label>
+                    <select
+                      value={formData.staff_id}
+                      onChange={(e) => setFormData({ ...formData, staff_id: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 bg-white"
+                    >
+                      <option value="">Any Staff Member</option>
+                      {teamMembers.map((tm) => (
+                        <option key={tm.id} value={tm.id}>
+                          {tm.name || tm.email}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Date *</label>
+                    <input
+                      type="date"
+                      required
+                      value={formData.appointment_date}
+                      onChange={(e) => setFormData({ ...formData, appointment_date: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Time *</label>
+                    <input
+                      type="time"
+                      required
+                      value={formData.appointment_time}
+                      onChange={(e) => setFormData({ ...formData, appointment_time: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Internal Notes</label>
+                  <textarea
+                    rows={2}
+                    placeholder="Add details, customer preferences, or agenda..."
+                    value={formData.notes}
+                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setIsModalOpen(false)}
+                    className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold hover:bg-slate-50 transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={modalLoading}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold hover:bg-indigo-700 transition shadow-sm disabled:opacity-50"
+                  >
+                    {modalLoading ? "Booking..." : "Confirm Booking"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
         )}
-      />
-    </div>
+      </div>
+    </AppLayout>
   );
 }
-
-export default AppointmentList;

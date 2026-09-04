@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import AppLayout from '../../Layout/AppLayout';
 import { flowAPI } from '../../services/api';
-import { useNavigate } from 'react-router';
+import { useNavigate, useLocation } from 'react-router';
 
 /* ─── constants ─── */
 const PLATFORMS = {
@@ -542,6 +542,7 @@ function SkeletonCard({ index }) {
    ═══════════════════════════════════════════════ */
 export default function FlowListPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { toasts, push: toast, remove: removeToast } = useToast();
 
   const [flows, setFlows] = useState([]);
@@ -549,8 +550,8 @@ export default function FlowListPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterPlatform, setFilterPlatform] = useState('ALL');
+  const [searchTerm, setSearchTerm] = useState(() => location.state?.searchTerm || '');
+  const [filterPlatform, setFilterPlatform] = useState(() => location.state?.filterPlatform || 'ALL');
 
   /* inject keyframes */
   useEffect(() => { injectKeyframes(); }, []);
@@ -581,7 +582,15 @@ export default function FlowListPage() {
       if (res.data?.success) {
         toast(`Flow "${data.name}" created!`);
         setShowCreate(false);
-        navigate(`/flows/${res.data.flow?.id || res.data.id}/edit`);
+        const flowId = res.data.flow?.id || res.data.id;
+        navigate(`/flows/${flowId}/edit`, {
+          state: {
+            from: location.pathname + location.search,
+            label: 'Flows',
+            searchTerm,
+            filterPlatform,
+          },
+        });
       } else {
         toast(res.data?.message || 'Failed to create flow', 'error');
       }
@@ -619,7 +628,14 @@ export default function FlowListPage() {
     }
   };
 
-  const handleEdit = (flow) => navigate(`/flows/${flow.id}/edit`);
+  const handleEdit = (flow) => navigate(`/flows/${flow.id}/edit`, {
+    state: {
+      from: location.pathname + location.search,
+      label: 'Flows',
+      searchTerm,
+      filterPlatform,
+    },
+  });
 
   /* filter */
   const filtered = flows.filter(f => {

@@ -3,6 +3,8 @@ import { AuthProvider } from './Provider/AuthContext';
 import { LayoutProvider } from './Provider/LayoutContext';
 import { NotificationProvider } from './Provider/NotificationContext';
 import ProtectedRoute from './Router/ProtectedRoute';
+import PublicRoute from './Router/PublicRoute';
+import RootRedirect from './Router/RootRedirect';
 
 // Public landing pages
 import LandingPage    from './Pages/Landing/LandingPage';
@@ -51,6 +53,8 @@ import FlowBuilderPage  from './Pages/Flows/FlowBuilderPage';
 import ContactsPage          from './Pages/Contacts/ContactsPage';
 import CampaignListPage      from './Pages/Campaigns/CampaignListPage';
 import SocialPostingPage     from './Pages/Publishing/SocialPostingPage';
+import AppointmentList       from './Pages/Appointment/AppointmentList';
+import SlotManager           from './Pages/Appointment/SlotManager';
 
 import { Toaster } from 'react-hot-toast';
 
@@ -66,9 +70,9 @@ export default function App() {
           <NotificationProvider>
             <Routes>
               {/* ── Public Landing & Auth ── */}
-              <Route path="/" element={<LandingPage />} />
-              <Route path="/login" element={<Login />} />
-              <Route path="/register" element={<Register />} />
+              <Route path="/" element={<RootRedirect />} />
+              <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
+              <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
 
               {/* ── Admin ── */}
               <Route path="/admin" element={<ProtectedRoute roles={['ADMIN']}><AdminDashboard /></ProtectedRoute>} />
@@ -121,6 +125,9 @@ export default function App() {
             <Route path="/integrations/webhooks" element={<ProtectedRoute roles={ADMIN_AGENCY}><WebhooksManagerPage /></ProtectedRoute>} />
             <Route path="/orders" element={<ProtectedRoute roles={ADMIN_AGENCY}><OrdersPage /></ProtectedRoute>} />
             <Route path="/payments/orders" element={<ProtectedRoute roles={ADMIN_AGENCY}><OrdersPage /></ProtectedRoute>} />
+            <Route path="/appointments" element={<ProtectedRoute roles={ALL_ROLES}><AppointmentList /></ProtectedRoute>} />
+            <Route path="/appointments/slots" element={<ProtectedRoute roles={ADMIN_AGENCY}><SlotManager /></ProtectedRoute>} />
+            <Route path="/slots" element={<ProtectedRoute roles={ADMIN_AGENCY}><SlotManager /></ProtectedRoute>} />
 
             {/* ── Settings & App Integrations Hub ── */}
             <Route path="/settings/apps" element={<ProtectedRoute roles={ADMIN_AGENCY}><AppSettingsHubPage /></ProtectedRoute>} />

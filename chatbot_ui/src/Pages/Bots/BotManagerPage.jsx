@@ -1,12 +1,17 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useLocation } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
 import { flowAPI, integrationAPI, channelAPI, botAPI, templateAPI } from '../../services/api';
 import WhatsAppTemplateManager from '../../Components/Templates/WhatsAppTemplateManager';
 import FacebookUtilityTemplateManager from '../../Components/Templates/FacebookUtilityTemplateManager';
 import CommentAutomationManager from '../../Components/Comments/CommentAutomationManager';
+import Swal from 'sweetalert2';
 import {
   Bot,
+  AlertCircle,
+  AlertTriangle,
+  Check,
+  ShieldAlert,
   Plus,
   Search,
   SlidersHorizontal,
@@ -210,18 +215,45 @@ const STARTER_TEMPLATES = [
   },
 ];
 
-function formatDate(ts) {
-  if (!ts) return '—';
-  return new Date(ts).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: '2-digit' });
+function formatUniqueId(id) {
+  if (!id) return 'BOT-0000';
+  const padded = String(id).padStart(4, '0');
+  return `BOT-${padded}`;
 }
 
-function formatUniqueId(id) {
-  if (!id) return '2072078';
-  return String(2000000 + Number(id) * 31);
+function formatDate(dateStr) {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatLogDateTime(dateStr) {
+  if (!dateStr) return { date: '—', time: '—', relative: '' };
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return { date: '—', time: '—', relative: '' };
+
+  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+  const diffMs = Date.now() - d.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHours = Math.floor(diffMin / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  let relative = '';
+  if (diffSec < 60) relative = 'Just now';
+  else if (diffMin < 60) relative = `${diffMin}m ago`;
+  else if (diffHours < 24) relative = `${diffHours}h ago`;
+  else relative = `${diffDays}d ago`;
+
+  return { date, time, relative };
 }
 
 export default function BotManagerPage() {
   const navigate = useNavigate();
+  const location = useLocation();
 
   // Data
   const [integrations, setIntegrations] = useState([]);
@@ -233,17 +265,46 @@ export default function BotManagerPage() {
   // Selected State
   const [selectedAccount, setSelectedAccount] = useState(null); // null = "All Accounts" or specific integration object
   const [accountSearch, setAccountSearch] = useState('');
-  const [channelFilter, setChannelFilter] = useState('ALL');
+  const [channelFilter, setChannelFilter] = useState(() => location.state?.channelFilter || 'ALL');
 
   // Category & SubTab Navigation
-  const [activeCategory, setActiveCategory] = useState('automation');
-  const [activeSubTab, setActiveSubTab] = useState('keywordReplies');
+  const [activeCategory, setActiveCategory] = useState(() => location.state?.activeCategory || 'automation');
+  const [activeSubTab, setActiveSubTab] = useState(() => location.state?.activeSubTab || 'keywordReplies');
 
   // Table Filter & Search
-  const [folderFilter, setFolderFilter] = useState('All Folders');
-  const [tableSearch, setTableSearch] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
+  const [folderFilter, setFolderFilter] = useState(() => location.state?.folderFilter || 'All Folders');
+  const [tableSearch, setTableSearch] = useState(() => location.state?.tableSearch || '');
+  const [currentPage, setCurrentPage] = useState(() => location.state?.currentPage || 1);
   const [pageSize, setPageSize] = useState(10);
+
+  // Restore selectedAccount from previous navigation state if available
+  const restoredAccountRef = useRef(false);
+  useEffect(() => {
+    if (!restoredAccountRef.current && location.state?.selectedAccountId && integrations.length > 0) {
+      const found = integrations.find((i) => String(i.id) === String(location.state.selectedAccountId));
+      if (found) {
+        setSelectedAccount(found);
+        restoredAccountRef.current = true;
+      }
+    }
+  }, [integrations, location.state]);
+
+  // Navigate to flow builder while retaining page origin state
+  const openFlowBuilder = useCallback((flowId) => {
+    navigate(`/flows/${flowId}`, {
+      state: {
+        from: location.pathname + location.search,
+        label: 'Automations',
+        activeCategory,
+        activeSubTab,
+        selectedAccountId: selectedAccount?.id || null,
+        channelFilter,
+        folderFilter,
+        tableSearch,
+        currentPage,
+      },
+    });
+  }, [navigate, location, activeCategory, activeSubTab, selectedAccount, channelFilter, folderFilter, tableSearch, currentPage]);
 
   // Modals
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -253,6 +314,15 @@ export default function BotManagerPage() {
   const [newFlowPlatform, setNewFlowPlatform] = useState('WHATSAPP');
   const [creating, setCreating] = useState(false);
   const [showOptionsDropdown, setShowOptionsDropdown] = useState(false);
+
+  // Error Log Modal State
+  const [showErrorLogModal, setShowErrorLogModal] = useState(false);
+  const [errorLogs, setErrorLogs] = useState([]);
+  const [errorLogsLoading, setErrorLogsLoading] = useState(false);
+  const [errorLogSearch, setErrorLogSearch] = useState('');
+  const [errorLogPlatformFilter, setErrorLogPlatformFilter] = useState('ALL');
+  const [expandedErrorId, setExpandedErrorId] = useState(null);
+  const [copiedLogId, setCopiedLogId] = useState(null);
 
   // AI settings mock state
   const [aiPrompt, setAiPrompt] = useState('You are a helpful and polite customer support AI assistant for our brand.');
@@ -264,6 +334,132 @@ export default function BotManagerPage() {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
   };
+
+  const getActiveChannel = useCallback(() => {
+    if (selectedAccount?.platform) return selectedAccount.platform.toUpperCase();
+    if (channelFilter && channelFilter !== 'ALL') return channelFilter.toUpperCase();
+    return 'ALL';
+  }, [selectedAccount, channelFilter]);
+
+  const loadErrorLogs = useCallback(async (targetPlatform = null) => {
+    setErrorLogsLoading(true);
+    try {
+      const activePlatform = (targetPlatform !== null ? targetPlatform : errorLogPlatformFilter).toUpperCase();
+      const params = { limit: 100 };
+      if (activePlatform && activePlatform !== 'ALL') {
+        params.platform = activePlatform;
+      }
+      const res = await botAPI.getErrorLogs(params);
+      if (res.data?.success) {
+        setErrorLogs(res.data.errors || []);
+      }
+    } catch (err) {
+      console.error('Failed to load bot error logs:', err);
+    } finally {
+      setErrorLogsLoading(false);
+    }
+  }, [errorLogPlatformFilter]);
+
+  const openErrorLogModal = useCallback((targetChannel = null) => {
+    const channel = (targetChannel || getActiveChannel()).toUpperCase();
+    setErrorLogPlatformFilter(channel);
+    setShowErrorLogModal(true);
+    loadErrorLogs(channel);
+  }, [getActiveChannel, loadErrorLogs]);
+
+  const handleDeleteErrorLog = async (id, e) => {
+    e?.stopPropagation();
+    try {
+      await botAPI.deleteErrorLog(id);
+      setErrorLogs((prev) => prev.filter((item) => item.id !== id));
+      showToast('Error log entry removed', 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('Failed to delete error log', 'error');
+    }
+  };
+
+  const handleClearAllErrors = async () => {
+    const channelLabel = errorLogPlatformFilter !== 'ALL' ? getPlatformInfo(errorLogPlatformFilter).label : 'All Channels';
+    const result = await Swal.fire({
+      title: `Clear ${channelLabel} Bot Errors?`,
+      text: `Are you sure you want to clear error logs for ${channelLabel}? This cannot be undone.`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#ef4444',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'Yes, Clear',
+    });
+    if (result.isConfirmed) {
+      try {
+        const params = errorLogPlatformFilter !== 'ALL' ? { platform: errorLogPlatformFilter } : {};
+        await botAPI.clearErrorLogs(params);
+        if (errorLogPlatformFilter !== 'ALL') {
+          setErrorLogs((prev) => prev.filter((item) => (item.platform || '').toUpperCase() !== errorLogPlatformFilter.toUpperCase()));
+        } else {
+          setErrorLogs([]);
+        }
+        showToast(`${channelLabel} bot error logs cleared`, 'success');
+      } catch (err) {
+        console.error(err);
+        showToast('Failed to clear error logs', 'error');
+      }
+    }
+  };
+
+  const handleSimulateTestError = async () => {
+    try {
+      const platform = errorLogPlatformFilter !== 'ALL' ? errorLogPlatformFilter : (selectedAccount?.platform || 'WHATSAPP');
+      await botAPI.createTestErrorLog({
+        platform,
+        contactIdentifier: selectedAccount?.wa_display_phone || '+1 (555) 019-2834',
+        message: `${getPlatformInfo(platform).label} API Error: Recipient account "${selectedAccount?.name || 'CareSphere'}" delivery error test simulation.`,
+      });
+      showToast('Simulated error log entry added', 'success');
+      loadErrorLogs(platform);
+    } catch (err) {
+      console.error(err);
+      showToast('Failed to generate test error', 'error');
+    }
+  };
+
+  const handleCopyErrorDetails = (errItem, e) => {
+    e?.stopPropagation();
+    let textToCopy = errItem.error_message;
+    if (errItem.error_details) {
+      try {
+        const parsed = JSON.parse(errItem.error_details);
+        textToCopy = `${errItem.error_message}\n\nTechnical Details:\n${JSON.stringify(parsed, null, 2)}`;
+      } catch {
+        textToCopy = `${errItem.error_message}\n\nTechnical Details:\n${errItem.error_details}`;
+      }
+    }
+    navigator.clipboard.writeText(textToCopy);
+    setCopiedLogId(errItem.id);
+    setTimeout(() => setCopiedLogId(null), 2000);
+    showToast('Error details copied to clipboard');
+  };
+
+  const filteredErrorLogs = useMemo(() => {
+    return errorLogs.filter((item) => {
+      if (errorLogPlatformFilter !== 'ALL') {
+        if ((item.platform || '').toUpperCase() !== errorLogPlatformFilter.toUpperCase()) {
+          return false;
+        }
+      }
+      if (errorLogSearch.trim()) {
+        const q = errorLogSearch.toLowerCase().trim();
+        const msg = (item.error_message || '').toLowerCase();
+        const contact = (item.contact_identifier || item.contact_name || '').toLowerCase();
+        const botName = (item.bot_name || '').toLowerCase();
+        const flowName = (item.flow_name || '').toLowerCase();
+        if (!msg.includes(q) && !contact.includes(q) && !botName.includes(q) && !flowName.includes(q)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [errorLogs, errorLogPlatformFilter, errorLogSearch]);
 
   /* ─── Load Data ─── */
   const loadAllData = useCallback(async () => {
@@ -294,23 +490,32 @@ export default function BotManagerPage() {
         setTemplates(templRes.value.data?.templates || []);
       }
 
-      // Default select the first account if available
-      if (integs.length > 0 && !selectedAccount) {
-        setSelectedAccount(integs[0]);
-      } else if (!selectedAccount) {
-        setSelectedAccount({ id: 'all', name: 'All Connected Channels', platform: 'WHATSAPP', is_active: 1 });
-      }
+      // Default select the first account if none currently chosen
+      setSelectedAccount((prev) => {
+        if (prev) return prev;
+        if (integs.length > 0) return integs[0];
+        return { id: 'all', name: 'All Connected Channels', platform: 'WHATSAPP', is_active: 1 };
+      });
+
+      // Also load latest error logs
+      loadErrorLogs();
     } catch (e) {
       console.error(e);
       showToast('Failed to load bot manager data', 'error');
     } finally {
       setLoading(false);
     }
-  }, [selectedAccount]);
+  }, [loadErrorLogs]);
 
   useEffect(() => {
     loadAllData();
   }, [loadAllData]);
+
+  // Sync error logs when selected account or channel filter changes
+  useEffect(() => {
+    const activeChan = getActiveChannel();
+    loadErrorLogs(activeChan);
+  }, [selectedAccount?.id, selectedAccount?.platform, channelFilter, getActiveChannel, loadErrorLogs]);
 
   // Filter sub-tabs dynamically per channel platform (Message Templates for WhatsApp & Facebook)
   const currentSubTabs = useMemo(() => {
@@ -393,9 +598,10 @@ export default function BotManagerPage() {
   };
 
   // When platform changes within activeCategory, ensure activeSubTab is valid
+  const currentAccountPlatform = selectedAccount?.platform;
   useEffect(() => {
     const list = SUB_TABS[activeCategory] || [];
-    const platform = (selectedAccount?.platform || 'WHATSAPP').toUpperCase();
+    const platform = (currentAccountPlatform || 'WHATSAPP').toUpperCase();
     const available = list.filter((sub) => {
       if (sub.id === 'messageTemplates') {
         return ['WHATSAPP', 'FACEBOOK'].includes(platform);
@@ -413,7 +619,7 @@ export default function BotManagerPage() {
     if (!isCurrentValid && available.length > 0) {
       setActiveSubTab(available[0].id);
     }
-  }, [selectedAccount, activeCategory, activeSubTab]);
+  }, [currentAccountPlatform, activeCategory, activeSubTab]);
 
 
 
@@ -513,7 +719,7 @@ export default function BotManagerPage() {
       setNewFlowName('');
       const newId = res.data?.flow?.id || res.data?.id;
       if (newId) {
-        navigate(`/flows/${newId}`);
+        openFlowBuilder(newId);
       } else {
         loadAllData();
       }
@@ -1012,6 +1218,43 @@ export default function BotManagerPage() {
 
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', position: 'relative' }}>
               <button
+                onClick={() => openErrorLogModal()}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '7px 14px',
+                  borderRadius: 8,
+                  border: errorLogs.length > 0 ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid #e4e4f0',
+                  background: errorLogs.length > 0 ? 'rgba(239, 68, 68, 0.06)' : '#ffffff',
+                  color: errorLogs.length > 0 ? '#dc2626' : '#1a1a2e',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s',
+                }}
+                title="View Bot Error Log"
+              >
+                <AlertCircle size={15} color={errorLogs.length > 0 ? '#ef4444' : '#64748b'} />
+                <span>Error Log</span>
+                {errorLogs.length > 0 && (
+                  <span
+                    style={{
+                      background: '#ef4444',
+                      color: '#ffffff',
+                      fontSize: '0.68rem',
+                      fontWeight: 800,
+                      padding: '1px 6px',
+                      borderRadius: 10,
+                      marginLeft: 2,
+                    }}
+                  >
+                    {errorLogs.length}
+                  </span>
+                )}
+              </button>
+
+              <button
                 onClick={() => setShowSettingsModal(true)}
                 style={{
                   display: 'flex',
@@ -1061,7 +1304,7 @@ export default function BotManagerPage() {
                       borderRadius: 8,
                       boxShadow: '0 8px 24px rgba(0,0,0,0.1)',
                       zIndex: 100,
-                      width: 170,
+                      width: 180,
                       overflow: 'hidden',
                     }}
                   >
@@ -1075,6 +1318,17 @@ export default function BotManagerPage() {
                       onMouseOut={(e) => e.currentTarget.style.background = '#ffffff'}
                     >
                       <Plus size={13} color="#6366f1" /> Create Flow
+                    </div>
+                    <div
+                      onClick={() => {
+                        setShowOptionsDropdown(false);
+                        openErrorLogModal();
+                      }}
+                      style={{ padding: '9px 14px', fontSize: '0.82rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: '#dc2626', borderTop: '1px solid #f0f0fa' }}
+                      onMouseOver={(e) => e.currentTarget.style.background = '#fef2f2'}
+                      onMouseOut={(e) => e.currentTarget.style.background = '#ffffff'}
+                    >
+                      <AlertCircle size={13} color="#ef4444" /> Bot Error Log {errorLogs.length > 0 ? `(${errorLogs.length})` : ''}
                     </div>
                     <div
                       onClick={() => {
@@ -1270,7 +1524,7 @@ export default function BotManagerPage() {
                       </tr>
                     ) : (
                       displayedFlows.map((flow, idx) => (
-                        <tr key={flow.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/flows/${flow.id}`)}>
+                        <tr key={flow.id} style={{ cursor: 'pointer' }} onClick={() => openFlowBuilder(flow.id)}>
                           <td style={{ fontWeight: 700, color: '#5c5c80' }}>
                             {idx + 1}
                           </td>
@@ -1299,7 +1553,7 @@ export default function BotManagerPage() {
                               <button
                                 className="bm-row-action"
                                 title="Open Live Visual Builder"
-                                onClick={() => navigate(`/flows/${flow.id}`)}
+                                onClick={() => openFlowBuilder(flow.id)}
                               >
                                 <Edit3 size={13} />
                               </button>
@@ -1723,6 +1977,606 @@ export default function BotManagerPage() {
                   Save Settings
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Bot Error Log Modal ── */}
+      {showErrorLogModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.65)',
+            backdropFilter: 'blur(4px)',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+          onClick={() => setShowErrorLogModal(false)}
+        >
+          <div
+            style={{
+              width: 880,
+              maxWidth: '96vw',
+              maxHeight: '88vh',
+              background: '#ffffff',
+              borderRadius: 16,
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+              border: '1px solid #e2e8f0',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div
+              style={{
+                padding: '18px 24px',
+                borderBottom: '1px solid #f1f5f9',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                background: '#ffffff',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 10,
+                    background: '#fef2f2',
+                    border: '1px solid #fee2e2',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#ef4444',
+                    flexShrink: 0,
+                  }}
+                >
+                  <AlertCircle size={22} />
+                </div>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <h3 style={{ margin: 0, fontSize: '1.08rem', fontWeight: 800, color: '#0f172a' }}>
+                      {errorLogPlatformFilter !== 'ALL' ? `${getPlatformInfo(errorLogPlatformFilter).label} Bot Error Log` : 'Bot Error Log'}
+                    </h3>
+                    {errorLogs.length > 0 && (
+                      <span
+                        style={{
+                          background: '#fef2f2',
+                          color: '#dc2626',
+                          border: '1px solid #fecaca',
+                          fontSize: '0.72rem',
+                          fontWeight: 700,
+                          padding: '2px 8px',
+                          borderRadius: 12,
+                        }}
+                      >
+                        {errorLogs.length} Total
+                      </span>
+                    )}
+                  </div>
+                  <p style={{ margin: '3px 0 0 0', fontSize: '0.78rem', color: '#64748b' }}>
+                    Review delivery failures, provider API errors, and reasons why bots didn't reply.
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={handleSimulateTestError}
+                  title="Generate a sample test error to preview logging behavior"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '6px 12px',
+                    borderRadius: 8,
+                    border: '1px dashed #cbd5e1',
+                    background: '#f8fafc',
+                    color: '#475569',
+                    fontSize: '0.76rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    transition: 'all 0.15s',
+                  }}
+                  onMouseOver={(e) => { e.currentTarget.style.background = '#f1f5f9'; }}
+                  onMouseOut={(e) => { e.currentTarget.style.background = '#f8fafc'; }}
+                >
+                  <Sparkles size={13} color="#6366f1" />
+                  <span>Simulate Test Error</span>
+                </button>
+
+                {errorLogs.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearAllErrors}
+                    title="Clear all error logs"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '6px 12px',
+                      borderRadius: 8,
+                      border: '1px solid #fecaca',
+                      background: '#fff5f5',
+                      color: '#dc2626',
+                      fontSize: '0.76rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseOver={(e) => { e.currentTarget.style.background = '#fee2e2'; }}
+                    onMouseOut={(e) => { e.currentTarget.style.background = '#fff5f5'; }}
+                  >
+                    <Trash2 size={13} />
+                    <span>Clear All</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => loadErrorLogs(errorLogPlatformFilter)}
+                  disabled={errorLogsLoading}
+                  title="Refresh logs"
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 8,
+                    border: '1px solid #e2e8f0',
+                    background: '#ffffff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#64748b',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <RefreshCw size={14} className={errorLogsLoading ? 'spin' : ''} />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowErrorLogModal(false)}
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 8,
+                    border: 'none',
+                    background: '#f1f5f9',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#64748b',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* Filter & Search Toolbar */}
+            <div
+              style={{
+                padding: '12px 24px',
+                borderBottom: '1px solid #f1f5f9',
+                background: '#f8fafc',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                flexWrap: 'wrap',
+              }}
+            >
+              {/* Channel Filter Pills */}
+              <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
+                {['WHATSAPP', 'FACEBOOK', 'TELEGRAM', 'INSTAGRAM', 'WEBCHAT', 'ALL'].map((plt) => {
+                  const isActive = errorLogPlatformFilter === plt;
+                  const pInfo = plt === 'ALL' ? { label: 'All Channels' } : getPlatformInfo(plt);
+                  return (
+                    <button
+                      key={plt}
+                      type="button"
+                      onClick={() => {
+                        setErrorLogPlatformFilter(plt);
+                        loadErrorLogs(plt);
+                      }}
+                      style={{
+                        padding: '5px 12px',
+                        borderRadius: 20,
+                        fontSize: '0.74rem',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        border: isActive ? '1px solid #6366f1' : '1px solid #e2e8f0',
+                        background: isActive ? '#6366f1' : '#ffffff',
+                        color: isActive ? '#ffffff' : '#64748b',
+                        transition: 'all 0.15s',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {pInfo.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Search input */}
+              <div style={{ position: 'relative', width: 280, maxWidth: '100%' }}>
+                <Search size={14} color="#94a3b8" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+                <input
+                  type="text"
+                  placeholder="Search errors, contacts, bots..."
+                  value={errorLogSearch}
+                  onChange={(e) => setErrorLogSearch(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '6px 10px 6px 30px',
+                    borderRadius: 8,
+                    border: '1px solid #e2e8f0',
+                    background: '#ffffff',
+                    fontSize: '0.78rem',
+                    color: '#0f172a',
+                    outline: 'none',
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Error List Body */}
+            <div
+              style={{
+                flex: 1,
+                overflowY: 'auto',
+                padding: '16px 24px',
+                background: '#f8fafc',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+              }}
+            >
+              {errorLogsLoading && errorLogs.length === 0 ? (
+                <div style={{ padding: '60px 0', textAlign: 'center' }}>
+                  <div className="loading-spinner" style={{ margin: '0 auto 10px' }} />
+                  <p style={{ color: '#64748b', fontSize: '0.82rem', margin: 0 }}>Fetching bot error logs...</p>
+                </div>
+              ) : filteredErrorLogs.length === 0 ? (
+                <div
+                  style={{
+                    padding: '60px 20px',
+                    textAlign: 'center',
+                    background: '#ffffff',
+                    borderRadius: 12,
+                    border: '1px solid #e2e8f0',
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 52,
+                      height: 52,
+                      borderRadius: '50%',
+                      background: '#ecfdf5',
+                      color: '#10b981',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      margin: '0 auto 12px',
+                    }}
+                  >
+                    <CheckCircle2 size={26} />
+                  </div>
+                  <h4 style={{ margin: '0 0 6px 0', fontSize: '0.96rem', fontWeight: 700, color: '#0f172a' }}>
+                    {errorLogs.length === 0 ? 'No Bot Errors Detected' : 'No Errors Matching Filter'}
+                  </h4>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b', maxWidth: 380, marginInline: 'auto' }}>
+                    {errorLogs.length === 0
+                      ? 'All bots and automated flows are running smoothly. Any future delivery or API failures will appear here.'
+                      : 'Try resetting your search query or channel filter to view other error entries.'}
+                  </p>
+                </div>
+              ) : (
+                filteredErrorLogs.map((errItem) => {
+                  const { date, time, relative } = formatLogDateTime(errItem.created_at);
+                  const isExpanded = expandedErrorId === errItem.id;
+                  const pInfo = getPlatformInfo(errItem.platform);
+                  const isCopied = copiedLogId === errItem.id;
+
+                  return (
+                    <div
+                      key={errItem.id}
+                      style={{
+                        background: '#ffffff',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: 12,
+                        padding: '14px 18px',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14 }}>
+                        {/* Error Icon & Main Message */}
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flex: 1, minWidth: 0 }}>
+                          <div
+                            style={{
+                              width: 32,
+                              height: 32,
+                              borderRadius: 8,
+                              background: '#fef2f2',
+                              color: '#ef4444',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              flexShrink: 0,
+                              marginTop: 2,
+                            }}
+                          >
+                            <AlertTriangle size={16} />
+                          </div>
+
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div
+                              style={{
+                                fontSize: '0.86rem',
+                                fontWeight: 700,
+                                color: '#0f172a',
+                                lineHeight: 1.45,
+                                wordBreak: 'break-word',
+                              }}
+                            >
+                              {errItem.error_message}
+                            </div>
+
+                            {/* Tags row */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                              {/* Channel badge */}
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                  fontSize: '0.72rem',
+                                  fontWeight: 600,
+                                  padding: '2px 8px',
+                                  borderRadius: 6,
+                                  background: pInfo.bg,
+                                  color: pInfo.color,
+                                }}
+                              >
+                                {pInfo.label}
+                              </span>
+
+                              {/* Bot or Flow info */}
+                              {errItem.flow_name && (
+                                <span
+                                  style={{
+                                    fontSize: '0.72rem',
+                                    fontWeight: 600,
+                                    padding: '2px 8px',
+                                    borderRadius: 6,
+                                    background: 'rgba(99, 102, 241, 0.08)',
+                                    color: '#4f46e5',
+                                  }}
+                                >
+                                  ⚡ Flow: {errItem.flow_name}
+                                </span>
+                              )}
+
+                              {errItem.bot_name && (
+                                <span
+                                  style={{
+                                    fontSize: '0.72rem',
+                                    fontWeight: 600,
+                                    padding: '2px 8px',
+                                    borderRadius: 6,
+                                    background: 'rgba(16, 185, 129, 0.08)',
+                                    color: '#059669',
+                                  }}
+                                >
+                                  🤖 Bot: {errItem.bot_name}
+                                </span>
+                              )}
+
+                              {/* Contact identifier */}
+                              {errItem.contact_identifier && (
+                                <span
+                                  style={{
+                                    fontSize: '0.72rem',
+                                    color: '#64748b',
+                                    fontWeight: 500,
+                                  }}
+                                >
+                                  To: <strong>{errItem.contact_name ? `${errItem.contact_name} (${errItem.contact_identifier})` : errItem.contact_identifier}</strong>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Date / Time & Actions */}
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
+                              <span
+                                style={{
+                                  fontSize: '0.7rem',
+                                  fontWeight: 700,
+                                  padding: '1px 6px',
+                                  borderRadius: 4,
+                                  background: '#f1f5f9',
+                                  color: '#475569',
+                                }}
+                              >
+                                {relative}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: 3 }}>
+                              {date} • {time}
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedErrorId(isExpanded ? null : errItem.id)}
+                              style={{
+                                padding: '4px 10px',
+                                borderRadius: 6,
+                                border: '1px solid #e2e8f0',
+                                background: isExpanded ? '#f1f5f9' : '#ffffff',
+                                color: '#475569',
+                                fontSize: '0.73rem',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 4,
+                              }}
+                            >
+                              <span>{isExpanded ? 'Hide Details' : 'Details'}</span>
+                              <ChevronDown
+                                size={13}
+                                style={{
+                                  transform: isExpanded ? 'rotate(180deg)' : 'none',
+                                  transition: 'transform 0.15s ease',
+                                }}
+                              />
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={(e) => handleDeleteErrorLog(errItem.id, e)}
+                              title="Delete this error entry"
+                              style={{
+                                width: 28,
+                                height: 28,
+                                borderRadius: 6,
+                                border: '1px solid #fee2e2',
+                                background: '#fff5f5',
+                                color: '#ef4444',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: 'pointer',
+                                transition: 'all 0.15s',
+                              }}
+                              onMouseOver={(e) => { e.currentTarget.style.background = '#fee2e2'; }}
+                              onMouseOut={(e) => { e.currentTarget.style.background = '#fff5f5'; }}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Expanded Technical Details Accordion */}
+                      {isExpanded && (
+                        <div
+                          style={{
+                            marginTop: 12,
+                            paddingTop: 12,
+                            borderTop: '1px dashed #e2e8f0',
+                            background: '#f8fafc',
+                            padding: 12,
+                            borderRadius: 8,
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                            <span style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#64748b' }}>
+                              Technical Diagnostic Payload
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => handleCopyErrorDetails(errItem, e)}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 5,
+                                padding: '3px 8px',
+                                borderRadius: 5,
+                                border: '1px solid #cbd5e1',
+                                background: '#ffffff',
+                                color: '#334155',
+                                fontSize: '0.7rem',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              {isCopied ? <Check size={12} color="#10b981" /> : <Copy size={12} />}
+                              <span>{isCopied ? 'Copied!' : 'Copy'}</span>
+                            </button>
+                          </div>
+
+                          <pre
+                            style={{
+                              margin: 0,
+                              padding: 10,
+                              borderRadius: 6,
+                              background: '#1e293b',
+                              color: '#f1f5f9',
+                              fontSize: '0.72rem',
+                              lineHeight: 1.45,
+                              overflowX: 'auto',
+                              fontFamily: 'Consolas, Monaco, "Courier New", monospace',
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-all',
+                              maxHeight: 220,
+                            }}
+                          >
+                            {(() => {
+                              try {
+                                if (!errItem.error_details) return JSON.stringify({ message: errItem.error_message }, null, 2);
+                                return JSON.stringify(JSON.parse(errItem.error_details), null, 2);
+                              } catch {
+                                return String(errItem.error_details || errItem.error_message);
+                              }
+                            })()}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div
+              style={{
+                padding: '12px 24px',
+                borderTop: '1px solid #f1f5f9',
+                background: '#ffffff',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
+              <div style={{ fontSize: '0.74rem', color: '#94a3b8' }}>
+                Showing {filteredErrorLogs.length} of {errorLogs.length} recorded error{errorLogs.length === 1 ? '' : 's'}.
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowErrorLogModal(false)}
+                style={{
+                  padding: '7px 18px',
+                  borderRadius: 8,
+                  border: '1px solid #e2e8f0',
+                  background: '#ffffff',
+                  color: '#1e293b',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>

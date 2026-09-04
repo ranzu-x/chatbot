@@ -161,7 +161,18 @@ async function publishToInstagram({ igAccountId, token, userToken, postType, mes
       );
 
       const igMediaId = pubRes.data?.id;
-      return { success: true, postId: igMediaId, permalink: `https://instagram.com/p/${igMediaId}` };
+
+      // Fetch the real permalink (shortcode-based URL) from the Graph API
+      let igPermalink = `https://www.instagram.com/p/${igMediaId}/`;
+      try {
+        const permalinkRes = await axios.get(
+          `https://graph.facebook.com/${META_API_VERSION}/${igMediaId}`,
+          { params: { fields: "permalink", access_token: activeToken } }
+        );
+        if (permalinkRes.data?.permalink) igPermalink = permalinkRes.data.permalink;
+      } catch (_) { /* fallback to numeric ID URL if fetch fails */ }
+
+      return { success: true, postId: igMediaId, permalink: igPermalink };
     } catch (err) {
       lastErr = err;
       const errDetail = err.response?.data?.error?.message || err.message;

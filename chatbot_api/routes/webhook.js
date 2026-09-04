@@ -10,6 +10,8 @@ import {
   matchBotRules,
 } from "../utils/messageProcessor.js";
 import { emitToAgency, emitToConversation } from "../utils/socket.js";
+import { fetchTelegramUserProfilePhoto } from "../utils/avatarFetcher.js";
+import { logBotError, extractErrorMessage } from "../utils/botLogger.js";
 
 const router = express.Router();
 
@@ -748,14 +750,8 @@ router.post("/webhook/:agencyId/:integrationId", async (req, res) => {
   }
 });
 
-// ─── RECEIVE TELEGRAM INCOMING MESSAGES (POST) ──────────────────────────────
-router.post("/webhook/telegram/:agencyId/:integrationId", async (req, res) => {
-  const { agencyId, integrationId } = req.params;
-  const update = req.body;
-
-  // Always respond 200 immediately to Telegram
-  res.sendStatus(200);
-
+// ─── PROCESS TELEGRAM UPDATE (SHARED BY WEBHOOK & POLLER) ────────────────────
+export async function processTelegramUpdate(agencyId, integrationId, update) {
   try {
     const [integRows] = await pool.query(
       "SELECT * FROM integrations WHERE id = ? AND agency_id = ? AND is_active = 1",
@@ -767,23 +763,44 @@ router.post("/webhook/telegram/:agencyId/:integrationId", async (req, res) => {
     const messageObj = update.message || update.callback_query?.message;
     if (!messageObj) return;
 
-    const externalId = messageObj.chat?.id?.toString();
-    const externalMsgId = (update.message?.message_id || update.callback_query?.id)?.toString();
-    
+    const externalId = (messageObj.chat?.id || update.message?.from?.id || update.callback_query?.from?.id)?.toString();
+    if (!externalId) return;
+
+    const externalMsgId = (update.message?.message_id || update.callback_query?.id || `tg_${Date.now()}`)?.toString();
+
     let msgBody = "";
     let msgType = "TEXT";
+    let mediaUrl = null;
 
     if (update.callback_query) {
       msgBody = update.callback_query.data || "";
-    } else {
-      msgBody = update.message?.text || "";
-      if (update.message?.photo) {
+      // Answer callback query so Telegram UI stops spinning
+      if (integration.access_token && update.callback_query.id) {
+        fetch(`https://api.telegram.org/bot${integration.access_token}/answerCallbackQuery?callback_query_id=${update.callback_query.id}`)
+          .catch(() => {});
+      }
+    } else if (update.message) {
+      msgBody = update.message.text || "";
+      if (update.message.photo && update.message.photo.length > 0) {
         msgType = "IMAGE";
         msgBody = update.message.caption || "[Photo]";
+      } else if (update.message.document) {
+        msgType = "DOCUMENT";
+        msgBody = update.message.caption || update.message.document.file_name || "[Document]";
       }
     }
 
-    const senderName = update.message?.from?.first_name || update.callback_query?.from?.first_name || externalId;
+    const fromObj = update.message?.from || update.callback_query?.from;
+    const senderName = fromObj
+      ? `${fromObj.first_name || ""} ${fromObj.last_name || ""}`.trim() || fromObj.username || externalId
+      : externalId;
+
+    let avatar = null;
+    if (fromObj?.id && integration.access_token) {
+      avatar = await fetchTelegramUserProfilePhoto(fromObj.id, integration.access_token);
+    }
+
+    console.log(`📩 [Telegram Incoming] From: ${senderName} (${externalId}) Avatar: ${avatar ? 'Found' : 'None'} Msg: "${msgBody}"`);
 
     await handleIncomingPayload({
       agencyId,
@@ -793,13 +810,21 @@ router.post("/webhook/telegram/:agencyId/:integrationId", async (req, res) => {
       externalMsgId,
       msgType,
       msgBody,
+      mediaUrl,
       senderName,
-      avatar: null,
+      avatar,
       integration,
     });
   } catch (err) {
-    console.error("Telegram Webhook processing error:", err);
+    console.error("Telegram processing error:", err);
   }
+}
+
+// ─── RECEIVE TELEGRAM INCOMING MESSAGES (POST) ──────────────────────────────
+router.post("/webhook/telegram/:agencyId/:integrationId", async (req, res) => {
+  const { agencyId, integrationId } = req.params;
+  res.sendStatus(200);
+  await processTelegramUpdate(Number(agencyId), Number(integrationId), req.body);
 });
 
 // ─── TIKTOK WEBHOOK VERIFICATION (GET) ───────────────────────────
@@ -879,48 +904,65 @@ async function handleIncomingPayload({
   avatar = null,
   integration,
 }) {
-  // 1. Prevent duplicate messages
-  const isDup = await isDuplicateMessage(externalMsgId);
-  if (isDup) return;
+  try {
+    // 1. Prevent duplicate messages
+    const isDup = await isDuplicateMessage(externalMsgId);
+    if (isDup) return;
 
-  // 2. Find or create contact with real name and avatar
-  const contact = await findOrCreateContact(
-    agencyId,
-    platform,
-    externalId,
-    senderName,
-    platform === "WHATSAPP" ? externalId : null,
-    avatar
-  );
+    // 2. Find or create contact with real name and avatar
+    const contact = await findOrCreateContact(
+      agencyId,
+      platform,
+      externalId,
+      senderName,
+      platform === "WHATSAPP" ? externalId : null,
+      avatar
+    );
 
-  // 3. Find or create conversation
-  const { conversation, isNew } = await findOrCreateConversation(agencyId, contact.id, integrationId, platform);
+    // 3. Find or create conversation
+    const { conversation, isNew } = await findOrCreateConversation(agencyId, contact.id, integrationId, platform);
 
-  // 4. Save incoming message with mediaUrl
-  const message = await saveMessage(conversation.id, "INBOUND", msgType, msgBody, externalMsgId, mediaUrl);
+    // 4. Save incoming message with mediaUrl
+    const message = await saveMessage(conversation.id, "INBOUND", msgType, msgBody, externalMsgId, mediaUrl);
 
-  // Emit socket event to notify agents of new message/conversation
-  emitToAgency(agencyId, "new_message", {
-    conversationId: conversation.id,
-    message,
-  });
-  emitToConversation(conversation.id, "new_message", {
-    conversationId: conversation.id,
-    message,
-  });
+    const socketMsg = { ...message };
+    if (socketMsg.media_url && socketMsg.media_url.includes("lookaside.fbsbx.com")) {
+      socketMsg.media_url = `/api/v1/media/whatsapp/${message.id}`;
+    }
 
-  if (isNew) {
-    emitToAgency(agencyId, "new_conversation", {
-      conversation,
+    // Emit socket event to notify agents of new message/conversation
+    emitToAgency(agencyId, "new_message", {
+      conversationId: conversation.id,
+      message: socketMsg,
+    });
+    emitToConversation(conversation.id, "new_message", {
+      conversationId: conversation.id,
+      message: socketMsg,
+    });
+
+    if (isNew) {
+      emitToAgency(agencyId, "new_conversation", {
+        conversation,
+      });
+    }
+
+    // 5. Run Flow Execution Engine
+    const flowRan = await processFlow(agencyId, platform, conversation, contact, msgBody, integration, msgType);
+    if (flowRan) return;
+
+    // 6. Fallback: Run standard bot rules
+    await matchBotRules(agencyId, platform, conversation, contact, msgBody, integration, msgType);
+  } catch (err) {
+    console.error("[Webhook Incoming Payload Error]:", err);
+    await logBotError({
+      agencyId,
+      integrationId,
+      platform,
+      contactIdentifier: externalId,
+      error: err,
+      customMessage: `Incoming message processing failed: ${extractErrorMessage(err)}`,
     });
   }
-
-  // 5. Run Flow Execution Engine
-  const flowRan = await processFlow(agencyId, platform, conversation, contact, msgBody, integration);
-  if (flowRan) return;
-
-  // 6. Fallback: Run standard bot rules
-  await matchBotRules(agencyId, platform, conversation, contact, msgBody, integration);
 }
 
 export default router;

@@ -1,12 +1,148 @@
 import pool from "../db.js";
 import { sendPlatformMessage } from "./platformSender.js";
 import { emitToAgency, emitToConversation } from "./socket.js";
+import { logBotError, extractErrorMessage } from "./botLogger.js";
+
+/**
+ * Helper to find matching flow based on triggers
+ */
+export async function findMatchingFlow(agencyId, platform, conversationId, integration, incomingMsgBody, msgType = "TEXT") {
+  const msgText = (incomingMsgBody || "").trim().toLowerCase();
+  const upperMsgType = (msgType || "TEXT").toUpperCase();
+  const isMedia = ["IMAGE", "VIDEO", "AUDIO", "VOICE", "DOCUMENT", "FILE"].includes(upperMsgType);
+  
+  const integId = integration?.id || null;
+  const [flows] = await pool.query(
+    `SELECT * FROM flows 
+     WHERE agency_id = ? AND platform = ? AND is_active = 1 
+       AND (integration_id IS NULL OR integration_id = ?)
+     ORDER BY (integration_id <=> ?) DESC, (trigger_type = 'KEYWORD') DESC, created_at DESC`,
+    [agencyId, platform, integId, integId]
+  );
+
+  for (const f of flows) {
+    let flowNodes = [];
+    try { flowNodes = JSON.parse(f.nodes_json || "[]"); } catch { flowNodes = []; }
+    const startNode = flowNodes.find(n => n.type === "start");
+    if (!startNode) continue;
+
+    // Multi-trigger support: check if startNode has `triggers` array
+    let triggersList = startNode.data?.triggers;
+    if (!Array.isArray(triggersList) || triggersList.length === 0) {
+      triggersList = [
+        {
+          type: startNode.data?.trigger_type || f.trigger_type || "keyword",
+          match_type: startNode.data?.match_type || "contains",
+          keywords: startNode.data?.keywords || (f.trigger_keyword ? f.trigger_keyword.split(",") : []),
+        }
+      ];
+    }
+
+    let isMatch = false;
+    for (const trig of triggersList) {
+      const tType = (trig.type || trig.trigger_type || "keyword").toLowerCase();
+
+      if (tType === "keyword" || tType === "user_sends_message" || tType === "message") {
+        if (isMedia && !msgText) continue;
+
+        const rawKws = trig.keywords || (trig.trigger_keyword ? trig.trigger_keyword.split(",") : []);
+        const keywords = (Array.isArray(rawKws) ? rawKws : [rawKws])
+          .map(k => (typeof k === "string" ? k.trim().toLowerCase() : ""))
+          .filter(Boolean);
+
+        const mType = (trig.match_type || trig.matchType || "contains").toLowerCase();
+
+        // 1. Message is thumbs up
+        if (mType === "thumbs_up" || mType === "thumbsup" || mType === "is_thumbs_up") {
+          const thumbsList = ["👍", "thumbs up", "(y)", "like", "👍🏻", "👍🏼", "👍🏽", "👍🏾", "👍🏿"];
+          if (thumbsList.includes(msgText)) {
+            isMatch = true;
+            break;
+          }
+          continue;
+        }
+
+        if (keywords.length === 0) continue;
+
+        // 2. Message is (exact match)
+        if (mType === "is" || mType === "exact") {
+          if (keywords.some(kw => msgText === kw)) {
+            isMatch = true;
+            break;
+          }
+        }
+        // 3. Message begins with
+        else if (mType === "begins_with" || mType === "starts_with") {
+          if (keywords.some(kw => msgText.startsWith(kw))) {
+            isMatch = true;
+            break;
+          }
+        }
+        // 4. Message contains whole word
+        else if (mType === "contains_whole_word" || mType === "whole_word") {
+          const matched = keywords.some(kw => {
+            const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            return new RegExp(`(^|\\s|[.,!?;:])${escaped}($|\\s|[.,!?;:])`, "i").test(msgText);
+          });
+          if (matched) {
+            isMatch = true;
+            break;
+          }
+        }
+        // 5. Message doesn't contain
+        else if (mType === "does_not_contain" || mType === "not_contains") {
+          if (msgText && keywords.every(kw => !msgText.includes(kw))) {
+            isMatch = true;
+            break;
+          }
+        }
+        // 6. Message contains (default)
+        else {
+          if (msgText && keywords.some(kw => msgText.includes(kw))) {
+            isMatch = true;
+            break;
+          }
+        }
+      } else if (tType === "first_contact" || tType === "first_message") {
+        if (conversationId) {
+          const [msgCount] = await pool.query(
+            "SELECT COUNT(*) as count FROM messages WHERE conversation_id = ?",
+            [conversationId]
+          );
+          if (msgCount[0]?.count <= 1) {
+            isMatch = true;
+            break;
+          }
+        }
+      } else if (tType === "any" || tType === "any_message") {
+        isMatch = true;
+        break;
+      } else if (tType === "fallback" || tType === "default") {
+        if (isMedia && !msgText) {
+          isMatch = true;
+          break;
+        }
+      }
+    }
+
+    if (isMatch) {
+      return {
+        flow: f,
+        nodes: flowNodes,
+        edges: JSON.parse(f.edges_json || "[]"),
+        startNode,
+      };
+    }
+  }
+
+  return null;
+}
 
 /**
  * Main Flow Engine Processor
  * Returns true if a flow was processed/executed (so the webhook knows NOT to run standard bot rules).
  */
-export async function processFlow(agencyId, platform, conversation, contact, incomingMsgBody, integration) {
+export async function processFlow(agencyId, platform, conversation, contact, incomingMsgBody, integration, msgType = "TEXT") {
   const conversationId = conversation.id;
 
   try {
@@ -28,6 +164,15 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
     let edges = [];
 
     if (session) {
+      // Expire session if older than 24 hours
+      const sessionAgeMs = Date.now() - new Date(session.updated_at).getTime();
+      if (sessionAgeMs > 24 * 60 * 60 * 1000) {
+        await pool.query("UPDATE flow_sessions SET status = 'EXPIRED' WHERE id = ?", [session.id]);
+        session = null;
+      }
+    }
+
+    if (session) {
       // Load flow details
       const [flows] = await pool.query(
         "SELECT * FROM flows WHERE id = ? AND is_active = 1 LIMIT 1",
@@ -40,85 +185,32 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
       } else {
         // Flow deleted or inactive, close session
         await pool.query("UPDATE flow_sessions SET status = 'COMPLETED' WHERE id = ?", [session.id]);
-        return false;
+        session = null;
       }
-    } else {
+    }
+
+    if (!session) {
       // 2. Look for matching flow trigger
-      const msgText = (incomingMsgBody || "").trim().toLowerCase();
-      
-      // Match by keyword trigger or first contact (prioritizing page/integration specific flows)
-      const integId = integration?.id || conversation?.integration_id || null;
-      const [flows] = await pool.query(
-        `SELECT * FROM flows 
-         WHERE agency_id = ? AND platform = ? AND is_active = 1 
-           AND (integration_id IS NULL OR integration_id = ?)
-         ORDER BY (integration_id <=> ?) DESC, (trigger_type = 'KEYWORD') DESC, created_at DESC`,
-        [agencyId, platform, integId, integId]
-      );
+      const match = await findMatchingFlow(agencyId, platform, conversationId, integration, incomingMsgBody, msgType);
+      if (match) {
+        flow = match.flow;
+        nodes = match.nodes;
+        edges = match.edges;
 
-      // Find first flow that matches
-      for (const f of flows) {
-        let isMatch = false;
-        let flowNodes = [];
-        try { flowNodes = JSON.parse(f.nodes_json || "[]"); } catch { flowNodes = []; }
-        const startNode = flowNodes.find(n => n.type === "start");
-        const triggerType = (startNode?.data?.trigger_type || f.trigger_type || "KEYWORD").toUpperCase();
+        const [newSess] = await pool.query(
+          "INSERT INTO flow_sessions (agency_id, conversation_id, flow_id, current_node_id, variables, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')",
+          [agencyId, conversationId, flow.id, match.startNode.id, JSON.stringify({})]
+        );
 
-        if (triggerType === "KEYWORD") {
-          const rawKeywords = startNode?.data?.keywords || (f.trigger_keyword ? f.trigger_keyword.split(",") : []);
-          const keywords = (Array.isArray(rawKeywords) ? rawKeywords : [rawKeywords])
-            .map(k => (typeof k === "string" ? k.trim().toLowerCase() : ""))
-            .filter(Boolean);
-
-          const matchType = (startNode?.data?.match_type || "contains").toLowerCase();
-
-          for (const kw of keywords) {
-            if (matchType === "exact") {
-              if (msgText === kw) { isMatch = true; break; }
-            } else if (matchType === "starts_with") {
-              if (msgText.startsWith(kw)) { isMatch = true; break; }
-            } else {
-              // Contains match (default)
-              if (msgText.includes(kw) || kw.includes(msgText)) { isMatch = true; break; }
-            }
-          }
-        } else if (triggerType === "ANY" || triggerType === "ANY_MESSAGE") {
-          isMatch = true;
-        } else if (triggerType === "FIRST_CONTACT" || triggerType === "FIRST_MESSAGE") {
-          // Check if this is the first message in the conversation
-          const [msgCount] = await pool.query(
-            "SELECT COUNT(*) as count FROM messages WHERE conversation_id = ?",
-            [conversationId]
-          );
-          if (msgCount[0].count <= 1) {
-            isMatch = true;
-          }
-        }
-
-        if (isMatch) {
-          flow = f;
-          nodes = flowNodes;
-          edges = JSON.parse(flow.edges_json || "[]");
-          
-          if (!startNode) continue; // Flow has no start node, skip
-
-          // Create new session
-          const [newSess] = await pool.query(
-            "INSERT INTO flow_sessions (agency_id, conversation_id, flow_id, current_node_id, variables, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')",
-            [agencyId, conversationId, flow.id, startNode.id, JSON.stringify({})]
-          );
-
-          session = {
-            id: newSess.insertId,
-            agency_id: agencyId,
-            conversation_id: conversationId,
-            flow_id: flow.id,
-            current_node_id: startNode.id,
-            variables: {},
-            status: "ACTIVE"
-          };
-          break;
-        }
+        session = {
+          id: newSess.insertId,
+          agency_id: agencyId,
+          conversation_id: conversationId,
+          flow_id: flow.id,
+          current_node_id: match.startNode.id,
+          variables: {},
+          status: "ACTIVE"
+        };
       }
     }
 
@@ -139,7 +231,9 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
       let matchedEdge = null;
       if (sourceHandle) {
         matchedEdge = edges.find(e => e.source === sourceId && e.sourceHandle === sourceHandle);
+        return matchedEdge ? matchedEdge.target : null;
       }
+      matchedEdge = edges.find(e => e.source === sourceId && !e.sourceHandle);
       if (!matchedEdge) {
         matchedEdge = edges.find(e => e.source === sourceId);
       }
@@ -161,7 +255,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         // Follow default outgoing handle
         nextNodeId = getNextNodeId(currentNodeId);
       } 
-      else if (currentNode.type === "buttons") {
+      else if (currentNode.type === "buttons" || (currentNode.type === "image" && (currentNode.data?.buttons || []).length > 0)) {
         const choice = (incomingMsgBody || "").trim().toLowerCase();
         const btns = currentNode.data?.buttons || [];
         let matchedIdx = -1;
@@ -169,11 +263,17 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
 
         for (let i = 0; i < btns.length; i++) {
           const btn = btns[i];
-          const title = typeof btn === "string" ? btn : (btn.title || "");
+          const title = typeof btn === "string" ? btn : (btn.title || btn.label || "");
           const payload = typeof btn === "string" ? btn : (btn.payload || "");
           const id = typeof btn === "string" ? `btn-${i}` : (btn.id || `btn-${i}`);
+          const altId = `btn_${i}`;
 
-          if (title.toLowerCase() === choice || payload.toLowerCase() === choice || id.toLowerCase() === choice) {
+          if (
+            (title && title.toLowerCase() === choice) ||
+            (payload && payload.toLowerCase() === choice) ||
+            (id && id.toLowerCase() === choice) ||
+            (altId && altId.toLowerCase() === choice)
+          ) {
             matchedIdx = i;
             matchedHandleId = id;
             break;
@@ -181,13 +281,49 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         }
 
         if (matchedIdx !== -1) {
-          // Try matching edge by handle ID (btn-0, btn_0, custom ID), or fallback to default edge
           nextNodeId = getNextNodeId(currentNodeId, matchedHandleId) ||
                        getNextNodeId(currentNodeId, `btn-${matchedIdx}`) ||
-                       getNextNodeId(currentNodeId, `btn_${matchedIdx}`) ||
-                       getNextNodeId(currentNodeId);
+                       getNextNodeId(currentNodeId, `btn_${matchedIdx}`);
+          
+          if (!nextNodeId) {
+            // Button reached a leaf, mark session completed
+            await pool.query("UPDATE flow_sessions SET status = 'COMPLETED', current_node_id = ? WHERE id = ?", [currentNodeId, session.id]);
+            return true;
+          }
         } else {
-          nextNodeId = getNextNodeId(currentNodeId);
+          // User sent text that did NOT match any button on this node.
+          // Check if this incoming message matches another flow (or restarts this flow)
+          const newMatch = await findMatchingFlow(agencyId, platform, conversationId, integration, incomingMsgBody, msgType);
+          if (newMatch) {
+            console.log(`🤖 [Flow Engine] User input "${incomingMsgBody}" triggered new flow "${newMatch.flow.name}". Completing previous session ${session.id}.`);
+            await pool.query("UPDATE flow_sessions SET status = 'COMPLETED' WHERE id = ?", [session.id]);
+
+            flow = newMatch.flow;
+            nodes = newMatch.nodes;
+            edges = newMatch.edges;
+
+            const [newSess] = await pool.query(
+              "INSERT INTO flow_sessions (agency_id, conversation_id, flow_id, current_node_id, variables, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')",
+              [agencyId, conversationId, flow.id, newMatch.startNode.id, JSON.stringify({})]
+            );
+
+            session = {
+              id: newSess.insertId,
+              agency_id: agencyId,
+              conversation_id: conversationId,
+              flow_id: flow.id,
+              current_node_id: newMatch.startNode.id,
+              variables: {},
+              status: "ACTIVE"
+            };
+            variables = {};
+            currentNodeId = newMatch.startNode.id;
+            nextNodeId = newMatch.startNode.id;
+          } else {
+            console.log(`🤖 [Flow Engine] User input "${incomingMsgBody}" did not match buttons on node ${currentNode.id}, nor any flow trigger.`);
+            // Do NOT execute button 1! Return false to allow bot rules / AI fallback to handle it.
+            return false;
+          }
         }
       }
       else if (currentNode.type === "quickReplies") {
@@ -198,11 +334,17 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
 
         for (let i = 0; i < replies.length; i++) {
           const r = replies[i];
-          const title = typeof r === "string" ? r : (r.title || "");
+          const title = typeof r === "string" ? r : (r.title || r.label || "");
           const payload = typeof r === "string" ? r : (r.payload || "");
           const id = typeof r === "string" ? `qr-${i}` : (r.id || `qr-${i}`);
+          const altId = `qr_${i}`;
 
-          if (title.toLowerCase() === choice || payload.toLowerCase() === choice || id.toLowerCase() === choice) {
+          if (
+            (title && title.toLowerCase() === choice) ||
+            (payload && payload.toLowerCase() === choice) ||
+            (id && id.toLowerCase() === choice) ||
+            (altId && altId.toLowerCase() === choice)
+          ) {
             matchedIdx = i;
             matchedHandleId = id;
             break;
@@ -212,27 +354,100 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         if (matchedIdx !== -1) {
           nextNodeId = getNextNodeId(currentNodeId, matchedHandleId) ||
                        getNextNodeId(currentNodeId, `qr-${matchedIdx}`) ||
-                       getNextNodeId(currentNodeId);
+                       getNextNodeId(currentNodeId, `qr_${matchedIdx}`);
+          
+          if (!nextNodeId) {
+            await pool.query("UPDATE flow_sessions SET status = 'COMPLETED', current_node_id = ? WHERE id = ?", [currentNodeId, session.id]);
+            return true;
+          }
         } else {
-          nextNodeId = getNextNodeId(currentNodeId);
+          const newMatch = await findMatchingFlow(agencyId, platform, conversationId, integration, incomingMsgBody, msgType);
+          if (newMatch) {
+            console.log(`🤖 [Flow Engine] User input "${incomingMsgBody}" triggered new flow "${newMatch.flow.name}". Completing previous session ${session.id}.`);
+            await pool.query("UPDATE flow_sessions SET status = 'COMPLETED' WHERE id = ?", [session.id]);
+
+            flow = newMatch.flow;
+            nodes = newMatch.nodes;
+            edges = newMatch.edges;
+
+            const [newSess] = await pool.query(
+              "INSERT INTO flow_sessions (agency_id, conversation_id, flow_id, current_node_id, variables, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')",
+              [agencyId, conversationId, flow.id, newMatch.startNode.id, JSON.stringify({})]
+            );
+
+            session = {
+              id: newSess.insertId,
+              agency_id: agencyId,
+              conversation_id: conversationId,
+              flow_id: flow.id,
+              current_node_id: newMatch.startNode.id,
+              variables: {},
+              status: "ACTIVE"
+            };
+            variables = {};
+            currentNodeId = newMatch.startNode.id;
+            nextNodeId = newMatch.startNode.id;
+          } else {
+            console.log(`🤖 [Flow Engine] User input "${incomingMsgBody}" did not match quickReplies on node ${currentNode.id}, nor any flow trigger.`);
+            return false;
+          }
         }
       }
       else if (currentNode.type === "listMenu") {
         const choice = (incomingMsgBody || "").trim().toLowerCase();
         const items = currentNode.data?.items || [];
-        const matchedItem = items.find(item => item.title.toLowerCase() === choice || (item.payload && item.payload.toLowerCase() === choice));
+        const matchedItem = items.find((item, idx) => 
+          (item.title && item.title.toLowerCase() === choice) ||
+          (item.payload && item.payload.toLowerCase() === choice) ||
+          (item.id && item.id.toLowerCase() === choice) ||
+          `item_${idx}` === choice ||
+          `item-${idx}` === choice
+        );
         
         if (matchedItem) {
           nextNodeId = getNextNodeId(currentNodeId, matchedItem.id);
+          if (!nextNodeId) {
+            await pool.query("UPDATE flow_sessions SET status = 'COMPLETED', current_node_id = ? WHERE id = ?", [currentNodeId, session.id]);
+            return true;
+          }
         } else {
-          nextNodeId = getNextNodeId(currentNodeId);
+          const newMatch = await findMatchingFlow(agencyId, platform, conversationId, integration, incomingMsgBody, msgType);
+          if (newMatch) {
+            console.log(`🤖 [Flow Engine] User input "${incomingMsgBody}" triggered new flow "${newMatch.flow.name}". Completing previous session ${session.id}.`);
+            await pool.query("UPDATE flow_sessions SET status = 'COMPLETED' WHERE id = ?", [session.id]);
+
+            flow = newMatch.flow;
+            nodes = newMatch.nodes;
+            edges = newMatch.edges;
+
+            const [newSess] = await pool.query(
+              "INSERT INTO flow_sessions (agency_id, conversation_id, flow_id, current_node_id, variables, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')",
+              [agencyId, conversationId, flow.id, newMatch.startNode.id, JSON.stringify({})]
+            );
+
+            session = {
+              id: newSess.insertId,
+              agency_id: agencyId,
+              conversation_id: conversationId,
+              flow_id: flow.id,
+              current_node_id: newMatch.startNode.id,
+              variables: {},
+              status: "ACTIVE"
+            };
+            variables = {};
+            currentNodeId = newMatch.startNode.id;
+            nextNodeId = newMatch.startNode.id;
+          } else {
+            console.log(`🤖 [Flow Engine] User input "${incomingMsgBody}" did not match listMenu on node ${currentNode.id}, nor any flow trigger.`);
+            return false;
+          }
         }
       }
       else {
         nextNodeId = getNextNodeId(currentNodeId);
       }
 
-      currentNodeId = nextNodeId;
+      currentNodeId = nextNodeId || currentNodeId;
     }
 
     // Main Execution Loop
@@ -254,7 +469,11 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         case "text": {
           const textBody = replaceVariables(node.data?.message || node.data?.text || node.data?.body || "", variables, contact);
           if (textBody) {
-            await sendMsg(agencyId, conversation, textBody, "TEXT", integration);
+            await sendMsg(agencyId, conversation, textBody, "TEXT", integration, {
+              flowId: flow?.id || session?.flow_id || null,
+              nodeId: node.id,
+              contactIdentifier: contact?.external_id || contact?.phone || null,
+            });
           }
           
           currentNodeId = getNextNodeId(node.id);
@@ -263,17 +482,58 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
 
         case "image": {
           const caption = replaceVariables(node.data?.caption || node.data?.message || node.data?.text || "", variables, contact);
-          const mediaUrl = node.data?.imageUrl || node.data?.mediaUrl || node.data?.url || "";
-          await sendMsg(agencyId, conversation, caption, "IMAGE", integration, { mediaUrl });
+          const mediaUrl = (node.data?.imageUrl || node.data?.mediaUrl || node.data?.url || "").trim();
+          const rawButtons = node.data?.buttons || [];
+          const formattedButtons = rawButtons.map((btn, idx) => ({
+            id: typeof btn === "string" ? `btn-${idx}` : (btn.id || `btn-${idx}`),
+            title: typeof btn === "string" ? btn : (btn.title || btn.label || `Button ${idx + 1}`),
+            payload: typeof btn === "string" ? btn : (btn.payload || btn.title || `btn_${idx}`),
+            type: typeof btn === "object" && btn.type === "URL" ? "URL" : "POSTBACK",
+            url: typeof btn === "object" ? btn.url : null,
+          }));
+
+          if (!mediaUrl) {
+            console.warn(`[Flow Engine] Image node "${node.id}" has no image URL/mediaUrl configured.`);
+            await logBotError({
+              agencyId,
+              flowId: flow?.id || session?.flow_id || null,
+              integrationId: integration?.id || conversation?.integration_id || null,
+              platform: conversation.platform || integration?.platform || contact?.platform || "WHATSAPP",
+              contactId: conversation.contact_id,
+              contactIdentifier: contact?.external_id || contact?.phone || null,
+              nodeId: node.id,
+              customMessage: `Flow "${flow?.name || 'Bot Flow'}" image node "${node.data?.label || node.id}" has no image URL or file configured.`,
+            });
+            currentNodeId = getNextNodeId(node.id);
+            break;
+          }
+
+          await sendMsg(agencyId, conversation, caption, "IMAGE", integration, {
+            flowId: flow?.id || session?.flow_id || null,
+            nodeId: node.id,
+            contactIdentifier: contact?.external_id || contact?.phone || null,
+            mediaUrl,
+            caption,
+            buttons: formattedButtons.length > 0 ? formattedButtons : undefined,
+          });
           
-          currentNodeId = getNextNodeId(node.id);
+          if (formattedButtons.length > 0) {
+            stopFlow = true;
+          } else {
+            currentNodeId = getNextNodeId(node.id);
+          }
           break;
         }
 
         case "video": {
           const caption = replaceVariables(node.data?.caption || node.data?.message || node.data?.text || "", variables, contact);
           const mediaUrl = node.data?.mediaUrl || node.data?.url || "";
-          await sendMsg(agencyId, conversation, caption, "VIDEO", integration, { mediaUrl });
+          await sendMsg(agencyId, conversation, caption, "VIDEO", integration, {
+            flowId: flow?.id || session?.flow_id || null,
+            nodeId: node.id,
+            contactIdentifier: contact?.external_id || contact?.phone || null,
+            mediaUrl,
+          });
           
           currentNodeId = getNextNodeId(node.id);
           break;
@@ -281,7 +541,12 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
 
         case "audio": {
           const mediaUrl = node.data?.mediaUrl || node.data?.url || "";
-          await sendMsg(agencyId, conversation, "[Audio]", "AUDIO", integration, { mediaUrl });
+          await sendMsg(agencyId, conversation, "[Audio]", "AUDIO", integration, {
+            flowId: flow?.id || session?.flow_id || null,
+            nodeId: node.id,
+            contactIdentifier: contact?.external_id || contact?.phone || null,
+            mediaUrl,
+          });
           
           currentNodeId = getNextNodeId(node.id);
           break;
@@ -291,7 +556,12 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         case "document": {
           const filename = replaceVariables(node.data?.filename || node.data?.title || "Document", variables, contact);
           const mediaUrl = node.data?.mediaUrl || node.data?.url || "";
-          await sendMsg(agencyId, conversation, filename, "DOCUMENT", integration, { mediaUrl });
+          await sendMsg(agencyId, conversation, filename, "DOCUMENT", integration, {
+            flowId: flow?.id || session?.flow_id || null,
+            nodeId: node.id,
+            contactIdentifier: contact?.external_id || contact?.phone || null,
+            mediaUrl,
+          });
           
           currentNodeId = getNextNodeId(node.id);
           break;
@@ -310,7 +580,10 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           }));
 
           await sendMsg(agencyId, conversation, textBody, "TEXT", integration, {
-            buttons: formattedButtons
+            flowId: flow?.id || session?.flow_id || null,
+            nodeId: node.id,
+            contactIdentifier: contact?.external_id || contact?.phone || null,
+            buttons: formattedButtons,
           });
 
           // Stop execution and wait for user button click/reply
@@ -329,7 +602,10 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           }));
 
           await sendMsg(agencyId, conversation, textBody, "TEXT", integration, {
-            quickReplies: formattedQr
+            flowId: flow?.id || session?.flow_id || null,
+            nodeId: node.id,
+            contactIdentifier: contact?.external_id || contact?.phone || null,
+            quickReplies: formattedQr,
           });
 
           stopFlow = true;
@@ -341,6 +617,9 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           const items = node.data?.items || [];
 
           await sendMsg(agencyId, conversation, textBody, "TEXT", integration, {
+            flowId: flow?.id || session?.flow_id || null,
+            nodeId: node.id,
+            contactIdentifier: contact?.external_id || contact?.phone || null,
             listMenu: {
               buttonText: node.data?.buttonText || "Options",
               title: node.data?.title || "Menu",
@@ -362,6 +641,9 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           const imageUrl = node.data?.imageUrl || node.data?.mediaUrl || "";
 
           await sendMsg(agencyId, conversation, title || "Card", "IMAGE", integration, {
+            flowId: flow?.id || session?.flow_id || null,
+            nodeId: node.id,
+            contactIdentifier: contact?.external_id || contact?.phone || null,
             card: {
               title,
               subtitle,
@@ -378,6 +660,9 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           const cards = node.data?.cards || [];
           
           await sendMsg(agencyId, conversation, "Carousel options", "TEXT", integration, {
+            flowId: flow?.id || session?.flow_id || null,
+            nodeId: node.id,
+            contactIdentifier: contact?.external_id || contact?.phone || null,
             carousel: cards.map(c => ({
               title: replaceVariables(c.title || "", variables, contact),
               subtitle: replaceVariables(c.subtitle || "", variables, contact),
@@ -496,6 +781,17 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
     return true; // Flow was successfully executed
   } catch (err) {
     console.error("Flow engine error:", err);
+    await logBotError({
+      agencyId,
+      flowId: flow?.id || session?.flow_id || null,
+      integrationId: integration?.id || conversation?.integration_id || null,
+      platform: platform || conversation?.platform || "WHATSAPP",
+      contactId: contact?.id || conversation?.contact_id || null,
+      contactIdentifier: contact?.external_id || contact?.phone || null,
+      nodeId: currentNodeId || null,
+      error: err,
+      customMessage: `Flow execution error in "${flow?.name || 'Bot Flow'}": ${extractErrorMessage(err)}`,
+    });
     return false;
   }
 }
@@ -543,26 +839,69 @@ async function sendMsg(agencyId, conversation, bodyText, type, integration, extr
 
   // Send via platform API
   let externalMsgId = null;
+  let contact = null;
+  let targetPlatform = conversation.platform || activeIntegration?.platform || "WHATSAPP";
+
   try {
     const [contactRows] = await pool.query("SELECT * FROM contacts WHERE id = ?", [conversation.contact_id]);
-    const contact = contactRows[0];
+    contact = contactRows[0];
+
+    targetPlatform = conversation.platform || activeIntegration?.platform || contact?.platform || "WHATSAPP";
 
     if (activeIntegration && contact?.external_id) {
-      externalMsgId = await sendPlatformMessage(conversation.platform || activeIntegration.platform, activeIntegration, contact.external_id, {
+      externalMsgId = await sendPlatformMessage(targetPlatform, activeIntegration, contact.external_id, {
         type,
         body: bodyText,
         ...extraFields
       });
+    } else if (targetPlatform !== "WEBCHAT") {
+      const reason = !activeIntegration
+        ? `No active channel account found for conversation #${conversationId}. Please verify your channel integration.`
+        : `Contact has no valid external recipient ID.`;
+      console.warn(`[Flow Engine] ${reason}`);
+      await logBotError({
+        agencyId,
+        flowId: extraFields?.flowId || null,
+        integrationId: activeIntegration?.id || conversation?.integration_id || null,
+        platform: targetPlatform,
+        contactId: conversation.contact_id,
+        contactIdentifier: extraFields?.contactIdentifier || contact?.external_id || contact?.phone || null,
+        nodeId: extraFields?.nodeId || null,
+        customMessage: `Flow delivery failed: ${reason}`,
+      });
     }
   } catch (apiErr) {
     console.error("API flow send failed:", apiErr.message || apiErr);
+    await logBotError({
+      agencyId,
+      flowId: extraFields?.flowId || null,
+      integrationId: activeIntegration?.id || conversation?.integration_id || null,
+      platform: targetPlatform,
+      contactId: conversation.contact_id,
+      contactIdentifier: extraFields?.contactIdentifier || contact?.external_id || contact?.phone || null,
+      nodeId: extraFields?.nodeId || null,
+      error: apiErr,
+      customMessage: `Flow delivery failed: ${extractErrorMessage(apiErr)}`,
+    });
   }
+
+  // Prepare metadata for buttons/interactive elements & sender attribution
+  const metadataObj = {
+    senderType: "BOT",
+    senderName: "Bot",
+  };
+  if (extraFields?.buttons?.length) metadataObj.buttons = extraFields.buttons;
+  if (extraFields?.quickReplies?.length) metadataObj.quickReplies = extraFields.quickReplies;
+  if (extraFields?.listMenu) metadataObj.listMenu = extraFields.listMenu;
+  if (extraFields?.card) metadataObj.card = extraFields.card;
+  if (extraFields?.carousel) metadataObj.carousel = extraFields.carousel;
+  const metadataJson = JSON.stringify(metadataObj);
 
   // Insert message in DB
   const [msgResult] = await pool.query(
-    `INSERT INTO messages (conversation_id, direction, type, body, media_url, external_msg_id, created_at)
-     VALUES (?, 'OUTBOUND', ?, ?, ?, ?, NOW())`,
-    [conversationId, type, bodyText, extraFields?.mediaUrl || null, externalMsgId]
+    `INSERT INTO messages (conversation_id, direction, type, body, media_url, metadata, external_msg_id, created_at)
+     VALUES (?, 'OUTBOUND', ?, ?, ?, ?, ?, NOW())`,
+    [conversationId, type, bodyText, extraFields?.mediaUrl || null, metadataJson, externalMsgId]
   );
 
   // Update conversation last_message_at
@@ -573,6 +912,7 @@ async function sendMsg(agencyId, conversation, bodyText, type, integration, extr
 
   const [savedMsg] = await pool.query("SELECT * FROM messages WHERE id = ?", [msgResult.insertId]);
   const message = savedMsg[0];
+  message.metadata = metadataObj;
 
   // Emit sockets
   emitToAgency(agencyId, "new_message", {

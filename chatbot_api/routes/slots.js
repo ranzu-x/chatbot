@@ -1,300 +1,227 @@
-// routes/slots.js
-import express from "express";
+﻿import express from "express";
 import pool from "../db.js";
-import cron from "node-cron";
-import { authMiddleWare } from "../middleware/authmiddleware.js";
-import { requireRole } from "../middleware/roleMiddleware.js";
-import generateSlots from "../utility/generateSlots.js";
-
+import { authMiddleware } from "../middleware/authmiddleware.js";
+import { requireModule } from "../utils/entitlements.js";
+import { generateTimeSlots } from "../utils/slotGenerator.js";
 
 const router = express.Router();
 
-// Create doctor slot
-router.post("/slots", authMiddleWare, requireRole(["hospital_admin", "doctor"]), async (req, res) => {
-try {
-    const {
-      doctor_id,
-      slot_date,
-      start_time,
-      end_time,
-      slot_duration,
-      max_patients,
-      break_start,
-      break_end
-    } = req.body;
-
-    const hospital_id = req.user.hospital_id; 
-
-    if (!doctor_id || !slot_date || !start_time || !end_time) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
-
-    // Generate time slots
-    const slots = generateSlots(start_time, end_time, slot_duration, break_start, break_end);
-
-    if (!slots.length) {
-      return res.status(400).json({ error: "No slots generated" });
-    }
-
-    // Insert each slot
-    const values = slots.map(s => [
-      doctor_id,
-      hospital_id, // assuming hospital_id from middleware
-      slot_date,
-      s.start_time,
-      s.end_time,
-      slot_duration,
-      max_patients
-    ]);
-
-    const query = `
-      INSERT INTO doctor_slots 
-      (doctor_id, hospital_id, slot_date, start_time, end_time, slot_duration, max_patients)
-      VALUES ?
-    `;
-
-    await pool.query(query, [values]);
-
-    res.json({
-      message: `${slots.length} slots created successfully`,
-      slots_created: slots.length
-    });
-  } catch (error) {
-    console.error("Slot creation error:", error);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// Get all slots for a doctor with dynamic availability calculation
-router.get("/slots", authMiddleWare, async (req, res) => {
+// ─── PUBLIC / CHATBOT CHANNEL: GET AVAILABLE SLOTS ───────────────────────────
+// Accessible by WhatsApp bots, Webchat, flow nodes, and direct booking links
+router.get("/slots/availability", async (req, res) => {
   try {
-    const { doctor_id, date } = req.query;
-    const hospitalId = req.user.hospital_id;
+    const agencyId = req.query.agencyId || req.query.agency_id;
+    const staffId = req.query.staffId || req.query.staff_id || null;
+    const date = req.query.date; // YYYY-MM-DD
+
+    if (!agencyId) {
+      return res.status(400).json({ success: false, message: "agencyId is required" });
+    }
 
     let query = `
-      SELECT 
-        ds.id, ds.slot_date, ds.start_time, ds.end_time, 
-        ds.slot_duration, ds.max_patients,
-        COALESCE(COUNT(a.id), 0) as booked_appointments,
-        (ds.max_patients - COALESCE(COUNT(a.id), 0)) as available_slots,
-        CASE 
-          WHEN (ds.max_patients - COALESCE(COUNT(a.id), 0)) > 0 THEN 'available'
-          ELSE 'full'
-        END as availability_status
-      FROM doctor_slots ds
-      LEFT JOIN appointments a ON ds.id = a.slot_id 
-        AND a.status NOT IN ('cancelled', 'completed')
-      WHERE ds.hospital_id = ?
+      SELECT s.id, s.agency_id, s.staff_id, s.slot_date, s.start_time, s.end_time,
+             s.slot_duration, s.max_capacity, s.booked_count,
+             (s.max_capacity - s.booked_count) AS available_slots,
+             u.name as staff_name
+      FROM appointment_slots s
+      LEFT JOIN users u ON u.id = s.staff_id
+      WHERE s.agency_id = ?
+        AND s.is_active = 1
+        AND (s.max_capacity - s.booked_count) > 0
     `;
-    
-    let params = [hospitalId];
-
-    if (doctor_id) {
-      query += ` AND ds.doctor_id = ?`;
-      params.push(doctor_id);
-    }
+    const params = [agencyId];
 
     if (date) {
-      query += ` AND ds.slot_date = ?`;
+      query += " AND s.slot_date = ?";
       params.push(date);
+    } else {
+      query += " AND s.slot_date >= CURDATE()";
     }
 
-    query += ` GROUP BY ds.id ORDER BY ds.slot_date, ds.start_time`;
+    if (staffId) {
+      query += " AND s.staff_id = ?";
+      params.push(staffId);
+    }
+
+    query += " ORDER BY s.slot_date ASC, s.start_time ASC LIMIT 100";
 
     const [slots] = await pool.query(query, params);
 
-    res.json(slots);
-  } catch (error) {
-    console.error("Error fetching slots:", error);
-    res.status(500).json({ error: "Failed to fetch slots" });
+    return res.json({ success: true, slots });
+  } catch (err) {
+    console.error("[GET SLOTS AVAILABILITY]", err);
+    return res.status(500).json({ success: false, message: "Error fetching slot availability" });
   }
 });
 
-// Get available slots for booking
-router.get("/slots/available", authMiddleWare, async (req, res) => {
-  try {
-    const { doctor_id, date } = req.query;
-    const hospitalId = req.user.hospital_id;
+// ─── PROTECTED AGENCY ROUTES ──────────────────────────────────────────────────
+router.use("/slots", authMiddleware, requireModule("feature_appointments"));
 
-    if (!doctor_id || !date) {
-      return res.status(400).json({ error: "Doctor ID and date are required" });
+// GET /api/v1/slots - List all slots for the workspace
+router.get("/slots", async (req, res) => {
+  try {
+    const agencyId = req.user?.agencyId || (req.user?.role === "ADMIN" && req.query.agencyId) || null;
+    if (!agencyId && req.user?.role !== "ADMIN") {
+      return res.status(403).json({ success: false, message: "No active workspace found" });
     }
 
-    const [slots] = await pool.query(
-      `SELECT 
-        ds.id, ds.slot_date, ds.start_time, ds.end_time, 
-        ds.slot_duration, ds.max_patients,
-        COALESCE(COUNT(a.id), 0) as booked_appointments,
-        (ds.max_patients - COALESCE(COUNT(a.id), 0)) as available_slots
-       FROM doctor_slots ds
-       LEFT JOIN appointments a ON ds.id = a.slot_id 
-         AND a.status NOT IN ('cancelled', 'completed')
-       WHERE ds.doctor_id = ? AND ds.slot_date = ? AND ds.hospital_id = ?
-       GROUP BY ds.id
-       HAVING available_slots > 0
-       ORDER BY ds.start_time`,
-      [doctor_id, date, hospitalId]
-    );
+    const { staffId, date, fromDate, toDate } = req.query;
 
-    res.json(slots);
-  } catch (error) {
-    console.error("Error fetching available slots:", error);
-    res.status(500).json({ error: "Failed to fetch available slots" });
+    let query = `
+      SELECT s.*, u.name AS staff_name, u.email AS staff_email,
+             (s.max_capacity - s.booked_count) AS available_capacity
+      FROM appointment_slots s
+      LEFT JOIN users u ON u.id = s.staff_id
+      WHERE 1=1
+    `;
+    const params = [];
+
+    if (agencyId) {
+      query += " AND s.agency_id = ?";
+      params.push(agencyId);
+    }
+
+    if (staffId) {
+      query += " AND s.staff_id = ?";
+      params.push(staffId);
+    }
+
+    if (date) {
+      query += " AND s.slot_date = ?";
+      params.push(date);
+    } else if (fromDate && toDate) {
+      query += " AND s.slot_date BETWEEN ? AND ?";
+      params.push(fromDate, toDate);
+    }
+
+    query += " ORDER BY s.slot_date DESC, s.start_time ASC";
+
+    const [rows] = await pool.query(query, params);
+    return res.json({ success: true, slots: rows });
+  } catch (err) {
+    console.error("[GET SLOTS]", err);
+    return res.status(500).json({ success: false, message: "Failed to fetch slots" });
   }
 });
 
-// Check specific slot availability
-router.get("/slots/:id/availability", authMiddleWare, async (req, res) => {
+// POST /api/v1/slots - Bulk generate slots for a day
+router.post("/slots", async (req, res) => {
   try {
-    const slotId = req.params.id;
-    const hospitalId = req.user.hospital_id;
-
-    const [slotData] = await pool.query(
-      `SELECT 
-        ds.id, ds.slot_date, ds.start_time, ds.end_time,
-        ds.max_patients,
-        COALESCE(COUNT(a.id), 0) as booked_count,
-        (ds.max_patients - COALESCE(COUNT(a.id), 0)) as available_slots
-       FROM doctor_slots ds
-       LEFT JOIN appointments a ON ds.id = a.slot_id 
-         AND a.status NOT IN ('cancelled', 'completed')
-       WHERE ds.id = ? AND ds.hospital_id = ?
-       GROUP BY ds.id`,
-      [slotId, hospitalId]
-    );
-
-    if (slotData.length === 0) {
-      return res.status(404).json({ error: "Slot not found" });
+    const agencyId = req.user?.agencyId;
+    if (!agencyId && req.user?.role !== "ADMIN") {
+      return res.status(403).json({ success: false, message: "No active workspace found" });
     }
 
-    const slot = slotData[0];
-    const isAvailable = slot.available_slots > 0;
-    
-    res.json({
-      available: isAvailable,
-      available_slots: slot.available_slots,
-      max_patients: slot.max_patients,
-      booked_count: slot.booked_count,
-      slot_date: slot.slot_date,
-      time_range: `${slot.start_time} - ${slot.end_time}`,
-      message: isAvailable 
-        ? `${slot.available_slots} slot(s) available` 
-        : 'Fully booked'
-    });
+    const {
+      staffId = null,
+      slot_date,
+      start_time,
+      end_time,
+      slot_duration = 30,
+      max_capacity = 1,
+      break_start = null,
+      break_end = null,
+      slot_type = "regular",
+    } = req.body;
 
-  } catch (error) {
-    console.error("Error checking slot availability:", error);
-    res.status(500).json({ error: "Failed to check slot availability" });
-  }
-});
-
-// Update slot (modify time or capacity)
-router.put("/slots/:id", authMiddleWare, async (req, res) => {
-  try {
-    const slotId = req.params.id;
-    const hospitalId = req.user.hospital_id;
-    const { start_time, end_time, max_patients, slot_duration } = req.body;
-
-    // Check if slot exists and belongs to hospital
-    const [existingSlot] = await pool.query(
-      `SELECT id FROM doctor_slots WHERE id = ? AND hospital_id = ?`,
-      [slotId, hospitalId]
-    );
-
-    if (existingSlot.length === 0) {
-      return res.status(404).json({ error: "Slot not found" });
+    if (!slot_date || !start_time || !end_time) {
+      return res.status(400).json({ success: false, message: "Date, start time, and end time are required" });
     }
 
-    // Check if modifying capacity would conflict with existing appointments
-    if (max_patients) {
-      const [appointmentCount] = await pool.query(
-        `SELECT COUNT(*) as count FROM appointments 
-         WHERE slot_id = ? AND status NOT IN ('cancelled', 'completed')`,
-        [slotId]
+    // Generate times
+    const generated = generateTimeSlots(start_time, end_time, parseInt(slot_duration) || 30, break_start, break_end);
+
+    if (!generated.length) {
+      return res.status(400).json({ success: false, message: "No slots could be generated with the given times" });
+    }
+
+    let inserted = 0;
+    for (const s of generated) {
+      // Check duplicate slot
+      const [existing] = await pool.query(
+        "SELECT id FROM appointment_slots WHERE agency_id = ? AND (staff_id <=> ?) AND slot_date = ? AND start_time = ? LIMIT 1",
+        [agencyId, staffId, slot_date, s.start_time]
       );
 
-      if (appointmentCount[0].count > max_patients) {
-        return res.status(400).json({ 
-          error: `Cannot reduce capacity below ${appointmentCount[0].count} (existing appointments)` 
-        });
+      if (existing.length === 0) {
+        await pool.query(
+          `INSERT INTO appointment_slots (agency_id, staff_id, slot_date, start_time, end_time, slot_duration, max_capacity, slot_type)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [agencyId, staffId, slot_date, s.start_time, s.end_time, slot_duration, max_capacity, slot_type]
+        );
+        inserted++;
       }
     }
 
-    // Build dynamic update query
-    const updates = [];
-    const params = [];
-
-    if (start_time) { updates.push('start_time = ?'); params.push(start_time); }
-    if (end_time) { updates.push('end_time = ?'); params.push(end_time); }
-    if (max_patients) { updates.push('max_patients = ?'); params.push(max_patients); }
-    if (slot_duration) { updates.push('slot_duration = ?'); params.push(slot_duration); }
-
-    if (updates.length === 0) {
-      return res.status(400).json({ error: "No fields to update" });
-    }
-
-    params.push(slotId, hospitalId);
-
-    const [result] = await pool.query(
-      `UPDATE doctor_slots SET ${updates.join(', ')} 
-       WHERE id = ? AND hospital_id = ?`,
-      params
-    );
-
-    res.json({ message: "Slot updated successfully" });
-
-  } catch (error) {
-    console.error("Error updating slot:", error);
-    res.status(500).json({ error: "Failed to update slot" });
+    return res.status(201).json({
+      success: true,
+      message: `Successfully generated ${inserted} slot(s) for ${slot_date}.`,
+      count: inserted,
+    });
+  } catch (err) {
+    console.error("[CREATE SLOTS]", err);
+    return res.status(500).json({ success: false, message: "Failed to generate slots" });
   }
 });
 
-// Delete slot (only if no active appointments)
-router.delete("/slots/:id", authMiddleWare, requireRole(["hospital_admin", "doctor"]), async (req, res) => {
+// DELETE /api/v1/slots/:id - Delete a single slot
+router.delete("/slots/:id", async (req, res) => {
   try {
-    const slotId = req.params.id;
-    const hospitalId = req.user.hospital_id;
+    const agencyId = req.user?.agencyId;
+    const { id } = req.params;
 
-    // Check for active appointments
-    const [activeAppointments] = await pool.query(
-      `SELECT COUNT(*) as count FROM appointments 
-       WHERE slot_id = ? AND status NOT IN ('cancelled', 'completed')`,
-      [slotId]
+    // Only delete if no active booked appointments
+    const [booked] = await pool.query(
+      "SELECT id FROM appointments WHERE slot_id = ? AND status NOT IN ('cancelled')",
+      [id]
     );
 
-    if (activeAppointments[0].count > 0) {
-      return res.status(400).json({ 
-        error: `Cannot delete slot with ${activeAppointments[0].count} active appointment(s)` 
+    if (booked.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot delete this slot because it already has active bookings. Please cancel the bookings first.",
       });
     }
 
-    const [result] = await pool.query(
-      `DELETE FROM doctor_slots WHERE id = ? AND hospital_id = ?`,
-      [slotId, hospitalId]
-    );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: "Slot not found" });
+    let deleteQuery = "DELETE FROM appointment_slots WHERE id = ?";
+    const params = [id];
+    if (agencyId) {
+      deleteQuery += " AND agency_id = ?";
+      params.push(agencyId);
     }
 
-    res.json({ message: "Slot deleted successfully" });
+    const [result] = await pool.query(deleteQuery, params);
 
-  } catch (error) {
-    console.error("Error deleting slot:", error);
-    res.status(500).json({ error: "Failed to delete slot" });
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "Slot not found" });
+    }
+
+    return res.json({ success: true, message: "Slot deleted successfully" });
+  } catch (err) {
+    console.error("[DELETE SLOT]", err);
+    return res.status(500).json({ success: false, message: "Failed to delete slot" });
   }
 });
 
-// Cron to delete past slots
+// PUT /api/v1/slots/:id/toggle - Activate/deactivate slot
+router.put("/slots/:id/toggle", async (req, res) => {
+  try {
+    const agencyId = req.user?.agencyId;
+    const { id } = req.params;
 
-cron.schedule("0 1 * * *", async () => {
-  // Runs every night at 2 AM
-  await pool.query(`
-    DELETE FROM doctor_slots
-    WHERE slot_date < CURDATE()
-  `);
-  console.log("⏳ Auto-cleaned old slots");
+    let query = "UPDATE appointment_slots SET is_active = NOT is_active WHERE id = ?";
+    const params = [id];
+    if (agencyId) {
+      query += " AND agency_id = ?";
+      params.push(agencyId);
+    }
+
+    await pool.query(query, params);
+    return res.json({ success: true, message: "Slot status toggled" });
+  } catch (err) {
+    console.error("[TOGGLE SLOT]", err);
+    return res.status(500).json({ success: false, message: "Failed to toggle slot" });
+  }
 });
-
 
 export default router;

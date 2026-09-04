@@ -1,17 +1,174 @@
 import axios from "axios";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
+import ffmpeg from "fluent-ffmpeg";
+import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
+
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 const META_API_VERSION = process.env.META_API_VERSION || "v21.0";
+
+function convertAudioToWhatsAppVoice(inputPath, outputPath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .toFormat("ogg")
+      .audioCodec("libopus")
+      .audioChannels(1)
+      .audioFrequency(48000)
+      .audioBitrate("32k")
+      .outputOptions([
+        "-application", "voip",
+        "-avoid_negative_ts", "make_zero"
+      ])
+      .on("end", () => resolve(outputPath))
+      .on("error", (err) => reject(err))
+      .save(outputPath);
+  });
+}
+
+function getMimeType(filePath, defaultType = "IMAGE") {
+  const ext = path.extname(filePath || "").toLowerCase();
+  const map = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".mp4": "video/mp4",
+    ".3gp": "video/3gp",
+    ".mov": "video/quicktime",
+    ".mp3": "audio/mpeg",
+    ".ogg": "audio/ogg; codecs=opus",
+    ".wav": "audio/wav",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
+    ".pdf": "application/pdf",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".txt": "text/plain",
+    ".zip": "application/zip",
+  };
+  if (map[ext]) return map[ext];
+  const upper = (defaultType || "").toUpperCase();
+  if (upper === "VIDEO") return "video/mp4";
+  if (upper === "AUDIO" || upper === "VOICE") return "audio/ogg; codecs=opus";
+  if (upper === "DOCUMENT" || upper === "FILE") return "application/pdf";
+  return "image/jpeg";
+}
+
+function isLocalHostUrl(url) {
+  if (!url || typeof url !== "string") return false;
+  return /localhost|127\.0\.0\.1|0\.0\.0\.0|::1/i.test(url);
+}
+
+function resolveLocalMediaPath(mediaUrl) {
+  if (!mediaUrl || typeof mediaUrl !== "string") return null;
+  let urlPath = mediaUrl.trim();
+  try {
+    if (urlPath.startsWith("http://") || urlPath.startsWith("https://")) {
+      const parsed = new URL(urlPath);
+      urlPath = parsed.pathname;
+    }
+  } catch (e) {}
+
+  const cleanPath = urlPath.replace(/^[/\\]+/, "");
+  const filename = path.basename(cleanPath);
+
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidateDirs = [
+    path.resolve(moduleDir, "..", "uploads"),
+    path.resolve(moduleDir, ".."),
+    path.resolve(process.cwd(), "chatbot_api", "uploads"),
+    path.resolve(process.cwd(), "uploads"),
+    process.cwd(),
+  ];
+
+  for (const dir of candidateDirs) {
+    const check1 = path.resolve(dir, cleanPath);
+    if (fs.existsSync(check1) && fs.statSync(check1).isFile()) return check1;
+    const check2 = path.resolve(dir, filename);
+    if (fs.existsSync(check2) && fs.statSync(check2).isFile()) return check2;
+  }
+
+  return null;
+}
+
+async function uploadLocalWhatsAppMedia(phoneNumberId, accessToken, localPath, mimeType) {
+  const formData = new FormData();
+  formData.append("messaging_product", "whatsapp");
+  formData.append("type", mimeType);
+  const fileBuffer = fs.readFileSync(localPath);
+  const fileBlob = new Blob([fileBuffer], { type: mimeType });
+  const uploadFilename = path.extname(localPath).toLowerCase() === ".ogg" ? "voice_message.ogg" : path.basename(localPath);
+  formData.append("file", fileBlob, uploadFilename);
+
+  const uploadRes = await axios.post(
+    `https://graph.facebook.com/${META_API_VERSION}/${phoneNumberId}/media`,
+    formData,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      timeout: 30000,
+    }
+  );
+  return uploadRes.data?.id || null;
+}
+
+async function uploadFacebookAttachment(accessToken, localPath, fullMediaUrl, defaultType = "IMAGE") {
+  const uploadUrl = `https://graph.facebook.com/${META_API_VERSION}/me/message_attachments?access_token=${accessToken}`;
+
+  // 1. If local file exists, upload via multipart FormData
+  if (localPath && fs.existsSync(localPath)) {
+    const formData = new FormData();
+    formData.append("message", JSON.stringify({
+      attachment: {
+        type: "image",
+        payload: { is_reusable: true }
+      }
+    }));
+    const mimeType = getMimeType(localPath, defaultType);
+    const fileBuffer = fs.readFileSync(localPath);
+    const fileBlob = new Blob([fileBuffer], { type: mimeType });
+    formData.append("filedata", fileBlob, path.basename(localPath));
+
+    const uploadRes = await axios.post(uploadUrl, formData, {
+      timeout: 30000,
+    });
+    return uploadRes.data?.attachment_id || null;
+  }
+
+  // 2. If reachable external URL, upload by URL to get attachment_id
+  if (fullMediaUrl && !isLocalHostUrl(fullMediaUrl)) {
+    const uploadRes = await axios.post(uploadUrl, {
+      message: {
+        attachment: {
+          type: "image",
+          payload: {
+            url: fullMediaUrl,
+            is_reusable: true,
+          }
+        }
+      }
+    }, { timeout: 30000 });
+    return uploadRes.data?.attachment_id || null;
+  }
+
+  return null;
+}
 
 /**
  * Send message to external platform APIs (WhatsApp, Facebook Messenger, Instagram, Telegram)
  */
 export async function sendPlatformMessage(platform, integration, contactExternalId, messageData) {
-  const { type = "TEXT", body = "", mediaUrl, buttons, quickReplies, listMenu, card, carousel } = messageData;
+  const { type = "TEXT", body = "", mediaUrl, caption, buttons, quickReplies, listMenu, card, carousel } = messageData;
   const accessToken = integration.access_token;
   const backendUrl = process.env.BACKEND_URL || "http://localhost:5000";
   const fullMediaUrl = mediaUrl && !mediaUrl.startsWith("http") ? `${backendUrl}${mediaUrl}` : mediaUrl;
+
+  const upperType = (type || "TEXT").toUpperCase();
+  const isMedia = ["IMAGE", "VIDEO", "AUDIO", "VOICE", "DOCUMENT", "FILE"].includes(upperType);
 
   try {
     if (platform === "WHATSAPP") {
@@ -23,28 +180,91 @@ export async function sendPlatformMessage(platform, integration, contactExternal
         to: contactExternalId,
       };
 
-      if (type === "IMAGE" && fullMediaUrl) {
-        payload.type = "image";
-        payload.image = { link: fullMediaUrl, caption: body || undefined };
-      } else if (type === "DOCUMENT" && fullMediaUrl) {
-        payload.type = "document";
-        payload.document = { link: fullMediaUrl, caption: body || undefined };
-      } else if (buttons && buttons.length > 0) {
+      if (buttons && buttons.length > 0) {
         // WhatsApp interactive buttons (Max 3)
+        const interactiveBodyText = (caption && caption.trim()) || (body && body.trim()) || (upperType === "IMAGE" ? "\u200B" : "Please select an option:");
         payload.type = "interactive";
         payload.interactive = {
           type: "button",
-          body: { text: body || "Please select an option:" },
+          body: { text: interactiveBodyText.slice(0, 1024) },
           action: {
-            buttons: buttons.slice(0, 3).map((btn, index) => ({
-              type: "reply",
-              reply: {
-                id: btn.id || `btn_${index}`,
-                title: btn.title.slice(0, 20),
-              },
-            })),
+            buttons: buttons.slice(0, 3).map((btn, index) => {
+              const btnTitle = typeof btn === "string" ? btn : (btn.title || btn.label || `Option ${index + 1}`);
+              const btnId = typeof btn === "string" ? `btn-${index}` : (btn.id || `btn_${index}`);
+              return {
+                type: "reply",
+                reply: {
+                  id: String(btnId).slice(0, 256),
+                  title: String(btnTitle).slice(0, 20),
+                },
+              };
+            }),
           },
         };
+
+        if (upperType === "IMAGE" && fullMediaUrl) {
+          payload.interactive.header = {
+            type: "image",
+            image: { link: fullMediaUrl },
+          };
+        }
+      } else if (isMedia && (mediaUrl || fullMediaUrl)) {
+        // Resolve media file stored locally on server
+        let localPath = resolveLocalMediaPath(mediaUrl);
+        let mediaId = null;
+
+        if (localPath && fs.existsSync(localPath)) {
+          try {
+            // If audio was recorded in webm or non-ogg format, transcode to WhatsApp native VoIP Opus voice note
+            if (upperType === "AUDIO" || upperType === "VOICE") {
+              const ext = path.extname(localPath).toLowerCase();
+              if (ext === ".webm" || ext === ".wav" || ext === ".m4a") {
+                const oggPath = localPath.replace(new RegExp(`${ext}$`, "i"), ".ogg");
+                console.log(`🎙️ [WhatsApp Voice] Transcoding ${localPath} to native WhatsApp VoIP Opus voice note...`);
+                await convertAudioToWhatsAppVoice(localPath, oggPath);
+                if (fs.existsSync(oggPath)) {
+                  localPath = oggPath;
+                  messageData.finalMediaUrl = "/" + path.relative(process.cwd(), oggPath).replace(/\\/g, "/");
+                }
+              }
+            }
+
+            const mimeType = getMimeType(localPath, upperType);
+            console.log(`📤 [WhatsApp Upload] Uploading binary to Meta: ${localPath} (${mimeType})`);
+            mediaId = await uploadLocalWhatsAppMedia(phoneNumberId, accessToken, localPath, mimeType);
+            console.log(`📤 [WhatsApp Upload] Got media ID: ${mediaId}`);
+          } catch (uploadErr) {
+            console.error(`❌ [WhatsApp Upload Error]:`, uploadErr.response?.data || uploadErr.message);
+            if (!fullMediaUrl || isLocalHostUrl(fullMediaUrl)) {
+              throw uploadErr;
+            }
+          }
+        } else if (!localPath && isLocalHostUrl(fullMediaUrl)) {
+          throw new Error(`Cannot send media to WhatsApp: Local media file not found on disk, and Meta cannot fetch localhost URLs (${mediaUrl})`);
+        }
+
+        if (upperType === "IMAGE") {
+          payload.type = "image";
+          payload.image = mediaId
+            ? { id: mediaId, caption: body || undefined }
+            : { link: fullMediaUrl, caption: body || undefined };
+        } else if (upperType === "VIDEO") {
+          payload.type = "video";
+          payload.video = mediaId
+            ? { id: mediaId, caption: body || undefined }
+            : { link: fullMediaUrl, caption: body || undefined };
+        } else if (upperType === "AUDIO" || upperType === "VOICE") {
+          payload.type = "audio";
+          payload.audio = mediaId
+            ? { id: mediaId }
+            : { link: fullMediaUrl };
+        } else if (upperType === "DOCUMENT" || upperType === "FILE") {
+          payload.type = "document";
+          const filename = messageData.filename || (localPath ? path.basename(localPath) : "Document.pdf");
+          payload.document = mediaId
+            ? { id: mediaId, caption: body || undefined, filename }
+            : { link: fullMediaUrl, caption: body || undefined, filename };
+        }
       } else if (listMenu) {
         // WhatsApp interactive list
         payload.type = "interactive";
@@ -85,17 +305,146 @@ export async function sendPlatformMessage(platform, integration, contactExternal
         message: {},
       };
 
-      const upperType = (type || "").toUpperCase();
+      if (upperType === "IMAGE" && buttons && buttons.length > 0) {
+        const localPath = resolveLocalMediaPath(mediaUrl);
+        const hasCaption = Boolean(caption && caption.trim());
 
-      if (fullMediaUrl && ["IMAGE", "VIDEO", "AUDIO", "DOCUMENT", "FILE"].includes(upperType)) {
+        // ── 1. FACEBOOK MESSENGER ──
+        if (platform === "FACEBOOK") {
+          // A) When no caption is provided (the ManyChat image + buttons style):
+          // Meta's "media" template attaches buttons DIRECTLY to the image with NO title, NO text, and ZERO blank space!
+          if (!hasCaption) {
+            try {
+              const attachmentId = await uploadFacebookAttachment(accessToken, localPath, fullMediaUrl, "IMAGE");
+              if (attachmentId) {
+                payload.message = {
+                  attachment: {
+                    type: "template",
+                    payload: {
+                      template_type: "media",
+                      elements: [
+                        {
+                          media_type: "image",
+                          attachment_id: attachmentId,
+                          buttons: buttons.slice(0, 3).map((btn) => ({
+                            type: btn.type === "URL" ? "web_url" : "postback",
+                            title: (typeof btn === "string" ? btn : (btn.title || btn.label || "Select")).slice(0, 20),
+                            [btn.type === "URL" ? "url" : "payload"]: btn.url || btn.payload || (typeof btn === "string" ? btn : btn.title) || "select",
+                          })),
+                        },
+                      ],
+                    },
+                  },
+                };
+                const response = await axios.post(url, payload);
+                console.log(`[FB Send Media Template] Image with flush buttons sent to ${contactExternalId}, msgId:`, response.data?.message_id);
+                return response.data?.message_id || null;
+              }
+            } catch (mediaErr) {
+              console.warn(`[FB Send Media Template Warning] Media template failed:`, mediaErr.response?.data || mediaErr.message);
+            }
+          }
+
+          // B) If caption exists and fullMediaUrl is public/reachable:
+          // Send as a Generic Template card with title = caption
+          if (hasCaption && fullMediaUrl && !isLocalHostUrl(fullMediaUrl)) {
+            try {
+              payload.message = {
+                attachment: {
+                  type: "template",
+                  payload: {
+                    template_type: "generic",
+                    elements: [
+                      {
+                        title: caption.trim().slice(0, 80),
+                        image_url: fullMediaUrl,
+                        buttons: buttons.slice(0, 3).map((btn) => ({
+                          type: btn.type === "URL" ? "web_url" : "postback",
+                          title: (typeof btn === "string" ? btn : (btn.title || btn.label || "Select")).slice(0, 20),
+                          [btn.type === "URL" ? "url" : "payload"]: btn.url || btn.payload || (typeof btn === "string" ? btn : btn.title) || "select",
+                        })),
+                      },
+                    ],
+                  },
+                },
+              };
+              const response = await axios.post(url, payload);
+              console.log(`[FB Send Generic Card with Caption] Sent to ${contactExternalId}, msgId:`, response.data?.message_id);
+              return response.data?.message_id || null;
+            } catch (genErr) {
+              console.warn(`[FB Send Generic Card Warning] Generic template failed:`, genErr.response?.data || genErr.message);
+            }
+          }
+
+          // C) If Media Template couldn't be sent, try Media Template with uploaded attachment even with caption
+          try {
+            const attachmentId = await uploadFacebookAttachment(accessToken, localPath, fullMediaUrl, "IMAGE");
+            if (attachmentId) {
+              payload.message = {
+                attachment: {
+                  type: "template",
+                  payload: {
+                    template_type: "media",
+                    elements: [
+                      {
+                        media_type: "image",
+                        attachment_id: attachmentId,
+                        buttons: buttons.slice(0, 3).map((btn) => ({
+                          type: btn.type === "URL" ? "web_url" : "postback",
+                          title: (typeof btn === "string" ? btn : (btn.title || btn.label || "Select")).slice(0, 20),
+                          [btn.type === "URL" ? "url" : "payload"]: btn.url || btn.payload || (typeof btn === "string" ? btn : btn.title) || "select",
+                        })),
+                      },
+                    ],
+                  },
+                },
+              };
+              const response = await axios.post(url, payload);
+              console.log(`[FB Send Media Template Fallback] Sent to ${contactExternalId}, msgId:`, response.data?.message_id);
+              return response.data?.message_id || null;
+            }
+          } catch (mErr) {
+            console.warn(`[FB Send Media Template Retry Failed]:`, mErr.response?.data || mErr.message);
+          }
+        }
+
+        // ── 2. INSTAGRAM / FALLBACK ──
+        if (fullMediaUrl && !isLocalHostUrl(fullMediaUrl)) {
+          const btnText = (caption && caption.trim()) || (body && body.trim()) || "Option:";
+          try {
+            payload.message = {
+              attachment: {
+                type: "template",
+                payload: {
+                  template_type: "generic",
+                  elements: [
+                    {
+                      title: btnText.slice(0, 80),
+                      image_url: fullMediaUrl,
+                      buttons: buttons.slice(0, 3).map((btn) => ({
+                        type: btn.type === "URL" ? "web_url" : "postback",
+                        title: (typeof btn === "string" ? btn : (btn.title || btn.label || "Select")).slice(0, 20),
+                        [btn.type === "URL" ? "url" : "payload"]: btn.url || btn.payload || (typeof btn === "string" ? btn : btn.title) || "select",
+                      })),
+                    },
+                  ],
+                },
+              },
+            };
+            const response = await axios.post(url, payload);
+            return response.data?.message_id || null;
+          } catch (genErr) {
+            console.warn(`[Send Generic Card Fallback Error]:`, genErr.response?.data || genErr.message);
+          }
+        }
+      } else if (fullMediaUrl && isMedia) {
         let attachmentType = "image";
         if (upperType === "VIDEO") attachmentType = "video";
         else if (upperType === "AUDIO") attachmentType = "audio";
         else if (upperType === "DOCUMENT" || upperType === "FILE") attachmentType = "file";
 
-        // Check if media is stored locally in uploads folder
-        const localRelPath = mediaUrl ? mediaUrl.replace(/^[/\\]+/, "") : "";
-        const localPath = localRelPath ? path.join(process.cwd(), localRelPath) : null;
+        // Check if media is stored locally on server
+        const localPath = resolveLocalMediaPath(mediaUrl);
 
         if (localPath && fs.existsSync(localPath)) {
           try {
@@ -108,20 +457,25 @@ export async function sendPlatformMessage(platform, integration, contactExternal
                 payload: { is_reusable: true }
               }
             }));
-            let mimeType = "image/png";
-            if (attachmentType === "video") mimeType = "video/mp4";
-            else if (attachmentType === "audio") mimeType = "audio/mpeg";
-            else if (attachmentType === "file") mimeType = "application/pdf";
+            const mimeType = getMimeType(localPath, upperType);
             const fileBuffer = fs.readFileSync(localPath);
             const fileBlob = new Blob([fileBuffer], { type: mimeType });
             formData.append("filedata", fileBlob, path.basename(localPath));
 
-            const response = await axios.post(url, formData);
+            const response = await axios.post(url, formData, {
+              headers: { Authorization: `Bearer ${accessToken}` },
+              timeout: 30000,
+            });
             console.log(`[FB Send Media Multipart] File sent to ${contactExternalId}, msgId:`, response.data?.message_id);
             return response.data?.message_id || null;
           } catch (multipartErr) {
             console.error(`[FB Send Media Multipart Error]`, multipartErr.response?.data || multipartErr.message);
+            if (!fullMediaUrl || isLocalHostUrl(fullMediaUrl)) {
+              throw multipartErr;
+            }
           }
+        } else if (!localPath && isLocalHostUrl(fullMediaUrl)) {
+          throw new Error(`Cannot send media to Facebook/Instagram: Local media file not found on disk, and Meta cannot fetch localhost URLs (${mediaUrl})`);
         }
 
         payload.message = {
@@ -248,20 +602,24 @@ export async function sendPlatformMessage(platform, integration, contactExternal
 
       if (buttons && buttons.length > 0) {
         payload.reply_markup = {
-          inline_keyboard: [
-            buttons.map((btn, index) => ({
-              text: btn.title,
-              callback_data: btn.payload || `btn_${index}`,
-            })),
-          ],
+          inline_keyboard: buttons.map((btn, index) => {
+            const btnTitle = typeof btn === "string" ? btn : (btn.title || btn.label || `Option ${index + 1}`);
+            const btnPayload = typeof btn === "string" ? btn : (btn.payload || btn.id || `btn_${index}`);
+            return [
+              {
+                text: btnTitle,
+                callback_data: String(btnPayload).slice(0, 64),
+              },
+            ];
+          }),
         };
       } else if (quickReplies && quickReplies.length > 0) {
         payload.reply_markup = {
-          keyboard: [
-            quickReplies.map((qr) => ({
-              text: qr.title,
-            })),
-          ],
+          keyboard: quickReplies.map((qr) => [
+            {
+              text: typeof qr === "string" ? qr : (qr.title || qr.label || "Option"),
+            },
+          ]),
           one_time_keyboard: true,
           resize_keyboard: true,
         };
@@ -270,15 +628,48 @@ export async function sendPlatformMessage(platform, integration, contactExternal
           inline_keyboard: listMenu.items.map((item, index) => [
             {
               text: item.title,
-              callback_data: item.payload || `item_${index}`,
+              callback_data: String(item.payload || `item_${index}`).slice(0, 64),
             },
           ]),
         };
       }
 
-      const url = `https://api.telegram.org/bot${accessToken}/${endpoint}`;
-      const response = await axios.post(url, payload);
-      return response.data?.result?.message_id?.toString() || null;
+      // If local file exists, upload via multipart FormData
+      const localPath = resolveLocalMediaPath(mediaUrl);
+      if (localPath && fs.existsSync(localPath) && (upperType === "IMAGE" || upperType === "DOCUMENT")) {
+        try {
+          const formData = new FormData();
+          formData.append("chat_id", contactExternalId);
+          if (body) formData.append("caption", body);
+          const mimeType = getMimeType(localPath, upperType);
+          const fileBuffer = fs.readFileSync(localPath);
+          const fileBlob = new Blob([fileBuffer], { type: mimeType });
+          const fieldName = upperType === "DOCUMENT" ? "document" : "photo";
+          formData.append(fieldName, fileBlob, path.basename(localPath));
+          if (payload.reply_markup) {
+            formData.append("reply_markup", JSON.stringify(payload.reply_markup));
+          }
+          const url = `https://api.telegram.org/bot${accessToken}/${endpoint}`;
+          const response = await axios.post(url, formData, { timeout: 30000 });
+          return response.data?.result?.message_id?.toString() || null;
+        } catch (multiErr) {
+          console.error("[Telegram Multipart Send Error]:", multiErr.response?.data || multiErr.message);
+          if (!fullMediaUrl || isLocalHostUrl(fullMediaUrl)) {
+            throw multiErr;
+          }
+        }
+      } else if (!localPath && isLocalHostUrl(fullMediaUrl)) {
+        throw new Error(`Cannot send media to Telegram: Local media file not found on disk, and Telegram cannot fetch localhost URLs (${mediaUrl})`);
+      }
+
+      try {
+        const url = `https://api.telegram.org/bot${accessToken}/${endpoint}`;
+        const response = await axios.post(url, payload);
+        return response.data?.result?.message_id?.toString() || null;
+      } catch (tgErr) {
+        console.error("[Telegram API Error]:", tgErr.response?.data || tgErr.message);
+        throw tgErr;
+      }
     }
 
     if (platform === "TIKTOK") {

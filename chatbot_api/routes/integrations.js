@@ -11,7 +11,11 @@ router.use(authMiddleware, roleMiddleware("AGENCY", "ADMIN"));
 router.get("/integrations", async (req, res) => {
   try {
     const [integrations] = await pool.query(
-      "SELECT * FROM integrations WHERE agency_id = ? ORDER BY created_at DESC",
+      `SELECT i.*, tb.bot_username AS tg_bot_username
+       FROM integrations i
+       LEFT JOIN telegram_bots tb ON tb.integration_id = i.id
+       WHERE i.agency_id = ?
+       ORDER BY i.created_at DESC`,
       [req.user.agencyId]
     );
 

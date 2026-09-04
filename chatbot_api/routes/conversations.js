@@ -103,11 +103,31 @@ router.get("/conversations/:id", async (req, res) => {
       conversation.contactTags = typeof conversation.contactTags === "string" ? JSON.parse(conversation.contactTags || "[]") : (conversation.contactTags || []);
     } catch { conversation.contactTags = []; }
 
+    // Fetch structured contact labels
+    const [contactLabels] = await pool.query(
+      `SELECT l.id, l.name, l.color 
+       FROM labels l
+       JOIN contact_labels cl ON cl.label_id = l.id
+       WHERE cl.contact_id = ?
+       ORDER BY l.name ASC`,
+      [conversation.contact_id]
+    );
+    conversation.contactLabels = contactLabels;
+
     // Fetch messages
     const [messages] = await pool.query(
       "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC",
       [req.params.id]
     );
+
+    for (const m of messages) {
+      if (m.metadata && typeof m.metadata === "string") {
+        try { m.metadata = JSON.parse(m.metadata); } catch (_) {}
+      }
+      if (m.media_url && m.media_url.includes("lookaside.fbsbx.com")) {
+        m.media_url = `/api/v1/media/whatsapp/${m.id}`;
+      }
+    }
 
     // Fetch contact notes
     const [notes] = await pool.query(
@@ -219,12 +239,13 @@ router.post("/conversations/:id/messages", async (req, res) => {
 
     // Send via platform API
     let externalMsgId = null;
+    const messagePayload = {
+      type,
+      body: body || "",
+      mediaUrl: mediaUrl || null,
+    };
     try {
-      externalMsgId = await sendPlatformMessage(conv.platform, conv, conv.contactExternalId, {
-        type,
-        body: body || "",
-        mediaUrl: mediaUrl || null,
-      });
+      externalMsgId = await sendPlatformMessage(conv.platform, conv, conv.contactExternalId, messagePayload);
     } catch (apiErr) {
       console.error("API send failed:", apiErr.message);
       // Extract Meta's real error message if available
@@ -245,11 +266,29 @@ router.post("/conversations/:id/messages", async (req, res) => {
     }
 
 
+    // Sender attribution metadata
+    let agentName = req.user?.name;
+    if (!agentName && req.user?.id) {
+      const [u] = await pool.query("SELECT name FROM users WHERE id = ?", [req.user.id]);
+      if (u.length && u[0].name) agentName = u[0].name;
+    }
+    if (!agentName) agentName = req.user?.email ? req.user.email.split('@')[0] : 'Agent';
+
+    const senderType = (req.body.senderType || 'AGENT').toUpperCase();
+    const metadata = {
+      senderType: senderType, // 'AGENT' or 'AI'
+      senderName: req.body.senderName || agentName,
+      userId: req.user?.id || req.user?.userId,
+      agentName: req.body.agentName || agentName,
+    };
+
+    const finalMediaUrl = messagePayload.finalMediaUrl || mediaUrl || null;
+
     // Save outbound message to DB
     const [msgResult] = await pool.query(
-      `INSERT INTO messages (conversation_id, direction, type, body, media_url, external_msg_id, sent_at, created_at)
-       VALUES (?, 'OUTBOUND', ?, ?, ?, ?, NOW(), NOW())`,
-      [req.params.id, type, body || "", mediaUrl || null, externalMsgId]
+      `INSERT INTO messages (conversation_id, direction, type, body, media_url, metadata, external_msg_id, sent_at, created_at)
+       VALUES (?, 'OUTBOUND', ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [req.params.id, type, body || "", finalMediaUrl, JSON.stringify(metadata), externalMsgId]
     );
 
     // Update conversation last_message_at
@@ -260,6 +299,7 @@ router.post("/conversations/:id/messages", async (req, res) => {
 
     const [savedMsg] = await pool.query("SELECT * FROM messages WHERE id = ?", [msgResult.insertId]);
     const message = savedMsg[0];
+    message.metadata = metadata;
 
     // Real-time socket emissions
     emitToAgency(agencyId, "new_message", {

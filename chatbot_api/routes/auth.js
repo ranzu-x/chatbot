@@ -260,6 +260,13 @@ router.post("/auth/login", async (req, res) => {
 
 // ─── LOGOUT ───────────────────────────────────────────────────────────────────
 router.post("/auth/logout", (req, res) => {
+  res.clearCookie("token", {
+    httpOnly: true,
+    secure: false,
+    sameSite: "lax",
+    path: "/",
+  });
+  res.clearCookie("token", { path: "/" });
   res.clearCookie("token");
   return res.json({ success: true, message: "Logged out successfully" });
 });
@@ -271,13 +278,37 @@ router.get("/auth/me", async (req, res) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // Verify user exists and is active in database
+    const [userRows] = await pool.query(
+      "SELECT id, name, email, role, is_active FROM users WHERE id = ? LIMIT 1",
+      [decoded.id]
+    );
+    if (!userRows.length || !userRows[0].is_active) {
+      res.clearCookie("token", { httpOnly: true, secure: false, sameSite: "lax", path: "/" });
+      res.clearCookie("token", { path: "/" });
+      res.clearCookie("token");
+      return res.status(401).json({ success: false, message: "Account is inactive or not found" });
+    }
+
+    const dbUser = userRows[0];
+    decoded.name = dbUser.name;
+    decoded.email = dbUser.email;
+    decoded.role = dbUser.role;
+
     if (!decoded.agencyId) {
-      const [agRows] = await pool.query("SELECT id FROM agencies WHERE owner_id = ? OR is_active = 1 ORDER BY id ASC LIMIT 1", [decoded.id || 0]);
+      const [agRows] = await pool.query(
+        "SELECT id FROM agencies WHERE owner_id = ? OR is_active = 1 ORDER BY id ASC LIMIT 1",
+        [decoded.id || 0]
+      );
       if (agRows.length) decoded.agencyId = agRows[0].id;
     }
     return res.json({ success: true, user: decoded });
   } catch {
-    return res.status(401).json({ success: false, message: "Invalid token" });
+    res.clearCookie("token", { httpOnly: true, secure: false, sameSite: "lax", path: "/" });
+    res.clearCookie("token", { path: "/" });
+    res.clearCookie("token");
+    return res.status(401).json({ success: false, message: "Invalid or expired token" });
   }
 });
 

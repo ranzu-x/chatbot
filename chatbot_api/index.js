@@ -35,10 +35,17 @@ import chatPaymentRoutes from "./routes/chatPayments.js";
 import notificationRoutes from "./routes/notifications.js";
 import socialPostRoutes from "./routes/socialPosts.js";
 import teamRoutes from "./routes/team.js";
+import appointmentRoutes from "./routes/appointments.js";
+import slotRoutes from "./routes/slots.js";
+import labelsRoutes from "./routes/labels.js";
+import mediaRoutes from "./routes/media.js";
 
 import http from "http";
 import { initSocket } from "./utils/socket.js";
 import { startSequenceScheduler } from "./utils/sequenceRunner.js";
+import { startTelegramPoller } from "./utils/telegramPoller.js";
+import { initBotErrorLogsTable } from "./utils/botLogger.js";
+import { startSocialPostScheduler } from "./utils/socialPostScheduler.js";
 
 dotenv.config();
 
@@ -46,12 +53,18 @@ const app = express();
 const port = process.env.PORT || 5000;
 const server = http.createServer(app);
 
-// Initialize Socket.io & Sequence Scheduler
+// Initialize Socket.io & Schedulers
 initSocket(server, process.env.FRONTEND_URL || "http://localhost:5173");
 startSequenceScheduler();
+startTelegramPoller();
+startSocialPostScheduler();
 
 // ─── Middleware ────────────────────────────────────────────────────────────────
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  })
+);
 app.use(compression());
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
@@ -80,7 +93,15 @@ app.use(cors({
   credentials: true,
 }));
 app.use(cookieParser());
-app.use("/uploads", express.static("uploads"));
+app.use(
+  "/uploads",
+  (req, res, next) => {
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    next();
+  },
+  express.static("uploads")
+);
 app.use(express.static("public"));
 
 // ─── DB Connection Test ────────────────────────────────────────────────────────
@@ -88,6 +109,7 @@ try {
   const conn = await pool.getConnection();
   console.log("✅ MySQL Connected to:", process.env.DB_NAME);
   conn.release();
+  await initBotErrorLogsTable();
 } catch (err) {
   console.error("❌ DB Connection Failed:", err.message);
 }
@@ -96,6 +118,7 @@ try {
 app.use("/api/v1", webhookRoutes);
 app.use("/api/v1", webchatRoutes);
 app.use("/api/v1", authRoutes);
+app.use("/api/v1", mediaRoutes);
 
 // ─── Protected Application Routes ─────────────────────────────────────────────
 app.use("/api/v1", adminRoutes);
@@ -123,6 +146,9 @@ app.use("/api/v1", chatPaymentRoutes);
 app.use("/api/v1", notificationRoutes);
 app.use("/api/v1", socialPostRoutes);
 app.use("/api/v1", teamRoutes);
+app.use("/api/v1", appointmentRoutes);
+app.use("/api/v1", slotRoutes);
+app.use("/api/v1", labelsRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
@@ -144,3 +170,4 @@ app.use((err, req, res, next) => {
 server.listen(port, () => {
   console.log(`🚀 Chatbot SaaS API running on port ${port}`);
 });
+

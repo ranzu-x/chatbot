@@ -11,6 +11,7 @@ import {
   FileText,
   Send,
   Clock,
+  Calendar,
   Settings,
   Building2,
   Plug,
@@ -38,6 +39,7 @@ const NAV_CONFIG = {
       { label: 'Broadcasts',       icon: Send,            path: '/campaigns',          moduleKey: 'feature_broadcasts' },
       { label: 'AI Agent & KB',    icon: Sparkles,        path: '/ai-agent',          moduleKey: 'feature_ai_agent' },
       { label: 'In-Chat Orders',   icon: ShoppingBag,     path: '/orders' },
+      { label: 'Appointments',     icon: Calendar,        path: '/appointments',      moduleKey: 'feature_appointments' },
     ]},
     { section: 'Control Panel', items: [
       { label: 'App Integrations', icon: Blocks,          path: '/settings/apps' },
@@ -60,6 +62,7 @@ const NAV_CONFIG = {
       { label: 'Broadcasts',       icon: Send,            path: '/campaigns',          moduleKey: 'feature_broadcasts' },
       { label: 'AI Agent & KB',    icon: Sparkles,        path: '/ai-agent',          moduleKey: 'feature_ai_agent' },
       { label: 'In-Chat Orders',   icon: ShoppingBag,     path: '/orders' },
+      { label: 'Appointments',     icon: Calendar,        path: '/appointments',      moduleKey: 'feature_appointments' },
     ]},
     { section: 'Control Panel', items: [
       { label: 'App Integrations', icon: Blocks,          path: '/settings/apps' },
@@ -74,6 +77,7 @@ const NAV_CONFIG = {
     { section: 'Main', items: [
       { label: 'Live Chat',    icon: MessageSquare, path: '/inbox',      moduleKey: 'feature_live_chat' },
       { label: 'Subscribers',  icon: Users,         path: '/contacts',   moduleKey: 'feature_subscribers' },
+      { label: 'Appointments', icon: Calendar,      path: '/appointments', moduleKey: 'feature_appointments' },
       { label: 'Team Members', icon: Users,         path: '/team' },
     ]},
   ],

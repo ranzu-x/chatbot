@@ -134,3 +134,74 @@ export const updateAppointment = async (id, appointmentData) => {
     throw error;
   }
 };
+
+/**
+ * Fetch appointment statistics for dashboard cards
+ */
+export const fetchAppointmentStats = async () => {
+  try {
+    const res = await api.get(`${API_BASE}/stats`);
+    return res.data;
+  } catch (error) {
+    console.error("❌ Error fetching appointment stats:", error);
+    throw error;
+  }
+};
+
+/**
+ * Slot Services
+ */
+export const fetchSlots = async (params = {}) => {
+  try {
+    const query = new URLSearchParams(params).toString();
+    const res = await api.get(`/api/v1/slots?${query}`);
+    return res.data;
+  } catch (error) {
+    console.error("❌ Error fetching slots:", error);
+    throw error;
+  }
+};
+
+export const createSlots = async (slotData) => {
+  try {
+    const res = await api.post("/api/v1/slots", slotData);
+    return res.data;
+  } catch (error) {
+    console.error("❌ Error creating slots:", error);
+    throw error;
+  }
+};
+
+export const deleteSlot = async (id) => {
+  try {
+    const res = await api.delete(`/api/v1/slots/${id}`);
+    return res.data;
+  } catch (error) {
+    console.error("❌ Error deleting slot:", error);
+    throw error;
+  }
+};
+
+export const toggleSlot = async (id) => {
+  try {
+    const res = await api.put(`/api/v1/slots/${id}/toggle`);
+    return res.data;
+  } catch (error) {
+    console.error("❌ Error toggling slot:", error);
+    throw error;
+  }
+};
+
+export const fetchAvailableSlots = async (agencyId, date = null, staffId = null) => {
+  try {
+    const params = new URLSearchParams({ agencyId });
+    if (date) params.append("date", date);
+    if (staffId) params.append("staffId", staffId);
+    const res = await api.get(`/api/v1/slots/availability?${params}`);
+    return res.data;
+  } catch (error) {
+    console.error("❌ Error fetching available slots:", error);
+    throw error;
+  }
+};
+

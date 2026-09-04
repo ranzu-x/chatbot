@@ -1,6 +1,7 @@
 import pool from "../db.js";
 import { sendPlatformMessage } from "./platformSender.js";
 import { emitToAgency, emitToConversation } from "./socket.js";
+import { logBotError, extractErrorMessage } from "./botLogger.js";
 
 /**
  * Find or create a Contact in DB
@@ -83,21 +84,26 @@ export async function isDuplicateMessage(externalMsgId) {
 /**
  * Save incoming/outgoing message in DB
  */
-export async function saveMessage(conversationId, direction, type, body, externalMsgId, mediaUrl = null) {
+export async function saveMessage(conversationId, direction, type, body, externalMsgId, mediaUrl = null, metadata = null) {
+  const metadataJson = metadata ? (typeof metadata === "string" ? metadata : JSON.stringify(metadata)) : null;
   const [msgResult] = await pool.query(
-    `INSERT INTO messages (conversation_id, direction, type, body, media_url, external_msg_id, is_read, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
-    [conversationId, direction, type, body || "", mediaUrl || null, externalMsgId || null, direction === "INBOUND" ? 0 : 1]
+    `INSERT INTO messages (conversation_id, direction, type, body, media_url, metadata, external_msg_id, is_read, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+    [conversationId, direction, type, body || "", mediaUrl || null, metadataJson, externalMsgId || null, direction === "INBOUND" ? 0 : 1]
   );
 
   const [savedMsg] = await pool.query("SELECT * FROM messages WHERE id = ?", [msgResult.insertId]);
-  return savedMsg[0];
+  const msg = savedMsg[0];
+  if (metadata) {
+    msg.metadata = typeof metadata === "string" ? JSON.parse(metadata) : metadata;
+  }
+  return msg;
 }
 
 /**
  * Match keyword-based bot auto-reply rules and send response if matched
  */
-export async function matchBotRules(agencyId, platform, conversation, contact, incomingMsgBody, integration) {
+export async function matchBotRules(agencyId, platform, conversation, contact, incomingMsgBody, integration, msgType = "TEXT") {
   try {
     // Check if bot is paused for this conversation or contact
     if (conversation?.bot_paused || contact?.bot_paused) {
@@ -106,8 +112,10 @@ export async function matchBotRules(agencyId, platform, conversation, contact, i
     }
 
     const textBody = (incomingMsgBody || "").trim().toLowerCase();
+    const upperMsgType = (msgType || "TEXT").toUpperCase();
+    const isMedia = ["IMAGE", "VIDEO", "AUDIO", "VOICE", "DOCUMENT", "FILE"].includes(upperMsgType);
     const integrationId = integration?.id || conversation?.integration_id;
-    console.log(`🤖 [Bot Matcher] Checking rules for agency=${agencyId}, platform=${platform}, text="${textBody}"`);
+    console.log(`🤖 [Bot Matcher] Checking rules for agency=${agencyId}, platform=${platform}, type=${upperMsgType}, text="${textBody}"`);
     
     // Find active bot: prioritized by specific integration_id, then platform fallback
     const [bots] = await pool.query(
@@ -131,11 +139,65 @@ export async function matchBotRules(agencyId, platform, conversation, contact, i
       [bot.id]
     );
 
+    // ── Handle Media Without Text Caption ──────────────────────────
+    if (isMedia && !textBody) {
+      console.log(`🤖 [Bot Matcher] 📎 Received ${upperMsgType} without text caption. Skipping text keyword matching.`);
+      
+      // Check for Fallback rule (trigger_keyword is 'FALLBACK' or 'DEFAULT' or '*') or away_message
+      const fallbackRule = rules.find((r) => {
+        const kw = (r.trigger_keyword || "").trim().toUpperCase();
+        return kw === "FALLBACK" || kw === "DEFAULT" || kw === "*";
+      });
+      const fallbackReply = fallbackRule?.reply_message || bot.away_message || null;
+
+      if (fallbackReply) {
+        console.log(`🤖 [Bot Matcher] Executing fallback bot response for media: "${fallbackReply}"`);
+        let externalMsgId = null;
+        try {
+          externalMsgId = await sendPlatformMessage(platform, integration, contact.external_id, {
+            type: "TEXT",
+            body: fallbackReply,
+          });
+        } catch (apiErr) {
+          console.error("API bot fallback reply failed:", apiErr.message || apiErr);
+          await logBotError({
+            agencyId,
+            botId: bot?.id || null,
+            integrationId: integration?.id || conversation?.integration_id || null,
+            platform: platform || "WHATSAPP",
+            contactId: contact?.id || conversation?.contact_id || null,
+            contactIdentifier: contact?.external_id || contact?.phone || null,
+            error: apiErr,
+            customMessage: `Bot "${bot.name}" failed to deliver fallback reply: ${extractErrorMessage(apiErr)}`,
+          });
+        }
+
+        const botMetadata = { senderType: "BOT", senderName: bot.name || "Bot" };
+        const [msgResult] = await pool.query(
+          `INSERT INTO messages (conversation_id, direction, type, body, metadata, external_msg_id, created_at)
+           VALUES (?, 'OUTBOUND', 'TEXT', ?, ?, ?, NOW())`,
+          [conversation.id, fallbackReply, JSON.stringify(botMetadata), externalMsgId]
+        );
+
+        await pool.query("UPDATE conversations SET last_message_at = NOW() WHERE id = ?", [conversation.id]);
+        const [savedMsg] = await pool.query("SELECT * FROM messages WHERE id = ?", [msgResult.insertId]);
+        const message = savedMsg[0];
+        message.metadata = botMetadata;
+
+        emitToAgency(agencyId, "new_message", { conversationId: conversation.id, message });
+        emitToConversation(conversation.id, "new_message", { conversationId: conversation.id, message });
+        return true;
+      }
+
+      return false; // No false keyword trigger
+    }
+
     if (!rules.length) {
       console.log(`🤖 [Bot Matcher] Bot "${bot.name}" has no rules configured.`);
       return false;
     }
 
+    // ── Keyword Rules Matching ─────────────────────────────────────
     for (const rule of rules) {
       let isMatch = false;
       const triggers = (rule.trigger_keyword || "")
@@ -151,8 +213,8 @@ export async function matchBotRules(agencyId, platform, conversation, contact, i
             break;
           }
         } else {
-          // Contains match
-          if (textBody.includes(trigger) || trigger.includes(textBody)) {
+          // Contains match: text must be non-empty and must include the keyword
+          if (textBody && textBody.includes(trigger)) {
             isMatch = true;
             break;
           }
@@ -172,13 +234,25 @@ export async function matchBotRules(agencyId, platform, conversation, contact, i
           console.log(`🤖 [Bot Matcher] Reply sent successfully to ${contact.external_id}`);
         } catch (apiErr) {
           console.error("API bot reply failed:", apiErr.message || apiErr);
+          await logBotError({
+            agencyId,
+            botId: bot?.id || null,
+            integrationId: integration?.id || conversation?.integration_id || null,
+            platform: platform || "WHATSAPP",
+            contactId: contact?.id || conversation?.contact_id || null,
+            contactIdentifier: contact?.external_id || contact?.phone || null,
+            error: apiErr,
+            customMessage: `Bot "${bot.name}" failed to deliver reply for trigger "${rule.trigger_keyword}": ${extractErrorMessage(apiErr)}`,
+          });
         }
+
+        const botMetadata = { senderType: "BOT", senderName: bot.name || "Bot" };
 
         // Save bot message to DB
         const [msgResult] = await pool.query(
-          `INSERT INTO messages (conversation_id, direction, type, body, external_msg_id, created_at)
-           VALUES (?, 'OUTBOUND', 'TEXT', ?, ?, NOW())`,
-          [conversation.id, rule.reply_message, externalMsgId]
+          `INSERT INTO messages (conversation_id, direction, type, body, metadata, external_msg_id, created_at)
+           VALUES (?, 'OUTBOUND', 'TEXT', ?, ?, ?, NOW())`,
+          [conversation.id, rule.reply_message, JSON.stringify(botMetadata), externalMsgId]
         );
 
         // Update conversation last_message_at
@@ -189,6 +263,7 @@ export async function matchBotRules(agencyId, platform, conversation, contact, i
 
         const [savedMsg] = await pool.query("SELECT * FROM messages WHERE id = ?", [msgResult.insertId]);
         const message = savedMsg[0];
+        message.metadata = botMetadata;
 
         // Emit sockets
         emitToAgency(agencyId, "new_message", {
@@ -208,6 +283,15 @@ export async function matchBotRules(agencyId, platform, conversation, contact, i
     return false; // No rule matched
   } catch (err) {
     console.error("Bot matching error:", err);
+    await logBotError({
+      agencyId,
+      integrationId: integration?.id || conversation?.integration_id || null,
+      platform: platform || "WHATSAPP",
+      contactId: contact?.id || conversation?.contact_id || null,
+      contactIdentifier: contact?.external_id || contact?.phone || null,
+      error: err,
+      customMessage: `Bot rule evaluation failed: ${extractErrorMessage(err)}`,
+    });
     return false;
   }
 }

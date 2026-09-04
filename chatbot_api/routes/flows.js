@@ -12,10 +12,12 @@ router.get("/flows", async (req, res) => {
     const [rows] = await pool.query(`
       SELECT f.*, b.name AS botName,
              i.name AS integration_name, i.fb_page_name, i.wa_phone_number_id, i.ig_username,
+             tb.bot_username AS tg_bot_username,
              JSON_LENGTH(f.nodes_json) AS nodeCount
       FROM flows f
       LEFT JOIN bots b ON b.id = f.bot_id
       LEFT JOIN integrations i ON i.id = f.integration_id
+      LEFT JOIN telegram_bots tb ON tb.integration_id = i.id
       WHERE f.agency_id = ?
       ORDER BY f.updated_at DESC
     `, [req.user.agencyId]);
@@ -28,9 +30,11 @@ router.get("/flows/:id", async (req, res) => {
   try {
     const [[flow]] = await pool.query(
       `SELECT f.*,
-              i.name AS integration_name, i.fb_page_name, i.wa_phone_number_id, i.ig_username, i.platform AS integration_platform
+              i.name AS integration_name, i.fb_page_name, i.wa_phone_number_id, i.ig_username, i.platform AS integration_platform,
+              tb.bot_username AS tg_bot_username
        FROM flows f
        LEFT JOIN integrations i ON i.id = f.integration_id
+       LEFT JOIN telegram_bots tb ON tb.integration_id = i.id
        WHERE f.id=? AND f.agency_id=?`,
       [req.params.id, req.user.agencyId]
     );

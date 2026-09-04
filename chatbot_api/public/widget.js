@@ -205,7 +205,7 @@
         // Render header, messages, and input
         renderWindow(data.widget || {});
         data.messages.forEach(msg => {
-          appendMessage(msg.body, msg.direction === "INBOUND" ? "inbound" : "outbound");
+          appendMessage(msg, msg.direction === "INBOUND" ? "inbound" : "outbound");
         });
 
         // Initialize Sockets
@@ -261,7 +261,7 @@
     });
   }
 
-  function appendMessage(text, direction) {
+  function appendMessage(msgData, direction) {
     const messagesContainer = windowEl.querySelector(".chatsaas-messages");
     if (!messagesContainer) return;
 
@@ -270,10 +270,44 @@
     if (direction === "inbound") {
       msgEl.style.background = primaryColor;
     }
-    msgEl.textContent = text;
 
-    messagesContainer.appendChild(msgEl);
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    const text = typeof msgData === "string" ? msgData : (msgData?.body || "");
+    const rawMedia = typeof msgData === "object" ? (msgData.media_url || msgData.mediaUrl || msgData.imageUrl) : null;
+    const normType = typeof msgData === "object" ? (msgData.type || "").toUpperCase() : "";
+
+    let hasContent = false;
+
+    if (rawMedia || normType === "IMAGE") {
+      const fullImgUrl = rawMedia ? (rawMedia.startsWith("http") ? rawMedia : `${backendUrl}${rawMedia.startsWith("/") ? "" : "/"}${rawMedia}`) : null;
+      if (fullImgUrl) {
+        const imgEl = document.createElement("img");
+        imgEl.src = fullImgUrl;
+        imgEl.alt = "Image";
+        imgEl.style.maxWidth = "100%";
+        imgEl.style.maxHeight = "220px";
+        imgEl.style.borderRadius = "8px";
+        imgEl.style.display = "block";
+        imgEl.style.cursor = "pointer";
+        imgEl.onclick = () => window.open(fullImgUrl, "_blank");
+        if (text) {
+          imgEl.style.marginBottom = "6px";
+        }
+        msgEl.appendChild(imgEl);
+        hasContent = true;
+      }
+    }
+
+    if (text) {
+      const textSpan = document.createElement("span");
+      textSpan.textContent = text;
+      msgEl.appendChild(textSpan);
+      hasContent = true;
+    }
+
+    if (hasContent) {
+      messagesContainer.appendChild(msgEl);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
   }
 
   function initSocketConnection() {
@@ -298,7 +332,7 @@
     socket.on("new_message", (data) => {
       // If message is from agent or bot (outbound from visitor's perspective)
       if (data.conversationId === conversationId && data.message.direction === "OUTBOUND") {
-        appendMessage(data.message.body, "outbound");
+        appendMessage(data.message, "outbound");
       }
     });
   }

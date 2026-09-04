@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router';
+import React, { useState, useEffect, useCallback, useRef, useMemo, createContext, useContext } from 'react';
+import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router';
 import {
   ReactFlow, Background, Controls, MiniMap,
   Handle, Position, useNodesState, useEdgesState,
   addEdge, ReactFlowProvider, useReactFlow,
-  BaseEdge, EdgeLabelRenderer, getSmoothStepPath
+  BaseEdge, EdgeLabelRenderer, getBezierPath, getSmoothStepPath, MarkerType
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
@@ -14,8 +14,11 @@ import {
   CircleStop, Play, Type, GripVertical, X, Plus, Trash2,
   ChevronRight, Zap, MousePointerClick, Mail, Phone,
   User, Settings2, CornerDownRight, Image, Upload,
-  Video, Music, FileText, Globe, ExternalLink
+  Video, Music, FileText, Globe, ExternalLink,
+  Smartphone, RotateCcw, Undo2, Redo2, ThumbsUp, Sparkles, MoreVertical,
+  Copy, ChevronDown
 } from 'lucide-react';
+import FlowPhonePreview from './FlowPhonePreview';
 import { flowAPI, uploadAPI, integrationAPI } from '../../services/api';
 import Swal from 'sweetalert2';
 
@@ -223,7 +226,7 @@ const PALETTE_CATEGORIES = [
 ];
 
 const DEFAULT_NODE_DATA = {
-  start:        { label: 'Start Trigger', trigger_type: 'keyword', match_type: 'contains' },
+  start:        { label: 'When...', trigger_type: 'keyword', match_type: 'contains' },
   text:         { label: 'Text Message', message: '' },
   image:        { label: 'Image', imageUrl: '', caption: '' },
   video:        { label: 'Video', mediaUrl: '', caption: '' },
@@ -576,7 +579,67 @@ const builderStyles = `
     transition: all 0.2s;
     margin-top: 8px;
   }
-  .fb-delete-node-btn:hover { background: rgba(239, 68, 68, 0.12); }
+  /* ── Hover Node Action Toolbar (Duplicate & Delete) ────────── */
+  .fb-node-hover-actions {
+    position: absolute;
+    top: -30px;
+    right: 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: #ffffff;
+    padding: 3px 6px;
+    border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.06);
+    border: 1px solid #e2e8f0;
+    z-index: 60;
+    opacity: 0;
+    transform: translateY(4px);
+    pointer-events: none;
+    transition: opacity 0.16s ease, transform 0.16s ease;
+  }
+  .fb-node-hover-actions::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    height: 18px;
+  }
+  .fb-node:hover .fb-node-hover-actions,
+  .fb-node-condition:hover .fb-node-hover-actions,
+  .flow-input-node:hover .fb-node-hover-actions {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+  .fb-node-action-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    padding: 0;
+  }
+  .fb-node-duplicate-btn {
+    color: #475569;
+  }
+  .fb-node-duplicate-btn:hover {
+    background: #f1f5f9;
+    color: #0f172a;
+  }
+  .fb-node-delete-btn {
+    color: #ef4444;
+  }
+  .fb-node-delete-btn:hover {
+    background: #fef2f2;
+    color: #dc2626;
+  }
 
   /* ── Custom Node Styles ────────────────────────────────────── */
   .fb-node {
@@ -700,29 +763,100 @@ const builderStyles = `
     box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15), 0 6px 24px rgba(0,0,0,0.10);
   }
 
-  /* ── React Flow Handle overrides ───────────────────────────── */
+  /* ── React Flow Handle overrides (ManyChat-exact design) ───── */
   .react-flow__handle {
-    width: 12px !important;
-    height: 12px !important;
+    width: 13px !important;
+    height: 13px !important;
+    background: #64748b !important;
     border: 2px solid #ffffff !important;
     border-radius: 50% !important;
-    transition: all 0.2s !important;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.15) !important;
+    transition: all 0.15s ease !important;
+    box-shadow: 0 0 0 1px #94a3b8, 0 2px 5px rgba(0,0,0,0.12) !important;
+    cursor: crosshair !important;
+    z-index: 10 !important;
   }
   .react-flow__handle:hover {
-    transform: scale(1.3) !important;
+    background: #0f172a !important;
+    border-color: #ffffff !important;
+    transform: scale(1.25) !important;
+    box-shadow: 0 0 0 2px #6366f1, 0 3px 8px rgba(0,0,0,0.2) !important;
   }
   .react-flow__handle-top { top: -6px !important; }
   .react-flow__handle-bottom { bottom: -6px !important; }
   .react-flow__handle-right { right: -6px !important; }
+  .react-flow__handle-left { left: -5px !important; }
 
-  /* ── Edge styling ──────────────────────────────────────────── */
+  /* Solid connector dot on active buttons and Then triggers */
+  .react-flow__handle.btn-handle,
+  .react-flow__handle[id^="btn-"],
+  .react-flow__handle[id="then"] {
+    width: 12px !important;
+    height: 12px !important;
+    background: #64748b !important;
+    border: 2px solid #ffffff !important;
+    border-radius: 50% !important;
+    box-shadow: 0 0 0 1px #94a3b8 !important;
+  }
+
+  /* Target connector on node left side (discreet circle matching card border) */
+  .react-flow__handle-left,
+  .react-flow__handle.target-handle,
+  .react-flow__handle[type="target"] {
+    width: 9px !important;
+    height: 9px !important;
+    background: #64748b !important;
+    border: 2px solid #ffffff !important;
+    box-shadow: 0 0 0 1px #cbd5e1 !important;
+    left: -5px !important;
+  }
+
+  /* Unfilled Next Step ring pointer handle */
+  .react-flow__handle.next-step-handle,
+  .react-flow__handle[id="next-step"],
+  .react-flow__handle[id="next"] {
+    width: 14px !important;
+    height: 14px !important;
+    background: #ffffff !important;
+    border: 2px solid #94a3b8 !important;
+    border-radius: 50% !important;
+    box-shadow: none !important;
+    cursor: crosshair !important;
+    right: -7px !important;
+  }
+  .react-flow__handle.next-step-handle:hover,
+  .react-flow__handle[id="next-step"]:hover,
+  .react-flow__handle[id="next"]:hover {
+    background: #f8fafc !important;
+    border-color: #0f172a !important;
+    transform: scale(1.2) !important;
+  }
+
+  /* ── Next Step row (bottom of card) ────────────────────────── */
+  .fb-next-step-row {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 7px;
+    padding: 8px 14px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #94a3b8;
+    position: relative;
+    background: transparent;
+    border-top: 1px dashed #f1f5f9;
+  }
+
+  /* ── Edge styling (ManyChat smooth slate curved connection lines) */
   .react-flow__edge-path {
-    stroke: rgba(99, 102, 241, 0.55) !important;
+    stroke: #64748b !important;
     stroke-width: 2 !important;
   }
   .react-flow__edge.selected .react-flow__edge-path {
-    stroke: #6366f1 !important;
+    stroke: #0f172a !important;
+    stroke-width: 2.5 !important;
+  }
+  .react-flow__edge:hover .react-flow__edge-path {
+    stroke: #334155 !important;
     stroke-width: 2.5 !important;
   }
 
@@ -765,6 +899,438 @@ const builderStyles = `
     background: rgba(239, 68, 68, 0.15);
     color: #ef4444;
   }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     FLOW BUILDER ENHANCEMENTS
+     ═══════════════════════════════════════════════════════════════════ */
+
+  /* ── Top Bar ───────────────────────────────────────────────── */
+  .flow-topbar {
+    height: 52px;
+    padding: 0 16px;
+    background: #ffffff;
+    border-bottom: 1px solid #e2e8f0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+  }
+  .flow-tool-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: #64748b;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .flow-tool-btn:hover {
+    background: #ffffff;
+    color: #0f172a;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  }
+  .flow-layout-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    color: #334155;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    height: 34px;
+  }
+  .flow-layout-btn:hover {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+    color: #0f172a;
+  }
+  .flow-preview-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 8px;
+    background: #ffffff;
+    border: 1.5px solid #cbd5e1;
+    color: #0f172a;
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.15s;
+    height: 34px;
+  }
+  .flow-preview-toggle-btn:hover,
+  .flow-preview-toggle-btn.active {
+    background: #eff6ff;
+    border-color: #2563eb;
+    color: #2563eb;
+  }
+  .flow-set-live-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 7px 20px;
+    border-radius: 20px;
+    border: none;
+    background: #0084ff;
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0, 132, 255, 0.35);
+    transition: all 0.2s;
+    height: 34px;
+  }
+  .flow-set-live-btn:hover {
+    background: #0073e6;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 132, 255, 0.45);
+  }
+  .flow-set-live-btn:active {
+    transform: translateY(0);
+  }
+
+  /* ── Canvas Floating Hint Tooltip ──────────────────────────── */
+  .flow-canvas-hint {
+    position: absolute;
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(254, 240, 138, 0.95);
+    border: 1px solid #fde047;
+    color: #854d0e;
+    padding: 5px 14px;
+    border-radius: 20px;
+    font-size: 11.5px;
+    font-weight: 600;
+    z-index: 10;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* ── Interactive Smartphone Device Simulator ─────────────────── */
+  .flow-preview-wrapper {
+    width: 360px;
+    height: calc(100vh - 56px);
+    position: absolute;
+    right: 16px;
+    top: 66px;
+    z-index: 30;
+    pointer-events: none;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+  }
+  .flow-phone-device {
+    pointer-events: auto;
+    width: 330px;
+    height: 640px;
+    max-height: calc(100vh - 84px);
+    background: #0b0f19;
+    border-radius: 44px;
+    padding: 11px;
+    box-shadow: 0 25px 60px -12px rgba(0,0,0,0.5), 0 0 0 3px #1f293d, 0 0 0 7px #0f172a;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+  .flow-phone-notch {
+    position: absolute;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 85px;
+    height: 18px;
+    background: #000000;
+    border-radius: 20px;
+    z-index: 15;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 10px;
+    box-sizing: border-box;
+  }
+  .flow-phone-speaker {
+    width: 34px;
+    height: 3px;
+    background: #262626;
+    border-radius: 2px;
+  }
+  .flow-phone-camera {
+    width: 8px;
+    height: 8px;
+    background: #171717;
+    border-radius: 50%;
+    border: 1px solid #262626;
+  }
+  .flow-phone-screen {
+    width: 100%;
+    height: 100%;
+    background: #0f172a;
+    border-radius: 34px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+  .flow-phone-header {
+    padding: 30px 14px 10px;
+    background: #1e293b;
+    border-bottom: 1px solid #334155;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .flow-phone-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .flow-phone-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #0084ff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    color: #fff;
+    flex-shrink: 0;
+  }
+  .flow-phone-header-info {
+    min-width: 0;
+  }
+  .flow-phone-header-name {
+    font-size: 12px;
+    font-weight: 700;
+    color: #f8fafc;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .flow-phone-header-status {
+    font-size: 10px;
+    color: #94a3b8;
+    line-height: 1.2;
+  }
+  .flow-phone-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .flow-phone-header-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    background: #334155;
+    border: none;
+    color: #cbd5e1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .flow-phone-header-btn:hover {
+    background: #475569;
+    color: #ffffff;
+  }
+  .flow-phone-chat-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .flow-phone-msg-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    width: 100%;
+  }
+  .flow-phone-msg-row.user-row {
+    justify-content: flex-end;
+  }
+  .flow-phone-chat-avatar {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #0084ff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    flex-shrink: 0;
+    margin-bottom: 2px;
+  }
+  .flow-phone-bubble {
+    max-width: 84%;
+    border-radius: 16px;
+    padding: 9px 12px;
+    font-size: 12px;
+    line-height: 1.4;
+    word-break: break-word;
+  }
+  .flow-phone-bubble.bot-bubble {
+    background: #1e293b;
+    color: #f1f5f9;
+    border-bottom-left-radius: 4px;
+  }
+  .flow-phone-bubble.user-bubble {
+    background: #0084ff;
+    color: #ffffff;
+    border-bottom-right-radius: 4px;
+  }
+  .flow-phone-text {
+    font-size: 12px;
+  }
+  .flow-phone-image-box {
+    margin-top: 6px;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .flow-phone-img {
+    width: 100%;
+    max-height: 140px;
+    object-fit: cover;
+    display: block;
+  }
+  .flow-phone-img-placeholder {
+    height: 90px;
+    background: #334155;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    color: #94a3b8;
+    font-size: 11px;
+  }
+  .flow-phone-caption {
+    font-size: 11px;
+    color: #94a3b8;
+    margin-top: 4px;
+  }
+  .flow-phone-btn-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .flow-phone-choice-btn {
+    width: 100%;
+    padding: 7px 10px;
+    border-radius: 8px;
+    border: 1px solid #334155;
+    background: #253349;
+    color: #38bdf8;
+    font-size: 11.5px;
+    font-weight: 700;
+    cursor: pointer;
+    text-align: center;
+    transition: all 0.15s;
+  }
+  .flow-phone-choice-btn:hover {
+    background: #334155;
+    color: #ffffff;
+  }
+  .flow-phone-qr-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 8px;
+  }
+  .flow-phone-qr-btn {
+    padding: 4px 10px;
+    border-radius: 14px;
+    border: 1px solid #0084ff;
+    background: transparent;
+    color: #38bdf8;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .flow-phone-qr-btn:hover {
+    background: #0084ff;
+    color: #ffffff;
+  }
+  .flow-phone-typing {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 12px;
+  }
+  .flow-phone-typing .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #94a3b8;
+    animation: flow-typing 1.4s infinite ease-in-out;
+  }
+  .flow-phone-typing .dot:nth-child(1) { animation-delay: 0s; }
+  .flow-phone-typing .dot:nth-child(2) { animation-delay: 0.2s; }
+  .flow-phone-typing .dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes flow-typing {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+    30% { transform: translateY(-4px); opacity: 1; }
+  }
+  .flow-phone-input-bar {
+    padding: 8px 10px;
+    background: #1e293b;
+    border-top: 1px solid #334155;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .flow-phone-input-field {
+    flex: 1;
+    height: 32px;
+    border-radius: 16px;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #f8fafc;
+    font-size: 11.5px;
+    padding: 0 12px;
+    outline: none;
+  }
+  .flow-phone-send-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: none;
+    background: #0084ff;
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  .flow-phone-send-btn:hover:not(:disabled) {
+    background: #0073e6;
+  }
+  .flow-phone-send-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
 `;
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -798,13 +1364,25 @@ function validateNodeData(node) {
   if (!node) return null;
   const data = node.data || {};
   switch (node.type) {
-    case 'start':
-      if (data.trigger_type === 'keyword') {
+    case 'start': {
+      if (data.triggers && data.triggers.length > 0) {
+        for (const trg of data.triggers) {
+          if (trg.match_type !== 'thumbs_up' && trg.type !== 'first_contact' && trg.type !== 'any') {
+            const raw = trg.keywords || (trg.trigger_keyword ? trg.trigger_keyword.split(',') : []);
+            const kwList = Array.isArray(raw) ? raw.filter((k) => k && String(k).trim()) : [];
+            if (kwList.length === 0) return 'Please set at least one trigger keyword';
+          }
+        }
+        return null;
+      }
+      if (data.trigger_type === 'keyword' || !data.trigger_type) {
+        if (data.match_type === 'thumbs_up') return null;
         const rawKw = data.keywords || (data.trigger_keyword ? data.trigger_keyword.split(',') : []);
         const kwList = Array.isArray(rawKw) ? rawKw.filter((k) => k && String(k).trim()) : [];
         if (kwList.length === 0) return 'Please set at least one trigger keyword';
       }
       return null;
+    }
 
     case 'text':
       if (!data.message || !data.message.trim()) {
@@ -928,7 +1506,7 @@ function validateNodeData(node) {
    ═══════════════════════════════════════════════════════════════════ */
 
 function getNodeDimensions(node) {
-  const width = 220;
+  const width = 270;
   if (!node) return { width, height: 110 };
 
   switch (node.type) {
@@ -1139,8 +1717,50 @@ function getAutoLayoutedNodes(nodes, edges) {
    CUSTOM NODE COMPONENTS (Clean Light Theme)
    ═══════════════════════════════════════════════════════════════════ */
 
+export const FlowNodeActionsContext = createContext({
+  onDuplicate: () => {},
+  onDelete: () => {},
+  onSelectNode: () => {},
+});
+
+/* ── Node Hover Actions Toolbar (Duplicate & Delete) ────────── */
+function NodeHoverActions({ nodeId, nodeType }) {
+  const { onDuplicate, onDelete } = useContext(FlowNodeActionsContext);
+
+  return (
+    <div
+      className="fb-node-hover-actions"
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        className="fb-node-action-btn fb-node-duplicate-btn"
+        title="Duplicate"
+        onClick={(e) => {
+          e.stopPropagation();
+          onDuplicate?.(nodeId);
+        }}
+      >
+        <Copy size={15} strokeWidth={2} />
+      </button>
+      <button
+        type="button"
+        className="fb-node-action-btn fb-node-delete-btn"
+        title="Delete"
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete?.(nodeId);
+        }}
+      >
+        <Trash2 size={15} strokeWidth={2} />
+      </button>
+    </div>
+  );
+}
+
 /* ── Base wrapper for standard nodes ─────────────────────────── */
-function NodeWrapper({ children, color, label, icon: Icon, selected, data, type }) {
+function NodeWrapper({ children, color, label, icon: Icon, selected, data, type, id, hideNextStep = false }) {
   const unsupported = data?._unsupported;
   const validationError = data?._validationError;
 
@@ -1152,6 +1772,7 @@ function NodeWrapper({ children, color, label, icon: Icon, selected, data, type 
         background: '#ffffff',
       }}
     >
+      <NodeHoverActions nodeId={id} nodeType={type} />
       {validationError ? (
         <div
           className="fb-node-warning"
@@ -1189,203 +1810,924 @@ function NodeWrapper({ children, color, label, icon: Icon, selected, data, type 
         <span style={{ fontWeight: 700, fontSize: '11.5px', color: validationError ? '#b91c1c' : '#1e293b' }}>{label}</span>
       </div>
       {children}
+      {!hideNextStep && type !== 'end' && (
+        <div className="fb-next-step-row">
+          <span>Next Step</span>
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="next-step"
+            className="next-step-handle"
+          />
+        </div>
+      )}
     </div>
   );
 }
 
-/* ── Start Node ──────────────────────────────────────────────── */
-function StartNode({ data, selected }) {
-  const triggerType = data.trigger_type || 'keyword';
-  const rawKeywords = data.keywords || (data.trigger_keyword ? data.trigger_keyword.split(',') : []);
-  const keywords = Array.isArray(rawKeywords) ? rawKeywords : [rawKeywords].filter(Boolean);
+/* ── Start Node ("When...") ──────────────────────────────────── */
+function StartNode({ id, data, selected }) {
+  const { onSelectNode } = useContext(FlowNodeActionsContext);
+
+  const triggers = (data.triggers && Array.isArray(data.triggers) && data.triggers.length > 0)
+    ? data.triggers
+    : [
+        {
+          id: 'trig-1',
+          type: data.trigger_type || 'keyword',
+          match_type: data.match_type || 'contains',
+          keywords: Array.isArray(data.keywords)
+            ? data.keywords
+            : (data.trigger_keyword ? data.trigger_keyword.split(',').map((s) => s.trim()).filter(Boolean) : ['hi', 'hello']),
+        },
+      ];
+
+  const getTriggerTitle = (trg) => {
+    if (trg.match_type === 'thumbs_up') return 'User sends a thumbs up';
+    if (trg.type === 'first_contact' || trg.type === 'first_message') return 'First contact';
+    if (trg.type === 'any' || trg.type === 'any_message') return 'Any message received';
+    return 'User sends a message';
+  };
+
+  const getTriggerSub = (trg) => {
+    if (trg.match_type === 'thumbs_up') return 'Message is thumbs up';
+    if (trg.type === 'first_contact' || trg.type === 'first_message') return 'Welcome new users';
+    if (trg.type === 'any' || trg.type === 'any_message') return 'Fallback on any text';
+    const kws = Array.isArray(trg.keywords) ? trg.keywords : [];
+    const match = trg.match_type || 'contains';
+    const label = match === 'contains' ? 'Message contains' : match === 'is' ? 'Message is' : match.replace(/_/g, ' ');
+    const kwStr = kws.slice(0, 3).join(', ');
+    return `${label} ${kwStr || '...'}`;
+  };
+
+  const validationError = data?._validationError;
 
   return (
-    <NodeWrapper color={NODE_COLORS.start} label="Start Trigger" icon={Play} selected={selected} data={data} type="start">
-      <div className="fb-node-body">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-          <span style={{ fontSize: 11, opacity: 0.8 }}>Trigger:</span>
-          <span style={{ fontWeight: 700, color: '#059669', textTransform: 'capitalize', fontSize: 11 }}>
-            {triggerType === 'keyword' ? '🔑 Keywords' : triggerType === 'first_message' ? '👋 First Message' : triggerType === 'any_message' ? '💬 Any Message' : triggerType}
-          </span>
+    <div
+      className={`fb-node${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
+      style={{
+        borderColor: validationError ? '#ef4444' : selected ? '#10b981' : '#e2e8f0',
+        background: '#ffffff',
+        minWidth: 260,
+        maxWidth: 280,
+        width: 270,
+        borderRadius: 20,
+        boxShadow: '0 4px 20px rgba(0,0,0,0.06)',
+        padding: '16px 16px 14px 16px',
+        position: 'relative',
+      }}
+    >
+      <NodeHoverActions nodeId={id} nodeType="start" />
+      {validationError && (
+        <div className="fb-node-warning" style={{ background: '#ef4444' }} title={`Missing Data: ${validationError}`}>
+          <AlertTriangle size={12} color="#fff" />
         </div>
+      )}
 
-        {triggerType === 'keyword' && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-            {keywords.length === 0 ? (
-              <span style={{ fontSize: 10, opacity: 0.5, fontStyle: 'italic' }}>No keywords set (click to add)</span>
-            ) : (
-              keywords.slice(0, 4).map((kw, i) => (
-                <span
-                  key={i}
-                  style={{
-                    padding: '2px 6px',
-                    borderRadius: 4,
-                    background: 'rgba(5, 150, 105, 0.12)',
-                    color: '#059669',
-                    fontSize: 10,
-                    fontWeight: 600,
-                  }}
-                >
-                  {kw}
-                </span>
-              ))
-            )}
-            {keywords.length > 4 && (
-              <span style={{ fontSize: 10, opacity: 0.6 }}>+{keywords.length - 4} more</span>
-            )}
+      {/* Header — "⚡ When..." */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 14,
+          paddingLeft: 2,
+        }}
+      >
+        <Zap size={18} strokeWidth={2.5} className="text-slate-900 fill-slate-900" />
+        <span style={{ fontWeight: 800, fontSize: '15px', color: '#0f172a' }}>
+          When...
+        </span>
+      </div>
+
+      {/* Trigger rows: each is a light-gray rounded block */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+        {triggers.map((trg, i) => (
+          <div
+            key={trg.id || i}
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 10,
+              padding: '10px 12px',
+              borderRadius: 12,
+              background: '#f8fafc',
+              border: '1px solid #f1f5f9',
+            }}
+          >
+            {/* Blue circle user icon */}
+            <div
+              style={{
+                width: 20,
+                height: 20,
+                borderRadius: '50%',
+                background: '#0084ff',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+                marginTop: 1,
+              }}
+            >
+              <User size={12} color="#ffffff" strokeWidth={2.5} />
+            </div>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', lineHeight: 1.25 }}>
+                {getTriggerTitle(trg)}
+              </div>
+              <div
+                style={{
+                  fontSize: 10.5,
+                  color: '#94a3b8',
+                  marginTop: 2,
+                  lineHeight: 1.3,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {getTriggerSub(trg)}
+              </div>
+            </div>
           </div>
-        )}
+        ))}
       </div>
-      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.start, width: 8, height: 8, border: '2px solid #ffffff' }} />
-    </NodeWrapper>
+
+      {/* + New Trigger button: rounded-xl dashed border */}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelectNode?.(id, 'addTrigger');
+        }}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 6,
+          width: '100%',
+          padding: '10px 14px',
+          background: '#ffffff',
+          border: '1.5px dashed #cbd5e1',
+          color: '#0084ff',
+          fontSize: 12.5,
+          fontWeight: 700,
+          cursor: 'pointer',
+          borderRadius: 12,
+          transition: 'all 0.15s ease',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.borderColor = '#0084ff';
+          e.currentTarget.style.background = '#f0f7ff';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.borderColor = '#cbd5e1';
+          e.currentTarget.style.background = '#ffffff';
+        }}
+      >
+        <Plus size={14} strokeWidth={2.5} />
+        New Trigger
+      </button>
+
+      {/* Bottom right: "Then" label with connector dot */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          gap: 6,
+          marginTop: 14,
+          paddingRight: 2,
+          position: 'relative',
+        }}
+      >
+        <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600 }}>Then</span>
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="then"
+          className="btn-handle"
+          style={{
+            position: 'absolute',
+            right: -6,
+            top: '50%',
+            transform: 'translateY(-50%)',
+          }}
+        />
+      </div>
+    </div>
   );
 }
 
-/* ── Text Node ───────────────────────────────────────────────── */
-function TextNode({ data, selected }) {
+
+/* ── Text Node (Send Message card style matching screenshot) ─── */
+function TextNode({ id, data, selected }) {
+  const validationError = data?._validationError;
+  const messageText = data.message || '';
+
   return (
-    <NodeWrapper color={NODE_COLORS.text} label="Text Message" icon={Type} selected={selected} data={data} type="text">
-      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.text, width: 8, height: 8, border: '2px solid #ffffff' }} />
-      <div className="fb-node-body">
-        <div className="fb-node-body-preview">
-          {data.message || <span style={{ opacity: 0.5, fontStyle: 'italic' }}>No message set</span>}
+    <div
+      className={`fb-node${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
+      style={{
+        borderRadius: 20,
+        background: '#ffffff',
+        border: selected ? '2px solid #10b981' : '1.5px solid #e2e8f0',
+        boxShadow: selected ? '0 0 0 2px rgba(16, 185, 129, 0.2), 0 8px 24px rgba(0,0,0,0.08)' : '0 4px 20px rgba(0,0,0,0.06)',
+        width: 270,
+        minWidth: 260,
+        maxWidth: 280,
+        overflow: 'visible',
+        position: 'relative',
+        padding: '14px 14px 10px 14px',
+      }}
+    >
+      <NodeHoverActions nodeId={id} nodeType="text" />
+
+      {/* Target handle on left */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="target-handle"
+        style={{
+          position: 'absolute',
+          left: -5,
+          top: 24,
+        }}
+      />
+
+      {/* Card Header: Channel icon + Title */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 12,
+        }}
+      >
+        <div
+          style={{
+            width: 20,
+            height: 20,
+            borderRadius: '50%',
+            background: '#0084ff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <MessageSquare size={11} color="#ffffff" />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 9.5, fontWeight: 600, color: '#94a3b8', lineHeight: 1.1, textTransform: 'capitalize' }}>
+            Facebook
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}>
+            Send Message
+          </div>
         </div>
       </div>
-      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.text, width: 8, height: 8, border: '2px solid #ffffff' }} />
-    </NodeWrapper>
+
+      {/* Text Content Box (Dashed rounded box when empty or text block) */}
+      <div
+        style={{
+          padding: '12px 14px',
+          borderRadius: 14,
+          background: messageText ? '#f8fafc' : '#ffffff',
+          border: messageText ? '1px solid #f1f5f9' : '1.5px dashed #cbd5e1',
+          fontSize: 12,
+          color: messageText ? '#334155' : '#94a3b8',
+          textAlign: messageText ? 'left' : 'center',
+          lineHeight: 1.4,
+          minHeight: 48,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: messageText ? 'flex-start' : 'center',
+        }}
+      >
+        {messageText || 'Add a text'}
+      </div>
+
+      {/* Next Step row with unfilled circle handle */}
+      <div className="fb-next-step-row" style={{ marginTop: 10 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="next-step"
+          className="next-step-handle"
+          style={{
+            position: 'absolute',
+            right: -7,
+            top: '50%',
+            transform: 'translateY(-50%)',
+          }}
+        />
+      </div>
+    </div>
   );
 }
 
-/* ── Image Node ──────────────────────────────────────────────── */
-function ImageNode({ data, selected }) {
-  const rawUrl = data.imageUrl || data.mediaUrl || '';
+/* ── Image Node (Matching ManyChat Send Message card with buttons) ── */
+function ImageNode({ id, data, selected }) {
+  const buttons = data.buttons || [];
+  const validationError = data?._validationError;
+  const caption = data.caption || data.message || '';
+  const imageUrl = data.imageUrl || data.mediaUrl || '';
+
   const backendUrl = import.meta.env.VITE_API_URL
     ? import.meta.env.VITE_API_URL.replace('/api/v1', '')
     : 'http://localhost:5000';
-  const fullUrl = rawUrl && !rawUrl.startsWith('http') ? `${backendUrl}${rawUrl}` : rawUrl;
+  const fullUrl = imageUrl && !imageUrl.startsWith('http') ? `${backendUrl}${imageUrl}` : imageUrl;
 
   return (
-    <NodeWrapper color={NODE_COLORS.image} label="Image" icon={Image} selected={selected} data={data} type="image">
-      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.image, width: 8, height: 8, border: '2px solid #ffffff' }} />
-      <div className="fb-node-body">
+    <div
+      className={`fb-node${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
+      style={{
+        borderRadius: 20,
+        background: '#ffffff',
+        border: selected ? '2px solid #10b981' : '1.5px solid #e2e8f0',
+        boxShadow: selected ? '0 0 0 2px rgba(16, 185, 129, 0.2), 0 8px 24px rgba(0,0,0,0.08)' : '0 4px 20px rgba(0,0,0,0.06)',
+        width: 270,
+        minWidth: 260,
+        maxWidth: 280,
+        overflow: 'visible',
+        position: 'relative',
+        padding: '14px 14px 10px 14px',
+      }}
+    >
+      <NodeHoverActions nodeId={id} nodeType="image" />
+
+      {/* Left target handle */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="target-handle"
+        style={{
+          position: 'absolute',
+          left: -5,
+          top: 24,
+        }}
+      />
+
+      {/* Card Header: Facebook Messenger */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 10,
+        }}
+      >
+        <div
+          style={{
+            width: 20,
+            height: 20,
+            borderRadius: '50%',
+            background: '#0084ff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <MessageSquare size={11} color="#ffffff" />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 9.5, fontWeight: 600, color: '#94a3b8', lineHeight: 1.1, textTransform: 'capitalize' }}>
+            Facebook
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}>
+            Send Message
+          </div>
+        </div>
+      </div>
+
+      {/* Optional Caption / Text block */}
+      {caption && (
+        <div
+          style={{
+            padding: '8px 12px',
+            borderRadius: 12,
+            background: '#f8fafc',
+            border: '1px solid #f1f5f9',
+            fontSize: 12,
+            color: '#334155',
+            lineHeight: 1.35,
+            marginBottom: 8,
+          }}
+        >
+          {caption}
+        </div>
+      )}
+
+      {/* Image Preview Container */}
+      <div style={{ marginBottom: buttons.length ? 8 : 0 }}>
         {fullUrl ? (
           <img
             src={fullUrl}
             alt="Preview"
-            style={{ width: '100%', height: 80, borderRadius: 6, objectFit: 'cover', display: 'block', marginBottom: 6 }}
+            style={{
+              width: '100%',
+              maxHeight: 150,
+              objectFit: 'cover',
+              borderRadius: 12,
+              border: '1px solid #e2e8f0',
+              display: 'block',
+            }}
           />
         ) : (
-          <div style={{
-            width: '100%', height: 60, borderRadius: 6, marginBottom: 6,
-            background: '#f8fafc', border: '1px dashed #cbd5e1', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
-          }}>
-            <Image size={16} style={{ color: '#94a3b8' }} />
-            <span style={{ fontSize: 10, color: '#94a3b8' }}>No image set</span>
+          <div
+            style={{
+              padding: '24px 12px',
+              borderRadius: 12,
+              background: '#f8fafc',
+              border: '1.5px dashed #cbd5e1',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              color: '#94a3b8',
+            }}
+          >
+            <Image size={24} style={{ opacity: 0.45, color: '#64748b' }} />
+            <span style={{ fontSize: 11, fontWeight: 600 }}>Image</span>
           </div>
         )}
-        {data.caption && (
-          <div style={{ fontSize: 11, color: '#475569' }} className="fb-node-body-preview">{data.caption}</div>
-        )}
       </div>
-      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.image, width: 8, height: 8, border: '2px solid #ffffff' }} />
-    </NodeWrapper>
-  );
-}
 
-/* ── Video Node ──────────────────────────────────────────────── */
-function VideoNode({ data, selected }) {
-  return (
-    <NodeWrapper color={NODE_COLORS.video} label="Video" icon={Video} selected={selected} data={data} type="video">
-      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.video, width: 8, height: 8, border: '2px solid #ffffff' }} />
-      <div className="fb-node-body" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Video size={16} style={{ color: NODE_COLORS.video, flexShrink: 0 }} />
-        <div style={{ overflow: 'hidden' }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#1e293b' }}>Video Message</div>
-          <div style={{ fontSize: 10, color: '#64748b' }} className="truncate">{data.mediaUrl ? 'Video linked' : 'No video attached'}</div>
-        </div>
-      </div>
-      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.video, width: 8, height: 8, border: '2px solid #ffffff' }} />
-    </NodeWrapper>
-  );
-}
+      {/* Attached Buttons */}
+      {buttons.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+          {buttons.map((btn, i) => {
+            const btnTitle = typeof btn === 'string' ? btn : (btn?.title || `Button ${i + 1}`);
+            const btnAction = typeof btn === 'object' ? btn?.action : 'flow';
+            const isPhone = btnAction === 'phone';
+            const isUrl = btnAction === 'url';
 
-/* ── Audio Node ──────────────────────────────────────────────── */
-function AudioNode({ data, selected }) {
-  return (
-    <NodeWrapper color={NODE_COLORS.audio} label="Audio" icon={Music} selected={selected} data={data} type="audio">
-      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.audio, width: 8, height: 8, border: '2px solid #ffffff' }} />
-      <div className="fb-node-body" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Music size={16} style={{ color: NODE_COLORS.audio, flexShrink: 0 }} />
-        <div style={{ overflow: 'hidden' }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#1e293b' }}>Audio Note</div>
-          <div style={{ fontSize: 10, color: '#64748b' }} className="truncate">{data.mediaUrl ? 'Audio linked' : 'No audio attached'}</div>
-        </div>
-      </div>
-      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.audio, width: 8, height: 8, border: '2px solid #ffffff' }} />
-    </NodeWrapper>
-  );
-}
+            return (
+              <div
+                key={i}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '9px 14px',
+                  borderRadius: 12,
+                  background: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
+                  position: 'relative',
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: '#0084ff',
+                    textAlign: 'center',
+                    flex: 1,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {btnTitle}
+                </span>
 
-/* ── File Node ───────────────────────────────────────────────── */
-function FileNode({ data, selected }) {
-  return (
-    <NodeWrapper color={NODE_COLORS.file} label="File / Document" icon={FileText} selected={selected} data={data} type="file">
-      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.file, width: 8, height: 8, border: '2px solid #ffffff' }} />
-      <div className="fb-node-body" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <FileText size={16} style={{ color: NODE_COLORS.file, flexShrink: 0 }} />
-        <div style={{ overflow: 'hidden' }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#1e293b' }}>{data.filename || 'Document'}</div>
-          <div style={{ fontSize: 10, color: '#64748b' }} className="truncate">{data.mediaUrl ? 'File linked' : 'No file attached'}</div>
-        </div>
-      </div>
-      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.file, width: 8, height: 8, border: '2px solid #ffffff' }} />
-    </NodeWrapper>
-  );
-}
-
-/* ── Buttons Node ────────────────────────────────────────────── */
-function ButtonsNode({ data, selected }) {
-  const buttons = data.buttons || [];
-  return (
-    <NodeWrapper color={NODE_COLORS.buttons} label="Buttons" icon={MousePointerClick} selected={selected} data={data} type="buttons">
-      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.buttons, width: 8, height: 8, border: '2px solid #ffffff' }} />
-      {data.message && (
-        <div className="fb-node-body" style={{ paddingBottom: buttons.length ? 6 : 10 }}>
-          <div className="fb-node-body-preview">{data.message}</div>
+                {isPhone && (
+                  <Phone
+                    size={14}
+                    style={{
+                      position: 'absolute',
+                      right: 12,
+                      color: '#0084ff',
+                    }}
+                  />
+                )}
+                {isUrl && (
+                  <ExternalLink
+                    size={14}
+                    style={{
+                      position: 'absolute',
+                      right: 12,
+                      color: '#0084ff',
+                    }}
+                  />
+                )}
+                {!isPhone && !isUrl && (
+                  <Handle
+                    type="source"
+                    position={Position.Right}
+                    id={`btn-${i}`}
+                    className="btn-handle"
+                    style={{
+                      position: 'absolute',
+                      right: 12,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                    }}
+                  />
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
-      <div className="fb-node-btn-list" style={{ marginTop: 2 }}>
-        {buttons.map((btn, i) => (
-          <div key={i} className="fb-node-btn-chip" style={{ background: 'rgba(217, 119, 6, 0.08)', borderColor: 'rgba(217, 119, 6, 0.2)', color: '#b45309' }}>
-            <span style={{ fontSize: '11px', fontWeight: 600 }}>{btn || `Button ${i + 1}`}</span>
-            <ChevronRight size={12} style={{ opacity: 0.6 }} />
-            <Handle
-              type="source"
-              position={Position.Right}
-              id={`btn-${i}`}
-              style={{
-                background: '#d97706',
-                top: '50%',
-                right: -6,
-                transform: 'translateY(-50%)',
-                width: 8,
-                height: 8,
-                border: '2px solid #ffffff',
-              }}
-            />
-          </div>
-        ))}
+
+      {/* Next Step row with unfilled circle handle */}
+      <div className="fb-next-step-row" style={{ marginTop: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="next-step"
+          className="next-step-handle"
+          style={{
+            position: 'absolute',
+            right: -7,
+            top: '50%',
+            transform: 'translateY(-50%)',
+          }}
+        />
       </div>
-    </NodeWrapper>
+    </div>
   );
 }
 
+/* ── Video Node (Send Message card style) ─────────────────────── */
+function VideoNode({ id, data, selected }) {
+  const buttons = data.buttons || [];
+  const validationError = data?._validationError;
+  const caption = data.caption || data.message || '';
+  const videoUrl = data.videoUrl || data.mediaUrl || '';
+
+  return (
+    <div
+      className={`fb-node${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
+      style={{
+        borderRadius: 20,
+        background: '#ffffff',
+        border: selected ? '2px solid #10b981' : '1.5px solid #e2e8f0',
+        boxShadow: selected ? '0 0 0 2px rgba(16, 185, 129, 0.2), 0 8px 24px rgba(0,0,0,0.08)' : '0 4px 20px rgba(0,0,0,0.06)',
+        width: 270,
+        minWidth: 260,
+        maxWidth: 280,
+        overflow: 'visible',
+        position: 'relative',
+        padding: '14px 14px 10px 14px',
+      }}
+    >
+      <NodeHoverActions nodeId={id} nodeType="video" />
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="target-handle"
+        style={{ position: 'absolute', left: -5, top: 24 }}
+      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <div style={{ width: 20, height: 20, borderRadius: '50%', background: '#0084ff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <MessageSquare size={11} color="#ffffff" />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 9.5, fontWeight: 600, color: '#94a3b8', lineHeight: 1.1 }}>Facebook</div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}>Send Message</div>
+        </div>
+      </div>
+      {caption && (
+        <div style={{ padding: '8px 12px', borderRadius: 12, background: '#f8fafc', border: '1px solid #f1f5f9', fontSize: 12, color: '#334155', lineHeight: 1.35, marginBottom: 8 }}>
+          {caption}
+        </div>
+      )}
+      <div style={{ padding: '24px 12px', borderRadius: 12, background: '#f8fafc', border: '1.5px dashed #cbd5e1', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, color: '#94a3b8', marginBottom: buttons.length ? 8 : 0 }}>
+        <Video size={24} style={{ opacity: 0.5, color: '#64748b' }} />
+        <span style={{ fontSize: 11, fontWeight: 600 }}>{videoUrl ? 'Video Attached' : 'Video'}</span>
+      </div>
+      {buttons.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+          {buttons.map((btn, i) => {
+            const btnTitle = typeof btn === 'string' ? btn : (btn?.title || `Button ${i + 1}`);
+            const btnAction = typeof btn === 'object' ? btn?.action : 'flow';
+            const isPhone = btnAction === 'phone';
+            const isUrl = btnAction === 'url';
+            return (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '9px 14px', borderRadius: 12, background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.03)', position: 'relative' }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#0084ff', textAlign: 'center', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {btnTitle}
+                </span>
+                {isPhone && <Phone size={14} style={{ position: 'absolute', right: 12, color: '#0084ff' }} />}
+                {isUrl && <ExternalLink size={14} style={{ position: 'absolute', right: 12, color: '#0084ff' }} />}
+                {!isPhone && !isUrl && (
+                  <Handle type="source" position={Position.Right} id={`btn-${i}`} className="btn-handle" style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)' }} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div className="fb-next-step-row" style={{ marginTop: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
+        <Handle type="source" position={Position.Right} id="next-step" className="next-step-handle" style={{ position: 'absolute', right: -7, top: '50%', transform: 'translateY(-50%)' }} />
+      </div>
+    </div>
+  );
+}
+
+/* ── Audio Node (Send Message card style) ─────────────────────── */
+function AudioNode({ id, data, selected }) {
+  const validationError = data?._validationError;
+  const audioUrl = data.audioUrl || data.mediaUrl || '';
+
+  return (
+    <div
+      className={`fb-node${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
+      style={{
+        borderRadius: 20,
+        background: '#ffffff',
+        border: selected ? '2px solid #10b981' : '1.5px solid #e2e8f0',
+        boxShadow: selected ? '0 0 0 2px rgba(16, 185, 129, 0.2), 0 8px 24px rgba(0,0,0,0.08)' : '0 4px 20px rgba(0,0,0,0.06)',
+        width: 270,
+        minWidth: 260,
+        maxWidth: 280,
+        overflow: 'visible',
+        position: 'relative',
+        padding: '14px 14px 10px 14px',
+      }}
+    >
+      <NodeHoverActions nodeId={id} nodeType="audio" />
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="target-handle"
+        style={{ position: 'absolute', left: -5, top: 24 }}
+      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <div style={{ width: 20, height: 20, borderRadius: '50%', background: '#0084ff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <MessageSquare size={11} color="#ffffff" />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 9.5, fontWeight: 600, color: '#94a3b8', lineHeight: 1.1 }}>Facebook</div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}>Send Message</div>
+        </div>
+      </div>
+      <div style={{ padding: '20px 12px', borderRadius: 12, background: '#f8fafc', border: '1.5px dashed #cbd5e1', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, color: '#94a3b8' }}>
+        <Music size={24} style={{ opacity: 0.5, color: '#64748b' }} />
+        <span style={{ fontSize: 11, fontWeight: 600 }}>{audioUrl ? 'Audio Attached' : 'Audio Clip'}</span>
+      </div>
+      <div className="fb-next-step-row" style={{ marginTop: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
+        <Handle type="source" position={Position.Right} id="next-step" className="next-step-handle" style={{ position: 'absolute', right: -7, top: '50%', transform: 'translateY(-50%)' }} />
+      </div>
+    </div>
+  );
+}
+
+/* ── File Node (Send Message card style) ──────────────────────── */
+function FileNode({ id, data, selected }) {
+  const validationError = data?._validationError;
+  const filename = data.filename || 'Document';
+
+  return (
+    <div
+      className={`fb-node${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
+      style={{
+        borderRadius: 20,
+        background: '#ffffff',
+        border: selected ? '2px solid #10b981' : '1.5px solid #e2e8f0',
+        boxShadow: selected ? '0 0 0 2px rgba(16, 185, 129, 0.2), 0 8px 24px rgba(0,0,0,0.08)' : '0 4px 20px rgba(0,0,0,0.06)',
+        width: 270,
+        minWidth: 260,
+        maxWidth: 280,
+        overflow: 'visible',
+        position: 'relative',
+        padding: '14px 14px 10px 14px',
+      }}
+    >
+      <NodeHoverActions nodeId={id} nodeType="file" />
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="target-handle"
+        style={{ position: 'absolute', left: -5, top: 24 }}
+      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <div style={{ width: 20, height: 20, borderRadius: '50%', background: '#0084ff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <MessageSquare size={11} color="#ffffff" />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 9.5, fontWeight: 600, color: '#94a3b8', lineHeight: 1.1 }}>Facebook</div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}>Send Message</div>
+        </div>
+      </div>
+      <div style={{ padding: '16px 12px', borderRadius: 12, background: '#f8fafc', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 10, color: '#334155' }}>
+        <FileText size={22} style={{ color: '#0084ff', flexShrink: 0 }} />
+        <span style={{ fontSize: 11.5, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{filename}</span>
+      </div>
+      <div className="fb-next-step-row" style={{ marginTop: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
+        <Handle type="source" position={Position.Right} id="next-step" className="next-step-handle" style={{ position: 'absolute', right: -7, top: '50%', transform: 'translateY(-50%)' }} />
+      </div>
+    </div>
+  );
+}
+
+/* ── Buttons Node (Send Message card style matching screenshot) ─ */
+function ButtonsNode({ id, data, selected }) {
+  const buttons = data.buttons || [];
+  const validationError = data?._validationError;
+  const messageText = data.message || '';
+
+  return (
+    <div
+      className={`fb-node${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
+      style={{
+        borderRadius: 20,
+        background: '#ffffff',
+        border: selected ? '2px solid #10b981' : '1.5px solid #e2e8f0',
+        boxShadow: selected ? '0 0 0 2px rgba(16, 185, 129, 0.2), 0 8px 24px rgba(0,0,0,0.08)' : '0 4px 20px rgba(0,0,0,0.06)',
+        width: 270,
+        minWidth: 260,
+        maxWidth: 280,
+        overflow: 'visible',
+        position: 'relative',
+        padding: '14px 14px 10px 14px',
+      }}
+    >
+      <NodeHoverActions nodeId={id} nodeType="buttons" />
+
+      {/* Target handle on left */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="target-handle"
+        style={{
+          position: 'absolute',
+          left: -5,
+          top: 24,
+        }}
+      />
+
+      {/* Card Header: Channel icon + Title */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 12,
+        }}
+      >
+        <div
+          style={{
+            width: 20,
+            height: 20,
+            borderRadius: '50%',
+            background: '#0084ff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <MessageSquare size={11} color="#ffffff" />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 9.5, fontWeight: 600, color: '#94a3b8', lineHeight: 1.1, textTransform: 'capitalize' }}>
+            Facebook
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}>
+            Send Message
+          </div>
+        </div>
+      </div>
+
+      {/* Text Content Box */}
+      <div
+        style={{
+          padding: '12px 14px',
+          borderRadius: 14,
+          background: messageText ? '#f8fafc' : '#ffffff',
+          border: messageText ? '1px solid #f1f5f9' : '1.5px dashed #cbd5e1',
+          fontSize: 12,
+          color: messageText ? '#334155' : '#94a3b8',
+          textAlign: messageText ? 'left' : 'center',
+          lineHeight: 1.4,
+          marginBottom: buttons.length ? 10 : 0,
+          minHeight: 44,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: messageText ? 'flex-start' : 'center',
+        }}
+      >
+        {messageText || 'Add a text'}
+      </div>
+
+      {/* Attached Buttons: White rounded pills with subtle border */}
+      {buttons.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {buttons.map((btn, i) => {
+            const btnTitle = typeof btn === 'string' ? btn : (btn?.title || `Button ${i + 1}`);
+            const btnAction = typeof btn === 'object' ? btn?.action : 'flow';
+            const isPhone = btnAction === 'phone';
+            const isUrl = btnAction === 'url';
+
+            return (
+              <div
+                key={i}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '9px 14px',
+                  borderRadius: 12,
+                  background: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
+                  position: 'relative',
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: '#0084ff',
+                    textAlign: 'center',
+                    flex: 1,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {btnTitle}
+                </span>
+
+                {isPhone && (
+                  <Phone
+                    size={14}
+                    style={{
+                      position: 'absolute',
+                      right: 12,
+                      color: '#0084ff',
+                    }}
+                  />
+                )}
+                {isUrl && (
+                  <ExternalLink
+                    size={14}
+                    style={{
+                      position: 'absolute',
+                      right: 12,
+                      color: '#0084ff',
+                    }}
+                  />
+                )}
+                {!isPhone && !isUrl && (
+                  <Handle
+                    type="source"
+                    position={Position.Right}
+                    id={`btn-${i}`}
+                    className="btn-handle"
+                    style={{
+                      position: 'absolute',
+                      right: 12,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                    }}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Next Step row with unfilled circle handle */}
+      <div className="fb-next-step-row" style={{ marginTop: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="next-step"
+          className="next-step-handle"
+          style={{
+            position: 'absolute',
+            right: -7,
+            top: '50%',
+            transform: 'translateY(-50%)',
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+
 /* ── Quick Replies Node (With individual branch handles) ─────── */
-function QuickRepliesNode({ data, selected }) {
+function QuickRepliesNode({ id, data, selected }) {
   const replies = data.replies || [];
   return (
-    <NodeWrapper color={NODE_COLORS.quickReplies} label="Quick Replies" icon={Keyboard} selected={selected} data={data} type="quickReplies">
-      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.quickReplies, width: 8, height: 8, border: '2px solid #ffffff' }} />
+    <NodeWrapper id={id} color={NODE_COLORS.quickReplies} label="Quick Replies" icon={Keyboard} selected={selected} data={data} type="quickReplies">
+      <Handle type="target" position={Position.Left} />
       {data.message && (
         <div className="fb-node-body" style={{ paddingBottom: replies.length ? 6 : 10 }}>
           <div className="fb-node-body-preview">{data.message}</div>
@@ -1394,38 +2736,29 @@ function QuickRepliesNode({ data, selected }) {
       <div className="fb-node-btn-list" style={{ marginTop: 2 }}>
         {replies.map((r, i) => (
           <div key={i} className="fb-node-btn-chip" style={{ background: 'rgba(2, 132, 199, 0.08)', borderColor: 'rgba(2, 132, 199, 0.2)', color: '#0369a1' }}>
-            <span style={{ fontSize: '11px', fontWeight: 600 }}>{r || `Reply ${i + 1}`}</span>
-            <ChevronRight size={12} style={{ opacity: 0.6 }} />
+            <span style={{ fontSize: '11px', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r || `Reply ${i + 1}`}</span>
+            <ChevronRight size={12} style={{ opacity: 0.6, flexShrink: 0 }} />
             <Handle
               type="source"
               position={Position.Right}
               id={`qr-${i}`}
-              style={{
-                background: '#0284c7',
-                top: '50%',
-                right: -6,
-                transform: 'translateY(-50%)',
-                width: 8,
-                height: 8,
-                border: '2px solid #ffffff',
-              }}
+              className="btn-handle"
+              style={{ top: '50%', right: -7, transform: 'translateY(-50%)', position: 'absolute' }}
             />
           </div>
         ))}
-      </div>
-      <div style={{ padding: '4px 10px 8px', fontSize: '9.5px', color: '#64748b', textAlign: 'center', borderTop: '1px dashed #e2e8f0' }}>
-        Connect reply to each button 👉
       </div>
     </NodeWrapper>
   );
 }
 
+
 /* ── List Menu Node (WhatsApp Interactive List) ──────────────── */
-function ListMenuNode({ data, selected }) {
+function ListMenuNode({ id, data, selected }) {
   const items = data.items || [];
   return (
-    <NodeWrapper color={NODE_COLORS.listMenu} label="List Menu" icon={ListOrdered} selected={selected} data={data} type="listMenu">
-      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.listMenu, width: 8, height: 8, border: '2px solid #ffffff' }} />
+    <NodeWrapper id={id} color={NODE_COLORS.listMenu} label="List Menu" icon={ListOrdered} selected={selected} data={data} type="listMenu">
+      <Handle type="target" position={Position.Left} />
       <div className="fb-node-body" style={{ paddingBottom: 6 }}>
         <div style={{ fontWeight: 700, fontSize: 11, color: '#1e293b' }}>
           {data.title || 'Menu Options'}
@@ -1434,37 +2767,28 @@ function ListMenuNode({ data, selected }) {
       <div className="fb-node-btn-list" style={{ marginTop: 2 }}>
         {items.map((item, i) => (
           <div key={i} className="fb-node-btn-chip" style={{ background: 'rgba(124, 58, 237, 0.08)', borderColor: 'rgba(124, 58, 237, 0.2)', color: '#6d28d9' }}>
-            <span style={{ fontSize: '11px', fontWeight: 600 }}>{item || `Option ${i + 1}`}</span>
-            <ChevronRight size={12} style={{ opacity: 0.6 }} />
+            <span style={{ fontSize: '11px', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item || `Option ${i + 1}`}</span>
+            <ChevronRight size={12} style={{ opacity: 0.6, flexShrink: 0 }} />
             <Handle
               type="source"
               position={Position.Right}
               id={`item-${i}`}
-              style={{
-                background: '#7c3aed',
-                top: '50%',
-                right: -6,
-                transform: 'translateY(-50%)',
-                width: 8,
-                height: 8,
-                border: '2px solid #ffffff',
-              }}
+              className="btn-handle"
+              style={{ top: '50%', right: -7, transform: 'translateY(-50%)', position: 'absolute' }}
             />
           </div>
         ))}
-      </div>
-      <div style={{ padding: '4px 10px 8px', fontSize: '9.5px', color: '#64748b', textAlign: 'center', borderTop: '1px dashed #e2e8f0' }}>
-        Connect reply to each option 👉
       </div>
     </NodeWrapper>
   );
 }
 
+
 /* ── Card Node ───────────────────────────────────────────────── */
-function CardNode({ data, selected }) {
+function CardNode({ id, data, selected }) {
   return (
-    <NodeWrapper color={NODE_COLORS.card} label="Card" icon={CreditCard} selected={selected} data={data} type="card">
-      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.card, width: 8, height: 8, border: '2px solid #ffffff' }} />
+    <NodeWrapper id={id} color={NODE_COLORS.card} label="Card" icon={CreditCard} selected={selected} data={data} type="card">
+      <Handle type="target" position={Position.Left} />
       <div className="fb-node-body">
         {data.imageUrl && (
           <div style={{
@@ -1492,17 +2816,16 @@ function CardNode({ data, selected }) {
           <div style={{ fontSize: 11, opacity: 0.7, color: '#475569' }}>{data.subtitle}</div>
         )}
       </div>
-      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.card, width: 8, height: 8, border: '2px solid #ffffff' }} />
     </NodeWrapper>
   );
 }
 
 /* ── Carousel Node ───────────────────────────────────────────── */
-function CarouselNode({ data, selected }) {
+function CarouselNode({ id, data, selected }) {
   const cardCount = data.cards?.length || 0;
   return (
-    <NodeWrapper color={NODE_COLORS.carousel} label="Carousel" icon={Layers} selected={selected} data={data} type="carousel">
-      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.carousel, width: 8, height: 8, border: '2px solid #ffffff' }} />
+    <NodeWrapper id={id} color={NODE_COLORS.carousel} label="Carousel" icon={Layers} selected={selected} data={data} type="carousel">
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
       <div className="fb-node-body" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{
           width: 34, height: 34, borderRadius: 8,
@@ -1514,36 +2837,193 @@ function CarouselNode({ data, selected }) {
         </div>
         <span style={{ fontWeight: 600, color: '#1e293b' }}>{cardCount === 1 ? '1 card' : `${cardCount} cards`}</span>
       </div>
-      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.carousel, width: 8, height: 8, border: '2px solid #ffffff' }} />
     </NodeWrapper>
   );
 }
 
-/* ── Collect Input Node ──────────────────────────────────────── */
-function CollectInputNode({ data, selected }) {
+/* ── Collect Input Node ─────────────────────────────────────── */
+function CollectInputNode({ id, data, selected }) {
   const typeIcons = { name: User, email: Mail, phone: Phone, custom: Settings2 };
   const TypeIcon = typeIcons[data.inputType] || Settings2;
+  const promptText = data.message || data.prompt || 'Please enter your reply...';
+  const saveVariable = data.variable || 'contact_reply';
+
   return (
-    <NodeWrapper color={NODE_COLORS.collectInput} label="Collect Input" icon={Mail} selected={selected} data={data} type="collectInput">
-      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.collectInput, width: 8, height: 8, border: '2px solid #ffffff' }} />
-      <div className="fb-node-body" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <TypeIcon size={16} style={{ color: NODE_COLORS.collectInput, flexShrink: 0 }} />
-        <div>
-          <div style={{ fontWeight: 600, color: '#1e293b', fontSize: 12 }}>
-            {data.inputType || 'custom'}
+    <div
+      className={`flow-input-node ${selected ? 'selected' : ''}`}
+      style={{
+        background: '#ffffff',
+        borderRadius: 20,
+        border: selected ? '2px solid #8b5cf6' : '1.5px solid #e2e8f0',
+        boxShadow: selected ? '0 8px 24px rgba(139,92,246,0.18)' : '0 4px 14px rgba(0,0,0,0.06)',
+        width: 270,
+        position: 'relative',
+        overflow: 'visible',
+        transition: 'all 0.2s ease',
+      }}
+    >
+      <NodeHoverActions nodeId={id} nodeType="collectInput" />
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="target-handle"
+        style={{
+          position: 'absolute',
+          left: -5,
+          top: 22,
+        }}
+      />
+
+      {/* Header */}
+      <div
+        style={{
+          padding: '9px 12px',
+          background: 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)',
+          borderBottom: '1px solid #e9d5ff',
+          borderRadius: '19px 19px 0 0',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div
+            style={{
+              width: 22,
+              height: 22,
+              borderRadius: 6,
+              background: '#8b5cf6',
+              color: '#ffffff',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Zap size={12} />
           </div>
-          {data.variable && (
-            <div style={{ fontSize: 10, color: '#64748b' }}>→ {data.variable}</div>
-          )}
+          <span style={{ fontSize: 12, fontWeight: 700, color: '#5b21b6' }}>User Input</span>
+        </div>
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            color: '#7c3aed',
+            background: '#ffffff',
+            padding: '2px 8px',
+            borderRadius: 10,
+            border: '1px solid #ddd6fe',
+            textTransform: 'capitalize',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+          }}
+        >
+          <TypeIcon size={10} />
+          {data.inputType || 'text'}
+        </span>
+      </div>
+
+      {/* Body */}
+      <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div
+          style={{
+            fontSize: 12,
+            color: '#1e293b',
+            lineHeight: 1.4,
+            fontWeight: 500,
+            wordBreak: 'break-word',
+          }}
+        >
+          {promptText}
+        </div>
+
+        {/* Target custom field badge */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '5px 8px',
+            borderRadius: 6,
+            background: '#faf5ff',
+            border: '1px dashed #d8b4fe',
+            fontSize: 11,
+            color: '#6b21a8',
+          }}
+        >
+          <span style={{ fontWeight: 600 }}>Save to:</span>
+          <code
+            style={{
+              fontWeight: 700,
+              background: '#f3e8ff',
+              padding: '1px 5px',
+              borderRadius: 4,
+              color: '#7e22ce',
+            }}
+          >
+            {saveVariable}
+          </code>
+        </div>
+
+        {/* Reply waiting bar */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '6px 8px',
+            borderRadius: 6,
+            background: '#f8fafc',
+            border: '1px solid #f1f5f9',
+            fontSize: 10.5,
+            color: '#64748b',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <Clock size={12} style={{ color: '#8b5cf6' }} />
+            <span>Waiting for reply</span>
+          </div>
+          <span style={{ fontSize: 10, fontWeight: 700, color: '#8b5cf6' }}>⚡ Action on reply</span>
         </div>
       </div>
-      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.collectInput, width: 8, height: 8, border: '2px solid #ffffff' }} />
-    </NodeWrapper>
+
+      {/* Next Step row matching the ManyChat design */}
+      <div className="fb-next-step-row" style={{ marginTop: 4, borderTop: '1px dashed #ede9fe' }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="next-step"
+          className="next-step-handle"
+          style={{
+            position: 'absolute',
+            right: -7,
+            top: '50%',
+            transform: 'translateY(-50%)',
+          }}
+        />
+        {/* Support backward-compatible id="next" */}
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="next"
+          className="next-step-handle"
+          style={{
+            position: 'absolute',
+            right: -7,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            opacity: 0,
+            pointerEvents: 'none',
+          }}
+        />
+      </div>
+    </div>
   );
 }
 
 /* ── Condition Node ──────────────────────────────────────────── */
-function ConditionNode({ data, selected }) {
+function ConditionNode({ id, data, selected }) {
   const unsupported = data?._unsupported;
   const validationError = data?._validationError;
 
@@ -1552,9 +3032,11 @@ function ConditionNode({ data, selected }) {
       className={`fb-node-condition${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
       style={{
         background: '#ffffff',
+        borderRadius: 20,
         borderColor: validationError ? '#ef4444' : selected ? NODE_COLORS.condition : '#e2e8f0',
       }}
     >
+      <NodeHoverActions nodeId={id} nodeType="condition" />
       {validationError ? (
         <div className="fb-node-warning" style={{ background: '#ef4444' }} title={`Missing Data: ${validationError}`}>
           <AlertTriangle size={12} color="#fff" />
@@ -1564,13 +3046,13 @@ function ConditionNode({ data, selected }) {
           <AlertTriangle size={12} color="#fff" />
         </div>
       ) : null}
-      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.condition, width: 8, height: 8, border: '2px solid #ffffff' }} />
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
       <div
         className="fb-node-header"
         style={{
           background: validationError ? '#fef2f2' : `${NODE_COLORS.condition}12`,
           borderBottom: `1px solid ${validationError ? '#fecaca' : `${NODE_COLORS.condition}22`}`,
-          borderRadius: '11px 11px 0 0',
+          borderRadius: '19px 19px 0 0',
         }}
       >
         <div
@@ -1605,7 +3087,8 @@ function ConditionNode({ data, selected }) {
             type="source"
             position={Position.Right}
             id="yes"
-            style={{ background: '#059669', right: -6, width: 8, height: 8, border: '2px solid #ffffff' }}
+            className="btn-handle"
+            style={{ right: 8, top: '50%', transform: 'translateY(-50%)', position: 'absolute' }}
           />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
@@ -1614,19 +3097,36 @@ function ConditionNode({ data, selected }) {
             type="source"
             position={Position.Right}
             id="no"
-            style={{ background: '#dc2626', right: -6, width: 8, height: 8, border: '2px solid #ffffff' }}
+            className="btn-handle"
+            style={{ right: 8, top: '50%', transform: 'translateY(-50%)', position: 'absolute' }}
           />
         </div>
+      </div>
+      {/* Fallback Next Step handle */}
+      <div className="fb-next-step-row" style={{ marginTop: 2, padding: '6px 12px 8px' }}>
+        <span style={{ fontSize: 10.5, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="next-step"
+          className="next-step-handle"
+          style={{
+            position: 'absolute',
+            right: -7,
+            top: '50%',
+            transform: 'translateY(-50%)',
+          }}
+        />
       </div>
     </div>
   );
 }
 
 /* ── Delay Node ──────────────────────────────────────────────── */
-function DelayNode({ data, selected }) {
+function DelayNode({ id, data, selected }) {
   return (
-    <NodeWrapper color={NODE_COLORS.delay} label="Delay" icon={Clock} selected={selected} data={data} type="delay">
-      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.delay, width: 8, height: 8, border: '2px solid #ffffff' }} />
+    <NodeWrapper id={id} color={NODE_COLORS.delay} label="Delay" icon={Clock} selected={selected} data={data} type="delay">
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
       <div className="fb-node-body" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <Clock size={18} style={{ color: NODE_COLORS.delay, flexShrink: 0 }} />
         <div>
@@ -1636,16 +3136,15 @@ function DelayNode({ data, selected }) {
           <span style={{ fontSize: 11, marginLeft: 4, color: '#64748b' }}>seconds</span>
         </div>
       </div>
-      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.delay, width: 8, height: 8, border: '2px solid #ffffff' }} />
     </NodeWrapper>
   );
 }
 
 /* ── Webhook / Zapier Node ───────────────────────────────────── */
-function WebhookNode({ data, selected }) {
+function WebhookNode({ id, data, selected }) {
   return (
-    <NodeWrapper color={NODE_COLORS.webhook} label="Webhook / Zapier" icon={Globe} selected={selected} data={data} type="webhook">
-      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.webhook, width: 8, height: 8, border: '2px solid #ffffff' }} />
+    <NodeWrapper id={id} color={NODE_COLORS.webhook} label="Webhook / Zapier" icon={Globe} selected={selected} data={data} type="webhook">
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
       <div className="fb-node-body">
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
           <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 4, background: '#2563eb', color: '#ffffff' }}>
@@ -1659,16 +3158,15 @@ function WebhookNode({ data, selected }) {
           {data.payloadMode === 'CUSTOM_JSON' ? '📦 Custom JSON Payload' : '⚡ All Contact Variables'}
         </div>
       </div>
-      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.webhook, width: 8, height: 8, border: '2px solid #ffffff' }} />
     </NodeWrapper>
   );
 }
 
 /* ── Collect Payment Node ────────────────────────────────────── */
-function PaymentNode({ data, selected }) {
+function PaymentNode({ id, data, selected }) {
   return (
-    <NodeWrapper color={NODE_COLORS.payment} label="In-Chat Payment" icon={CreditCard} selected={selected} data={data} type="payment">
-      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.payment, width: 8, height: 8, border: '2px solid #ffffff' }} />
+    <NodeWrapper id={id} color={NODE_COLORS.payment} label="In-Chat Payment" icon={CreditCard} selected={selected} data={data} type="payment">
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
       <div className="fb-node-body">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
           <strong style={{ fontSize: 11, color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }}>
@@ -1682,16 +3180,15 @@ function PaymentNode({ data, selected }) {
           {data.buttonLabel || '💳 Pay Now'}
         </div>
       </div>
-      <Handle type="source" position={Position.Right} style={{ background: NODE_COLORS.payment, width: 8, height: 8, border: '2px solid #ffffff' }} />
     </NodeWrapper>
   );
 }
 
 /* ── Handoff Node ────────────────────────────────────────────── */
-function HandoffNode({ data, selected }) {
+function HandoffNode({ id, data, selected }) {
   return (
-    <NodeWrapper color={NODE_COLORS.handoff} label="Agent Handoff" icon={Headphones} selected={selected} data={data} type="handoff">
-      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.handoff, width: 8, height: 8, border: '2px solid #ffffff' }} />
+    <NodeWrapper id={id} color={NODE_COLORS.handoff} label="Agent Handoff" icon={Headphones} selected={selected} data={data} type="handoff">
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
       <div className="fb-node-body">
         {data.message ? (
           <div className="fb-node-body-preview">{data.message}</div>
@@ -1707,10 +3204,10 @@ function HandoffNode({ data, selected }) {
 }
 
 /* ── End Node ────────────────────────────────────────────────── */
-function EndNode({ data, selected }) {
+function EndNode({ id, data, selected }) {
   return (
-    <NodeWrapper color={NODE_COLORS.end} label="End" icon={CircleStop} selected={selected} data={data} type="end">
-      <Handle type="target" position={Position.Left} style={{ background: NODE_COLORS.end, width: 8, height: 8, border: '2px solid #ffffff' }} />
+    <NodeWrapper id={id} color={NODE_COLORS.end} label="End" icon={CircleStop} selected={selected} data={data} type="end">
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
       <div className="fb-node-body">
         {data.message ? (
           <div className="fb-node-body-preview">{data.message}</div>
@@ -1880,157 +3377,574 @@ function MediaUploadField({ label = 'Media File', value, onChange, accept = '*/*
   );
 }
 
-/* ── Start Node Properties with Reactive Keywords Manager ──── */
+/* ── Start Node Properties with Multi-Trigger & Dotted Buttons ──── */
 function StartNodeProperties({ data = {}, onUpdateNode }) {
-  const [keywordInput, setKeywordInput] = useState('');
+  const rawTriggers = (data.triggers && Array.isArray(data.triggers) && data.triggers.length > 0)
+    ? data.triggers
+    : [
+        {
+          id: 'trig-1',
+          type: data.trigger_type || 'keyword',
+          match_type: data.match_type || 'contains',
+          keywords: Array.isArray(data.keywords)
+            ? data.keywords
+            : (data.trigger_keyword ? data.trigger_keyword.split(',').map((s) => s.trim()).filter(Boolean) : ['hi', 'hello']),
+        },
+      ];
 
-  const triggerType = data.trigger_type || 'keyword';
-  const rawKeywords = data.keywords !== undefined
-    ? data.keywords
-    : (data.trigger_keyword ? data.trigger_keyword.split(',') : ['hi', 'hello']);
-  const keywords = Array.isArray(rawKeywords) ? rawKeywords : [rawKeywords].filter(Boolean);
+  const [triggers, setTriggers] = useState(rawTriggers);
+  const [keywordInputs, setKeywordInputs] = useState({});
 
-  const handleTriggerTypeChange = (newType) => {
+  useEffect(() => {
+    if (data.triggers && Array.isArray(data.triggers) && data.triggers.length > 0) {
+      setTriggers(data.triggers);
+    }
+    if (data._addTriggerNow) {
+      const newTrig = {
+        id: `trig-${Date.now().toString(36)}`,
+        type: 'keyword',
+        match_type: 'contains',
+        keywords: ['hello'],
+      };
+      const currentList = (data.triggers && Array.isArray(data.triggers) && data.triggers.length > 0)
+        ? data.triggers
+        : rawTriggers;
+      const nextTriggers = [...currentList, newTrig];
+      setTriggers(nextTriggers);
+      const cleanData = { ...data };
+      delete cleanData._addTriggerNow;
+      onUpdateNode({
+        ...cleanData,
+        triggers: nextTriggers,
+      });
+    }
+  }, [data.triggers, data._addTriggerNow]);
+
+  const syncTriggers = (newTriggers) => {
+    setTriggers(newTriggers);
+    const firstTrig = newTriggers[0] || {};
+    const firstKws = Array.isArray(firstTrig.keywords) ? firstTrig.keywords : [];
     onUpdateNode({
       ...data,
-      trigger_type: newType,
+      triggers: newTriggers,
+      trigger_type: firstTrig.type || 'keyword',
+      match_type: firstTrig.match_type || 'contains',
+      keywords: firstKws,
+      trigger_keyword: firstKws.join(','),
     });
   };
 
-  const handleMatchTypeChange = (newMatch) => {
-    onUpdateNode({
-      ...data,
-      match_type: newMatch,
-    });
+  const handleAddTriggerRule = () => {
+    const newTrig = {
+      id: `trig-${Date.now().toString(36)}`,
+      type: 'keyword',
+      match_type: 'contains',
+      keywords: ['hello'],
+    };
+    syncTriggers([...triggers, newTrig]);
   };
 
-  const handleAddKeyword = () => {
-    const val = keywordInput.trim();
-    if (!val) return;
-    const newItems = val.split(',').map((k) => k.trim()).filter(Boolean);
-    const updated = Array.from(new Set([...keywords, ...newItems]));
-    onUpdateNode({
-      ...data,
-      keywords: updated,
-      trigger_keyword: updated.join(','),
-    });
-    setKeywordInput('');
+  const handleRemoveTriggerRule = (indexToRemove) => {
+    if (triggers.length <= 1) return;
+    const updated = triggers.filter((_, idx) => idx !== indexToRemove);
+    syncTriggers(updated);
   };
 
-  const handleRemoveKeyword = (indexToRemove) => {
-    const updated = keywords.filter((_, idx) => idx !== indexToRemove);
-    onUpdateNode({
-      ...data,
-      keywords: updated,
-      trigger_keyword: updated.join(','),
+  const handleUpdateRule = (index, field, value) => {
+    const updated = triggers.map((trg, idx) => {
+      if (idx !== index) return trg;
+      return { ...trg, [field]: value };
     });
+    syncTriggers(updated);
+  };
+
+  const handleAddKeywordToRule = (ruleIndex) => {
+    const inputVal = (keywordInputs[ruleIndex] || '').trim();
+    if (!inputVal) return;
+    const currentRule = triggers[ruleIndex];
+    const currentKws = Array.isArray(currentRule.keywords) ? currentRule.keywords : [];
+    const newItems = inputVal.split(',').map((k) => k.trim()).filter(Boolean);
+    const updatedKeywords = Array.from(new Set([...currentKws, ...newItems]));
+
+    const updated = triggers.map((trg, idx) => {
+      if (idx !== ruleIndex) return trg;
+      return { ...trg, keywords: updatedKeywords };
+    });
+    syncTriggers(updated);
+    setKeywordInputs((prev) => ({ ...prev, [ruleIndex]: '' }));
+  };
+
+  const handleRemoveKeywordFromRule = (ruleIndex, kwIndexToRemove) => {
+    const currentRule = triggers[ruleIndex];
+    const currentKws = Array.isArray(currentRule.keywords) ? currentRule.keywords : [];
+    const updatedKeywords = currentKws.filter((_, idx) => idx !== kwIndexToRemove);
+
+    const updated = triggers.map((trg, idx) => {
+      if (idx !== ruleIndex) return trg;
+      return { ...trg, keywords: updatedKeywords };
+    });
+    syncTriggers(updated);
   };
 
   return (
-    <>
-      <div className="fb-field">
-        <label>Trigger Type</label>
-        <select value={triggerType} onChange={(e) => handleTriggerTypeChange(e.target.value)}>
-          <option value="keyword">🔑 Keyword Trigger (e.g. hi, pricing, hello)</option>
-          <option value="first_message">👋 First Message (Welcome new contacts)</option>
-          <option value="any_message">💬 Any Message / Fallback</option>
-          <option value="button_payload">🔘 Button Payload / Postback</option>
-          <option value="webhook">⚡ Webhook / API</option>
-        </select>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.8px', color: '#5c5c80' }}>
+          Flow Triggers ({triggers.length})
+        </span>
+        <span style={{ fontSize: 10, color: '#059669', background: '#ecfdf5', padding: '2px 8px', borderRadius: 4, fontWeight: 600 }}>
+          Starts automation
+        </span>
       </div>
 
-      {triggerType === 'keyword' && (
-        <>
-          <div className="fb-field">
-            <label>Matching Method</label>
-            <select
-              value={data.match_type || 'contains'}
-              onChange={(e) => handleMatchTypeChange(e.target.value)}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {triggers.map((trg, rIdx) => {
+          const tType = trg.type || 'keyword';
+          const mType = trg.match_type || 'contains';
+          const kws = Array.isArray(trg.keywords) ? trg.keywords : [];
+
+          return (
+            <div
+              key={trg.id || rIdx}
+              style={{
+                background: '#ffffff',
+                border: '1px solid #e2e8f0',
+                borderRadius: 8,
+                padding: 12,
+                boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+              }}
             >
-              <option value="contains">Contains (e.g. user says "hey there" matches "hey")</option>
-              <option value="exact">Exact Match (user text must match keyword exactly)</option>
-              <option value="starts_with">Starts With (e.g. starts with keyword)</option>
+              {/* Trigger header */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Zap size={13} style={{ color: '#059669' }} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: '#0f172a' }}>
+                    Rule #{rIdx + 1}
+                  </span>
+                </div>
+                {triggers.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveTriggerRule(rIdx)}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#ef4444',
+                      cursor: 'pointer',
+                      padding: 2,
+                      display: 'flex',
+                      alignItems: 'center',
+                    }}
+                    title="Delete trigger rule"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                )}
+              </div>
+
+              {/* Trigger Type */}
+              <div className="fb-field">
+                <label>When this happens</label>
+                <select
+                  value={tType}
+                  onChange={(e) => handleUpdateRule(rIdx, 'type', e.target.value)}
+                  style={{ fontSize: 12 }}
+                >
+                  <option value="keyword">User sends a message (Keyword)</option>
+                  <option value="first_message">First contact (Welcome new users)</option>
+                  <option value="any_message">Any incoming message (Fallback)</option>
+                </select>
+              </div>
+
+              {tType === 'keyword' && (
+                <>
+                  {/* Match Type */}
+                  <div className="fb-field">
+                    <label>Condition</label>
+                    <select
+                      value={mType}
+                      onChange={(e) => handleUpdateRule(rIdx, 'match_type', e.target.value)}
+                      style={{ fontSize: 12 }}
+                    >
+                      <option value="contains">Message contains</option>
+                      <option value="is">Message is</option>
+                      <option value="contains_whole_word">Message contains whole word</option>
+                      <option value="begins_with">Message begins with</option>
+                      <option value="thumbs_up">Message is thumbs up</option>
+                      <option value="does_not_contain">Message doesn't contain</option>
+                    </select>
+                  </div>
+
+                  {/* If Thumbs up, special banner */}
+                  {mType === 'thumbs_up' ? (
+                    <div
+                      style={{
+                        padding: '8px 10px',
+                        borderRadius: 6,
+                        background: '#f0fdf4',
+                        border: '1px solid #bbf7d0',
+                        fontSize: 11,
+                        color: '#15803d',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        lineHeight: 1.3,
+                      }}
+                    >
+                      <span style={{ fontSize: 16 }}>👍</span>
+                      <span>Triggers when contact sends a thumbs up emoji, like button, or (y).</span>
+                    </div>
+                  ) : (
+                    /* Keywords editor */
+                    <div className="fb-field">
+                      <label>Keywords ({kws.length})</label>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, minHeight: 24, marginBottom: 6 }}>
+                        {kws.length === 0 ? (
+                          <span style={{ fontSize: 11, color: '#f59e0b', fontStyle: 'italic' }}>
+                            No keywords added yet.
+                          </span>
+                        ) : (
+                          kws.map((kw, kIdx) => (
+                            <span
+                              key={`${kw}_${kIdx}`}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 4,
+                                padding: '3px 8px',
+                                borderRadius: 5,
+                                background: 'rgba(16, 185, 129, 0.12)',
+                                color: '#047857',
+                                fontSize: 11,
+                                fontWeight: 600,
+                                border: '1px solid rgba(16, 185, 129, 0.25)',
+                              }}
+                            >
+                              {kw}
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveKeywordFromRule(rIdx, kIdx)}
+                                style={{
+                                  background: 'transparent',
+                                  border: 'none',
+                                  color: '#dc2626',
+                                  cursor: 'pointer',
+                                  padding: 0,
+                                  fontSize: 11,
+                                  fontWeight: 'bold',
+                                  lineHeight: 1,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                }}
+                                title={`Remove "${kw}"`}
+                              >
+                                ✕
+                              </button>
+                            </span>
+                          ))
+                        )}
+                      </div>
+
+                      {/* Keyword Input and Dotted Add Button */}
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <input
+                          value={keywordInputs[rIdx] || ''}
+                          onChange={(e) => setKeywordInputs({ ...keywordInputs, [rIdx]: e.target.value })}
+                          placeholder="Type keyword..."
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAddKeywordToRule(rIdx);
+                            }
+                          }}
+                          style={{ flex: 1, fontSize: 12, padding: '6px 10px' }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleAddKeywordToRule(rIdx)}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            padding: '6px 12px',
+                            borderRadius: 6,
+                            border: '1.5px dashed #059669',
+                            background: '#f0fdf4',
+                            color: '#059669',
+                            fontSize: 11.5,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            flexShrink: 0,
+                          }}
+                        >
+                          <Plus size={13} /> Add
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Dotted button to add trigger rule */}
+      <button
+        type="button"
+        onClick={handleAddTriggerRule}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 6,
+          width: '100%',
+          padding: '9px 12px',
+          borderRadius: 8,
+          border: '1.5px dashed #059669',
+          background: '#f0fdf4',
+          color: '#059669',
+          fontSize: 12.5,
+          fontWeight: 700,
+          cursor: 'pointer',
+          transition: 'all 0.15s ease',
+        }}
+      >
+        <Plus size={15} /> + Add Trigger Rule
+      </button>
+    </div>
+  );
+}
+
+/* ── Button Action Editor (Submenu for Action Type per Channel) ─── */
+function ButtonActionEditor({ btn, index, onChange, onRemove, platform }) {
+  const p = (platform || 'WEBCHAT').toUpperCase();
+  const [expanded, setExpanded] = useState(false);
+
+  const btnObj = typeof btn === 'string'
+    ? { title: btn, action: 'flow', url: '', phone: '', reply_text: '' }
+    : { action: 'flow', url: '', phone: '', reply_text: '', ...btn };
+
+  const isFB = p === 'FACEBOOK';
+  const isWA = p === 'WHATSAPP';
+  const isTG = p === 'TELEGRAM';
+  const isIG = p === 'INSTAGRAM';
+
+  // Allowed action types based on developer documentation
+  const actionOptions = [
+    { value: 'flow', label: 'Continue Flow (Next Step)', icon: '➡️' },
+    { value: 'url', label: 'Open Website / URL', icon: '🌐' },
+    ...(isFB || p === 'WEBCHAT' ? [{ value: 'phone', label: 'Call Phone Number', icon: '📞' }] : []),
+    { value: 'text_reply', label: 'Send Text Reply', icon: '💬' },
+  ];
+
+  const updateProp = (field, val) => {
+    onChange({ ...btnObj, [field]: val });
+  };
+
+  const getActionBadge = () => {
+    switch (btnObj.action) {
+      case 'url': return { label: 'URL', bg: '#eff6ff', color: '#2563eb' };
+      case 'phone': return { label: 'Call', bg: '#f0fdf4', color: '#16a34a' };
+      case 'text_reply': return { label: 'Text', bg: '#fdf4ff', color: '#a855f7' };
+      default: return { label: 'Flow', bg: '#f0f9ff', color: '#0284c7' };
+    }
+  };
+
+  const badge = getActionBadge();
+
+  return (
+    <div
+      style={{
+        border: '1px solid #e2e8f0',
+        borderRadius: 8,
+        background: '#ffffff',
+        marginBottom: 8,
+        overflow: 'hidden',
+        boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+      }}
+    >
+      {/* Top Header Row */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '7px 10px',
+          background: '#f8fafc',
+          borderBottom: expanded ? '1px solid #e2e8f0' : 'none',
+        }}
+      >
+        <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', width: 16 }}>
+          {index + 1}.
+        </span>
+        <input
+          value={btnObj.title || ''}
+          onChange={(e) => updateProp('title', e.target.value)}
+          placeholder={`Button ${index + 1} text...`}
+          maxLength={20}
+          style={{
+            flex: 1,
+            fontSize: 12,
+            fontWeight: 600,
+            padding: '4px 8px',
+            border: '1px solid #cbd5e1',
+            borderRadius: 6,
+            background: '#ffffff',
+          }}
+        />
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            padding: '2px 6px',
+            borderRadius: 4,
+            background: badge.bg,
+            color: badge.color,
+            flexShrink: 0,
+          }}
+        >
+          {badge.label}
+        </span>
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: '#64748b',
+            cursor: 'pointer',
+            padding: 4,
+            display: 'flex',
+            alignItems: 'center',
+            borderRadius: 4,
+          }}
+          title={expanded ? 'Collapse action submenu' : 'Expand action submenu'}
+        >
+          <ChevronDown
+            size={14}
+            style={{
+              transform: expanded ? 'rotate(180deg)' : 'none',
+              transition: 'transform 0.15s ease',
+            }}
+          />
+        </button>
+        <button
+          type="button"
+          onClick={onRemove}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: '#ef4444',
+            cursor: 'pointer',
+            padding: 4,
+            display: 'flex',
+            alignItems: 'center',
+          }}
+          title="Remove button"
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
+
+      {/* Expandable Action Submenu */}
+      {expanded && (
+        <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8, background: '#fafbfc' }}>
+          <div className="fb-field" style={{ margin: 0 }}>
+            <label style={{ fontSize: 10, fontWeight: 700, color: '#475569' }}>
+              When this button is clicked
+            </label>
+            <select
+              value={btnObj.action || 'flow'}
+              onChange={(e) => updateProp('action', e.target.value)}
+              style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, background: '#ffffff' }}
+            >
+              {actionOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.icon} {opt.label}
+                </option>
+              ))}
             </select>
           </div>
 
-          <div className="fb-field">
-            <label>Trigger Keywords ({keywords.length})</label>
-            <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.4 }}>
-              Type a keyword and press <b>Enter</b> or click <b>+ Add</b>. You can also paste comma-separated keywords (e.g. <i>hi, hello, hey, start</i>).
-            </p>
-
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10, minHeight: 32 }}>
-              {keywords.length === 0 ? (
-                <span style={{ fontSize: 11, color: '#f59e0b', fontStyle: 'italic', padding: '4px 0' }}>
-                  ⚠️ No keywords added. Type a keyword below and click "+ Add".
+          {/* Action: Open Website */}
+          {btnObj.action === 'url' && (
+            <div className="fb-field" style={{ margin: 0 }}>
+              <label style={{ fontSize: 10, fontWeight: 700, color: '#475569' }}>
+                Website URL (https://)
+              </label>
+              <input
+                type="url"
+                value={btnObj.url || ''}
+                onChange={(e) => updateProp('url', e.target.value)}
+                placeholder="https://example.com"
+                style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, background: '#ffffff' }}
+              />
+              {isWA && (
+                <span style={{ fontSize: 9.5, color: '#0369a1', fontStyle: 'italic', marginTop: 2 }}>
+                  ℹ️ WhatsApp CTA URL button: opens browser directly upon tap.
                 </span>
-              ) : (
-                keywords.map((kw, i) => (
-                  <span
-                    key={`${kw}_${i}`}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      padding: '4px 10px',
-                      borderRadius: 6,
-                      background: 'rgba(16, 185, 129, 0.18)',
-                      color: '#10b981',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      border: '1px solid rgba(16, 185, 129, 0.35)',
-                    }}
-                  >
-                    🏷️ {kw}
-                    <button
-                      type="button"
-                      style={{
-                        background: 'rgba(0,0,0,0.2)',
-                        border: 'none',
-                        color: '#ef4444',
-                        cursor: 'pointer',
-                        padding: '1px 5px',
-                        borderRadius: '50%',
-                        fontSize: 11,
-                        lineHeight: 1,
-                        fontWeight: 'bold',
-                      }}
-                      onClick={() => handleRemoveKeyword(i)}
-                      title={`Remove "${kw}"`}
-                    >
-                      ✕
-                    </button>
-                  </span>
-                ))
               )}
             </div>
+          )}
 
-            <div style={{ display: 'flex', gap: 6 }}>
+          {/* Action: Call Phone Number */}
+          {btnObj.action === 'phone' && (
+            <div className="fb-field" style={{ margin: 0 }}>
+              <label style={{ fontSize: 10, fontWeight: 700, color: '#475569' }}>
+                Phone Number (E.164 with country code)
+              </label>
               <input
-                value={keywordInput}
-                onChange={(e) => setKeywordInput(e.target.value)}
-                placeholder="Type keyword (e.g. pricing, support)…"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleAddKeyword();
-                  }
-                }}
-                style={{ flex: 1, fontSize: 12 }}
+                type="tel"
+                value={btnObj.phone || ''}
+                onChange={(e) => updateProp('phone', e.target.value)}
+                placeholder="+1234567890"
+                style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, background: '#ffffff' }}
               />
-              <button
-                type="button"
-                className="fb-add-btn"
-                style={{ padding: '6px 14px', fontSize: 12, flexShrink: 0, fontWeight: 700 }}
-                onClick={handleAddKeyword}
-              >
-                <Plus size={14} /> Add
-              </button>
+              <span style={{ fontSize: 9.5, color: '#64748b', fontStyle: 'italic', marginTop: 2 }}>
+                Format: +[Country Code][Number] without spaces or dashes.
+              </span>
             </div>
-          </div>
-        </>
+          )}
+
+          {/* Action: Send Text Reply */}
+          {btnObj.action === 'text_reply' && (
+            <div className="fb-field" style={{ margin: 0 }}>
+              <label style={{ fontSize: 10, fontWeight: 700, color: '#475569' }}>
+                Text Reply Message
+              </label>
+              <textarea
+                value={btnObj.reply_text || ''}
+                onChange={(e) => updateProp('reply_text', e.target.value)}
+                placeholder="Message to automatically send..."
+                rows={2}
+                style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, background: '#ffffff' }}
+              />
+            </div>
+          )}
+
+          {/* Action: Continue Flow */}
+          {(btnObj.action === 'flow' || !btnObj.action) && (
+            <div
+              style={{
+                fontSize: 10.5,
+                color: '#0284c7',
+                background: '#f0f9ff',
+                border: '1px dashed #bae6fd',
+                padding: '6px 8px',
+                borderRadius: 6,
+                lineHeight: 1.35,
+              }}
+            >
+              👉 Connect this button to the next message or automation card on the canvas using its handle dot.
+            </div>
+          )}
+        </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -2038,7 +3952,7 @@ function StartNodeProperties({ data = {}, onUpdateNode }) {
    PROPERTIES PANEL
    ═══════════════════════════════════════════════════════════════════ */
 
-function PropertiesPanel({ node, onClose, onUpdate, onDelete }) {
+function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
   if (!node) return null;
 
   const { data, type } = node;
@@ -2069,7 +3983,29 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete }) {
           </div>
         );
 
-      case 'image':
+      case 'image': {
+        const imageButtons = data.buttons || [];
+        const handleAddImageButton = () => {
+          if (imageButtons.length >= 3) return;
+          const newBtn = {
+            title: `Button ${imageButtons.length + 1}`,
+            action: 'flow',
+            url: '',
+            phone: '',
+            reply_text: '',
+          };
+          updateField('buttons', [...imageButtons, newBtn]);
+        };
+        const handleUpdateImageButton = (index, value) => {
+          const updated = [...imageButtons];
+          updated[index] = value;
+          updateField('buttons', updated);
+        };
+        const handleRemoveImageButton = (index) => {
+          const updated = imageButtons.filter((_, idx) => idx !== index);
+          updateField('buttons', updated);
+        };
+
         return (
           <>
             <ImageUploadField
@@ -2092,8 +4028,56 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete }) {
                 rows={2}
               />
             </div>
+            <div className="fb-field" style={{ marginTop: 4 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                <label style={{ margin: 0 }}>Interactive Buttons ({imageButtons.length}/3)</label>
+                <span style={{ fontSize: 10, color: '#0284c7', background: '#e0f2fe', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>
+                  Channel Aware
+                </span>
+              </div>
+              <p style={{ fontSize: 11, color: '#64748b', margin: '0 0 8px 0', lineHeight: 1.3 }}>
+                Attach up to 3 interactive buttons. Configure click actions (flow step, URL, phone call, or text reply).
+              </p>
+
+              {imageButtons.map((btn, i) => (
+                <ButtonActionEditor
+                  key={i}
+                  btn={btn}
+                  index={i}
+                  platform={platform}
+                  onChange={(val) => handleUpdateImageButton(i, val)}
+                  onRemove={() => handleRemoveImageButton(i)}
+                />
+              ))}
+
+              {imageButtons.length < 3 && (
+                <button
+                  type="button"
+                  onClick={handleAddImageButton}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    width: '100%',
+                    padding: '7px 12px',
+                    borderRadius: 6,
+                    border: '1.5px dashed #0284c7',
+                    background: '#f0f9ff',
+                    color: '#0284c7',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    marginTop: 4,
+                  }}
+                >
+                  <Plus size={14} /> + Add Button
+                </button>
+              )}
+            </div>
           </>
         );
+      }
 
       case 'video':
         return (
@@ -2146,7 +4130,29 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete }) {
           </>
         );
 
-      case 'buttons':
+      case 'buttons': {
+        const btnList = data.buttons || [];
+        const handleAddButton = () => {
+          if (btnList.length >= 3) return;
+          const newBtn = {
+            title: `Button ${btnList.length + 1}`,
+            action: 'flow',
+            url: '',
+            phone: '',
+            reply_text: '',
+          };
+          updateField('buttons', [...btnList, newBtn]);
+        };
+        const handleUpdateButton = (index, value) => {
+          const updated = [...btnList];
+          updated[index] = value;
+          updateField('buttons', updated);
+        };
+        const handleRemoveButton = (index) => {
+          const updated = btnList.filter((_, idx) => idx !== index);
+          updateField('buttons', updated);
+        };
+
         return (
           <>
             <div className="fb-field">
@@ -2158,38 +4164,37 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete }) {
               />
             </div>
             <div className="fb-field">
-              <label>Buttons</label>
-              {(data.buttons || []).map((btn, i) => (
-                <div key={i} className="fb-list-item">
-                  <input
-                    value={btn}
-                    onChange={(e) => {
-                      const updated = [...(data.buttons || [])];
-                      updated[i] = e.target.value;
-                      updateField('buttons', updated);
-                    }}
-                    placeholder={`Button ${i + 1}`}
-                  />
-                  <button
-                    className="fb-list-item-del"
-                    onClick={() => {
-                      const updated = (data.buttons || []).filter((_, idx) => idx !== i);
-                      updateField('buttons', updated);
-                    }}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                <label>Buttons ({btnList.length}/3)</label>
+                <span style={{ fontSize: 10, color: '#d97706', background: '#fef3c7', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>
+                  Channel Actions
+                </span>
+              </div>
+
+              {btnList.map((btn, i) => (
+                <ButtonActionEditor
+                  key={i}
+                  btn={btn}
+                  index={i}
+                  platform={platform}
+                  onChange={(val) => handleUpdateButton(i, val)}
+                  onRemove={() => handleRemoveButton(i)}
+                />
               ))}
-              <button
-                className="fb-add-btn"
-                onClick={() => updateField('buttons', [...(data.buttons || []), ''])}
-              >
-                <Plus size={14} /> Add Button
-              </button>
+
+              {btnList.length < 3 && (
+                <button
+                  type="button"
+                  className="fb-add-btn"
+                  onClick={handleAddButton}
+                >
+                  <Plus size={14} /> Add Button
+                </button>
+              )}
             </div>
           </>
         );
+      }
 
       case 'quickReplies':
         return (
@@ -2754,19 +4759,19 @@ function RemovableEdge({
   selected,
 }) {
   const { setEdges } = useReactFlow();
+  const [isHovered, setIsHovered] = useState(false);
 
   // Force pure horizontal Left-to-Right edge routing (source exits right, target enters left)
   const actualSourcePos = (sourcePosition === Position.Bottom || !sourcePosition) ? Position.Right : sourcePosition;
   const actualTargetPos = (targetPosition === Position.Top || !targetPosition) ? Position.Left : targetPosition;
 
-  const [edgePath, labelX, labelY] = getSmoothStepPath({
+  const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
     sourcePosition: actualSourcePos,
     targetX,
     targetY,
     targetPosition: actualTargetPos,
-    borderRadius: 12,
   });
 
   const onEdgeDelete = (e) => {
@@ -2775,64 +4780,82 @@ function RemovableEdge({
   };
 
   return (
-    <>
+    <g
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      className="react-flow__edge-custom-group"
+    >
+      {/* Invisible wider hit path to effortlessly capture mouse hover on the wire */}
+      <path
+        d={edgePath}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={24}
+        className="react-flow__edge-interaction"
+      />
       <BaseEdge
         path={edgePath}
         markerEnd={markerEnd}
         style={{
           ...style,
-          strokeWidth: selected ? 3.5 : 2.5,
-          stroke: selected ? '#818cf8' : (style.stroke || 'rgba(99, 102, 241, 0.6)'),
+          strokeWidth: (isHovered || selected) ? 2.5 : 2,
+          stroke: (isHovered || selected) ? '#0f172a' : (style.stroke || '#64748b'),
         }}
       />
-      <EdgeLabelRenderer>
-        <div
-          style={{
-            position: 'absolute',
-            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-            pointerEvents: 'all',
-            zIndex: 1000,
-          }}
-          className="nodrag nopan"
-        >
-          <button
-            type="button"
-            className="fb-edge-delete-btn"
-            onClick={onEdgeDelete}
-            title="Disconnect connection (Delete Edge)"
+      {(isHovered || selected) && (
+        <EdgeLabelRenderer>
+          <div
             style={{
-              width: 22,
-              height: 22,
-              background: '#181b2e',
-              border: '1.5px solid #ef4444',
-              color: '#ef4444',
-              cursor: 'pointer',
-              borderRadius: '50%',
-              fontSize: 11,
-              fontWeight: 800,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 3px 10px rgba(0,0,0,0.5)',
-              transition: 'all 0.15s ease',
-              padding: 0,
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+              pointerEvents: 'all',
+              zIndex: 1000,
             }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'scale(1.25)';
-              e.currentTarget.style.background = '#ef4444';
-              e.currentTarget.style.color = '#ffffff';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'scale(1)';
-              e.currentTarget.style.background = '#181b2e';
-              e.currentTarget.style.color = '#ef4444';
-            }}
+            className="nodrag nopan"
+            onMouseEnter={() => setIsHovered(true)}
+            onMouseLeave={() => setIsHovered(false)}
           >
-            ✕
-          </button>
-        </div>
-      </EdgeLabelRenderer>
-    </>
+            <button
+              type="button"
+              className="fb-edge-delete-btn"
+              onClick={onEdgeDelete}
+              title="Disconnect connection (Delete Edge)"
+              style={{
+                width: 20,
+                height: 20,
+                background: '#ffffff',
+                border: '1.5px solid #cbd5e1',
+                color: '#64748b',
+                cursor: 'pointer',
+                borderRadius: '50%',
+                fontSize: 10,
+                fontWeight: 800,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+                transition: 'all 0.15s ease',
+                padding: 0,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'scale(1.2)';
+                e.currentTarget.style.borderColor = '#ef4444';
+                e.currentTarget.style.color = '#ef4444';
+                e.currentTarget.style.background = '#fef2f2';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'scale(1)';
+                e.currentTarget.style.borderColor = '#cbd5e1';
+                e.currentTarget.style.color = '#64748b';
+                e.currentTarget.style.background = '#ffffff';
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </g>
   );
 }
 
@@ -3038,28 +5061,35 @@ function QuickComponentPicker({ position, onClose, onSelect, platform }) {
 }
 
 const defaultEdgeOptions = {
-  type: 'smoothstep',
-  animated: true,
-  style: { stroke: 'rgba(99, 102, 241, 0.5)', strokeWidth: 2 },
+  type: 'default',
+  animated: false,
+  style: { stroke: '#64748b', strokeWidth: 2 },
+  markerEnd: {
+    type: MarkerType.ArrowClosed,
+    width: 14,
+    height: 14,
+    color: '#64748b',
+  },
 };
 
-function getPlatformUrl(account, platform) {
-  const p = (platform || account?.platform || '').toUpperCase();
+function getPlatformUrl(account, platform, flowData = null) {
+  const p = (platform || account?.platform || flowData?.platform || '').toUpperCase();
   switch (p) {
     case 'INSTAGRAM': {
-      const username = account?.ig_username || (account?.name && !account.name.includes(' ') ? account.name : '');
+      const username = account?.ig_username || flowData?.ig_username || (account?.name && !account.name.includes(' ') ? account.name : '');
       return username
-        ? `https://www.instagram.com/${username.replace('@', '')}/`
+        ? `https://www.instagram.com/${String(username).replace('@', '')}/`
         : 'https://www.instagram.com/';
     }
     case 'FACEBOOK': {
-      if (account?.fb_page_id) {
-        return `https://www.facebook.com/${account.fb_page_id}`;
+      const fbId = account?.fb_page_id || flowData?.fb_page_id;
+      if (fbId) {
+        return `https://www.facebook.com/${fbId}`;
       }
       return 'https://www.facebook.com/';
     }
     case 'WHATSAPP': {
-      const phone = account?.wa_display_phone || account?.wa_phone_number_id;
+      const phone = account?.wa_display_phone || account?.wa_phone_number_id || flowData?.wa_phone_number_id;
       const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, '') : '';
       if (cleanPhone && cleanPhone.length >= 7 && cleanPhone.length <= 15) {
         return `https://wa.me/${cleanPhone}`;
@@ -3067,8 +5097,31 @@ function getPlatformUrl(account, platform) {
       return 'https://business.facebook.com/wa/manage/home/';
     }
     case 'TELEGRAM': {
-      const tgName = account?.name ? account.name.replace('@', '') : '';
-      return tgName ? `https://t.me/${tgName}` : 'https://web.telegram.org/';
+      // 1. Direct bot username field from database (telegram_bots)
+      let tgBot = account?.tg_bot_username || account?.bot_username || flowData?.tg_bot_username;
+
+      // 2. Extract @username from name like "Nexa Bot (@The_River_9_bot)"
+      if (!tgBot) {
+        const rawName = account?.name || flowData?.integration_name || '';
+        const match = rawName.match(/@([a-zA-Z0-9_]{3,})/);
+        if (match) {
+          tgBot = match[1];
+        } else if (rawName && !rawName.includes(' ') && !rawName.includes('(')) {
+          tgBot = rawName.replace(/^@/, '').trim();
+        }
+      }
+
+      if (tgBot) {
+        const cleanHandle = String(tgBot).replace(/[^a-zA-Z0-9_]/g, '');
+        if (cleanHandle) {
+          const keyword = flowData?.trigger_keyword?.trim();
+          if (keyword && keyword !== '*' && !keyword.includes(' ')) {
+            return `https://t.me/${cleanHandle}?start=${encodeURIComponent(keyword)}`;
+          }
+          return `https://t.me/${cleanHandle}`;
+        }
+      }
+      return 'https://web.telegram.org/';
     }
     case 'TIKTOK': {
       const ttName = account?.name ? account.name.replace('@', '') : '';
@@ -3083,8 +5136,73 @@ function getPlatformUrl(account, platform) {
 function FlowBuilderInner() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const { screenToFlowPosition, fitView } = useReactFlow();
+
+  // Track referring location for the back button and breadcrumb
+  const referrerState = location.state;
+  const returnUrl = useMemo(() => {
+    // 1. Explicitly passed in router state
+    if (
+      referrerState?.from &&
+      typeof referrerState.from === 'string' &&
+      !referrerState.from.startsWith('/flows/' + id) &&
+      !referrerState.from.startsWith('/bots/' + id)
+    ) {
+      return referrerState.from;
+    }
+    // 2. SessionStorage cached referrer (in case of page reload)
+    try {
+      const cached = sessionStorage.getItem('flow_builder_return_url');
+      if (
+        cached &&
+        !cached.startsWith('/flows/' + id) &&
+        !cached.startsWith('/bots/' + id)
+      ) {
+        return cached;
+      }
+    } catch {}
+    return null;
+  }, [referrerState, id]);
+
+  // Persist the return URL into sessionStorage when arriving from outside flow builder
+  useEffect(() => {
+    try {
+      if (
+        referrerState?.from &&
+        !referrerState.from.startsWith('/flows/' + id) &&
+        !referrerState.from.startsWith('/bots/' + id)
+      ) {
+        sessionStorage.setItem('flow_builder_return_url', referrerState.from);
+        if (referrerState.label) {
+          sessionStorage.setItem('flow_builder_return_label', referrerState.label);
+        }
+      }
+    } catch {}
+  }, [referrerState, id]);
+
+  // Dynamic breadcrumb label matching the source page
+  const backLabel = useMemo(() => {
+    if (referrerState?.label) return referrerState.label;
+    try {
+      const cachedLabel = sessionStorage.getItem('flow_builder_return_label');
+      if (cachedLabel) return cachedLabel;
+    } catch {}
+
+    const dest = returnUrl || '';
+    if (dest.startsWith('/flows')) return 'Flows';
+    if (dest.startsWith('/bots')) return 'Automations';
+    if (dest.startsWith('/channels')) return 'Channels';
+    if (dest.startsWith('/campaigns')) return 'Campaigns';
+    if (dest.startsWith('/social-posting') || dest.startsWith('/publishing')) return 'Publishing';
+    if (dest.startsWith('/ai')) return 'AI Agent';
+    if (dest.startsWith('/webhooks')) return 'Webhooks';
+    if (dest.startsWith('/orders')) return 'Orders';
+    if (dest.startsWith('/appointments')) return 'Appointments';
+    if (dest.startsWith('/inbox')) return 'Live Chat';
+    return 'Automations';
+  }, [referrerState, returnUrl]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -3102,6 +5220,55 @@ function FlowBuilderInner() {
   const [saving, setSaving] = useState(false);
   const [selectedNode, setSelectedNode] = useState(null);
   const [autoSaveStatus, setAutoSaveStatus] = useState('');
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [isLive, setIsLive] = useState(false);
+
+  // Undo / Redo history tracking
+  const historyRef = useRef([]);
+  const historyIndexRef = useRef(-1);
+  const isHistoryAction = useRef(false);
+
+  const pushHistory = useCallback((newNodes, newEdges) => {
+    if (isHistoryAction.current) return;
+    const nextHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
+    nextHistory.push({
+      nodes: JSON.parse(JSON.stringify(newNodes)),
+      edges: JSON.parse(JSON.stringify(newEdges)),
+    });
+    if (nextHistory.length > 30) nextHistory.shift();
+    historyRef.current = nextHistory;
+    historyIndexRef.current = nextHistory.length - 1;
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    if (historyIndexRef.current > 0) {
+      isHistoryAction.current = true;
+      historyIndexRef.current -= 1;
+      const prevSnap = historyRef.current[historyIndexRef.current];
+      if (prevSnap) {
+        setNodes(prevSnap.nodes);
+        setEdges(prevSnap.edges);
+      }
+      setTimeout(() => {
+        isHistoryAction.current = false;
+      }, 100);
+    }
+  }, [setNodes, setEdges]);
+
+  const handleRedo = useCallback(() => {
+    if (historyIndexRef.current < historyRef.current.length - 1) {
+      isHistoryAction.current = true;
+      historyIndexRef.current += 1;
+      const nextSnap = historyRef.current[historyIndexRef.current];
+      if (nextSnap) {
+        setNodes(nextSnap.nodes);
+        setEdges(nextSnap.edges);
+      }
+      setTimeout(() => {
+        isHistoryAction.current = false;
+      }, 100);
+    }
+  }, [setNodes, setEdges]);
 
   const autoSaveTimerRef = useRef(null);
   const nodesRef = useRef(nodes);
@@ -3111,21 +5278,29 @@ function FlowBuilderInner() {
 
   // Resolve the exact connected page / account name for this flow
   const currentAccount = useMemo(() => {
-    if (integrationId) {
+    if (integrationId && integrations.length > 0) {
       const matched = integrations.find((i) => String(i.id) === String(integrationId));
       if (matched) return matched;
     }
-    if (flowData?.integration_id) {
+    if (flowData?.integration_id && integrations.length > 0) {
       const matched = integrations.find((i) => String(i.id) === String(flowData.integration_id));
       if (matched) return matched;
     }
+    // Fallback: match by platform if single integration exists
+    if (platform && integrations.length > 0) {
+      const platformMatches = integrations.filter((i) => i.platform === platform);
+      if (platformMatches.length > 0) return platformMatches[0];
+    }
     return null;
-  }, [integrationId, flowData, integrations]);
+  }, [integrationId, flowData, integrations, platform]);
 
   const currentAccountName = useMemo(() => {
     if (currentAccount) {
-      return currentAccount.fb_page_name || currentAccount.ig_username || currentAccount.name || currentAccount.wa_phone_number_id;
+      return currentAccount.tg_bot_username
+        ? `@${currentAccount.tg_bot_username}`
+        : currentAccount.fb_page_name || currentAccount.ig_username || currentAccount.name || currentAccount.wa_phone_number_id;
     }
+    if (flowData?.tg_bot_username) return `@${flowData.tg_bot_username}`;
     if (flowData?.fb_page_name) return flowData.fb_page_name;
     if (flowData?.ig_username) return `@${flowData.ig_username}`;
     if (flowData?.integration_name) return flowData.integration_name;
@@ -3133,8 +5308,8 @@ function FlowBuilderInner() {
   }, [currentAccount, flowData]);
 
   const platformUrl = useMemo(() => {
-    return getPlatformUrl(currentAccount, platform);
-  }, [currentAccount, platform]);
+    return getPlatformUrl(currentAccount, platform, flowData);
+  }, [currentAccount, platform, flowData]);
 
   /* ── Mark unsupported nodes ──────────────────────────────── */
   useEffect(() => {
@@ -3230,12 +5405,22 @@ function FlowBuilderInner() {
           };
 
           if (n.type === 'start') {
+            if (!nodeData.triggers || !Array.isArray(nodeData.triggers) || nodeData.triggers.length === 0) {
+              const kws = nodeData.keywords !== undefined
+                ? (Array.isArray(nodeData.keywords) ? nodeData.keywords : [nodeData.keywords])
+                : (flow.trigger_keyword ? flow.trigger_keyword.split(',').map((k) => k.trim()).filter(Boolean) : ['ranzu', 'hi', 'hello']);
+              nodeData.triggers = [
+                {
+                  id: 'trig-1',
+                  type: nodeData.trigger_type || 'keyword',
+                  title: 'User sends a message',
+                  match_type: nodeData.match_type || 'contains',
+                  keywords: kws,
+                },
+              ];
+            }
             if (nodeData.keywords === undefined) {
-              if (flow.trigger_keyword) {
-                nodeData.keywords = flow.trigger_keyword.split(',').map((k) => k.trim()).filter(Boolean);
-              } else {
-                nodeData.keywords = ['hi', 'hello'];
-              }
+              nodeData.keywords = nodeData.triggers[0]?.keywords || ['hi', 'hello'];
             }
           }
 
@@ -3247,17 +5432,26 @@ function FlowBuilderInner() {
           };
         });
 
-        // Normalize loaded edges to smoothstep with Left-to-Right orientation
+        // Normalize loaded edges with Left-to-Right orientation matching ManyChat design
         loadedEdges = loadedEdges.map((e) => ({
           ...e,
-          type: 'smoothstep',
-          animated: true,
+          type: 'default',
+          animated: false,
+          style: { stroke: '#64748b', strokeWidth: 2 },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            width: 14,
+            height: 14,
+            color: '#64748b',
+          },
           sourceHandle: (e.sourceHandle === 'default' || e.sourceHandle === 'bottom') ? undefined : e.sourceHandle,
           targetHandle: (e.targetHandle === 'default' || e.targetHandle === 'top') ? undefined : e.targetHandle,
         }));
 
         setNodes(loadedNodes);
         setEdges(loadedEdges);
+        setIsLive(flow.status === 'active');
+        pushHistory(loadedNodes, loadedEdges);
       } catch (err) {
         console.error('Failed to load flow:', err);
       } finally {
@@ -3320,6 +5514,68 @@ function FlowBuilderInner() {
     };
   }, [nodes, edges, triggerAutoSave, loading, flowData]);
 
+  /* ── Immediate save before leaving (flushes debounced timer) ── */
+  const flushAutoSave = useCallback(async () => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+      try {
+        if (!id || id === 'new') return;
+        const currentNodes = nodesRef.current || [];
+        const hasErrors = currentNodes.some((n) => validateNodeData(n) !== null);
+        if (hasErrors) return;
+
+        const startNode = currentNodes.find((n) => n.type === 'start');
+        const triggerType = (startNode?.data?.trigger_type || 'KEYWORD').toUpperCase();
+        let triggerKeyword = flowData?.trigger_keyword || '';
+        if (startNode?.data?.keywords) {
+          triggerKeyword = Array.isArray(startNode.data.keywords)
+            ? startNode.data.keywords.join(',')
+            : startNode.data.keywords;
+        }
+
+        await flowAPI.update(id, {
+          name: flowName,
+          platform,
+          integration_id: integrationId || null,
+          trigger_type: triggerType,
+          trigger_keyword: triggerKeyword,
+          nodes_json: JSON.stringify(currentNodes.map((n) => {
+            const { _unsupported, _validationError, ...rest } = n.data;
+            return { ...n, data: rest };
+          })),
+          edges_json: JSON.stringify(edgesRef.current),
+        });
+      } catch (err) {
+        console.error('Save before exit error:', err);
+      }
+    }
+  }, [id, flowName, platform, integrationId, flowData]);
+
+  /* ── Go back to origin page ───────────────────────────────── */
+  const handleGoBack = useCallback(async () => {
+    await flushAutoSave();
+
+    // 1. Explicit return URL from caller or session
+    if (returnUrl) {
+      try {
+        sessionStorage.removeItem('flow_builder_return_url');
+        sessionStorage.removeItem('flow_builder_return_label');
+      } catch {}
+      navigate(returnUrl, { state: referrerState });
+      return;
+    }
+
+    // 2. Previous history entry in this tab session
+    if (window.history.state && window.history.state.idx > 0) {
+      navigate(-1);
+      return;
+    }
+
+    // 3. Fallback
+    navigate('/bots');
+  }, [flushAutoSave, returnUrl, referrerState, navigate]);
+
   /* ── Auto-Layout / Rearrange Flow ───────────────────────── */
   const handleAutoLayout = useCallback(() => {
     const currentNodes = nodesRef.current || nodes;
@@ -3329,8 +5585,15 @@ function FlowBuilderInner() {
     setEdges((eds) =>
       eds.map((e) => ({
         ...e,
-        type: 'smoothstep',
-        animated: true,
+        type: 'default',
+        animated: false,
+        style: { stroke: '#64748b', strokeWidth: 2 },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 14,
+          height: 14,
+          color: '#64748b',
+        },
         sourceHandle: (e.sourceHandle === 'default' || e.sourceHandle === 'bottom') ? undefined : e.sourceHandle,
         targetHandle: (e.targetHandle === 'default' || e.targetHandle === 'top') ? undefined : e.targetHandle,
       }))
@@ -3445,7 +5708,18 @@ function FlowBuilderInner() {
         const filtered = eds.filter(
           (edge) => !(edge.source === params.source && (edge.sourceHandle || null) === (params.sourceHandle || null))
         );
-        return addEdge({ ...params, type: 'smoothstep', animated: true }, filtered);
+        return addEdge({
+          ...params,
+          type: 'default',
+          animated: false,
+          style: { stroke: '#64748b', strokeWidth: 2 },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            width: 14,
+            height: 14,
+            color: '#64748b',
+          },
+        }, filtered);
       }),
     [setEdges]
   );
@@ -3504,8 +5778,15 @@ function FlowBuilderInner() {
         source: quickPicker.sourceNodeId,
         sourceHandle: quickPicker.sourceHandleId || undefined,
         target: newNodeId,
-        type: 'smoothstep',
-        animated: true,
+        type: 'default',
+        animated: false,
+        style: { stroke: '#64748b', strokeWidth: 2 },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 14,
+          height: 14,
+          color: '#64748b',
+        },
       };
 
       setNodes((nds) => [...nds, newNode]);
@@ -3606,11 +5887,67 @@ function FlowBuilderInner() {
   /* ── Delete node ────────────────────────────────────────── */
   const handleDeleteNode = useCallback(
     (nodeId) => {
-      setNodes((nds) => nds.filter((n) => n.id !== nodeId));
-      setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
-      setSelectedNode(null);
+      const target = nodes.find((n) => n.id === nodeId);
+      if (!target) return;
+      if (target.type === 'start') {
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'info',
+          title: 'The Start Trigger node cannot be deleted.',
+          showConfirmButton: false,
+          timer: 2500,
+        });
+        return;
+      }
+      const nextNodes = nodes.filter((n) => n.id !== nodeId);
+      const nextEdges = edges.filter((e) => e.source !== nodeId && e.target !== nodeId);
+      setNodes(nextNodes);
+      setEdges(nextEdges);
+      pushHistory(nextNodes, nextEdges);
+      setSelectedNode((prev) => (prev?.id === nodeId ? null : prev));
     },
-    [setNodes, setEdges]
+    [nodes, edges, setNodes, setEdges, pushHistory, setSelectedNode]
+  );
+
+  /* ── Duplicate node ─────────────────────────────────────── */
+  const handleDuplicateNode = useCallback(
+    (nodeId) => {
+      const source = nodes.find((n) => n.id === nodeId);
+      if (!source) return;
+
+      if (source.type === 'start') {
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'info',
+          title: 'The Start Trigger node cannot be duplicated.',
+          showConfirmButton: false,
+          timer: 2500,
+        });
+        return;
+      }
+
+      const newId = generateNodeId(source.type);
+      const clonedNode = {
+        ...JSON.parse(JSON.stringify(source)),
+        id: newId,
+        selected: true,
+        position: {
+          x: (source.position?.x || 0) + 30,
+          y: (source.position?.y || 0) + 30,
+        },
+      };
+
+      const nextNodes = nodes
+        .map((n) => ({ ...n, selected: false }))
+        .concat(clonedNode);
+
+      setNodes(nextNodes);
+      setSelectedNode(clonedNode);
+      pushHistory(nextNodes, edges);
+    },
+    [nodes, edges, setNodes, pushHistory, setSelectedNode]
   );
 
   /* ── Keep selectedNode synced with nodes state ──────────── */
@@ -3637,148 +5974,263 @@ function FlowBuilderInner() {
   }
 
   return (
-    <div className="flow-builder-root">
-      {/* ── Toolbar ─────────────────────────────────────────── */}
-      <div className="fb-toolbar">
-        <button
-          type="button"
-          className="fb-toolbar-back"
-          onClick={() => navigate('/bots')}
-          title="Back to Bot Manager"
-        >
-          <ArrowLeft size={16} />
-          <span>Bot Manager</span>
-        </button>
-        <input
-          className="fb-toolbar-name"
-          value={flowName}
-          onChange={(e) => setFlowName(e.target.value)}
-          onBlur={triggerAutoSave}
-          spellCheck={false}
-        />
-        <div className="fb-toolbar-spacer" />
-        <div className={`fb-autosave-indicator ${autoSaveStatus ? 'visible' : ''}`}>
-          {autoSaveStatus === 'saving' && (
-            <>
-              <Loader2 size={13} className="spin" style={{ animation: 'fb-spin 0.8s linear infinite' }} />
-              <span>Saving...</span>
-            </>
-          )}
-          {autoSaveStatus === 'saved' && (
-            <>
-              <Check size={13} style={{ color: 'var(--success, #10b981)' }} />
-              <span style={{ color: 'var(--success, #10b981)' }}>Saved</span>
-            </>
-          )}
+    <FlowNodeActionsContext.Provider value={{
+      onDuplicate: handleDuplicateNode,
+      onDelete: handleDeleteNode,
+      onSelectNode: (nodeId, action) => {
+        const node = nodes.find((n) => n.id === nodeId);
+        if (!node) return;
+        if (action === 'addTrigger') {
+          // Select node and set a temporary flag so properties panel auto-adds a trigger
+          setSelectedNode({ ...node, data: { ...node.data, _addTriggerNow: true } });
+        } else {
+          setSelectedNode(node);
+        }
+      },
+    }}>
+      <div className="flow-builder-root">
+      {/* ── Flow Top Bar ────────────────────────────────── */}
+      <div
+        className="flow-topbar"
+        style={{
+          height: 56,
+          background: '#ffffff',
+          borderBottom: '1px solid #e2e8f0',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 16px',
+          zIndex: 30,
+          gap: 12,
+        }}
+      >
+        {/* Left: Breadcrumbs & Flow Name & Status Badge */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <button
+            type="button"
+            className="flow-tool-btn"
+            onClick={handleGoBack}
+            title={`Back to ${backLabel}`}
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 8,
+              border: '1px solid #e2e8f0',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: '#f8fafc',
+              color: '#475569',
+              cursor: 'pointer',
+            }}
+          >
+            <ArrowLeft size={16} />
+          </button>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#64748b' }}>
+            <span
+              style={{ fontWeight: 500, cursor: 'pointer' }}
+              onClick={handleGoBack}
+              title={`Back to ${backLabel}`}
+            >
+              {backLabel}
+            </span>
+            <span>&gt;</span>
+          </div>
+
+          <input
+            value={flowName}
+            onChange={(e) => setFlowName(e.target.value)}
+            onBlur={triggerAutoSave}
+            spellCheck={false}
+            style={{
+              fontWeight: 700,
+              fontSize: 14,
+              color: '#0f172a',
+              border: '1px solid transparent',
+              borderRadius: 6,
+              padding: '4px 8px',
+              outline: 'none',
+              maxWidth: 220,
+              background: 'transparent',
+              transition: 'border-color 0.15s',
+            }}
+            onFocus={(e) => {
+              e.currentTarget.style.borderColor = '#cbd5e1';
+              e.currentTarget.style.background = '#ffffff';
+            }}
+            onBlurCapture={(e) => {
+              e.currentTarget.style.borderColor = 'transparent';
+              e.currentTarget.style.background = 'transparent';
+            }}
+          />
+
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 800,
+              padding: '2px 8px',
+              borderRadius: 12,
+              background: isLive ? '#dcfce7' : '#f1f5f9',
+              color: isLive ? '#15803d' : '#64748b',
+              letterSpacing: '0.4px',
+              textTransform: 'uppercase',
+            }}
+          >
+            {isLive ? 'Live' : 'Draft'}
+          </span>
         </div>
-        <button
-          onClick={handleAutoLayout}
-          className="fb-rearrange-btn"
-          title="Auto-rearrange all components to save space and look uniform"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            padding: '7px 14px',
-            borderRadius: 8,
-            border: '1px solid #e2e8f0',
-            background: '#ffffff',
-            color: '#334155',
-            fontSize: 12,
-            fontWeight: 600,
-            cursor: 'pointer',
-            transition: 'all 0.15s',
-            height: 35,
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = '#f8fafc';
-            e.currentTarget.style.borderColor = '#cbd5e1';
-            e.currentTarget.style.color = '#0f172a';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = '#ffffff';
-            e.currentTarget.style.borderColor = '#e2e8f0';
-            e.currentTarget.style.color = '#334155';
-          }}
-        >
-          <LayoutGrid size={14} style={{ color: '#4f46e5' }} />
-          <span>Auto Layout</span>
-        </button>
 
-        {/* Connected Platform & Account (Opens live platform profile in new tab) */}
-        <a
-          href={platformUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="fb-account-link"
-          title={`Open ${currentAccountName || platform} in new tab`}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 7,
-            padding: '6px 13px',
-            borderRadius: 8,
-            background: '#ffffff',
-            border: '1px solid #e2e8f0',
-            color: '#334155',
-            fontSize: 12,
-            textDecoration: 'none',
-            fontWeight: 600,
-            height: 35,
-            boxSizing: 'border-box',
-            transition: 'all 0.15s ease-in-out',
-            flexShrink: 0,
-            boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = '#f0f2ff';
-            e.currentTarget.style.borderColor = '#c7d2fe';
-            e.currentTarget.style.color = '#4f46e5';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = '#ffffff';
-            e.currentTarget.style.borderColor = '#e2e8f0';
-            e.currentTarget.style.color = '#334155';
-          }}
-        >
-          <span style={{ fontSize: 13 }}>
-            {platform === 'FACEBOOK' ? '📘' : platform === 'INSTAGRAM' ? '📸' : platform === 'WHATSAPP' ? '💬' : platform === 'TELEGRAM' ? '✈️' : platform === 'TIKTOK' ? '🎵' : '🌐'}
-          </span>
-          <span style={{ fontWeight: 700, color: '#0f172a' }}>
-            {currentAccountName || `${platform.charAt(0) + platform.slice(1).toLowerCase()} Channel`}
-          </span>
-          <span style={{
-            fontSize: 10,
-            fontWeight: 700,
-            padding: '1px 6px',
-            borderRadius: 4,
-            background: '#f1f5f9',
-            color: '#475569',
-            textTransform: 'uppercase',
-            letterSpacing: '0.4px',
-          }}>
-            {platform}
-          </span>
-          <ExternalLink size={12} style={{ color: '#94a3b8', marginLeft: 1 }} />
-        </a>
+        {/* Center: Undo/Redo & Auto Layout & Connected Platform Channel */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            type="button"
+            onClick={handleUndo}
+            disabled={historyIndexRef.current <= 0}
+            title="Undo"
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 6,
+              border: '1px solid #e2e8f0',
+              background: '#ffffff',
+              color: historyIndexRef.current <= 0 ? '#cbd5e1' : '#475569',
+              cursor: historyIndexRef.current <= 0 ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Undo2 size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={handleRedo}
+            disabled={historyIndexRef.current >= historyRef.current.length - 1}
+            title="Redo"
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 6,
+              border: '1px solid #e2e8f0',
+              background: '#ffffff',
+              color: historyIndexRef.current >= historyRef.current.length - 1 ? '#cbd5e1' : '#475569',
+              cursor: historyIndexRef.current >= historyRef.current.length - 1 ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Redo2 size={14} />
+          </button>
 
-        <button className="fb-save-btn" onClick={handleSave} disabled={saving}>
-          {saving ? (
-            <Loader2 size={15} className="spin" />
-          ) : (
-            <Save size={15} />
-          )}
-          {saving ? 'Saving...' : 'Save'}
-        </button>
+          <button
+            onClick={handleAutoLayout}
+            className="flow-layout-btn"
+            title="Auto-rearrange components cleanly"
+          >
+            <LayoutGrid size={13} style={{ color: '#4f46e5' }} />
+            <span>Auto Layout</span>
+          </button>
+
+          {/* Platform / Account link */}
+          <a
+            href={platformUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`Open ${currentAccountName || platform} in new tab`}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '5px 10px',
+              borderRadius: 8,
+              background: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              color: '#334155',
+              fontSize: 11.5,
+              textDecoration: 'none',
+              fontWeight: 600,
+              height: 32,
+              transition: 'all 0.15s',
+            }}
+          >
+            <span style={{ fontSize: 13 }}>
+              {platform === 'FACEBOOK'
+                ? '📘'
+                : platform === 'INSTAGRAM'
+                ? '📸'
+                : platform === 'WHATSAPP'
+                ? '💬'
+                : platform === 'TELEGRAM'
+                ? '✈️'
+                : platform === 'TIKTOK'
+                ? '🎵'
+                : '🌐'}
+            </span>
+            <span>{currentAccountName || `${platform} Channel`}</span>
+            <ExternalLink size={11} style={{ color: '#94a3b8' }} />
+          </a>
+        </div>
+
+        {/* Right: Saved Status, Preview Toggle Button, and Set Live Button */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* Autosave status indicator */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#64748b' }}>
+            {autoSaveStatus === 'saving' && (
+              <>
+                <Loader2 size={12} className="spin" />
+                <span>Saving...</span>
+              </>
+            )}
+            {autoSaveStatus === 'saved' && (
+              <>
+                <Check size={13} style={{ color: '#10b981' }} />
+                <span style={{ color: '#10b981', fontWeight: 600 }}>Saved</span>
+              </>
+            )}
+          </div>
+
+          {/* Interactive Device Preview Toggle */}
+          <button
+            type="button"
+            className={`flow-preview-toggle-btn ${previewOpen ? 'active' : ''}`}
+            onClick={() => setPreviewOpen((prev) => !prev)}
+            title="Toggle interactive device simulation preview"
+          >
+            <Smartphone size={14} />
+            <span>Preview</span>
+            <span style={{ fontSize: 9, opacity: 0.7 }}>▾</span>
+          </button>
+
+          {/* Set Live / Save Button */}
+          <button
+            type="button"
+            className="flow-set-live-btn"
+            onClick={async () => {
+              await handleSave();
+              setIsLive(true);
+            }}
+            disabled={saving}
+          >
+            {saving ? <Loader2 size={14} className="spin" /> : <Zap size={14} />}
+            <span>{isLive ? 'Update Live' : 'Set Live'}</span>
+          </button>
+        </div>
       </div>
 
       {/* ── Main Area ───────────────────────────────────────── */}
-      <div className="fb-main">
-        {/* Left Palette */}
+      <div className="fb-main" style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
+        {/* Left: Component Palette (always present) */}
         <NodePalette platform={platform} />
 
         {/* Canvas */}
-        <div className="fb-canvas">
+        <div className="fb-canvas" style={{ flex: 1, position: 'relative', height: '100%' }}>
+          {/* Floating hint */}
+          <div className="flow-canvas-hint">
+            <span>👆 Tap some step to edit</span>
+          </div>
+
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -3794,6 +6246,8 @@ function FlowBuilderInner() {
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             defaultEdgeOptions={defaultEdgeOptions}
+            connectionLineType="default"
+            connectionLineStyle={{ stroke: '#64748b', strokeWidth: 2 }}
             defaultSourcePosition={Position.Right}
             defaultTargetPosition={Position.Left}
             fitView
@@ -3825,17 +6279,29 @@ function FlowBuilderInner() {
           )}
         </div>
 
-        {/* Right Properties Panel */}
+        {/* Right Properties Panel (for all nodes including start) */}
         {selectedNode && (
           <PropertiesPanel
             node={selectedNode}
             onClose={() => setSelectedNode(null)}
             onUpdate={handleUpdateNodeData}
             onDelete={handleDeleteNode}
+            platform={platform}
           />
         )}
+
+        {/* Interactive Device Simulation Preview Drawer */}
+        <FlowPhonePreview
+          open={previewOpen}
+          onClose={() => setPreviewOpen(false)}
+          nodes={nodes}
+          edges={edges}
+          platform={platform}
+          businessName={currentAccountName || 'CareSphere'}
+        />
       </div>
     </div>
+    </FlowNodeActionsContext.Provider>
   );
 }
 

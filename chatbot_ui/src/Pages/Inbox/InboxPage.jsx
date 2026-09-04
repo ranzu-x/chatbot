@@ -889,6 +889,13 @@ export default function InboxPage() {
                     const isAudio = msg.type === 'AUDIO' || (mediaUrl && mediaUrl.match(/\.(mp3|wav|ogg|m4a)($|\?)/i));
                     const isDoc   = msg.type === 'DOCUMENT' || (mediaUrl && mediaUrl.match(/\.(pdf|doc|docx|zip|txt)($|\?)/i));
 
+                    let meta = msg.metadata;
+                    if (typeof meta === 'string') {
+                      try { meta = JSON.parse(meta); } catch (_) { meta = null; }
+                    }
+                    const buttons = meta?.buttons || msg.buttons || null;
+                    const hasAttachedButtons = isImage && buttons && buttons.length > 0;
+
                     return (
                       <div
                         key={msg.id || msg._id || idx}
@@ -901,11 +908,11 @@ export default function InboxPage() {
                         <div
                           style={{
                             maxWidth: '72%',
-                            padding: isImage && isMediaOnly ? '4px' : '10px 14px',
+                            padding: hasAttachedButtons ? 0 : (isImage && isMediaOnly ? '4px' : '10px 14px'),
                             borderRadius: isOutbound ? '14px 14px 2px 14px' : '14px 14px 14px 2px',
-                            background: isOutbound ? '#2563eb' : '#ffffff',
-                            color: isOutbound ? '#ffffff' : '#0f172a',
-                            border: isOutbound ? 'none' : '1px solid #e2e8f0',
+                            background: hasAttachedButtons ? '#ffffff' : (isOutbound ? '#2563eb' : '#ffffff'),
+                            color: hasAttachedButtons ? '#0f172a' : (isOutbound ? '#ffffff' : '#0f172a'),
+                            border: hasAttachedButtons ? '1px solid #cbd5e1' : (isOutbound ? 'none' : '1px solid #e2e8f0'),
                             fontSize: '0.86rem',
                             lineHeight: 1.45,
                             boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
@@ -915,14 +922,14 @@ export default function InboxPage() {
                         >
                           {/* ── Image Rendering ── */}
                           {isImage && (
-                            <div style={{ marginBottom: isMediaOnly ? 0 : 8 }}>
+                            <div style={{ marginBottom: (isMediaOnly || hasAttachedButtons) ? 0 : 8 }}>
                               <img
                                 src={mediaUrl}
                                 alt="Attachment"
                                 style={{
-                                  maxWidth: '100%',
+                                  width: '100%',
                                   maxHeight: 280,
-                                  borderRadius: 10,
+                                  borderRadius: hasAttachedButtons ? 0 : 10,
                                   cursor: 'pointer',
                                   display: 'block',
                                   objectFit: 'cover',
@@ -983,7 +990,34 @@ export default function InboxPage() {
                           )}
 
                           {/* Text message */}
-                          {!isMediaOnly && text && <div>{text}</div>}
+                          {!isMediaOnly && text && (
+                            <div style={{ padding: hasAttachedButtons ? '8px 12px' : 0 }}>
+                              {text}
+                            </div>
+                          )}
+
+                          {/* Attached Buttons for Messenger Card (Flush with ZERO space) */}
+                          {buttons && buttons.length > 0 && (
+                            <div className={hasAttachedButtons
+                              ? "flex flex-col m-0 p-0 border-t border-slate-200 divide-y divide-slate-200 bg-white"
+                              : "mt-2.5 flex flex-col gap-1.5"
+                            }>
+                              {buttons.map((b, bIdx) => {
+                                const bTitle = typeof b === 'string' ? b : (b.title || b.text || b.label || `Option ${bIdx + 1}`);
+                                return (
+                                  <div
+                                    key={bIdx}
+                                    className={hasAttachedButtons
+                                      ? "w-full py-2 px-3 text-xs font-semibold text-sky-600 hover:bg-slate-50 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                                      : `py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 ${isOutbound ? 'bg-blue-700/60 text-white' : 'bg-slate-100 text-slate-800'}`
+                                    }
+                                  >
+                                    <span>{bTitle}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
 
                         <span style={{ fontSize: '0.68rem', color: '#94a3b8', marginTop: 3, padding: '0 4px' }}>
