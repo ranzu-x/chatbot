@@ -2,4 +2,6 @@ node_modules
 # Keep environment variables out of version control
 .env
 
-/generated/prisma
+# User-uploaded media (test/dev fixtures and real uploads alike don't belong in git)
+uploads/*
+!uploads/.gitkeep

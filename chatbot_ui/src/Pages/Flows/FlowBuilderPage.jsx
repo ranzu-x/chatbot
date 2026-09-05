@@ -16,7 +16,7 @@ import {
   User, Settings2, CornerDownRight, Image, Upload,
   Video, Music, FileText, Globe, ExternalLink,
   Smartphone, RotateCcw, Undo2, Redo2, ThumbsUp, Sparkles, MoreVertical,
-  Copy, ChevronDown
+  Copy, ChevronDown, ShoppingBag
 } from 'lucide-react';
 import FlowPhonePreview from './FlowPhonePreview';
 import { flowAPI, uploadAPI, integrationAPI } from '../../services/api';
@@ -29,12 +29,13 @@ import Swal from 'sweetalert2';
 const PLATFORM_RULES = {
   WHATSAPP: {
     text: true,
+    interactive: true, // WhatsApp Interactive message with Header, Body, Footer & Reply/CTA buttons
     image: true,
     video: true,
     audio: true,
     file: true,
     buttons: 3,        // WhatsApp Interactive Reply Buttons (max 3)
-    quickReplies: false, // WhatsApp uses buttons or listMenu
+    quickReplies: false, // WhatsApp uses buttons, interactive or listMenu
     listMenu: 10,      // WhatsApp Interactive List Message (max 10 items)
     card: false,
     carousel: false,
@@ -42,12 +43,13 @@ const PLATFORM_RULES = {
     condition: true,
     delay: true,
     webhook: true,
-    payment: true,
+    payment: true,     // WhatsApp In-Chat Payment / Catalog Orders
     handoff: true,
     end: true,
   },
   FACEBOOK: {
     text: true,
+    interactive: false,
     image: true,
     video: true,
     audio: true,
@@ -67,6 +69,7 @@ const PLATFORM_RULES = {
   },
   INSTAGRAM: {
     text: true,
+    interactive: false,
     image: true,
     video: true,
     audio: true,
@@ -86,6 +89,7 @@ const PLATFORM_RULES = {
   },
   TELEGRAM: {
     text: true,
+    interactive: false,
     image: true,
     video: true,
     audio: true,
@@ -105,6 +109,7 @@ const PLATFORM_RULES = {
   },
   TIKTOK: {
     text: true,
+    interactive: false,
     image: true,
     video: true,
     audio: false,
@@ -124,6 +129,7 @@ const PLATFORM_RULES = {
   },
   WEBCHAT: {
     text: true,
+    interactive: false,
     image: true,
     video: true,
     audio: true,
@@ -146,6 +152,7 @@ const PLATFORM_RULES = {
 const NODE_COLORS = {
   start: '#059669',        // Fresh emerald
   text: '#4f46e5',         // Soft indigo
+  interactive: '#0284c7',  // WhatsApp blue/teal interactive
   image: '#db2777',        // Soft pink
   video: '#e11d48',        // Soft rose
   audio: '#0891b2',        // Soft cyan
@@ -167,6 +174,7 @@ const NODE_COLORS = {
 const NODE_ICONS = {
   start: Play,
   text: Type,
+  interactive: Sparkles,
   image: Image,
   video: Video,
   audio: Music,
@@ -180,7 +188,7 @@ const NODE_ICONS = {
   condition: GitBranch,
   delay: Clock,
   webhook: Globe,
-  payment: CreditCard,
+  payment: ShoppingBag,
   handoff: Headphones,
   end: CircleStop,
 };
@@ -189,8 +197,8 @@ const PALETTE_CATEGORIES = [
   {
     label: 'Messages',
     items: [
-      { type: 'text', label: 'Text Message' },
-      { type: 'buttons', label: 'Buttons' },
+      { type: 'interactive', label: 'Interactive (Header/Footer)' },
+      { type: 'buttons', label: 'Text Message' },
       { type: 'quickReplies', label: 'Quick Replies' },
       { type: 'listMenu', label: 'List Menu' },
     ],
@@ -213,7 +221,7 @@ const PALETTE_CATEGORIES = [
       { type: 'condition', label: 'Condition' },
       { type: 'delay', label: 'Delay' },
       { type: 'webhook', label: 'Webhook / Zapier' },
-      { type: 'payment', label: 'Collect Payment' },
+      { type: 'payment', label: 'Catalog / Payment' },
     ],
   },
   {
@@ -228,20 +236,21 @@ const PALETTE_CATEGORIES = [
 const DEFAULT_NODE_DATA = {
   start:        { label: 'When...', trigger_type: 'keyword', match_type: 'contains' },
   text:         { label: 'Text Message', message: '' },
+  interactive:  { label: 'Interactive Message', headerType: 'text', headerText: '', headerMediaUrl: '', message: '', footerText: '', buttons: [{ title: 'Reply 1', action: 'flow' }] },
   image:        { label: 'Image', imageUrl: '', caption: '' },
   video:        { label: 'Video', mediaUrl: '', caption: '' },
   audio:        { label: 'Audio', mediaUrl: '' },
   file:         { label: 'File / Document', mediaUrl: '', filename: '' },
-  buttons:      { label: 'Buttons', message: '', buttons: ['Button 1'] },
+  buttons:      { label: 'Text Message', message: '', buttons: [] },
   quickReplies: { label: 'Quick Replies', message: '', replies: ['Reply 1'] },
-  listMenu:     { label: 'List Menu', title: 'Menu', items: ['Item 1'] },
+  listMenu:     { label: 'List Menu', title: 'Menu Options', items: ['Option 1', 'Option 2'] },
   card:         { label: 'Card', title: '', subtitle: '', imageUrl: '' },
   carousel:     { label: 'Carousel', cards: [{ title: 'Card 1', subtitle: '', imageUrl: '' }] },
   collectInput: { label: 'Collect Input', variable: '', inputType: 'name' },
   condition:    { label: 'Condition', variable: '', operator: 'equals', value: '' },
   delay:        { label: 'Delay', seconds: 3 },
   webhook:      { label: 'Webhook / Zapier Action', url: '', method: 'POST', payloadMode: 'ALL_VARIABLES', customPayload: '', customHeaders: '' },
-  payment:      { label: 'Collect Payment', productName: 'Order Product / Service', amount: 49.99, currency: 'USD', buttonLabel: '💳 Pay Now', successMessage: '🎉 Payment received! Your order is confirmed.' },
+  payment:      { label: 'Catalog / Payment', productName: 'Order Product / Catalog', amount: 49.99, currency: 'USD', buttonLabel: '🛍️ View Catalog / Pay', successMessage: '🎉 Order received! We will process it shortly.' },
   handoff:      { label: 'Agent Handoff', message: '' },
   end:          { label: 'End', message: '' },
 };
@@ -451,81 +460,81 @@ const builderStyles = `
     background: #f0f0fa;
   }
 
-  /* ── Properties Panel (Right) ──────────────────────────────── */
+  /* ── Properties Panel (Right Modal / Sidebar) ─────────────── */
   .fb-props {
-    width: 310px;
+    width: 320px;
     flex-shrink: 0;
     background: #ffffff;
-    border-left: 1px solid #e4e4f0;
+    border-left: 1.5px solid #e2e8f0;
     z-index: 10;
     display: flex;
     flex-direction: column;
     animation: fb-slide-in 0.2s ease-out;
     overflow-y: auto;
-    box-shadow: -2px 0 8px rgba(0,0,0,0.04);
+    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.05);
   }
   @keyframes fb-slide-in {
     from { transform: translateX(20px); opacity: 0; }
     to { transform: translateX(0); opacity: 1; }
   }
-  .fb-props::-webkit-scrollbar { width: 4px; }
-  .fb-props::-webkit-scrollbar-thumb { background: #d0d0e8; border-radius: 4px; }
+  .fb-props::-webkit-scrollbar { width: 5px; }
+  .fb-props::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
   .fb-props-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 16px;
-    border-bottom: 1px solid #e4e4f0;
-    background: #fafafa;
+    padding: 14px 18px;
+    border-bottom: 1px solid #e2e8f0;
+    background: #ffffff;
   }
   .fb-props-header h3 {
     margin: 0;
-    font-size: 13px;
-    font-weight: 700;
-    color: #1a1a2e;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: #0f172a;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
   }
   .fb-props-close {
     width: 28px; height: 28px;
     display: flex; align-items: center; justify-content: center;
-    border-radius: 6px;
-    background: transparent;
-    border: none;
-    color: #5c5c80;
+    border-radius: 8px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    color: #64748b;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.15s;
   }
-  .fb-props-close:hover { background: rgba(239, 68, 68, 0.10); color: #ef4444; }
-  .fb-props-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
-  .fb-field { display: flex; flex-direction: column; gap: 5px; }
+  .fb-props-close:hover { background: #fef2f2; border-color: #fecaca; color: #ef4444; }
+  .fb-props-body { padding: 16px; display: flex; flex-direction: column; gap: 14px; background: #ffffff; }
+  .fb-field { display: flex; flex-direction: column; gap: 6px; }
   .fb-field label {
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: #5c5c80;
+    letter-spacing: 0.6px;
+    color: #64748b;
   }
   .fb-field input,
   .fb-field textarea,
   .fb-field select {
-    background: #f8f8fc;
-    border: 1px solid #e4e4f0;
-    border-radius: 8px;
-    padding: 8px 12px;
-    font-size: 13px;
-    color: #1a1a2e;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 9px 12px;
+    font-size: 12.5px;
+    color: #0f172a;
     outline: none;
-    transition: all 0.2s;
+    transition: all 0.15s;
     font-family: inherit;
     resize: vertical;
   }
   .fb-field input:focus,
   .fb-field textarea:focus,
   .fb-field select:focus {
-    border-color: #6366f1;
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.10);
+    border-color: #0284c7;
+    box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
     background: #ffffff;
   }
   .fb-field textarea { min-height: 80px; }
@@ -539,44 +548,44 @@ const builderStyles = `
   .fb-list-item-del {
     width: 28px; height: 28px;
     display: flex; align-items: center; justify-content: center;
-    border-radius: 6px;
-    background: transparent;
-    border: none;
-    color: #9999bb;
+    border-radius: 8px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    color: #94a3b8;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.15s;
     flex-shrink: 0;
   }
-  .fb-list-item-del:hover { background: rgba(239, 68, 68, 0.10); color: #ef4444; }
+  .fb-list-item-del:hover { background: #fef2f2; border-color: #fecaca; color: #ef4444; }
   .fb-add-btn {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 7px 12px;
-    border-radius: 8px;
-    border: 1.5px dashed #d0d0e8;
-    background: transparent;
-    color: #6366f1;
+    padding: 8px 14px;
+    border-radius: 10px;
+    border: 1.5px dashed #cbd5e1;
+    background: #f8fafc;
+    color: #0284c7;
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.15s;
   }
-  .fb-add-btn:hover { background: rgba(99, 102, 241, 0.06); border-color: #6366f1; }
+  .fb-add-btn:hover { background: #f0f9ff; border-color: #0284c7; }
   .fb-delete-node-btn {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
     padding: 10px;
-    border-radius: 8px;
+    border-radius: 10px;
     border: 1px solid rgba(239, 68, 68, 0.20);
     background: rgba(239, 68, 68, 0.05);
     color: #ef4444;
-    font-size: 13px;
+    font-size: 12.5px;
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.15s;
     margin-top: 8px;
   }
   /* ── Hover Node Action Toolbar (Duplicate & Delete) ────────── */
@@ -847,6 +856,13 @@ const builderStyles = `
   }
 
   /* ── Edge styling (ManyChat smooth slate curved connection lines) */
+  /* Raise edge SVG layer so wires starting from inside buttons are visible over container backgrounds */
+  .react-flow__edges {
+    z-index: 4 !important;
+  }
+  .react-flow__edge {
+    z-index: 4 !important;
+  }
   .react-flow__edge-path {
     stroke: #64748b !important;
     stroke-width: 2 !important;
@@ -1390,6 +1406,18 @@ function validateNodeData(node) {
       }
       return null;
 
+    case 'interactive':
+      if (!data.message || !data.message.trim()) {
+        return 'Message body cannot be empty for Interactive Message';
+      }
+      if (data.headerType && data.headerType !== 'none' && data.headerType === 'text' && !(data.headerText || '').trim()) {
+        return 'Header text is required when Text header is selected';
+      }
+      if (data.headerType && ['image', 'video', 'document'].includes(data.headerType) && !(data.headerMediaUrl || '').trim()) {
+        return 'Header media attachment or URL is required';
+      }
+      return null;
+
     case 'image':
       if (!(data.imageUrl || data.mediaUrl || '').trim()) {
         return 'Image URL or uploaded image is required';
@@ -1416,11 +1444,7 @@ function validateNodeData(node) {
 
     case 'buttons':
       if (!data.message || !data.message.trim()) {
-        return 'Buttons prompt message cannot be empty';
-      }
-      const validBtns = (data.buttons || []).filter((b) => (typeof b === 'string' ? b : b?.title || '').trim());
-      if (validBtns.length === 0) {
-        return 'At least one button label is required';
+        return 'Text Message cannot be empty';
       }
       return null;
 
@@ -1524,6 +1548,12 @@ function getNodeDimensions(node) {
     case 'quickReplies': {
       const count = (node.data?.replies || []).length;
       return { width, height: 95 + Math.max(1, count) * 34 };
+    }
+    case 'interactive': {
+      const count = (node.data?.buttons || []).length;
+      const hasHdr = node.data?.headerType && node.data?.headerType !== 'none';
+      const hasFtr = !!(node.data?.footerText || '').trim();
+      return { width, height: 110 + (hasHdr ? 32 : 0) + (hasFtr ? 24 : 0) + Math.max(1, count) * 34 };
     }
     case 'buttons': {
       const count = (node.data?.buttons || []).length;
@@ -1721,6 +1751,9 @@ export const FlowNodeActionsContext = createContext({
   onDuplicate: () => {},
   onDelete: () => {},
   onSelectNode: () => {},
+  onUpdateNodeData: () => {},
+  buttonTargetNodes: new Set(),
+  emptySourceNodes: new Set(),
 });
 
 /* ── Node Hover Actions Toolbar (Duplicate & Delete) ────────── */
@@ -1807,7 +1840,7 @@ function NodeWrapper({ children, color, label, icon: Icon, selected, data, type,
         >
           {Icon && <Icon size={13} style={{ color: validationError ? '#ef4444' : color }} />}
         </div>
-        <span style={{ fontWeight: 700, fontSize: '11.5px', color: validationError ? '#b91c1c' : '#1e293b' }}>{label}</span>
+        <span style={{ fontWeight: 600, fontSize: '11.5px', color: validationError ? '#b91c1c' : '#1e293b' }}>{label}</span>
       </div>
       {children}
       {!hideNextStep && type !== 'end' && (
@@ -2022,8 +2055,24 @@ function StartNode({ id, data, selected }) {
 
 /* ── Text Node (Send Message card style matching screenshot) ─── */
 function TextNode({ id, data, selected }) {
+  const buttons = data.buttons || [];
   const validationError = data?._validationError;
   const messageText = data.message || '';
+  const { onSelectNode, onUpdateNodeData } = useContext(FlowNodeActionsContext);
+
+  const handleAddButton = (e) => {
+    e.stopPropagation();
+    if (buttons.length >= 3) return;
+    const newBtn = {
+      title: `Button ${buttons.length + 1}`,
+      action: 'flow',
+      url: '',
+      phone: '',
+      reply_text: '',
+    };
+    onUpdateNodeData(id, { ...data, buttons: [...buttons, newBtn] });
+    onSelectNode(id);
+  };
 
   return (
     <div
@@ -2079,11 +2128,8 @@ function TextNode({ id, data, selected }) {
           <MessageSquare size={11} color="#ffffff" />
         </div>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 9.5, fontWeight: 600, color: '#94a3b8', lineHeight: 1.1, textTransform: 'capitalize' }}>
-            Facebook
-          </div>
-          <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}>
-            Send Message
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', lineHeight: 1.2 }}>
+            Text Message
           </div>
         </div>
       </div>
@@ -2099,6 +2145,7 @@ function TextNode({ id, data, selected }) {
           color: messageText ? '#334155' : '#94a3b8',
           textAlign: messageText ? 'left' : 'center',
           lineHeight: 1.4,
+          marginBottom: (buttons.length > 0 || true) ? 8 : 0,
           minHeight: 48,
           display: 'flex',
           alignItems: 'center',
@@ -2108,8 +2155,388 @@ function TextNode({ id, data, selected }) {
         {messageText || 'Add a text'}
       </div>
 
+      {/* Attached Buttons & Add Button option */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {buttons.map((btn, i) => {
+          const btnTitle = typeof btn === 'string' ? btn : (btn?.title || `Button ${i + 1}`);
+          const btnAction = typeof btn === 'object' ? btn?.action : 'flow';
+          const isPhone = btnAction === 'phone';
+          const isUrl = btnAction === 'url';
+
+          return (
+            <div
+              key={i}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '9px 14px',
+                borderRadius: 12,
+                background: '#ffffff',
+                border: '1px solid #e2e8f0',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
+                position: 'relative',
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: '#0084ff',
+                  textAlign: 'center',
+                  flex: 1,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {btnTitle}
+              </span>
+
+              {isPhone && (
+                <Phone
+                  size={14}
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    color: '#0084ff',
+                  }}
+                />
+              )}
+              {isUrl && (
+                <ExternalLink
+                  size={14}
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    color: '#0084ff',
+                  }}
+                />
+              )}
+              {!isPhone && !isUrl && (
+                <Handle
+                  type="source"
+                  position={Position.Right}
+                  id={`btn-${i}`}
+                  className="btn-handle"
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                  }}
+                />
+              )}
+            </div>
+          );
+        })}
+
+        {/* Option to Add Button directly on the card */}
+        {buttons.length < 3 && (
+          <button
+            type="button"
+            onClick={handleAddButton}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              padding: '8px 12px',
+              borderRadius: 12,
+              background: '#f8fafc',
+              border: '1.5.px dashed #cbd5e1',
+              color: '#0084ff',
+              fontSize: 11.5,
+              fontWeight: 700,
+              cursor: 'pointer',
+              transition: 'all 0.15s',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = '#0084ff';
+              e.currentTarget.style.background = '#f0f7ff';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = '#cbd5e1';
+              e.currentTarget.style.background = '#f8fafc';
+            }}
+          >
+            <Plus size={13} />
+            <span>+ Add Button</span>
+          </button>
+        )}
+      </div>
+
       {/* Next Step row with unfilled circle handle */}
-      <div className="fb-next-step-row" style={{ marginTop: 10 }}>
+      <div className="fb-next-step-row" style={{ marginTop: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="next-step"
+          className="next-step-handle"
+          style={{
+            position: 'absolute',
+            right: -7,
+            top: '50%',
+            transform: 'translateY(-50%)',
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/* ── Interactive Node (WhatsApp Interactive Message: Header + Body + Footer + Buttons) ── */
+function InteractiveNode({ id, data, selected }) {
+  const buttons = data.buttons || [];
+  const validationError = data?._validationError;
+  const messageText = data.message || '';
+  const headerType = data.headerType || 'text';
+  const headerText = data.headerText || '';
+  const headerMediaUrl = data.headerMediaUrl || '';
+  const footerText = data.footerText || '';
+  const { onSelectNode, onUpdateNodeData } = useContext(FlowNodeActionsContext);
+
+  const handleAddButton = (e) => {
+    e.stopPropagation();
+    if (buttons.length >= 3) return;
+    const newBtn = {
+      title: `Reply ${buttons.length + 1}`,
+      action: 'flow',
+      url: '',
+      phone: '',
+      reply_text: '',
+    };
+    onUpdateNodeData(id, { ...data, buttons: [...buttons, newBtn] });
+    onSelectNode(id);
+  };
+
+  return (
+    <div
+      className={`fb-node${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
+      style={{
+        borderRadius: 20,
+        background: '#ffffff',
+        border: selected ? '2px solid #25d366' : '1.5px solid #e2e8f0',
+        boxShadow: selected ? '0 0 0 2px rgba(37, 211, 102, 0.2), 0 8px 24px rgba(0,0,0,0.08)' : '0 4px 20px rgba(0,0,0,0.06)',
+        width: 270,
+        minWidth: 260,
+        maxWidth: 280,
+        overflow: 'visible',
+        position: 'relative',
+        padding: '14px 14px 10px 14px',
+      }}
+    >
+      <NodeHoverActions nodeId={id} nodeType="interactive" />
+
+      {/* Target handle on left */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="target-handle"
+        style={{
+          position: 'absolute',
+          left: -5,
+          top: 24,
+        }}
+      />
+
+      {/* Card Header: WhatsApp Interactive Message */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 12,
+        }}
+      >
+        <div
+          style={{
+            width: 20,
+            height: 20,
+            borderRadius: '50%',
+            background: '#25d366',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <Sparkles size={11} color="#ffffff" />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', lineHeight: 1.2 }}>
+            Interactive Message
+          </div>
+        </div>
+      </div>
+
+      {/* WhatsApp Message Card: Header, Body & Footer container */}
+      <div
+        style={{
+          padding: '12px 14px',
+          borderRadius: 14,
+          background: '#f8fafc',
+          border: '1px solid #f1f5f9',
+          marginBottom: 8,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 6,
+        }}
+      >
+        {/* Optional Header */}
+        {headerType && headerType !== 'none' && (
+          <div style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: 6 }}>
+            {headerType === 'text' ? (
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#0f172a' }}>
+                {headerText || 'Header Text'}
+              </span>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#25d366', fontSize: 11, fontWeight: 600 }}>
+                {headerType === 'image' && <Image size={14} />}
+                {headerType === 'video' && <Video size={14} />}
+                {headerType === 'document' && <FileText size={14} />}
+                <span style={{ textTransform: 'capitalize' }}>
+                  {headerMediaUrl ? `${headerType} Attached` : `Header ${headerType}`}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Message Body */}
+        <div
+          style={{
+            fontSize: 12,
+            color: messageText ? '#334155' : '#94a3b8',
+            lineHeight: 1.4,
+            minHeight: 30,
+          }}
+        >
+          {messageText || 'Enter message body...'}
+        </div>
+
+        {/* Optional Footer */}
+        {footerText && (
+          <div style={{ fontSize: 10.5, color: '#94a3b8', fontStyle: 'italic', borderTop: '1px solid #f1f5f9', paddingTop: 4 }}>
+            {footerText}
+          </div>
+        )}
+      </div>
+
+      {/* Attached Reply Buttons */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {buttons.map((btn, i) => {
+          const btnTitle = typeof btn === 'string' ? btn : (btn?.title || `Reply ${i + 1}`);
+          const btnAction = typeof btn === 'object' ? btn?.action : 'flow';
+          const isPhone = btnAction === 'phone';
+          const isUrl = btnAction === 'url';
+
+          return (
+            <div
+              key={i}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '9px 14px',
+                borderRadius: 12,
+                background: '#ffffff',
+                border: '1px solid #e2e8f0',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
+                position: 'relative',
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: '#25d366',
+                  textAlign: 'center',
+                  flex: 1,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {btnTitle}
+              </span>
+
+              {isPhone && (
+                <Phone
+                  size={14}
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    color: '#25d366',
+                  }}
+                />
+              )}
+              {isUrl && (
+                <ExternalLink
+                  size={14}
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    color: '#25d366',
+                  }}
+                />
+              )}
+              {!isPhone && !isUrl && (
+                <Handle
+                  type="source"
+                  position={Position.Right}
+                  id={`btn-${i}`}
+                  className="btn-handle"
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                  }}
+                />
+              )}
+            </div>
+          );
+        })}
+
+        {/* Option to Add Button directly on the card */}
+        {buttons.length < 3 && (
+          <button
+            type="button"
+            onClick={handleAddButton}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              padding: '8px 12px',
+              borderRadius: 12,
+              background: '#f8fafc',
+              border: '1.5px dashed #cbd5e1',
+              color: '#25d366',
+              fontSize: 11.5,
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.15s',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = '#25d366';
+              e.currentTarget.style.background = '#f0fdf4';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = '#cbd5e1';
+              e.currentTarget.style.background = '#f8fafc';
+            }}
+          >
+            <Plus size={13} />
+            <span>+ Add Reply Button</span>
+          </button>
+        )}
+      </div>
+
+      {/* Next Step row with unfilled circle handle */}
+      <div className="fb-next-step-row" style={{ marginTop: 8 }}>
         <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
         <Handle
           type="source"
@@ -2134,6 +2561,21 @@ function ImageNode({ id, data, selected }) {
   const validationError = data?._validationError;
   const caption = data.caption || data.message || '';
   const imageUrl = data.imageUrl || data.mediaUrl || '';
+  const { onSelectNode, onUpdateNodeData } = useContext(FlowNodeActionsContext);
+
+  const handleAddButton = (e) => {
+    e.stopPropagation();
+    if (buttons.length >= 3) return;
+    const newBtn = {
+      title: `Button ${buttons.length + 1}`,
+      action: 'flow',
+      url: '',
+      phone: '',
+      reply_text: '',
+    };
+    onUpdateNodeData(id, { ...data, buttons: [...buttons, newBtn] });
+    onSelectNode(id);
+  };
 
   const backendUrl = import.meta.env.VITE_API_URL
     ? import.meta.env.VITE_API_URL.replace('/api/v1', '')
@@ -2194,11 +2636,8 @@ function ImageNode({ id, data, selected }) {
           <MessageSquare size={11} color="#ffffff" />
         </div>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 9.5, fontWeight: 600, color: '#94a3b8', lineHeight: 1.1, textTransform: 'capitalize' }}>
-            Facebook
-          </div>
-          <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}>
-            Send Message
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', lineHeight: 1.2 }}>
+            Image
           </div>
         </div>
       </div>
@@ -2257,84 +2696,116 @@ function ImageNode({ id, data, selected }) {
         )}
       </div>
 
-      {/* Attached Buttons */}
-      {buttons.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
-          {buttons.map((btn, i) => {
-            const btnTitle = typeof btn === 'string' ? btn : (btn?.title || `Button ${i + 1}`);
-            const btnAction = typeof btn === 'object' ? btn?.action : 'flow';
-            const isPhone = btnAction === 'phone';
-            const isUrl = btnAction === 'url';
+      {/* Attached Buttons & Add Button option */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: buttons.length ? 8 : 6 }}>
+        {buttons.map((btn, i) => {
+          const btnTitle = typeof btn === 'string' ? btn : (btn?.title || `Button ${i + 1}`);
+          const btnAction = typeof btn === 'object' ? btn?.action : 'flow';
+          const isPhone = btnAction === 'phone';
+          const isUrl = btnAction === 'url';
 
-            return (
-              <div
-                key={i}
+          return (
+            <div
+              key={i}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '9px 14px',
+                borderRadius: 12,
+                background: '#ffffff',
+                border: '1px solid #e2e8f0',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
+                position: 'relative',
+              }}
+            >
+              <span
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  padding: '9px 14px',
-                  borderRadius: 12,
-                  background: '#ffffff',
-                  border: '1px solid #e2e8f0',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
-                  position: 'relative',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: '#0084ff',
+                  textAlign: 'center',
+                  flex: 1,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
                 }}
               >
-                <span
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 700,
-                    color: '#0084ff',
-                    textAlign: 'center',
-                    flex: 1,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {btnTitle}
-                </span>
+                {btnTitle}
+              </span>
 
-                {isPhone && (
-                  <Phone
-                    size={14}
-                    style={{
-                      position: 'absolute',
-                      right: 12,
-                      color: '#0084ff',
-                    }}
-                  />
-                )}
-                {isUrl && (
-                  <ExternalLink
-                    size={14}
-                    style={{
-                      position: 'absolute',
-                      right: 12,
-                      color: '#0084ff',
-                    }}
-                  />
-                )}
-                {!isPhone && !isUrl && (
-                  <Handle
-                    type="source"
-                    position={Position.Right}
-                    id={`btn-${i}`}
-                    className="btn-handle"
-                    style={{
-                      position: 'absolute',
-                      right: 12,
-                      top: '50%',
-                      transform: 'translateY(-50%)',
-                    }}
-                  />
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+              {isPhone && (
+                <Phone
+                  size={14}
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    color: '#0084ff',
+                  }}
+                />
+              )}
+              {isUrl && (
+                <ExternalLink
+                  size={14}
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    color: '#0084ff',
+                  }}
+                />
+              )}
+              {!isPhone && !isUrl && (
+                <Handle
+                  type="source"
+                  position={Position.Right}
+                  id={`btn-${i}`}
+                  className="btn-handle"
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                  }}
+                />
+              )}
+            </div>
+          );
+        })}
+
+        {/* Option to Add Button directly on the card */}
+        {buttons.length < 3 && (
+          <button
+            type="button"
+            onClick={handleAddButton}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              padding: '8px 12px',
+              borderRadius: 12,
+              background: '#f8fafc',
+              border: '1.5px dashed #cbd5e1',
+              color: '#0084ff',
+              fontSize: 11.5,
+              fontWeight: 700,
+              cursor: 'pointer',
+              transition: 'all 0.15s',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = '#0084ff';
+              e.currentTarget.style.background = '#f0f7ff';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = '#cbd5e1';
+              e.currentTarget.style.background = '#f8fafc';
+            }}
+          >
+            <Plus size={13} />
+            <span>+ Add Button</span>
+          </button>
+        )}
+      </div>
 
       {/* Next Step row with unfilled circle handle */}
       <div className="fb-next-step-row" style={{ marginTop: 8 }}>
@@ -2391,8 +2862,7 @@ function VideoNode({ id, data, selected }) {
           <MessageSquare size={11} color="#ffffff" />
         </div>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 9.5, fontWeight: 600, color: '#94a3b8', lineHeight: 1.1 }}>Facebook</div>
-          <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}>Send Message</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', lineHeight: 1.2 }}>Video</div>
         </div>
       </div>
       {caption && (
@@ -2467,8 +2937,7 @@ function AudioNode({ id, data, selected }) {
           <MessageSquare size={11} color="#ffffff" />
         </div>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 9.5, fontWeight: 600, color: '#94a3b8', lineHeight: 1.1 }}>Facebook</div>
-          <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}>Send Message</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', lineHeight: 1.2 }}>Audio Clip</div>
         </div>
       </div>
       <div style={{ padding: '20px 12px', borderRadius: 12, background: '#f8fafc', border: '1.5px dashed #cbd5e1', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, color: '#94a3b8' }}>
@@ -2516,8 +2985,7 @@ function FileNode({ id, data, selected }) {
           <MessageSquare size={11} color="#ffffff" />
         </div>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 9.5, fontWeight: 600, color: '#94a3b8', lineHeight: 1.1 }}>Facebook</div>
-          <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}>Send Message</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', lineHeight: 1.2 }}>File / Document</div>
         </div>
       </div>
       <div style={{ padding: '16px 12px', borderRadius: 12, background: '#f8fafc', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 10, color: '#334155' }}>
@@ -2537,6 +3005,21 @@ function ButtonsNode({ id, data, selected }) {
   const buttons = data.buttons || [];
   const validationError = data?._validationError;
   const messageText = data.message || '';
+  const { onSelectNode, onUpdateNodeData } = useContext(FlowNodeActionsContext);
+
+  const handleAddButton = (e) => {
+    e.stopPropagation();
+    if (buttons.length >= 3) return;
+    const newBtn = {
+      title: `Button ${buttons.length + 1}`,
+      action: 'flow',
+      url: '',
+      phone: '',
+      reply_text: '',
+    };
+    onUpdateNodeData(id, { ...data, buttons: [...buttons, newBtn] });
+    onSelectNode(id);
+  };
 
   return (
     <div
@@ -2592,11 +3075,8 @@ function ButtonsNode({ id, data, selected }) {
           <MessageSquare size={11} color="#ffffff" />
         </div>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 9.5, fontWeight: 600, color: '#94a3b8', lineHeight: 1.1, textTransform: 'capitalize' }}>
-            Facebook
-          </div>
-          <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}>
-            Send Message
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', lineHeight: 1.2 }}>
+            Text Message
           </div>
         </div>
       </div>
@@ -2612,7 +3092,7 @@ function ButtonsNode({ id, data, selected }) {
           color: messageText ? '#334155' : '#94a3b8',
           textAlign: messageText ? 'left' : 'center',
           lineHeight: 1.4,
-          marginBottom: buttons.length ? 10 : 0,
+          marginBottom: (buttons.length > 0 || true) ? 8 : 0,
           minHeight: 44,
           display: 'flex',
           alignItems: 'center',
@@ -2622,84 +3102,116 @@ function ButtonsNode({ id, data, selected }) {
         {messageText || 'Add a text'}
       </div>
 
-      {/* Attached Buttons: White rounded pills with subtle border */}
-      {buttons.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {buttons.map((btn, i) => {
-            const btnTitle = typeof btn === 'string' ? btn : (btn?.title || `Button ${i + 1}`);
-            const btnAction = typeof btn === 'object' ? btn?.action : 'flow';
-            const isPhone = btnAction === 'phone';
-            const isUrl = btnAction === 'url';
+      {/* Attached Buttons & Add Button option */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {buttons.map((btn, i) => {
+          const btnTitle = typeof btn === 'string' ? btn : (btn?.title || `Button ${i + 1}`);
+          const btnAction = typeof btn === 'object' ? btn?.action : 'flow';
+          const isPhone = btnAction === 'phone';
+          const isUrl = btnAction === 'url';
 
-            return (
-              <div
-                key={i}
+          return (
+            <div
+              key={i}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '9px 14px',
+                borderRadius: 12,
+                background: '#ffffff',
+                border: '1px solid #e2e8f0',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
+                position: 'relative',
+              }}
+            >
+              <span
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  padding: '9px 14px',
-                  borderRadius: 12,
-                  background: '#ffffff',
-                  border: '1px solid #e2e8f0',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
-                  position: 'relative',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: '#0084ff',
+                  textAlign: 'center',
+                  flex: 1,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
                 }}
               >
-                <span
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 700,
-                    color: '#0084ff',
-                    textAlign: 'center',
-                    flex: 1,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {btnTitle}
-                </span>
+                {btnTitle}
+              </span>
 
-                {isPhone && (
-                  <Phone
-                    size={14}
-                    style={{
-                      position: 'absolute',
-                      right: 12,
-                      color: '#0084ff',
-                    }}
-                  />
-                )}
-                {isUrl && (
-                  <ExternalLink
-                    size={14}
-                    style={{
-                      position: 'absolute',
-                      right: 12,
-                      color: '#0084ff',
-                    }}
-                  />
-                )}
-                {!isPhone && !isUrl && (
-                  <Handle
-                    type="source"
-                    position={Position.Right}
-                    id={`btn-${i}`}
-                    className="btn-handle"
-                    style={{
-                      position: 'absolute',
-                      right: 12,
-                      top: '50%',
-                      transform: 'translateY(-50%)',
-                    }}
-                  />
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+              {isPhone && (
+                <Phone
+                  size={14}
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    color: '#0084ff',
+                  }}
+                />
+              )}
+              {isUrl && (
+                <ExternalLink
+                  size={14}
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    color: '#0084ff',
+                  }}
+                />
+              )}
+              {!isPhone && !isUrl && (
+                <Handle
+                  type="source"
+                  position={Position.Right}
+                  id={`btn-${i}`}
+                  className="btn-handle"
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                  }}
+                />
+              )}
+            </div>
+          );
+        })}
+
+        {/* Option to Add Button directly on the card */}
+        {buttons.length < 3 && (
+          <button
+            type="button"
+            onClick={handleAddButton}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              padding: '8px 12px',
+              borderRadius: 12,
+              background: '#f8fafc',
+              border: '1.5px dashed #cbd5e1',
+              color: '#0084ff',
+              fontSize: 11.5,
+              fontWeight: 700,
+              cursor: 'pointer',
+              transition: 'all 0.15s',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = '#0084ff';
+              e.currentTarget.style.background = '#f0f7ff';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = '#cbd5e1';
+              e.currentTarget.style.background = '#f8fafc';
+            }}
+          >
+            <Plus size={13} />
+            <span>+ Add Button</span>
+          </button>
+        )}
+      </div>
 
       {/* Next Step row with unfilled circle handle */}
       <div className="fb-next-step-row" style={{ marginTop: 8 }}>
@@ -3971,17 +4483,211 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
           />
         );
 
-      case 'text':
+      case 'text': {
+        const textBtnList = data.buttons || [];
+        const handleAddTextButton = () => {
+          if (textBtnList.length >= 3) return;
+          const newBtn = {
+            title: `Button ${textBtnList.length + 1}`,
+            action: 'flow',
+            url: '',
+            phone: '',
+            reply_text: '',
+          };
+          updateField('buttons', [...textBtnList, newBtn]);
+        };
+        const handleUpdateTextButton = (index, value) => {
+          const updated = [...textBtnList];
+          updated[index] = value;
+          updateField('buttons', updated);
+        };
+        const handleRemoveTextButton = (index) => {
+          const updated = textBtnList.filter((_, idx) => idx !== index);
+          updateField('buttons', updated);
+        };
+
         return (
-          <div className="fb-field">
-            <label>Message</label>
-            <textarea
-              value={data.message || ''}
-              onChange={(e) => updateField('message', e.target.value)}
-              placeholder="Enter your text message..."
-            />
-          </div>
+          <>
+            <div className="fb-field">
+              <label>Message</label>
+              <textarea
+                value={data.message || ''}
+                onChange={(e) => updateField('message', e.target.value)}
+                placeholder="Enter your text message..."
+              />
+            </div>
+            <div className="fb-field">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                <label style={{ margin: 0 }}>Buttons ({textBtnList.length}/3)</label>
+                <span style={{ fontSize: 10, color: '#d97706', background: '#fef3c7', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>
+                  Optional
+                </span>
+              </div>
+
+              {textBtnList.map((btn, i) => (
+                <ButtonActionEditor
+                  key={i}
+                  btn={btn}
+                  index={i}
+                  platform={platform}
+                  onChange={(val) => handleUpdateTextButton(i, val)}
+                  onRemove={() => handleRemoveTextButton(i)}
+                />
+              ))}
+
+              {textBtnList.length < 3 && (
+                <button
+                  type="button"
+                  className="fb-add-btn"
+                  onClick={handleAddTextButton}
+                >
+                  <Plus size={14} /> Add Button
+                </button>
+              )}
+            </div>
+          </>
         );
+      }
+
+      case 'interactive': {
+        const interactiveBtnList = data.buttons || [];
+        const handleAddInteractiveButton = () => {
+          if (interactiveBtnList.length >= 3) return;
+          const newBtn = {
+            title: `Reply ${interactiveBtnList.length + 1}`,
+            action: 'flow',
+            url: '',
+            phone: '',
+            reply_text: '',
+          };
+          updateField('buttons', [...interactiveBtnList, newBtn]);
+        };
+        const handleUpdateInteractiveButton = (index, value) => {
+          const updated = [...interactiveBtnList];
+          updated[index] = value;
+          updateField('buttons', updated);
+        };
+        const handleRemoveInteractiveButton = (index) => {
+          const updated = interactiveBtnList.filter((_, idx) => idx !== index);
+          updateField('buttons', updated);
+        };
+
+        return (
+          <>
+            {/* Header section (Optional: Text, Image, Video, Document) */}
+            <div className="fb-field">
+              <label>Header Type</label>
+              <select
+                value={data.headerType || 'none'}
+                onChange={(e) => updateField('headerType', e.target.value)}
+              >
+                <option value="none">None</option>
+                <option value="text">Text Header</option>
+                <option value="image">Image Header</option>
+                <option value="video">Video Header</option>
+                <option value="document">Document Header (PDF)</option>
+              </select>
+            </div>
+
+            {data.headerType === 'text' && (
+              <div className="fb-field">
+                <label>Header Text (max 60 chars)</label>
+                <input
+                  type="text"
+                  maxLength={60}
+                  value={data.headerText || ''}
+                  onChange={(e) => updateField('headerText', e.target.value)}
+                  placeholder="e.g. Special Offer!"
+                />
+              </div>
+            )}
+
+            {data.headerType === 'image' && (
+              <ImageUploadField
+                label="Header Image"
+                value={data.headerMediaUrl || ''}
+                onChange={(val) => updateField('headerMediaUrl', val)}
+              />
+            )}
+
+            {data.headerType === 'video' && (
+              <MediaUploadField
+                label="Header Video"
+                accept="video/*"
+                value={data.headerMediaUrl || ''}
+                onChange={(val) => updateField('headerMediaUrl', val)}
+              />
+            )}
+
+            {data.headerType === 'document' && (
+              <MediaUploadField
+                label="Header Document (PDF)"
+                accept=".pdf,.doc,.docx"
+                value={data.headerMediaUrl || ''}
+                onChange={(val) => updateField('headerMediaUrl', val)}
+              />
+            )}
+
+            {/* Body Message (Required) */}
+            <div className="fb-field">
+              <label>Body Message (Required, max 1024 chars)</label>
+              <textarea
+                rows={4}
+                maxLength={1024}
+                value={data.message || ''}
+                onChange={(e) => updateField('message', e.target.value)}
+                placeholder="Enter the main message body for this WhatsApp interactive message..."
+              />
+            </div>
+
+            {/* Footer Text (Optional) */}
+            <div className="fb-field">
+              <label>Footer Text (Optional, max 60 chars)</label>
+              <input
+                type="text"
+                maxLength={60}
+                value={data.footerText || ''}
+                onChange={(e) => updateField('footerText', e.target.value)}
+                placeholder="e.g. Reply STOP to unsubscribe"
+              />
+            </div>
+
+            {/* Interactive Reply Buttons (Up to 3) */}
+            <div className="fb-field">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                <label style={{ margin: 0 }}>Reply Buttons ({interactiveBtnList.length}/3)</label>
+                <span style={{ fontSize: 10, color: '#16a34a', background: '#dcfce7', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>
+                  WhatsApp Interactive
+                </span>
+              </div>
+              <p style={{ fontSize: 11, color: '#64748b', margin: '0 0 8px 0', lineHeight: 1.3 }}>
+                WhatsApp supports up to 3 quick reply or CTA buttons on interactive messages.
+              </p>
+
+              {interactiveBtnList.map((btn, i) => (
+                <ButtonActionEditor
+                  key={i}
+                  btn={btn}
+                  index={i}
+                  platform="WHATSAPP"
+                  onChange={(val) => handleUpdateInteractiveButton(i, val)}
+                  onRemove={() => handleRemoveInteractiveButton(i)}
+                />
+              ))}
+
+              {interactiveBtnList.length < 3 && (
+                <button
+                  type="button"
+                  className="fb-add-btn"
+                  onClick={handleAddInteractiveButton}
+                >
+                  <Plus size={14} /> Add Reply Button
+                </button>
+              )}
+            </div>
+          </>
+        );
+      }
 
       case 'image': {
         const imageButtons = data.buttons || [];
@@ -4727,6 +5433,7 @@ function NodePalette({ platform }) {
 const nodeTypes = {
   start: StartNode,
   text: TextNode,
+  interactive: InteractiveNode,
   image: ImageNode,
   video: VideoNode,
   audio: AudioNode,
@@ -4748,6 +5455,7 @@ const nodeTypes = {
 /* ── Removable / Deletable Edge ────────────────────────────── */
 function RemovableEdge({
   id,
+  source,
   sourceX,
   sourceY,
   targetX,
@@ -4759,11 +5467,18 @@ function RemovableEdge({
   selected,
 }) {
   const { setEdges } = useReactFlow();
+  const { emptySourceNodes } = useContext(FlowNodeActionsContext);
   const [isHovered, setIsHovered] = useState(false);
+
+  const isEmpty = emptySourceNodes?.has(source);
 
   // Force pure horizontal Left-to-Right edge routing (source exits right, target enters left)
   const actualSourcePos = (sourcePosition === Position.Bottom || !sourcePosition) ? Position.Right : sourcePosition;
   const actualTargetPos = (targetPosition === Position.Top || !targetPosition) ? Position.Left : targetPosition;
+
+  // Dynamic curvature: when elements are close (dx < 180), use higher curvature so the curve bends gracefully
+  const dx = Math.max(1, Math.abs(targetX - sourceX));
+  const dynamicCurvature = dx < 140 ? 0.95 : dx < 220 ? 0.8 : 0.65;
 
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
@@ -4772,6 +5487,7 @@ function RemovableEdge({
     targetX,
     targetY,
     targetPosition: actualTargetPos,
+    curvature: dynamicCurvature,
   });
 
   const onEdgeDelete = (e) => {
@@ -4784,6 +5500,7 @@ function RemovableEdge({
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       className="react-flow__edge-custom-group"
+      style={{ opacity: 1 }}
     >
       {/* Invisible wider hit path to effortlessly capture mouse hover on the wire */}
       <path
@@ -4800,6 +5517,7 @@ function RemovableEdge({
           ...style,
           strokeWidth: (isHovered || selected) ? 2.5 : 2,
           stroke: (isHovered || selected) ? '#0f172a' : (style.stroke || '#64748b'),
+          strokeDasharray: 'none',
         }}
       />
       {(isHovered || selected) && (
@@ -5462,57 +6180,14 @@ function FlowBuilderInner() {
     if (id) loadFlow();
   }, [id, setNodes, setEdges]);
 
-  /* ── Auto-save debounced ────────────────────────────────── */
+  /* ── Auto-save disabled on user request ─────────────────── */
   const triggerAutoSave = useCallback(() => {
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(async () => {
-      try {
-        if (!id || id === 'new') return;
-        const currentNodes = nodesRef.current || [];
-        // Do not auto-save if any node has missing data
-        const hasErrors = currentNodes.some((n) => validateNodeData(n) !== null);
-        if (hasErrors) return;
+    // Auto-save disabled
+  }, []);
 
-        setAutoSaveStatus('saving');
-        const startNode = currentNodes.find((n) => n.type === 'start');
-        const triggerType = (startNode?.data?.trigger_type || 'KEYWORD').toUpperCase();
-        let triggerKeyword = flowData?.trigger_keyword || '';
-        if (startNode?.data?.keywords) {
-          triggerKeyword = Array.isArray(startNode.data.keywords)
-            ? startNode.data.keywords.join(',')
-            : startNode.data.keywords;
-        }
+  /* ── Auto-save on changes disabled ──────────────────────── */
+  // Auto-save disabled per user request
 
-        await flowAPI.update(id, {
-          name: flowName,
-          platform,
-          integration_id: integrationId || null,
-          trigger_type: triggerType,
-          trigger_keyword: triggerKeyword,
-          nodes_json: JSON.stringify(currentNodes.map((n) => {
-            const { _unsupported, _validationError, ...rest } = n.data;
-            return { ...n, data: rest };
-          })),
-          edges_json: JSON.stringify(edgesRef.current),
-        });
-        setAutoSaveStatus('saved');
-        setTimeout(() => setAutoSaveStatus(''), 2500);
-      } catch (err) {
-        console.error('Auto-save failed:', err);
-        setAutoSaveStatus('');
-      }
-    }, 2000);
-  }, [id, flowName, platform, integrationId, flowData]);
-
-  /* ── Trigger auto-save on changes ───────────────────────── */
-  useEffect(() => {
-    if (!loading && flowData) {
-      triggerAutoSave();
-    }
-    return () => {
-      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    };
-  }, [nodes, edges, triggerAutoSave, loading, flowData]);
 
   /* ── Immediate save before leaving (flushes debounced timer) ── */
   const flushAutoSave = useCallback(async () => {
@@ -5963,6 +6638,37 @@ function FlowBuilderInner() {
     }
   }, [nodes, selectedNode]);
 
+  /* ── Button source nodes (for transparency effect) ──────── */
+  // Nodes that have at least one btn-handle wire going out become semi-transparent
+  // Must be declared before any early return to satisfy React hooks rules
+  const buttonTargetNodes = useMemo(() => {
+    const set = new Set();
+    edges.forEach((e) => {
+      if (e.sourceHandle && e.sourceHandle.startsWith('btn-')) {
+        if (e.source) set.add(e.source);
+      }
+    });
+    return set;
+  }, [edges]);
+
+  /* ── Empty source nodes (for edge transparency effect) ───── */
+  // Nodes that have no text and no buttons have their outgoing wires rendered transparent
+  const emptySourceNodes = useMemo(() => {
+    const set = new Set();
+    nodes.forEach((n) => {
+      // Check message / text content
+      const msg = (n.data?.message || n.data?.caption || n.data?.text || '').trim();
+      // Check buttons
+      const btns = n.data?.buttons || [];
+      const hasButtons = Array.isArray(btns) && btns.length > 0;
+      // If node is a message/buttons/text/image card and has neither message nor buttons, consider it empty
+      if (!msg && !hasButtons) {
+        set.add(n.id);
+      }
+    });
+    return set;
+  }, [nodes]);
+
   /* ── Loading screen ─────────────────────────────────────── */
   if (loading) {
     return (
@@ -5987,6 +6693,9 @@ function FlowBuilderInner() {
           setSelectedNode(node);
         }
       },
+      onUpdateNodeData: handleUpdateNodeData,
+      buttonTargetNodes,
+      emptySourceNodes,
     }}>
       <div className="flow-builder-root">
       {/* ── Flow Top Bar ────────────────────────────────── */}
@@ -6201,6 +6910,19 @@ function FlowBuilderInner() {
             <Smartphone size={14} />
             <span>Preview</span>
             <span style={{ fontSize: 9, opacity: 0.7 }}>▾</span>
+          </button>
+
+          {/* Manual Save Draft Button */}
+          <button
+            type="button"
+            className="flow-preview-toggle-btn"
+            onClick={handleSave}
+            disabled={saving}
+            title="Save draft"
+            style={{ fontWeight: 600 }}
+          >
+            {saving ? <Loader2 size={13} className="spin" /> : <Save size={13} />}
+            <span>Save</span>
           </button>
 
           {/* Set Live / Save Button */}

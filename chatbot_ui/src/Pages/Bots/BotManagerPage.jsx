@@ -140,18 +140,18 @@ const STARTER_TEMPLATES = [
       {
         id: 'start_1',
         type: 'start',
-        position: { x: 320, y: 80 },
+        position: { x: 80, y: 120 },
         data: { label: 'Start Trigger', trigger_type: 'keyword', keywords: ['hi', 'hello'], match_type: 'contains' },
       },
       {
         id: 'text_1',
         type: 'text',
-        position: { x: 320, y: 240 },
-        data: { label: 'Welcome Text', message: `Hello! Welcome to ${name || 'our service'}. How can we assist you today?` },
+        position: { x: 440, y: 120 },
+        data: { label: 'Welcome Text', message: `Hello! Welcome to ${name || 'our service'}. How can we assist you today?`, buttons: [] },
       },
     ],
     edges: () => [
-      { id: 'e1', source: 'start_1', target: 'text_1', type: 'smoothstep', animated: true },
+      { id: 'e1', source: 'start_1', target: 'text_1', type: 'default', animated: false },
     ],
   },
   {
@@ -164,22 +164,22 @@ const STARTER_TEMPLATES = [
       {
         id: 'start_1',
         type: 'start',
-        position: { x: 320, y: 60 },
+        position: { x: 80, y: 120 },
         data: { label: 'Start Trigger', trigger_type: 'keyword', keywords: ['hi', 'hello', 'start', 'menu'], match_type: 'contains' },
       },
       {
         id: 'btn_1',
         type: 'buttons',
-        position: { x: 320, y: 220 },
+        position: { x: 440, y: 120 },
         data: {
-          label: 'Interactive Menu',
+          label: 'Text Message',
           message: `👋 Welcome to ${name || 'our bot'}! Please pick an option below:`,
           buttons: ['🛍️ Browse Products', '💰 View Pricing', '💬 Talk to Agent'],
         },
       },
     ],
     edges: () => [
-      { id: 'e_start_btn', source: 'start_1', target: 'btn_1', type: 'smoothstep', animated: true },
+      { id: 'e_start_btn', source: 'start_1', target: 'btn_1', type: 'default', animated: false },
     ],
   },
   {
@@ -192,25 +192,25 @@ const STARTER_TEMPLATES = [
       {
         id: 'start_1',
         type: 'start',
-        position: { x: 320, y: 60 },
+        position: { x: 80, y: 120 },
         data: { label: 'Start Trigger', trigger_type: 'keyword', keywords: ['quote', 'consult', 'booking'], match_type: 'contains' },
       },
       {
         id: 'text_intro',
         type: 'text',
-        position: { x: 320, y: 200 },
-        data: { label: 'Intro Prompt', message: '✨ Let’s get you scheduled! May I know your full name?' },
+        position: { x: 440, y: 120 },
+        data: { label: 'Intro Prompt', message: '✨ Let’s get you scheduled! May I know your full name?', buttons: [] },
       },
       {
         id: 'collect_name',
         type: 'collectInput',
-        position: { x: 320, y: 350 },
+        position: { x: 800, y: 120 },
         data: { label: 'Capture Name', variableName: 'contact_name', text: 'Please type your name:' },
       },
     ],
     edges: () => [
-      { id: 'e1', source: 'start_1', target: 'text_intro', type: 'smoothstep', animated: true },
-      { id: 'e2', source: 'text_intro', target: 'collect_name', type: 'smoothstep', animated: true },
+      { id: 'e1', source: 'start_1', target: 'text_intro', type: 'default', animated: false },
+      { id: 'e2', source: 'text_intro', target: 'collect_name', type: 'default', animated: false },
     ],
   },
 ];

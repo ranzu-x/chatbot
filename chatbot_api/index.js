@@ -39,6 +39,8 @@ import appointmentRoutes from "./routes/appointments.js";
 import slotRoutes from "./routes/slots.js";
 import labelsRoutes from "./routes/labels.js";
 import mediaRoutes from "./routes/media.js";
+import agencyPaymentGatewayRoutes from "./routes/agencyPaymentGateways.js";
+import customFieldRoutes from "./routes/customFields.js";
 
 import http from "http";
 import { initSocket } from "./utils/socket.js";
@@ -88,7 +90,10 @@ app.use(cors({
     ) {
       return callback(null, true);
     }
-    return callback(null, true); // In dev, allow all for now
+    // Outside production, keep dev convenient (unregistered local tunnels etc).
+    // In production, unknown origins are rejected instead of silently allowed.
+    if (process.env.NODE_ENV !== 'production') return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
 }));
@@ -105,6 +110,7 @@ app.use(
 app.use(express.static("public"));
 
 // ─── DB Connection Test ────────────────────────────────────────────────────────
+// WhatsApp flow fixes active
 try {
   const conn = await pool.getConnection();
   console.log("✅ MySQL Connected to:", process.env.DB_NAME);
@@ -149,6 +155,8 @@ app.use("/api/v1", teamRoutes);
 app.use("/api/v1", appointmentRoutes);
 app.use("/api/v1", slotRoutes);
 app.use("/api/v1", labelsRoutes);
+app.use("/api/v1", agencyPaymentGatewayRoutes);
+app.use("/api/v1", customFieldRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {

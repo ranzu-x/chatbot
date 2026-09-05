@@ -137,6 +137,8 @@ export const conversationAPI = {
   toggleBot: (id) => api.patch(`/conversations/${id}/toggle-bot`),
   triggerFlow: (id, flowId) => api.post(`/conversations/${id}/trigger-flow`, { flowId }),
   sendMessage: (id, data) => api.post(`/conversations/${id}/messages`, data),
+  bulkAssign: (conversationIds, agentProfileId) => api.patch('/conversations/bulk-assign', { conversationIds, agentProfileId }),
+  bulkUpdateStatus: (conversationIds, status) => api.patch('/conversations/bulk-status', { conversationIds, status }),
 };
 
 // ─── Channels ─────────────────────────────────────────────────────
@@ -283,6 +285,16 @@ export const labelAPI = {
   attachToContact: (contactId, data) => api.post(`/contacts/${contactId}/labels`, data),
   detachFromContact: (contactId, labelId) => api.delete(`/contacts/${contactId}/labels/${labelId}`),
   bulkAttach: (data) => api.post('/contacts/bulk-labels', data),
+};
+
+// ─── Custom Fields ────────────────────────────────────────────────────
+export const customFieldAPI = {
+  getAll: () => api.get('/custom-fields'),
+  create: (data) => api.post('/custom-fields', data),
+  update: (id, data) => api.put(`/custom-fields/${id}`, data),
+  delete: (id) => api.delete(`/custom-fields/${id}`),
+  getForContact: (contactId) => api.get(`/contacts/${contactId}/custom-fields`),
+  setValue: (contactId, fieldId, value) => api.put(`/contacts/${contactId}/custom-fields/${fieldId}`, { value }),
 };
 
 // ─── Upload ─────────────────────────────────────────────────────────

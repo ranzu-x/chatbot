@@ -1,6 +1,7 @@
 import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
+import { emitToAgency } from "../utils/socket.js";
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -166,6 +167,12 @@ router.delete("/labels/:id", async (req, res) => {
       syncContactTagsJson(c.contact_id);
     }
 
+    emitToAgency(agencyId, "contacts_bulk_labeled", {
+      contactIds: attachedContacts.map((c) => c.contact_id),
+      labelId: Number(id),
+      removed: true,
+    });
+
     return res.json({ success: true, message: "Label deleted successfully" });
   } catch (err) {
     console.error("Delete label error:", err);
@@ -223,7 +230,7 @@ router.post("/contacts/:id/labels", async (req, res) => {
 
     // Return updated labels for contact
     const [contactLabels] = await pool.query(
-      `SELECT l.id, l.name, l.color 
+      `SELECT l.id, l.name, l.color
        FROM labels l
        JOIN contact_labels cl ON cl.label_id = l.id
        WHERE cl.contact_id = ?
@@ -231,6 +238,7 @@ router.post("/contacts/:id/labels", async (req, res) => {
       [contactId]
     );
 
+    emitToAgency(agencyId, "contact_labels_updated", { contactId: Number(contactId), labels: contactLabels });
     return res.json({ success: true, message: "Label attached", labels: contactLabels });
   } catch (err) {
     console.error("Attach label error:", err);
@@ -263,7 +271,7 @@ router.delete("/contacts/:id/labels/:labelId", async (req, res) => {
 
     // Return updated labels for contact
     const [contactLabels] = await pool.query(
-      `SELECT l.id, l.name, l.color 
+      `SELECT l.id, l.name, l.color
        FROM labels l
        JOIN contact_labels cl ON cl.label_id = l.id
        WHERE cl.contact_id = ?
@@ -271,6 +279,7 @@ router.delete("/contacts/:id/labels/:labelId", async (req, res) => {
       [contactId]
     );
 
+    emitToAgency(agencyId, "contact_labels_updated", { contactId: Number(contactId), labels: contactLabels });
     return res.json({ success: true, message: "Label removed", labels: contactLabels });
   } catch (err) {
     console.error("Detach label error:", err);
@@ -310,6 +319,11 @@ router.post("/contacts/bulk-labels", async (req, res) => {
       );
       syncContactTagsJson(c.id);
     }
+
+    emitToAgency(agencyId, "contacts_bulk_labeled", {
+      contactIds: validContacts.map((c) => c.id),
+      labelId: Number(labelId),
+    });
 
     return res.json({
       success: true,

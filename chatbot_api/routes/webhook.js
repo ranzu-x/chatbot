@@ -263,17 +263,75 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
         const value = change?.value;
         if (!value) continue;
 
-        // Handle message status updates (sent, delivered, read)
+        // Handle message status updates (sent, delivered, read, failed)
         if (Array.isArray(value.statuses)) {
           for (const statusObj of value.statuses) {
             const externalMsgId = statusObj.id;
             const status = statusObj.status; // "delivered", "read", "sent", "failed"
-            if (externalMsgId && status) {
+            if (!externalMsgId || !status) continue;
+
+            try {
+              const [[msgRow]] = await pool.query(
+                `SELECT m.id, m.conversation_id, c.agency_id, c.integration_id, c.contact_id, ct.external_id AS contact_identifier
+                 FROM messages m
+                 JOIN conversations c ON c.id = m.conversation_id
+                 JOIN contacts ct ON ct.id = c.contact_id
+                 WHERE m.external_msg_id = ? LIMIT 1`,
+                [externalMsgId]
+              );
+              if (!msgRow) continue;
+
               if (status === "delivered") {
-                await pool.query("UPDATE messages SET delivered_at = NOW() WHERE external_msg_id = ?", [externalMsgId]);
+                await pool.query("UPDATE messages SET delivered_at = NOW() WHERE id = ?", [msgRow.id]);
+                const payload = { messageId: msgRow.id, conversationId: msgRow.conversation_id, deliveredAt: new Date().toISOString() };
+                // Agent Inbox UI only ever joins the `agency:` room (see utils/socket.js) — the
+                // `conv:` room is for webchat widget sessions. Emit to both so either listener works.
+                emitToAgency(msgRow.agency_id, "message_status_update", payload);
+                emitToConversation(msgRow.conversation_id, "message_status_update", payload);
               } else if (status === "read") {
-                await pool.query("UPDATE messages SET read_at = NOW(), is_read = 1 WHERE external_msg_id = ?", [externalMsgId]);
+                await pool.query("UPDATE messages SET read_at = NOW(), is_read = 1 WHERE id = ?", [msgRow.id]);
+                const payload = { messageId: msgRow.id, conversationId: msgRow.conversation_id, readAt: new Date().toISOString(), isRead: true };
+                emitToAgency(msgRow.agency_id, "message_status_update", payload);
+                emitToConversation(msgRow.conversation_id, "message_status_update", payload);
+              } else if (status === "failed") {
+                // Meta accepted the send request earlier (we got a wamid back) but delivery
+                // ultimately failed — statusObj.errors carries the real reason (bad media
+                // format, size limit, recipient issue, etc). Previously this was silently
+                // dropped, so failed media sends looked like they vanished with no explanation.
+                const metaError = Array.isArray(statusObj.errors) && statusObj.errors[0]
+                  ? statusObj.errors[0]
+                  : null;
+                const errorMessage = metaError
+                  ? `[Code ${metaError.code || "?"}] ${metaError.title || metaError.message || "Delivery failed"}${metaError.error_data?.details ? ` — ${metaError.error_data.details}` : ""}`
+                  : "WhatsApp reported this message as failed to deliver.";
+
+                console.error(`❌ [WhatsApp Delivery Failed] external_msg_id=${externalMsgId}:`, errorMessage);
+
+                await pool.query(
+                  "UPDATE messages SET status = 'FAILED', failure_stage = 'DELIVERY', failure_reason = ? WHERE id = ?",
+                  [errorMessage, msgRow.id]
+                );
+                {
+                  const payload = {
+                    messageId: msgRow.id, conversationId: msgRow.conversation_id,
+                    status: "FAILED", failureStage: "DELIVERY", failureReason: errorMessage,
+                  };
+                  emitToAgency(msgRow.agency_id, "message_status_update", payload);
+                  emitToConversation(msgRow.conversation_id, "message_status_update", payload);
+                }
+
+                await logBotError({
+                  agencyId: msgRow.agency_id,
+                  integrationId: msgRow.integration_id,
+                  platform: "WHATSAPP",
+                  contactId: msgRow.contact_id,
+                  contactIdentifier: msgRow.contact_identifier,
+                  customMessage: errorMessage,
+                  error: metaError,
+                });
               }
+            } catch (statusErr) {
+              console.error("Failed to process WhatsApp status update:", statusErr.message);
             }
           }
         }
@@ -303,9 +361,9 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
           } else if (msg.type === "interactive") {
             const type = msg.interactive?.type;
             if (type === "button_reply") {
-              msgBody = msg.interactive?.button_reply?.title || "";
+              msgBody = msg.interactive?.button_reply?.title || msg.interactive?.button_reply?.id || "";
             } else if (type === "list_reply") {
-              msgBody = msg.interactive?.list_reply?.title || "";
+              msgBody = msg.interactive?.list_reply?.title || msg.interactive?.list_reply?.id || "";
             }
           } else if (msg.type === "image") {
             msgBody = msg.image?.caption || "";

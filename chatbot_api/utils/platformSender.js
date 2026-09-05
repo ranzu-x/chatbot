@@ -162,7 +162,21 @@ async function uploadFacebookAttachment(accessToken, localPath, fullMediaUrl, de
  * Send message to external platform APIs (WhatsApp, Facebook Messenger, Instagram, Telegram)
  */
 export async function sendPlatformMessage(platform, integration, contactExternalId, messageData) {
-  const { type = "TEXT", body = "", mediaUrl, caption, buttons, quickReplies, listMenu, card, carousel } = messageData;
+  const {
+    type = "TEXT",
+    body = "",
+    mediaUrl,
+    caption,
+    buttons,
+    quickReplies,
+    listMenu,
+    card,
+    carousel,
+    headerType,
+    headerText,
+    headerMediaUrl,
+    footerText,
+  } = messageData;
   const accessToken = integration.access_token;
   const backendUrl = process.env.BACKEND_URL || "http://localhost:5000";
   const fullMediaUrl = mediaUrl && !mediaUrl.startsWith("http") ? `${backendUrl}${mediaUrl}` : mediaUrl;
@@ -180,17 +194,20 @@ export async function sendPlatformMessage(platform, integration, contactExternal
         to: contactExternalId,
       };
 
-      if (buttons && buttons.length > 0) {
+      const hasButtons = Array.isArray(buttons) && buttons.length > 0;
+      const isInteractive = upperType === "INTERACTIVE" || Boolean(headerType || footerText);
+
+      if (hasButtons) {
         // WhatsApp interactive buttons (Max 3)
-        const interactiveBodyText = (caption && caption.trim()) || (body && body.trim()) || (upperType === "IMAGE" ? "\u200B" : "Please select an option:");
+        const interactiveBodyText = (body && body.trim()) || (caption && caption.trim()) || (upperType === "IMAGE" ? "\u200B" : "Please select an option:");
         payload.type = "interactive";
         payload.interactive = {
           type: "button",
           body: { text: interactiveBodyText.slice(0, 1024) },
           action: {
             buttons: buttons.slice(0, 3).map((btn, index) => {
-              const btnTitle = typeof btn === "string" ? btn : (btn.title || btn.label || `Option ${index + 1}`);
-              const btnId = typeof btn === "string" ? `btn-${index}` : (btn.id || `btn_${index}`);
+              const btnTitle = typeof btn === "string" ? btn : (btn.title || btn.label || btn.reply_text || `Option ${index + 1}`);
+              const btnId = typeof btn === "string" ? `btn-${index}` : (btn.id || btn.payload || `btn_${index}`);
               return {
                 type: "reply",
                 reply: {
@@ -202,12 +219,65 @@ export async function sendPlatformMessage(platform, integration, contactExternal
           },
         };
 
-        if (upperType === "IMAGE" && fullMediaUrl) {
+        // Handle Header for interactive message
+        const effectiveHeaderType = (headerType || (upperType === "IMAGE" ? "image" : "")).toLowerCase();
+        const headerMedia = headerMediaUrl || (upperType === "IMAGE" ? (mediaUrl || fullMediaUrl) : "");
+
+        if (effectiveHeaderType === "text" && headerText && headerText.trim()) {
           payload.interactive.header = {
-            type: "image",
-            image: { link: fullMediaUrl },
+            type: "text",
+            text: headerText.trim().slice(0, 60),
+          };
+        } else if (["image", "video", "document"].includes(effectiveHeaderType) && headerMedia) {
+          const localHeaderPath = resolveLocalMediaPath(headerMedia);
+          let headerMediaId = null;
+          if (localHeaderPath && fs.existsSync(localHeaderPath)) {
+            try {
+              const mime = getMimeType(localHeaderPath, effectiveHeaderType.toUpperCase());
+              headerMediaId = await uploadLocalWhatsAppMedia(phoneNumberId, accessToken, localHeaderPath, mime);
+            } catch (upErr) {
+              console.warn(`[WhatsApp Header Upload Warning]`, upErr.response?.data || upErr.message);
+            }
+          }
+          const fullHeaderMediaUrl = headerMedia && !headerMedia.startsWith("http") ? `${backendUrl}${headerMedia}` : headerMedia;
+
+          if (effectiveHeaderType === "image") {
+            payload.interactive.header = {
+              type: "image",
+              image: headerMediaId ? { id: headerMediaId } : { link: fullHeaderMediaUrl },
+            };
+          } else if (effectiveHeaderType === "video") {
+            payload.interactive.header = {
+              type: "video",
+              video: headerMediaId ? { id: headerMediaId } : { link: fullHeaderMediaUrl },
+            };
+          } else if (effectiveHeaderType === "document") {
+            payload.interactive.header = {
+              type: "document",
+              document: headerMediaId ? { id: headerMediaId } : { link: fullHeaderMediaUrl },
+            };
+          }
+        }
+
+        // Handle Footer for interactive message
+        if (footerText && footerText.trim()) {
+          payload.interactive.footer = {
+            text: footerText.trim().slice(0, 60),
           };
         }
+      } else if (isInteractive && !hasButtons) {
+        // Interactive node without buttons: Meta WhatsApp doesn't accept interactive button with 0 buttons,
+        // so send formatted text message with bold header and italic footer.
+        let fullText = "";
+        if (headerType === "text" && headerText && headerText.trim()) {
+          fullText += `*${headerText.trim()}*\n\n`;
+        }
+        fullText += (body && body.trim()) || "";
+        if (footerText && footerText.trim()) {
+          fullText += `\n\n_${footerText.trim()}_`;
+        }
+        payload.type = "text";
+        payload.text = { body: fullText.trim() || "..." };
       } else if (isMedia && (mediaUrl || fullMediaUrl)) {
         // Resolve media file stored locally on server
         let localPath = resolveLocalMediaPath(mediaUrl);
@@ -243,16 +313,18 @@ export async function sendPlatformMessage(platform, integration, contactExternal
           throw new Error(`Cannot send media to WhatsApp: Local media file not found on disk, and Meta cannot fetch localhost URLs (${mediaUrl})`);
         }
 
+        const mediaCaption = (caption && caption.trim()) || (body && body.trim()) || undefined;
+
         if (upperType === "IMAGE") {
           payload.type = "image";
           payload.image = mediaId
-            ? { id: mediaId, caption: body || undefined }
-            : { link: fullMediaUrl, caption: body || undefined };
+            ? { id: mediaId, caption: mediaCaption }
+            : { link: fullMediaUrl, caption: mediaCaption };
         } else if (upperType === "VIDEO") {
           payload.type = "video";
           payload.video = mediaId
-            ? { id: mediaId, caption: body || undefined }
-            : { link: fullMediaUrl, caption: body || undefined };
+            ? { id: mediaId, caption: mediaCaption }
+            : { link: fullMediaUrl, caption: mediaCaption };
         } else if (upperType === "AUDIO" || upperType === "VOICE") {
           payload.type = "audio";
           payload.audio = mediaId
@@ -262,8 +334,8 @@ export async function sendPlatformMessage(platform, integration, contactExternal
           payload.type = "document";
           const filename = messageData.filename || (localPath ? path.basename(localPath) : "Document.pdf");
           payload.document = mediaId
-            ? { id: mediaId, caption: body || undefined, filename }
-            : { link: fullMediaUrl, caption: body || undefined, filename };
+            ? { id: mediaId, caption: mediaCaption, filename }
+            : { link: fullMediaUrl, caption: mediaCaption, filename };
         }
       } else if (listMenu) {
         // WhatsApp interactive list
@@ -534,13 +606,14 @@ export async function sendPlatformMessage(platform, integration, contactExternal
           })),
         };
       } else if (buttons && buttons.length > 0) {
+        const formattedBtnText = ((headerText ? `${headerText}\n\n` : '') + (body || "Please select an option:") + (footerText ? `\n\n${footerText}` : '')).trim();
         if (platform === "FACEBOOK") {
           payload.message = {
             attachment: {
               type: "template",
               payload: {
                 template_type: "button",
-                text: (body || "Please select an option:").slice(0, 640),
+                text: formattedBtnText.slice(0, 640),
                 buttons: buttons.slice(0, 3).map((btn) => ({
                   type: btn.type === "URL" ? "web_url" : "postback",
                   title: (btn.title || "Button").slice(0, 20),
@@ -558,7 +631,7 @@ export async function sendPlatformMessage(platform, integration, contactExternal
                 template_type: "generic",
                 elements: [
                   {
-                    title: (body || "Please select an option:").slice(0, 80),
+                    title: formattedBtnText.slice(0, 80),
                     buttons: buttons.slice(0, 3).map((btn) => ({
                       type: btn.type === "URL" ? "web_url" : "postback",
                       title: (btn.title || "Button").slice(0, 20),
@@ -571,7 +644,8 @@ export async function sendPlatformMessage(platform, integration, contactExternal
           };
         }
       } else {
-        payload.message = { text: body || "" };
+        const fullBody = ((headerText ? `${headerText}\n\n` : '') + (body || "") + (footerText ? `\n\n${footerText}` : '')).trim();
+        payload.message = { text: fullBody };
       }
 
       try {
@@ -587,17 +661,18 @@ export async function sendPlatformMessage(platform, integration, contactExternal
     if (platform === "TELEGRAM") {
       let endpoint = "sendMessage";
       let payload = { chat_id: contactExternalId };
+      const formattedTgText = ((headerText ? `*${headerText}*\n\n` : '') + (body || "") + (footerText ? `\n\n_${footerText}_` : '')).trim();
 
       if (type === "IMAGE" && fullMediaUrl) {
         endpoint = "sendPhoto";
         payload.photo = fullMediaUrl;
-        payload.caption = body || "";
+        payload.caption = formattedTgText || "";
       } else if (type === "DOCUMENT" && fullMediaUrl) {
         endpoint = "sendDocument";
         payload.document = fullMediaUrl;
-        payload.caption = body || "";
+        payload.caption = formattedTgText || "";
       } else {
-        payload.text = body || "";
+        payload.text = formattedTgText || body || "";
       }
 
       if (buttons && buttons.length > 0) {

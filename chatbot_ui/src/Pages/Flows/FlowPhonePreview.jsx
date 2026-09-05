@@ -97,6 +97,23 @@ export default function FlowPhonePreview({
       });
     }
 
+    // 2b. WhatsApp Interactive Message
+    else if (node.type === 'interactive') {
+      const btns = Array.isArray(data.buttons) ? data.buttons : [];
+      newItems.push({
+        id: `msg-${Date.now()}-interactive`,
+        sender: 'bot',
+        type: 'interactive',
+        headerType: data.headerType || 'none',
+        headerText: data.headerText || '',
+        headerMediaUrl: data.headerMediaUrl || '',
+        text: data.message || '',
+        footerText: data.footerText || '',
+        buttons: btns,
+        nodeId: node.id,
+      });
+    }
+
     // 3. Image (with optional Facebook interactive buttons)
     else if (node.type === 'image') {
       const btns = Array.isArray(data.buttons) ? data.buttons : [];
@@ -168,7 +185,7 @@ export default function FlowPhonePreview({
     scrollToBottom();
 
     // If this node has a direct single outgoing edge and is not waiting for input/button click:
-    const hasButtons = (node.type === 'buttons' || (node.type === 'image' && (node.data?.buttons || []).length > 0));
+    const hasButtons = (node.type === 'buttons' || node.type === 'interactive' || (node.type === 'image' && (node.data?.buttons || []).length > 0));
     if (node.type !== 'collectInput' && !hasButtons && node.type !== 'quickReplies') {
       const nextEdge = edges.find((e) => e.source === node.id && !e.sourceHandle);
       if (nextEdge) {
@@ -435,6 +452,53 @@ export default function FlowPhonePreview({
                             </button>
                           );
                         })}
+                      </div>
+                    )}
+
+                    {/* WhatsApp Interactive Message (Header + Body + Footer + Buttons) */}
+                    {m.type === 'interactive' && (
+                      <div className="flex flex-col gap-2">
+                        {/* Header preview */}
+                        {m.headerType && m.headerType !== 'none' && (
+                          <div className="pb-1.5 border-b border-slate-700/50">
+                            {m.headerType === 'text' ? (
+                              <div className="text-xs font-bold text-slate-100">{m.headerText}</div>
+                            ) : (
+                              <div className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1">
+                                <span>[{m.headerType.toUpperCase()} HEADER]</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Body Text */}
+                        <div className="flow-phone-text font-normal">{m.text}</div>
+
+                        {/* Footer Text */}
+                        {m.footerText && (
+                          <div className="text-[10px] text-slate-400 italic pt-1 border-t border-slate-700/30">
+                            {m.footerText}
+                          </div>
+                        )}
+
+                        {/* Reply Buttons */}
+                        {m.buttons && m.buttons.length > 0 && (
+                          <div className="flow-phone-btn-list mt-1">
+                            {m.buttons.map((b, bIdx) => {
+                              const title = typeof b === 'string' ? b : b.title || `Reply ${bIdx + 1}`;
+                              return (
+                                <button
+                                  key={bIdx}
+                                  type="button"
+                                  className="flow-phone-choice-btn text-emerald-400 font-semibold"
+                                  onClick={() => handleButtonClick(title, bIdx, m.nodeId)}
+                                >
+                                  {title}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     )}
 

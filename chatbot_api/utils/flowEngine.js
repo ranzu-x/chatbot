@@ -231,9 +231,9 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
       let matchedEdge = null;
       if (sourceHandle) {
         matchedEdge = edges.find(e => e.source === sourceId && e.sourceHandle === sourceHandle);
-        return matchedEdge ? matchedEdge.target : null;
+        if (matchedEdge) return matchedEdge.target;
       }
-      matchedEdge = edges.find(e => e.source === sourceId && !e.sourceHandle);
+      matchedEdge = edges.find(e => e.source === sourceId && (!e.sourceHandle || e.sourceHandle === "next-step" || e.sourceHandle === "default"));
       if (!matchedEdge) {
         matchedEdge = edges.find(e => e.source === sourceId);
       }
@@ -242,7 +242,39 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
 
     // If resuming from a node that was waiting for input
     const currentNode = nodes.find(n => n.id === currentNodeId);
-    if (currentNode && session.created_at !== session.updated_at) {
+
+    // If the node no longer exists in flow (e.g. user deleted it while session was active)
+    if (!currentNode) {
+      console.log(`🤖 [Flow Engine] Node "${currentNodeId}" not found in flow ${flow?.id}. Stale session ${session.id} will be completed.`);
+      await pool.query("UPDATE flow_sessions SET status = 'COMPLETED' WHERE id = ?", [session.id]);
+      session = null;
+      // Check if incoming message starts a new flow
+      const newMatch = await findMatchingFlow(agencyId, platform, conversationId, integration, incomingMsgBody, msgType);
+      if (newMatch) {
+        console.log(`🤖 [Flow Engine] User input "${incomingMsgBody}" triggered new flow "${newMatch.flow.name}".`);
+        flow = newMatch.flow;
+        nodes = newMatch.nodes;
+        edges = newMatch.edges;
+        const [newSess] = await pool.query(
+          "INSERT INTO flow_sessions (agency_id, conversation_id, flow_id, current_node_id, variables, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')",
+          [agencyId, conversationId, flow.id, newMatch.startNode.id, JSON.stringify({})]
+        );
+        session = {
+          id: newSess.insertId,
+          agency_id: agencyId,
+          conversation_id: conversationId,
+          flow_id: flow.id,
+          current_node_id: newMatch.startNode.id,
+          variables: {},
+          status: "ACTIVE"
+        };
+        variables = {};
+        currentNodeId = newMatch.startNode.id;
+        nextNodeId = newMatch.startNode.id;
+      } else {
+        return false;
+      }
+    } else if (session.created_at !== session.updated_at) {
       // We had already executed this node in a previous step and were waiting for input.
       // Now process the user's input.
       if (currentNode.type === "collectInput") {
@@ -255,7 +287,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         // Follow default outgoing handle
         nextNodeId = getNextNodeId(currentNodeId);
       } 
-      else if (currentNode.type === "buttons" || (currentNode.type === "image" && (currentNode.data?.buttons || []).length > 0)) {
+      else if (currentNode.type === "buttons" || currentNode.type === "interactive" || (currentNode.type === "image" && (currentNode.data?.buttons || []).length > 0)) {
         const choice = (incomingMsgBody || "").trim().toLowerCase();
         const btns = currentNode.data?.buttons || [];
         let matchedIdx = -1;
@@ -264,12 +296,14 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         for (let i = 0; i < btns.length; i++) {
           const btn = btns[i];
           const title = typeof btn === "string" ? btn : (btn.title || btn.label || "");
+          const replyText = typeof btn === "object" ? (btn.reply_text || "") : "";
           const payload = typeof btn === "string" ? btn : (btn.payload || "");
           const id = typeof btn === "string" ? `btn-${i}` : (btn.id || `btn-${i}`);
           const altId = `btn_${i}`;
 
           if (
             (title && title.toLowerCase() === choice) ||
+            (replyText && replyText.toLowerCase() === choice) ||
             (payload && payload.toLowerCase() === choice) ||
             (id && id.toLowerCase() === choice) ||
             (altId && altId.toLowerCase() === choice)
@@ -283,7 +317,9 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         if (matchedIdx !== -1) {
           nextNodeId = getNextNodeId(currentNodeId, matchedHandleId) ||
                        getNextNodeId(currentNodeId, `btn-${matchedIdx}`) ||
-                       getNextNodeId(currentNodeId, `btn_${matchedIdx}`);
+                       getNextNodeId(currentNodeId, `btn_${matchedIdx}`) ||
+                       getNextNodeId(currentNodeId, "next-step") ||
+                       getNextNodeId(currentNodeId);
           
           if (!nextNodeId) {
             // Button reached a leaf, mark session completed
@@ -591,6 +627,41 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           break;
         }
 
+        case "interactive": {
+          const textBody = replaceVariables(node.data?.message || node.data?.text || node.data?.body || "Please select an option:", variables, contact);
+          const headerType = (node.data?.headerType || "text").toLowerCase();
+          const headerText = replaceVariables(node.data?.headerText || "", variables, contact);
+          const headerMediaUrl = (node.data?.headerMediaUrl || node.data?.imageUrl || node.data?.mediaUrl || "").trim();
+          const footerText = replaceVariables(node.data?.footerText || "", variables, contact);
+          const rawButtons = node.data?.buttons || [];
+
+          const formattedButtons = rawButtons.map((btn, idx) => ({
+            id: typeof btn === "string" ? `btn-${idx}` : (btn.id || `btn-${idx}`),
+            title: typeof btn === "string" ? btn : (btn.title || btn.label || btn.reply_text || `Button ${idx + 1}`),
+            payload: typeof btn === "string" ? btn : (btn.payload || btn.reply_text || btn.title || `btn_${idx}`),
+            type: typeof btn === "object" && btn.type === "URL" ? "URL" : "POSTBACK",
+            url: typeof btn === "object" ? btn.url : null,
+          }));
+
+          await sendMsg(agencyId, conversation, textBody, "TEXT", integration, {
+            flowId: flow?.id || session?.flow_id || null,
+            nodeId: node.id,
+            contactIdentifier: contact?.external_id || contact?.phone || null,
+            headerType,
+            headerText,
+            headerMediaUrl,
+            footerText,
+            buttons: formattedButtons,
+          });
+
+          if (formattedButtons.length > 0) {
+            stopFlow = true;
+          } else {
+            currentNodeId = getNextNodeId(node.id);
+          }
+          break;
+        }
+
         case "quickReplies": {
           const textBody = replaceVariables(node.data?.message || node.data?.text || "Choose options:", variables, contact);
           const rawQr = node.data?.quickReplies || node.data?.replies || [];
@@ -895,6 +966,10 @@ async function sendMsg(agencyId, conversation, bodyText, type, integration, extr
   if (extraFields?.listMenu) metadataObj.listMenu = extraFields.listMenu;
   if (extraFields?.card) metadataObj.card = extraFields.card;
   if (extraFields?.carousel) metadataObj.carousel = extraFields.carousel;
+  if (extraFields?.headerType) metadataObj.headerType = extraFields.headerType;
+  if (extraFields?.headerText) metadataObj.headerText = extraFields.headerText;
+  if (extraFields?.headerMediaUrl) metadataObj.headerMediaUrl = extraFields.headerMediaUrl;
+  if (extraFields?.footerText) metadataObj.footerText = extraFields.footerText;
   const metadataJson = JSON.stringify(metadataObj);
 
   // Insert message in DB

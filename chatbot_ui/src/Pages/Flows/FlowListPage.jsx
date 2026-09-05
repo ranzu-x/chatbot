@@ -582,15 +582,19 @@ export default function FlowListPage() {
       if (res.data?.success) {
         toast(`Flow "${data.name}" created!`);
         setShowCreate(false);
-        const flowId = res.data.flow?.id || res.data.id;
-        navigate(`/flows/${flowId}/edit`, {
-          state: {
-            from: location.pathname + location.search,
-            label: 'Flows',
-            searchTerm,
-            filterPlatform,
-          },
-        });
+        const flowId = res.data?.flowId || res.data?.flow?.id || res.data?.id;
+        if (flowId) {
+          navigate(`/flows/${flowId}/edit`, {
+            state: {
+              from: location.pathname + location.search,
+              label: 'Flows',
+              searchTerm,
+              filterPlatform,
+            },
+          });
+        } else {
+          fetchFlows();
+        }
       } else {
         toast(res.data?.message || 'Failed to create flow', 'error');
       }

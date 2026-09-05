@@ -7,6 +7,8 @@ import {
   contactAPI,
   flowAPI,
   agencyAPI,
+  labelAPI,
+  customFieldAPI,
 } from '../../services/api';
 import { useAuth } from '../../Provider/AuthContext';
 import { useLayout } from '../../Provider/LayoutContext';
@@ -55,6 +57,8 @@ import {
   Phone,
   Mail,
   Sliders,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
 
 /* ─── Platform Map ─── */
@@ -118,6 +122,9 @@ function getInitials(name = '') {
 const STATUS_CHIPS = ['All', 'OPEN', 'PENDING', 'RESOLVED'];
 const DRAWER_TABS = ['Overview', 'Labels', 'Flows & Agent', 'Custom Fields', 'Notes'];
 
+// Remembers the selected subscriber across a page refresh (per browser tab).
+const SELECTED_CONVERSATION_KEY = 'inbox_selected_conversation_id';
+
 export default function InboxPage() {
   const { user } = useAuth();
   const { openPopupNav } = useLayout();
@@ -143,9 +150,28 @@ export default function InboxPage() {
   const [activeDrawerTab, setActiveDrawerTab] = useState('Overview');
   const [botPaused, setBotPaused] = useState(false);
   const [togglingBot, setTogglingBot] = useState(false);
-  const [contactTags, setContactTags] = useState([]);
-  const [newTagInput, setNewTagInput] = useState('');
-  const [addingTag, setAddingTag] = useState(false);
+
+  // Structured Labels (agency-wide catalog + per-subscriber attachment)
+  const [agencyLabels, setAgencyLabels] = useState([]);
+  const [contactLabels, setContactLabels] = useState([]);
+  const [labelPickerOpen, setLabelPickerOpen] = useState(false);
+  const [newLabelName, setNewLabelName] = useState('');
+  const [newLabelColor, setNewLabelColor] = useState('#2563eb');
+  const [savingLabel, setSavingLabel] = useState(false);
+  const [labelFilterId, setLabelFilterId] = useState('');
+
+  // Custom Fields (agency-defined field types + per-subscriber values)
+  const [customFieldDefs, setCustomFieldDefs] = useState([]);
+  const [customFieldValues, setCustomFieldValues] = useState({}); // { [fieldId]: value }
+  const [savingFieldId, setSavingFieldId] = useState(null);
+  const [showNewFieldForm, setShowNewFieldForm] = useState(false);
+  const [newFieldDraft, setNewFieldDraft] = useState({ name: '', fieldType: 'TEXT', options: '' });
+  const [savingNewField, setSavingNewField] = useState(false);
+
+  // Bulk selection in the subscriber list
+  const [selectedConvIds, setSelectedConvIds] = useState(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+
   const [contactNotes, setContactNotes] = useState([]);
   const [newNoteText, setNewNoteText] = useState('');
   const [savingNote, setSavingNote] = useState(false);
@@ -163,21 +189,28 @@ export default function InboxPage() {
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const fileInputRef = useRef(null);
+  const searchInputRef = useRef(null);
+  const messageInputRef = useRef(null);
 
   const selectedId = selectedConv?._id || selectedConv?.id;
   const selectedIdRef = useRef(selectedId);
+  const selectedContactId = selectedConv?.contact_id || selectedConv?.contactId;
+  const selectedContactIdRef = useRef(selectedContactId);
 
   useEffect(() => {
     selectedIdRef.current = selectedId;
-  }, [selectedId]);
+    selectedContactIdRef.current = selectedContactId;
+  }, [selectedId, selectedContactId]);
 
-  // Load Canned Responses, Flows & Team Agents
+  // Load Canned Responses, Flows, Team Agents, Labels & Custom Field definitions
   useEffect(() => {
     cannedResponseAPI.getAll().then((res) => setCannedResponses(res.data?.cannedResponses || [])).catch(() => {});
     flowAPI.getAll().then((res) => setAvailableFlows(res.data?.flows || [])).catch(() => {});
     if (agencyAPI?.getAgents) {
       agencyAPI.getAgents().then((res) => setAgentsList(res.data?.agents || [])).catch(() => {});
     }
+    labelAPI.getAll().then((res) => setAgencyLabels(res.data?.labels || [])).catch(() => {});
+    customFieldAPI.getAll().then((res) => setCustomFieldDefs(res.data?.fields || [])).catch(() => {});
   }, []);
 
   // Load conversations list
@@ -186,6 +219,7 @@ export default function InboxPage() {
       const params = {};
       if (statusFilter !== 'All') params.status = statusFilter;
       if (platformFilter) params.platform = platformFilter;
+      if (labelFilterId) params.labelId = labelFilterId;
       const res = await conversationAPI.getAll(params);
       setConversations(res.data.conversations || res.data || []);
     } catch (err) {
@@ -193,7 +227,7 @@ export default function InboxPage() {
     } finally {
       setConvLoading(false);
     }
-  }, [statusFilter, platformFilter]);
+  }, [statusFilter, platformFilter, labelFilterId]);
 
   useEffect(() => {
     setConvLoading(true);
@@ -212,8 +246,24 @@ export default function InboxPage() {
       setSelectedConv(conv);
       setConvStatus(conv.status || 'OPEN');
       setBotPaused(Boolean(conv.bot_paused || conv.botPaused || conv.contactBotPaused));
-      setContactTags(conv.contactTags || []);
+      setContactLabels(conv.contactLabels || []);
       setContactNotes(data.notes || []);
+      try {
+        sessionStorage.setItem(SELECTED_CONVERSATION_KEY, String(convId));
+      } catch {
+        // Storage unavailable (private browsing, etc) — selection just won't survive a refresh
+      }
+
+      // Custom field values for this subscriber
+      const contactId = conv.contact_id || conv.contactId;
+      if (contactId) {
+        customFieldAPI.getForContact(contactId).then((cfRes) => {
+          const fields = cfRes.data?.fields || [];
+          const values = {};
+          for (const f of fields) values[f.field_id] = f.value ?? '';
+          setCustomFieldValues(values);
+        }).catch(() => setCustomFieldValues({}));
+      }
     } catch (err) {
       console.error('Failed to load conversation details', err);
     } finally {
@@ -221,11 +271,29 @@ export default function InboxPage() {
     }
   }, []);
 
+  // Restore the previously selected subscriber after a page refresh (once, on mount).
+  useEffect(() => {
+    let savedId = null;
+    try {
+      savedId = sessionStorage.getItem(SELECTED_CONVERSATION_KEY);
+    } catch {
+      // ignore
+    }
+    if (savedId) loadMessages(savedId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const selectConversation = (conv) => {
     setSelectedConv(conv);
     setConvStatus(conv.status || 'OPEN');
     setMessages([]);
     loadMessages(conv._id || conv.id);
+    // Opening a conversation resets unread_count server-side (GET /conversations/:id) —
+    // reflect that immediately in the list instead of waiting for the next full reload.
+    const openedId = conv._id || conv.id;
+    setConversations((prev) => prev.map((c) => (
+      String(c._id || c.id) === String(openedId) ? { ...c, unread_count: 0 } : c
+    )));
   };
 
   // Socket.io Real-time connection with strict deduplication
@@ -270,12 +338,100 @@ export default function InboxPage() {
       loadConversations();
     });
 
-    socket.on('conversation_updated', () => {
+    // Live tick updates: delivered / read / failed status arriving asynchronously
+    // (e.g. WhatsApp status webhooks) get patched onto the already-rendered message.
+    socket.on('message_status_update', (data) => {
+      if (String(data.conversationId) !== String(selectedIdRef.current)) return;
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (String(m.id) !== String(data.messageId)) return m;
+          return {
+            ...m,
+            ...(data.deliveredAt ? { delivered_at: data.deliveredAt } : {}),
+            ...(data.readAt ? { read_at: data.readAt, is_read: true } : {}),
+            ...(data.status ? { status: data.status, failure_stage: data.failureStage, failure_reason: data.failureReason } : {}),
+          };
+        })
+      );
+    });
+
+    socket.on('conversation_updated', (data) => {
+      // Patch the currently-open conversation in place (assign/status/bot-pause changed by
+      // another team member) instead of only refreshing the list — previously this required
+      // a refresh to see reflected in the open detail pane.
+      if (data && String(data.conversationId) === String(selectedIdRef.current)) {
+        setSelectedConv((prev) => (prev ? {
+          ...prev,
+          ...(data.assignedToId !== undefined ? { assigned_to_id: data.assignedToId } : {}),
+          ...(data.status !== undefined ? { status: data.status } : {}),
+          ...(data.botPaused !== undefined ? { bot_paused: data.botPaused, botPaused: data.botPaused } : {}),
+        } : prev));
+        if (data.status !== undefined) setConvStatus(data.status);
+        if (data.botPaused !== undefined) setBotPaused(Boolean(data.botPaused));
+      }
       loadConversations();
     });
 
+    // Structured label attached/detached for a single subscriber
+    socket.on('contact_labels_updated', (data) => {
+      if (String(data.contactId) === String(selectedContactIdRef.current)) {
+        setContactLabels(data.labels || []);
+      }
+      loadConversations();
+    });
+
+    // Bulk label attach/detach or a label being deleted entirely
+    socket.on('contacts_bulk_labeled', (data) => {
+      const affectsOpenConv = Array.isArray(data.contactIds) &&
+        data.contactIds.map(String).includes(String(selectedContactIdRef.current));
+      if (affectsOpenConv && selectedIdRef.current) {
+        // Re-fetch this subscriber's full detail rather than guessing the new label set client-side
+        loadMessages(selectedIdRef.current);
+      }
+      loadConversations();
+    });
+
+    // Custom field catalog changed (field added/renamed/removed) — refresh definitions
+    socket.on('custom_fields_updated', () => {
+      customFieldAPI.getAll().then((res) => setCustomFieldDefs(res.data?.fields || [])).catch(() => {});
+    });
+
+    // A specific subscriber's custom field value changed (by anyone, any tab)
+    socket.on('contact_custom_field_updated', (data) => {
+      if (String(data.contactId) === String(selectedContactIdRef.current)) {
+        setCustomFieldValues((prev) => ({ ...prev, [data.fieldId]: data.value ?? '' }));
+      }
+    });
+
     return () => socket.disconnect();
+    // loadMessages is a stable useCallback([]) reference — safe to omit here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, loadConversations]);
+
+  // Keyboard shortcuts: Ctrl/Cmd+K focuses search, "/" focuses the reply box
+  // (only when not already typing somewhere), Escape closes the subscriber drawer.
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const tag = document.activeElement?.tagName;
+      const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable;
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      } else if (e.key === '/' && !isTyping && selectedIdRef.current) {
+        e.preventDefault();
+        messageInputRef.current?.focus();
+      } else if (e.key === 'Escape') {
+        if (document.activeElement === searchInputRef.current) {
+          searchInputRef.current.blur();
+        } else {
+          setShowSubscriberPanel(false);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Auto-scroll messages to bottom reliably
   const scrollToBottom = useCallback((instant = false) => {
@@ -318,6 +474,9 @@ export default function InboxPage() {
         body: text,
         type: 'text',
         direction: 'OUTBOUND',
+        senderType: 'AGENT',
+        senderName: user?.name || user?.email?.split('@')[0] || 'Admin',
+        agentName: user?.name || user?.email?.split('@')[0] || 'Admin',
       });
       const newMsg = res.data.message || res.data;
 
@@ -337,8 +496,15 @@ export default function InboxPage() {
       console.error('Failed to send message', err);
       const errMsg = err?.response?.data?.message || 'Failed to send message. Check your WhatsApp connection settings.';
       setSendError(errMsg);
-      // Restore the typed message so user doesn't lose it
-      setMessageText(text);
+      // The server still records failed sends as a message (red tick) so the conversation
+      // shows what was attempted instead of it just vanishing — add it if present.
+      const failedMsg = err?.response?.data?.chatMessage;
+      if (failedMsg) {
+        setMessages((prev) => (prev.some((m) => String(m.id) === String(failedMsg.id)) ? prev : [...prev, failedMsg]));
+      } else {
+        // No persisted record came back — restore the typed text so nothing is lost
+        setMessageText(text);
+      }
       // Auto-clear error after 8 seconds
       setTimeout(() => setSendError(''), 8000);
     } finally {
@@ -364,6 +530,9 @@ export default function InboxPage() {
         body: filename || file.name,
         mediaUrl: url,
         direction: 'OUTBOUND',
+        senderType: 'AGENT',
+        senderName: user?.name || user?.email?.split('@')[0] || 'Admin',
+        agentName: user?.name || user?.email?.split('@')[0] || 'Admin',
       });
 
       const newMsg = res.data.message || res.data;
@@ -380,7 +549,16 @@ export default function InboxPage() {
       loadConversations();
     } catch (err) {
       console.error('Failed to upload file', err);
-      alert('Failed to upload attachment.');
+      // If the file reached our server and the platform send failed afterwards, the server
+      // still records it as a red-tick message so it's visible in the conversation.
+      const failedMsg = err?.response?.data?.chatMessage;
+      if (failedMsg) {
+        setMessages((prev) => (prev.some((m) => String(m.id) === String(failedMsg.id)) ? prev : [...prev, failedMsg]));
+        setSendError(err?.response?.data?.message || 'Failed to deliver attachment.');
+        setTimeout(() => setSendError(''), 8000);
+      } else {
+        alert('Failed to upload attachment.');
+      }
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -435,6 +613,58 @@ export default function InboxPage() {
     }
   };
 
+  // ─── Bulk Actions on selected subscribers in the list ────────────────────────
+  const handleBulkAssign = async (agentProfileId) => {
+    const ids = Array.from(selectedConvIds);
+    if (!ids.length || bulkBusy) return;
+    setBulkBusy(true);
+    try {
+      await conversationAPI.bulkAssign(ids, agentProfileId);
+      setSelectedConvIds(new Set());
+      loadConversations();
+    } catch (err) {
+      console.error('Bulk assign failed', err);
+      alert(err?.response?.data?.message || 'Bulk assign failed');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const handleBulkStatus = async (status) => {
+    const ids = Array.from(selectedConvIds);
+    if (!ids.length || bulkBusy) return;
+    setBulkBusy(true);
+    try {
+      await conversationAPI.bulkUpdateStatus(ids, status);
+      setSelectedConvIds(new Set());
+      loadConversations();
+    } catch (err) {
+      console.error('Bulk status update failed', err);
+      alert(err?.response?.data?.message || 'Bulk status update failed');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const handleBulkLabel = async (labelId) => {
+    const ids = Array.from(selectedConvIds);
+    if (!ids.length || bulkBusy) return;
+    setBulkBusy(true);
+    try {
+      const contactIds = [...new Set(
+        ids.map((cid) => conversations.find((c) => String(c._id || c.id) === String(cid))?.contact_id).filter(Boolean)
+      )];
+      await labelAPI.bulkAttach({ contactIds, labelId });
+      setSelectedConvIds(new Set());
+      loadConversations();
+    } catch (err) {
+      console.error('Bulk label failed', err);
+      alert(err?.response?.data?.message || 'Bulk label failed');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
   // Trigger Visual Bot Flow
   const handleTriggerFlow = async () => {
     if (!selectedId || !selectedFlowId) return;
@@ -450,34 +680,89 @@ export default function InboxPage() {
     }
   };
 
-  // Add Contact Tag / Label
-  const handleAddTag = async (e) => {
-    e?.preventDefault();
-    const tag = newTagInput.trim();
+  // ─── Structured Labels (unified with the Contacts/Subscriber Manager) ────────
+  // Attach an existing agency label to the open subscriber
+  const handleAttachLabel = async (labelId) => {
     const contactId = selectedConv?.contact_id || selectedConv?.contactId;
-    if (!tag || !contactId || addingTag) return;
-
-    setAddingTag(true);
+    if (!contactId || savingLabel) return;
+    setSavingLabel(true);
     try {
-      await contactAPI.addTag(contactId, tag);
-      setContactTags((prev) => [...new Set([...prev, tag])]);
-      setNewTagInput('');
+      const res = await labelAPI.attachToContact(contactId, { labelId });
+      setContactLabels(res.data?.labels || []);
+      setLabelPickerOpen(false);
     } catch (err) {
-      console.error('Failed to add tag', err);
+      console.error('Failed to attach label', err);
     } finally {
-      setAddingTag(false);
+      setSavingLabel(false);
     }
   };
 
-  // Remove Contact Tag / Label
-  const handleRemoveTag = async (tag) => {
+  // Create a brand-new agency label and attach it in one step
+  const handleCreateAndAttachLabel = async (e) => {
+    e?.preventDefault();
+    const contactId = selectedConv?.contact_id || selectedConv?.contactId;
+    const name = newLabelName.trim();
+    if (!name || !contactId || savingLabel) return;
+    setSavingLabel(true);
+    try {
+      const res = await labelAPI.attachToContact(contactId, { name, color: newLabelColor });
+      setContactLabels(res.data?.labels || []);
+      setNewLabelName('');
+      setLabelPickerOpen(false);
+      // Refresh the agency-wide label catalog so the new label shows up in the picker/filter
+      labelAPI.getAll().then((r) => setAgencyLabels(r.data?.labels || [])).catch(() => {});
+    } catch (err) {
+      console.error('Failed to create label', err);
+    } finally {
+      setSavingLabel(false);
+    }
+  };
+
+  // Detach a label from the open subscriber
+  const handleDetachLabel = async (labelId) => {
     const contactId = selectedConv?.contact_id || selectedConv?.contactId;
     if (!contactId) return;
     try {
-      await contactAPI.removeTag(contactId, tag);
-      setContactTags((prev) => prev.filter((t) => t !== tag));
+      const res = await labelAPI.detachFromContact(contactId, labelId);
+      setContactLabels(res.data?.labels || []);
     } catch (err) {
-      console.error('Failed to remove tag', err);
+      console.error('Failed to remove label', err);
+    }
+  };
+
+  // ─── Custom Fields ────────────────────────────────────────────────────────
+  const handleSaveCustomField = async (fieldId, value) => {
+    const contactId = selectedConv?.contact_id || selectedConv?.contactId;
+    if (!contactId) return;
+    setSavingFieldId(fieldId);
+    try {
+      await customFieldAPI.setValue(contactId, fieldId, value);
+      setCustomFieldValues((prev) => ({ ...prev, [fieldId]: value }));
+    } catch (err) {
+      console.error('Failed to save custom field', err);
+    } finally {
+      setSavingFieldId(null);
+    }
+  };
+
+  const handleCreateCustomField = async (e) => {
+    e?.preventDefault();
+    const name = newFieldDraft.name.trim();
+    if (!name || savingNewField) return;
+    setSavingNewField(true);
+    try {
+      const options = newFieldDraft.fieldType === 'SELECT'
+        ? newFieldDraft.options.split(',').map((o) => o.trim()).filter(Boolean)
+        : [];
+      const res = await customFieldAPI.create({ name, fieldType: newFieldDraft.fieldType, options });
+      setCustomFieldDefs((prev) => [...prev, res.data.field]);
+      setNewFieldDraft({ name: '', fieldType: 'TEXT', options: '' });
+      setShowNewFieldForm(false);
+    } catch (err) {
+      console.error('Failed to create custom field', err);
+      alert(err?.response?.data?.message || 'Failed to create custom field');
+    } finally {
+      setSavingNewField(false);
     }
   };
 
@@ -626,19 +911,109 @@ export default function InboxPage() {
               ))}
             </div>
 
+            {/* Label Filter */}
+            {agencyLabels.length > 0 && (
+              <div style={{ display: 'flex', gap: 4, marginBottom: 8, overflowX: 'auto', paddingBottom: 2 }}>
+                <button
+                  onClick={() => setLabelFilterId('')}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 12, fontSize: '0.7rem', fontWeight: 700,
+                    border: '1px solid', borderColor: !labelFilterId ? '#0f172a' : '#e2e8f0',
+                    background: !labelFilterId ? '#0f172a' : '#f8fafc', color: !labelFilterId ? '#fff' : '#64748b',
+                    cursor: 'pointer', whiteSpace: 'nowrap',
+                  }}
+                >
+                  All Labels
+                </button>
+                {agencyLabels.map((lb) => {
+                  const isSel = String(labelFilterId) === String(lb.id);
+                  return (
+                    <button
+                      key={lb.id}
+                      onClick={() => setLabelFilterId(isSel ? '' : lb.id)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 12, fontSize: '0.7rem', fontWeight: 700,
+                        border: `1px solid ${isSel ? lb.color : '#e2e8f0'}`,
+                        background: isSel ? lb.color : '#f8fafc', color: isSel ? '#fff' : lb.color,
+                        cursor: 'pointer', whiteSpace: 'nowrap',
+                      }}
+                    >
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: isSel ? '#fff' : lb.color }} />
+                      {lb.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
             {/* Search Box */}
             <div style={{ position: 'relative' }}>
               <Search size={14} color="#94a3b8" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
               <input
+                ref={searchInputRef}
                 type="text"
                 className="form-input"
-                placeholder="Search subscribers..."
+                placeholder="Search subscribers... (Ctrl+K)"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 style={{ paddingLeft: 30, fontSize: '0.8rem', height: 34 }}
               />
             </div>
           </div>
+
+          {/* Bulk Actions Toolbar — appears once one or more subscribers are checked */}
+          {selectedConvIds.size > 0 && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px',
+              background: '#eef2ff', borderBottom: '1px solid #c7d2fe', flexWrap: 'wrap',
+            }}>
+              <span style={{ fontSize: '0.76rem', fontWeight: 700, color: '#4338ca' }}>
+                {selectedConvIds.size} selected
+              </span>
+              <select
+                disabled={bulkBusy}
+                onChange={(e) => { if (e.target.value) { handleBulkAssign(e.target.value === 'unassign' ? null : e.target.value); e.target.value = ''; } }}
+                defaultValue=""
+                style={{ fontSize: '0.74rem', padding: '4px 6px', borderRadius: 6, border: '1px solid #c7d2fe', background: '#fff', color: '#4338ca' }}
+              >
+                <option value="" disabled>Assign to...</option>
+                <option value="unassign">Unassign</option>
+                {agentsList.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name || a.email}</option>
+                ))}
+              </select>
+              <select
+                disabled={bulkBusy}
+                onChange={(e) => { if (e.target.value) { handleBulkStatus(e.target.value); e.target.value = ''; } }}
+                defaultValue=""
+                style={{ fontSize: '0.74rem', padding: '4px 6px', borderRadius: 6, border: '1px solid #c7d2fe', background: '#fff', color: '#4338ca' }}
+              >
+                <option value="" disabled>Set status...</option>
+                <option value="OPEN">Open</option>
+                <option value="PENDING">Pending</option>
+                <option value="RESOLVED">Resolved</option>
+              </select>
+              {agencyLabels.length > 0 && (
+                <select
+                  disabled={bulkBusy}
+                  onChange={(e) => { if (e.target.value) { handleBulkLabel(e.target.value); e.target.value = ''; } }}
+                  defaultValue=""
+                  style={{ fontSize: '0.74rem', padding: '4px 6px', borderRadius: 6, border: '1px solid #c7d2fe', background: '#fff', color: '#4338ca' }}
+                >
+                  <option value="" disabled>Add label...</option>
+                  {agencyLabels.map((lb) => (
+                    <option key={lb.id} value={lb.id}>{lb.name}</option>
+                  ))}
+                </select>
+              )}
+              <button
+                onClick={() => setSelectedConvIds(new Set())}
+                style={{ marginLeft: 'auto', fontSize: '0.74rem', fontWeight: 700, color: '#64748b', background: 'none', border: 'none', cursor: 'pointer' }}
+              >
+                Clear
+              </button>
+            </div>
+          )}
 
           {/* Conversation List Items */}
           <div className="conversation-list-body" style={{ flex: 1, overflowY: 'auto' }}>
@@ -677,6 +1052,21 @@ export default function InboxPage() {
                       borderLeft: isSelected ? '3px solid #2563eb' : '3px solid transparent',
                     }}
                   >
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedConvIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(id)) next.delete(id); else next.add(id);
+                          return next;
+                        });
+                      }}
+                      title="Select for bulk actions"
+                      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: selectedConvIds.has(id) ? '#2563eb' : '#cbd5e1', flexShrink: 0 }}
+                    >
+                      {selectedConvIds.has(id) ? <CheckSquare size={17} /> : <Square size={17} />}
+                    </button>
                     <div style={{ position: 'relative' }}>
                       {conv.contactAvatar || conv.avatar ? (
                         <img
@@ -738,8 +1128,23 @@ export default function InboxPage() {
                           {formatRelativeTime(time)}
                         </span>
                       </div>
-                      <div style={{ fontSize: '0.76rem', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>
-                        {lastMsg}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                        <div style={{
+                          fontSize: '0.76rem', color: conv.unread_count > 0 ? '#0f172a' : '#64748b',
+                          fontWeight: conv.unread_count > 0 ? 700 : 400,
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+                        }}>
+                          {lastMsg}
+                        </div>
+                        {conv.unread_count > 0 && (
+                          <span style={{
+                            flexShrink: 0, minWidth: 18, height: 18, borderRadius: 9, padding: '0 5px',
+                            background: '#2563eb', color: '#fff', fontSize: '0.68rem', fontWeight: 800,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          }}>
+                            {conv.unread_count > 99 ? '99+' : conv.unread_count}
+                          </span>
+                        )}
                       </div>
                       {/* Channel / Bot Account Tag */}
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
@@ -769,6 +1174,21 @@ export default function InboxPage() {
                           </span>
                         )}
                       </div>
+                      {Array.isArray(conv.contactLabels) && conv.contactLabels.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 4 }}>
+                          {conv.contactLabels.map((lb) => (
+                            <span
+                              key={lb.id}
+                              style={{
+                                fontSize: '0.62rem', fontWeight: 700, padding: '1px 6px', borderRadius: 8,
+                                background: `${lb.color}18`, color: lb.color,
+                              }}
+                            >
+                              {lb.name}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -821,18 +1241,22 @@ export default function InboxPage() {
                   <button
                     onClick={handleToggleBot}
                     disabled={togglingBot}
+                    className="transition-all duration-150 hover:brightness-95 active:scale-95"
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       gap: 6,
-                      padding: '6px 12px',
-                      borderRadius: 8,
-                      border: '1px solid #e2e8f0',
-                      background: botPaused ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)',
-                      color: botPaused ? '#10b981' : '#ef4444',
+                      padding: '7px 14px',
+                      borderRadius: 20,
+                      border: 'none',
+                      background: botPaused ? '#10b981' : '#fef2f2',
+                      color: botPaused ? '#ffffff' : '#ef4444',
                       fontSize: '0.8rem',
-                      fontWeight: 600,
-                      cursor: 'pointer',
+                      fontWeight: 700,
+                      cursor: togglingBot ? 'default' : 'pointer',
+                      opacity: togglingBot ? 0.6 : 1,
+                      boxShadow: botPaused ? '0 2px 8px rgba(16, 185, 129, 0.35)' : 'none',
+                      transition: 'transform 0.12s ease, box-shadow 0.12s ease',
                     }}
                   >
                     {botPaused ? <Play size={13} /> : <Pause size={13} />}
@@ -841,18 +1265,21 @@ export default function InboxPage() {
 
                   <button
                     onClick={() => setShowSubscriberPanel((p) => !p)}
+                    className="transition-all duration-150 hover:brightness-95 active:scale-95"
                     style={{
-                      padding: '6px 12px',
-                      borderRadius: 8,
-                      border: '1px solid #e2e8f0',
-                      background: '#ffffff',
-                      color: '#475569',
+                      padding: '7px 14px',
+                      borderRadius: 20,
+                      border: '1px solid',
+                      borderColor: showSubscriberPanel ? '#c7d2fe' : '#e2e8f0',
+                      background: showSubscriberPanel ? '#eef2ff' : '#ffffff',
+                      color: showSubscriberPanel ? '#4338ca' : '#475569',
                       fontSize: '0.8rem',
-                      fontWeight: 600,
+                      fontWeight: 700,
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
                       gap: 6,
+                      transition: 'transform 0.12s ease, background 0.12s ease',
                     }}
                   >
                     <SlidersHorizontal size={14} />
@@ -896,6 +1323,27 @@ export default function InboxPage() {
                     const buttons = meta?.buttons || msg.buttons || null;
                     const hasAttachedButtons = isImage && buttons && buttons.length > 0;
 
+                    // Determine sender attribution (Bot vs Admin / Team Member)
+                    let isBot = false;
+                    let senderDisplayName = '';
+                    if (isOutbound) {
+                      if (meta?.senderType === 'AGENT' || meta?.senderType === 'ADMIN' || meta?.agentName || meta?.userId) {
+                        isBot = false;
+                        senderDisplayName = meta?.agentName || meta?.senderName || user?.name || 'Admin';
+                      } else if (meta?.senderType === 'BOT' || meta?.senderName === 'Bot') {
+                        isBot = true;
+                        senderDisplayName = meta?.senderName || 'Bot';
+                      } else if (msg.sent_at) {
+                        isBot = false;
+                        senderDisplayName = meta?.senderName || user?.name || 'Admin';
+                      } else {
+                        isBot = true;
+                        senderDisplayName = 'Bot';
+                      }
+                    } else {
+                      senderDisplayName = selectedConv?.contactName || selectedConv?.contact_name || selectedConv?.name || selectedConv?.external_id || 'Subscriber';
+                    }
+
                     return (
                       <div
                         key={msg.id || msg._id || idx}
@@ -910,9 +1358,9 @@ export default function InboxPage() {
                             maxWidth: '72%',
                             padding: hasAttachedButtons ? 0 : (isImage && isMediaOnly ? '4px' : '10px 14px'),
                             borderRadius: isOutbound ? '14px 14px 2px 14px' : '14px 14px 14px 2px',
-                            background: hasAttachedButtons ? '#ffffff' : (isOutbound ? '#2563eb' : '#ffffff'),
-                            color: hasAttachedButtons ? '#0f172a' : (isOutbound ? '#ffffff' : '#0f172a'),
-                            border: hasAttachedButtons ? '1px solid #cbd5e1' : (isOutbound ? 'none' : '1px solid #e2e8f0'),
+                            background: hasAttachedButtons ? '#ffffff' : (isOutbound ? '#f1f5f9' : '#ffffff'),
+                            color: '#0f172a',
+                            border: hasAttachedButtons ? '1px solid #cbd5e1' : '1px solid #e2e8f0',
                             fontSize: '0.86rem',
                             lineHeight: 1.45,
                             boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
@@ -920,6 +1368,22 @@ export default function InboxPage() {
                             overflow: 'hidden',
                           }}
                         >
+                          {/* ── Interactive Header (if present) ── */}
+                          {meta?.headerText && (
+                            <div style={{ fontWeight: 700, fontSize: '0.9rem', marginBottom: 4, color: '#0f172a' }}>
+                              {meta.headerText}
+                            </div>
+                          )}
+                          {meta?.headerMediaUrl && (
+                            <div style={{ marginBottom: 8 }}>
+                              <img
+                                src={resolveMediaUrl(meta.headerMediaUrl)}
+                                alt="Header Media"
+                                style={{ width: '100%', maxHeight: 240, borderRadius: 8, objectFit: 'cover' }}
+                              />
+                            </div>
+                          )}
+
                           {/* ── Image Rendering ── */}
                           {isImage && (
                             <div style={{ marginBottom: (isMediaOnly || hasAttachedButtons) ? 0 : 8 }}>
@@ -975,8 +1439,9 @@ export default function InboxPage() {
                                   gap: 8,
                                   padding: '8px 12px',
                                   borderRadius: 8,
-                                  background: isOutbound ? 'rgba(255,255,255,0.15)' : '#f1f5f9',
-                                  color: isOutbound ? '#ffffff' : '#0f172a',
+                                  background: '#f8fafc',
+                                  border: '1px solid #e2e8f0',
+                                  color: '#0f172a',
                                   textDecoration: 'none',
                                   fontSize: '0.82rem',
                                   fontWeight: 600,
@@ -996,33 +1461,95 @@ export default function InboxPage() {
                             </div>
                           )}
 
-                          {/* Attached Buttons for Messenger Card (Flush with ZERO space) */}
+                          {/* ── Interactive Footer (if present) ── */}
+                          {meta?.footerText && (
+                            <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: 6, fontStyle: 'italic' }}>
+                              {meta.footerText}
+                            </div>
+                          )}
+
+                          {/* Attached Buttons for Messenger Card / Interactive — full-width bars
+                              matching how WhatsApp/Messenger actually render these natively.
+                              Deliberately neutral (not platform-colored) so it looks identical
+                              and consistent across every channel. */}
                           {buttons && buttons.length > 0 && (
-                            <div className={hasAttachedButtons
-                              ? "flex flex-col m-0 p-0 border-t border-slate-200 divide-y divide-slate-200 bg-white"
-                              : "mt-2.5 flex flex-col gap-1.5"
-                            }>
+                            <div
+                              className={`flex flex-col m-0 p-0 border-t divide-y divide-slate-200 border-slate-200 bg-white ${hasAttachedButtons ? '' : 'mt-2 -mx-3.5 -mb-2.5'}`}
+                              style={{ borderRadius: '0 0 10px 10px', overflow: 'hidden' }}
+                            >
                               {buttons.map((b, bIdx) => {
-                                const bTitle = typeof b === 'string' ? b : (b.title || b.text || b.label || `Option ${bIdx + 1}`);
+                                const bTitle = typeof b === 'string' ? b : (b.title || b.text || b.label || b.reply_text || `Option ${bIdx + 1}`);
+                                const isUrlButton = typeof b === 'object' && (b.type === 'URL' || b.type === 'web_url') && b.url;
+                                const Tag = isUrlButton ? 'a' : 'div';
                                 return (
-                                  <div
+                                  <Tag
                                     key={bIdx}
-                                    className={hasAttachedButtons
-                                      ? "w-full py-2 px-3 text-xs font-semibold text-sky-600 hover:bg-slate-50 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                                      : `py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 ${isOutbound ? 'bg-blue-700/60 text-white' : 'bg-slate-100 text-slate-800'}`
-                                    }
+                                    {...(isUrlButton ? { href: b.url, target: '_blank', rel: 'noopener noreferrer' } : {})}
+                                    className="w-full py-8 px-4 text-sm font-semibold flex items-center justify-center gap-2 text-slate-800 transition-colors cursor-pointer hover:bg-slate-50 active:bg-slate-100"
+                                    style={{ textDecoration: 'none' }}
                                   >
+                                    {isUrlButton && <ExternalLink size={14} className="text-slate-500" />}
                                     <span>{bTitle}</span>
-                                  </div>
+                                  </Tag>
                                 );
                               })}
                             </div>
                           )}
                         </div>
 
-                        <span style={{ fontSize: '0.68rem', color: '#94a3b8', marginTop: 3, padding: '0 4px' }}>
-                          {formatTime(msg.created_at || msg.timestamp || msg.createdAt)}
-                        </span>
+                        {/* Sender info & timestamp */}
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 5,
+                            fontSize: '0.68rem',
+                            color: '#94a3b8',
+                            marginTop: 4,
+                            padding: '0 4px',
+                          }}
+                        >
+                          {isOutbound ? (
+                            <>
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 3.5,
+                                  fontWeight: 600,
+                                  color: isBot ? '#64748b' : '#2563eb',
+                                }}
+                              >
+                                {isBot ? <Bot size={11} /> : <User size={11} />}
+                                {senderDisplayName}
+                              </span>
+                              <span>•</span>
+                              <span>{formatTime(msg.created_at || msg.timestamp || msg.createdAt)}</span>
+                              {msg.status === 'FAILED' && msg.failure_stage === 'SEND' ? (
+                                <Check size={12} color="#ef4444" title={msg.failure_reason || 'Failed to send'} />
+                              ) : msg.status === 'FAILED' && msg.failure_stage === 'DELIVERY' ? (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 1 }} title={msg.failure_reason || 'Sent, but not delivered'}>
+                                  <Check size={12} color="#22c55e" style={{ marginRight: -6 }} />
+                                  <Check size={12} color="#ef4444" />
+                                </span>
+                              ) : msg.is_read ? (
+                                <CheckCheck size={12} color="#2563eb" title="Read" />
+                              ) : msg.delivered_at ? (
+                                <CheckCheck size={12} color="#94a3b8" title="Delivered" />
+                              ) : (
+                                <Check size={12} color="#94a3b8" title="Sent" />
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              <span style={{ fontWeight: 600, color: '#64748b' }}>
+                                {senderDisplayName}
+                              </span>
+                              <span>•</span>
+                              <span>{formatTime(msg.created_at || msg.timestamp || msg.createdAt)}</span>
+                            </>
+                          )}
+                        </div>
                       </div>
                     );
                   })
@@ -1073,17 +1600,18 @@ export default function InboxPage() {
                     disabled={uploading}
                     onClick={() => fileInputRef.current?.click()}
                     title="Send image, video, audio or file"
+                    className="transition-all duration-150 hover:bg-slate-100 active:scale-90"
                     style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 8,
+                      width: 38,
+                      height: 38,
+                      borderRadius: '50%',
                       border: '1px solid #e2e8f0',
                       background: '#f8fafc',
                       color: '#64748b',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      cursor: 'pointer',
+                      cursor: uploading ? 'default' : 'pointer',
                       flexShrink: 0,
                     }}
                   >
@@ -1095,21 +1623,29 @@ export default function InboxPage() {
                   </button>
 
                   <input
+                    ref={messageInputRef}
                     type="text"
                     className="form-input"
                     placeholder="Type a message or reply..."
                     value={messageText}
                     onChange={(e) => setMessageText(e.target.value)}
-                    style={{ flex: 1, height: 40, fontSize: '0.86rem' }}
+                    style={{ flex: 1, height: 40, fontSize: '0.86rem', borderRadius: 20 }}
                   />
 
                   <button
                     type="submit"
                     disabled={!messageText.trim() || sending}
-                    className="btn btn-primary"
-                    style={{ height: 40, padding: '0 20px', display: 'flex', alignItems: 'center', gap: 6 }}
+                    title="Send message"
+                    className="transition-all duration-150 hover:brightness-110 active:scale-90 disabled:opacity-40"
+                    style={{
+                      width: 40, height: 40, borderRadius: '50%', border: 'none',
+                      background: activePlatformInfo.color, color: '#fff',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                      cursor: (!messageText.trim() || sending) ? 'default' : 'pointer',
+                      boxShadow: messageText.trim() ? `0 2px 10px ${activePlatformInfo.color}55` : 'none',
+                    }}
                   >
-                    <Send size={15} /> Send
+                    <Send size={16} />
                   </button>
                 </form>
               </div>
@@ -1302,52 +1838,47 @@ export default function InboxPage() {
               </div>
             )}
 
-            {/* Tab 2: Labels / Tags */}
+            {/* Tab 2: Labels (structured, color-coded — shared with the Subscriber/Contacts Manager) */}
             {activeDrawerTab === 'Labels' && (
               <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <form onSubmit={handleAddTag} style={{ display: 'flex', gap: 6 }}>
-                  <input
-                    type="text"
-                    className="form-input"
-                    placeholder="New label / tag..."
-                    value={newTagInput}
-                    onChange={(e) => setNewTagInput(e.target.value)}
-                    style={{ flex: 1, height: 32, fontSize: '0.8rem' }}
-                  />
-                  <button type="submit" disabled={addingTag || !newTagInput.trim()} className="btn btn-primary btn-sm" style={{ height: 32 }}>
-                    <Plus size={13} /> Add
-                  </button>
-                </form>
-
                 <div>
-                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', display: 'block', marginBottom: 8 }}>
-                    Attached Labels ({contactTags.length})
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
+                      Attached Labels ({contactLabels.length})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setLabelPickerOpen((p) => !p)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 7,
+                        border: '1px solid #c7d2fe', background: labelPickerOpen ? '#eef2ff' : '#fff',
+                        color: '#4338ca', fontSize: '0.74rem', fontWeight: 700, cursor: 'pointer',
+                      }}
+                    >
+                      <Plus size={12} /> Add Label
+                    </button>
+                  </div>
+
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {contactTags.length === 0 ? (
-                      <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>No tags attached yet.</span>
+                    {contactLabels.length === 0 ? (
+                      <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>No labels attached yet.</span>
                     ) : (
-                      contactTags.map((tag) => (
+                      contactLabels.map((lb) => (
                         <span
-                          key={tag}
+                          key={lb.id}
                           style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 4,
-                            fontSize: '0.75rem',
-                            fontWeight: 600,
-                            padding: '3px 8px',
-                            borderRadius: 12,
-                            background: 'rgba(37, 99, 235, 0.08)',
-                            color: '#2563eb',
-                            border: '1px solid rgba(37, 99, 235, 0.2)',
+                            display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.75rem', fontWeight: 700,
+                            padding: '4px 9px', borderRadius: 12,
+                            background: `${lb.color}18`, color: lb.color, border: `1px solid ${lb.color}45`,
                           }}
                         >
-                          <Tag size={11} /> {tag}
+                          <span style={{ width: 7, height: 7, borderRadius: '50%', background: lb.color, flexShrink: 0 }} />
+                          {lb.name}
                           <button
                             type="button"
-                            onClick={() => handleRemoveTag(tag)}
-                            style={{ background: 'none', border: 'none', color: '#2563eb', cursor: 'pointer', marginLeft: 2 }}
+                            onClick={() => handleDetachLabel(lb.id)}
+                            title="Remove label"
+                            style={{ background: 'none', border: 'none', color: lb.color, cursor: 'pointer', marginLeft: 2, lineHeight: 1, fontSize: '0.9rem' }}
                           >
                             ×
                           </button>
@@ -1356,6 +1887,65 @@ export default function InboxPage() {
                     )}
                   </div>
                 </div>
+
+                {labelPickerOpen && (
+                  <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: 12, background: '#f8fafc', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {/* Existing agency labels not yet attached */}
+                    <div>
+                      <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
+                        Existing Labels
+                      </span>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                        {agencyLabels.filter((al) => !contactLabels.some((cl) => cl.id === al.id)).length === 0 ? (
+                          <span style={{ fontSize: '0.76rem', color: '#94a3b8' }}>
+                            {agencyLabels.length === 0 ? 'No labels created yet.' : 'All labels already attached.'}
+                          </span>
+                        ) : (
+                          agencyLabels
+                            .filter((al) => !contactLabels.some((cl) => cl.id === al.id))
+                            .map((lb) => (
+                              <button
+                                key={lb.id}
+                                type="button"
+                                disabled={savingLabel}
+                                onClick={() => handleAttachLabel(lb.id)}
+                                style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.75rem', fontWeight: 700,
+                                  padding: '4px 9px', borderRadius: 12, cursor: savingLabel ? 'default' : 'pointer',
+                                  background: `${lb.color}12`, color: lb.color, border: `1px dashed ${lb.color}60`,
+                                }}
+                              >
+                                <span style={{ width: 7, height: 7, borderRadius: '50%', background: lb.color, flexShrink: 0 }} />
+                                {lb.name}
+                              </button>
+                            ))
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Create a brand-new label and attach immediately */}
+                    <form onSubmit={handleCreateAndAttachLabel} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <input
+                        type="color"
+                        value={newLabelColor}
+                        onChange={(e) => setNewLabelColor(e.target.value)}
+                        title="Label color"
+                        style={{ width: 30, height: 30, padding: 0, border: '1px solid #e2e8f0', borderRadius: 6, cursor: 'pointer' }}
+                      />
+                      <input
+                        type="text"
+                        className="form-input"
+                        placeholder="New label name..."
+                        value={newLabelName}
+                        onChange={(e) => setNewLabelName(e.target.value)}
+                        style={{ flex: 1, height: 30, fontSize: '0.8rem' }}
+                      />
+                      <button type="submit" disabled={savingLabel || !newLabelName.trim()} className="btn btn-primary btn-sm" style={{ height: 30 }}>
+                        Create
+                      </button>
+                    </form>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1392,22 +1982,118 @@ export default function InboxPage() {
 
             {/* Tab 4: Custom Fields */}
             {activeDrawerTab === 'Custom Fields' && (
-              <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
-                  Collected Flow Variables
-                </span>
-                <div style={{ fontSize: '0.8rem', color: '#64748b', background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                    <strong style={{ color: '#0f172a' }}>Platform:</strong>
-                    <span>{activePlatformInfo.label}</span>
+              <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
+                      Subscriber Data
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowNewFieldForm((p) => !p)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 7,
+                        border: '1px solid #c7d2fe', background: showNewFieldForm ? '#eef2ff' : '#fff',
+                        color: '#4338ca', fontSize: '0.74rem', fontWeight: 700, cursor: 'pointer',
+                      }}
+                    >
+                      <Plus size={12} /> New Field
+                    </button>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                    <strong style={{ color: '#0f172a' }}>External ID:</strong>
-                    <span>{selectedConv.external_id || '—'}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <strong style={{ color: '#0f172a' }}>Bot Session:</strong>
-                    <span>{botPaused ? 'Agent Handled' : 'Active'}</span>
+
+                  {customFieldDefs.length === 0 ? (
+                    <div style={{ fontSize: '0.8rem', color: '#94a3b8', padding: '10px 0' }}>
+                      No custom fields defined yet for your agency. Create one to start collecting structured data per subscriber (e.g. Order ID, Plan Tier, Renewal Date).
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {customFieldDefs.map((field) => (
+                        <div key={field.id}>
+                          <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 700, color: '#64748b', marginBottom: 4 }}>
+                            {field.name}
+                          </label>
+                          {field.field_type === 'SELECT' ? (
+                            <select
+                              value={customFieldValues[field.id] ?? ''}
+                              onChange={(e) => handleSaveCustomField(field.id, e.target.value)}
+                              disabled={savingFieldId === field.id}
+                              style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: '0.82rem', background: '#fff' }}
+                            >
+                              <option value="">—</option>
+                              {(field.options || []).map((opt) => (
+                                <option key={opt} value={opt}>{opt}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type={field.field_type === 'NUMBER' ? 'number' : field.field_type === 'DATE' ? 'date' : 'text'}
+                              className="form-input"
+                              value={customFieldValues[field.id] ?? ''}
+                              onChange={(e) => setCustomFieldValues((prev) => ({ ...prev, [field.id]: e.target.value }))}
+                              onBlur={(e) => handleSaveCustomField(field.id, e.target.value)}
+                              disabled={savingFieldId === field.id}
+                              style={{ width: '100%', height: 32, fontSize: '0.82rem' }}
+                            />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {showNewFieldForm && (
+                    <form onSubmit={handleCreateCustomField} style={{ marginTop: 12, border: '1px solid #e2e8f0', borderRadius: 10, padding: 12, background: '#f8fafc', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <input
+                        type="text"
+                        className="form-input"
+                        placeholder="Field name (e.g. Order ID)"
+                        value={newFieldDraft.name}
+                        onChange={(e) => setNewFieldDraft((f) => ({ ...f, name: e.target.value }))}
+                        style={{ height: 30, fontSize: '0.8rem' }}
+                      />
+                      <select
+                        value={newFieldDraft.fieldType}
+                        onChange={(e) => setNewFieldDraft((f) => ({ ...f, fieldType: e.target.value }))}
+                        style={{ height: 30, padding: '0 10px', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: '0.8rem', background: '#fff' }}
+                      >
+                        <option value="TEXT">Text</option>
+                        <option value="NUMBER">Number</option>
+                        <option value="DATE">Date</option>
+                        <option value="SELECT">Dropdown</option>
+                      </select>
+                      {newFieldDraft.fieldType === 'SELECT' && (
+                        <input
+                          type="text"
+                          className="form-input"
+                          placeholder="Options, comma-separated (e.g. Gold, Silver, Bronze)"
+                          value={newFieldDraft.options}
+                          onChange={(e) => setNewFieldDraft((f) => ({ ...f, options: e.target.value }))}
+                          style={{ height: 30, fontSize: '0.8rem' }}
+                        />
+                      )}
+                      <button type="submit" disabled={savingNewField || !newFieldDraft.name.trim()} className="btn btn-primary btn-sm" style={{ alignSelf: 'flex-end' }}>
+                        {savingNewField ? 'Creating...' : 'Create Field'}
+                      </button>
+                    </form>
+                  )}
+                </div>
+
+                <div>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
+                    System Variables (read-only)
+                  </span>
+                  <div style={{ fontSize: '0.8rem', color: '#64748b', background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px solid #e2e8f0', marginTop: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <strong style={{ color: '#0f172a' }}>Platform:</strong>
+                      <span>{activePlatformInfo.label}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <strong style={{ color: '#0f172a' }}>External ID:</strong>
+                      <span>{selectedConv.external_id || '—'}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <strong style={{ color: '#0f172a' }}>Bot Session:</strong>
+                      <span>{botPaused ? 'Agent Handled' : 'Active'}</span>
+                    </div>
                   </div>
                 </div>
               </div>

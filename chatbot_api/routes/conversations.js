@@ -12,7 +12,7 @@ router.use(authMiddleware, roleMiddleware("AGENCY", "ADMIN", "AGENT"));
 // ─── GET ALL CONVERSATIONS (for inbox) ───────────────────────────────────────
 router.get("/conversations", async (req, res) => {
   try {
-    const { status, platform, search } = req.query;
+    const { status, platform, search, labelId } = req.query;
     const agencyId = req.user.agencyId;
     const role = req.user.role;
 
@@ -65,10 +65,36 @@ router.get("/conversations", async (req, res) => {
       query += " AND (c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR i.name LIKE ?)";
       params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
+    if (labelId) {
+      query += " AND cv.contact_id IN (SELECT contact_id FROM contact_labels WHERE label_id = ?)";
+      params.push(labelId);
+    }
 
     query += " ORDER BY COALESCE(cv.last_message_at, cv.created_at) DESC";
 
     const [conversations] = await pool.query(query, params);
+
+    // Batch-fetch structured labels for every contact in this page of results
+    // (avoids an N+1 query per conversation row).
+    const contactIds = [...new Set(conversations.map((c) => c.contact_id))];
+    if (contactIds.length) {
+      const [labelRows] = await pool.query(
+        `SELECT cl.contact_id, l.id, l.name, l.color
+         FROM contact_labels cl
+         JOIN labels l ON l.id = cl.label_id
+         WHERE cl.contact_id IN (?)`,
+        [contactIds]
+      );
+      const labelsByContact = {};
+      for (const row of labelRows) {
+        if (!labelsByContact[row.contact_id]) labelsByContact[row.contact_id] = [];
+        labelsByContact[row.contact_id].push({ id: row.id, name: row.name, color: row.color });
+      }
+      for (const conv of conversations) {
+        conv.contactLabels = labelsByContact[conv.contact_id] || [];
+      }
+    }
+
     return res.json({ success: true, conversations });
   } catch (err) {
     console.error(err);
@@ -216,6 +242,54 @@ router.patch("/conversations/:id/status", async (req, res) => {
   }
 });
 
+// ─── BULK ASSIGN CONVERSATIONS ────────────────────────────────────────────────
+router.patch("/conversations/bulk-assign", async (req, res) => {
+  try {
+    const { conversationIds, agentProfileId } = req.body;
+    const agencyId = req.user.agencyId;
+    if (!Array.isArray(conversationIds) || conversationIds.length === 0) {
+      return res.status(400).json({ success: false, message: "conversationIds array is required" });
+    }
+    await pool.query(
+      "UPDATE conversations SET assigned_to_id = ?, status = 'ASSIGNED' WHERE id IN (?) AND agency_id = ?",
+      [agentProfileId || null, conversationIds, agencyId]
+    );
+    for (const id of conversationIds) {
+      emitToAgency(agencyId, "conversation_updated", { conversationId: Number(id), assignedToId: agentProfileId || null, status: "ASSIGNED" });
+    }
+    return res.json({ success: true, message: `${conversationIds.length} conversation(s) assigned` });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── BULK UPDATE CONVERSATION STATUS ──────────────────────────────────────────
+router.patch("/conversations/bulk-status", async (req, res) => {
+  try {
+    const { conversationIds, status } = req.body;
+    const agencyId = req.user.agencyId;
+    const validStatuses = ["OPEN", "ASSIGNED", "RESOLVED", "PENDING"];
+    if (!Array.isArray(conversationIds) || conversationIds.length === 0) {
+      return res.status(400).json({ success: false, message: "conversationIds array is required" });
+    }
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid status" });
+    }
+    await pool.query(
+      "UPDATE conversations SET status = ? WHERE id IN (?) AND agency_id = ?",
+      [status, conversationIds, agencyId]
+    );
+    for (const id of conversationIds) {
+      emitToAgency(agencyId, "conversation_updated", { conversationId: Number(id), status });
+    }
+    return res.json({ success: true, message: `${conversationIds.length} conversation(s) updated` });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // ─── SEND MESSAGE (Outbound) ──────────────────────────────────────────────────
 router.post("/conversations/:id/messages", async (req, res) => {
   try {
@@ -236,6 +310,22 @@ router.post("/conversations/:id/messages", async (req, res) => {
 
     if (!rows.length) return res.status(404).json({ success: false, message: "Conversation not found" });
     const conv = rows[0];
+
+    // Sender attribution metadata (built up front so it's available whether the send succeeds or fails)
+    let agentName = req.user?.name;
+    if (!agentName && req.user?.id) {
+      const [u] = await pool.query("SELECT name FROM users WHERE id = ?", [req.user.id]);
+      if (u.length && u[0].name) agentName = u[0].name;
+    }
+    if (!agentName) agentName = req.user?.email ? req.user.email.split('@')[0] : 'Agent';
+
+    const senderType = (req.body.senderType || 'AGENT').toUpperCase();
+    const metadata = {
+      senderType: senderType, // 'AGENT' or 'AI'
+      senderName: req.body.senderName || agentName,
+      userId: req.user?.id || req.user?.userId,
+      agentName: req.body.agentName || agentName,
+    };
 
     // Send via platform API
     let externalMsgId = null;
@@ -262,25 +352,28 @@ router.post("/conversations/:id/messages", async (req, res) => {
           friendlyMsg = metaError.message || friendlyMsg;
         }
       }
-      return res.status(502).json({ success: false, message: friendlyMsg, metaError });
+
+      // Persist the attempt as a FAILED message (instead of just returning an error and
+      // leaving no trace in the chat) so the conversation shows exactly what was tried and
+      // that it never left our server — this is what renders as the red single tick.
+      let chatMessage = null;
+      try {
+        const [failResult] = await pool.query(
+          `INSERT INTO messages (conversation_id, direction, type, body, media_url, metadata, external_msg_id, status, failure_stage, failure_reason, created_at)
+           VALUES (?, 'OUTBOUND', ?, ?, ?, ?, NULL, 'FAILED', 'SEND', ?, NOW())`,
+          [req.params.id, type, body || "", mediaUrl || null, JSON.stringify(metadata), friendlyMsg]
+        );
+        const [[savedFail]] = await pool.query("SELECT * FROM messages WHERE id = ?", [failResult.insertId]);
+        chatMessage = { ...savedFail, metadata };
+
+        emitToAgency(agencyId, "new_message", { conversationId: conv.id, message: chatMessage });
+        emitToConversation(conv.id, "new_message", { conversationId: conv.id, message: chatMessage });
+      } catch (persistErr) {
+        console.error("Failed to persist failed-send message:", persistErr.message);
+      }
+
+      return res.status(502).json({ success: false, message: friendlyMsg, metaError, chatMessage });
     }
-
-
-    // Sender attribution metadata
-    let agentName = req.user?.name;
-    if (!agentName && req.user?.id) {
-      const [u] = await pool.query("SELECT name FROM users WHERE id = ?", [req.user.id]);
-      if (u.length && u[0].name) agentName = u[0].name;
-    }
-    if (!agentName) agentName = req.user?.email ? req.user.email.split('@')[0] : 'Agent';
-
-    const senderType = (req.body.senderType || 'AGENT').toUpperCase();
-    const metadata = {
-      senderType: senderType, // 'AGENT' or 'AI'
-      senderName: req.body.senderName || agentName,
-      userId: req.user?.id || req.user?.userId,
-      agentName: req.body.agentName || agentName,
-    };
 
     const finalMediaUrl = messagePayload.finalMediaUrl || mediaUrl || null;
 
