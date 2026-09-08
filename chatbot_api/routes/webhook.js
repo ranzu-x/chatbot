@@ -136,30 +136,49 @@ router.get("/webhook/:agencyId/:integrationId", async (req, res) => {
 });
 
 // ─── HELPER: FETCH META USER PROFILE (FACEBOOK / INSTAGRAM) ─────────────────
+// Field lists per Meta's own docs — Messenger's User Profile API
+// (https://developers.facebook.com/docs/messenger-platform/identity/user-profile)
+// and Instagram's User Profile API
+// (https://developers.facebook.com/docs/messenger-platform/instagram/features/user-profile/).
+// `name`/`avatar` are used immediately (contact display); the rest is stored as
+// read-only "System Fields" (see contacts.platform_profile) — not all of it may
+// actually come back depending on what permissions/consent are granted.
 async function fetchMetaUserProfile(platform, externalId, accessToken) {
-  if (!accessToken || !externalId) return { name: null, avatar: null };
+  if (!accessToken || !externalId) return { name: null, avatar: null, systemFields: null };
   try {
     if (platform === "FACEBOOK") {
       const res = await axios.get(
-        `https://graph.facebook.com/v21.0/${externalId}?fields=first_name,last_name,name,profile_pic&access_token=${accessToken}`,
+        `https://graph.facebook.com/v21.0/${externalId}?fields=first_name,last_name,name,profile_pic,locale,timezone,gender&access_token=${accessToken}`,
         { timeout: 6000 }
       );
       const name = res.data?.name || `${res.data?.first_name || ""} ${res.data?.last_name || ""}`.trim() || null;
       const avatar = res.data?.profile_pic || null;
-      return { name, avatar };
+      const systemFields = {
+        first_name: res.data?.first_name || null,
+        last_name: res.data?.last_name || null,
+        locale: res.data?.locale || null,
+        timezone: res.data?.timezone ?? null,
+        gender: res.data?.gender || null,
+      };
+      return { name, avatar, systemFields };
     } else if (platform === "INSTAGRAM") {
       const res = await axios.get(
-        `https://graph.facebook.com/v21.0/${externalId}?fields=name,username,profile_pic&access_token=${accessToken}`,
+        `https://graph.facebook.com/v21.0/${externalId}?fields=name,username,profile_pic,is_verified_user,follower_count&access_token=${accessToken}`,
         { timeout: 6000 }
       );
       const name = res.data?.name || res.data?.username || null;
       const avatar = res.data?.profile_pic || null;
-      return { name, avatar };
+      const systemFields = {
+        username: res.data?.username || null,
+        is_verified_user: res.data?.is_verified_user ?? null,
+        follower_count: res.data?.follower_count ?? null,
+      };
+      return { name, avatar, systemFields };
     }
   } catch (err) {
     console.warn(`[Profile Fetch] Could not fetch profile for ${platform} user ${externalId}:`, err.response?.data?.error?.message || err.message);
   }
-  return { name: null, avatar: null };
+  return { name: null, avatar: null, systemFields: null };
 }
 
 // ─── RECEIVE META INCOMING MESSAGES VIA AGENCY WEBHOOK (POST) ────────────────
@@ -354,6 +373,7 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
           let mediaUrl = null;
 
           let msgBody = "";
+          let buttonRoute = null; // raw button/list id, checked for our own routing token (see flowEngine.js)
           if (msg.type === "text") {
             msgBody = msg.text?.body || "";
           } else if (msg.type === "button") {
@@ -362,8 +382,10 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
             const type = msg.interactive?.type;
             if (type === "button_reply") {
               msgBody = msg.interactive?.button_reply?.title || msg.interactive?.button_reply?.id || "";
+              buttonRoute = msg.interactive?.button_reply?.id || null;
             } else if (type === "list_reply") {
               msgBody = msg.interactive?.list_reply?.title || msg.interactive?.list_reply?.id || "";
+              buttonRoute = msg.interactive?.list_reply?.id || null;
             }
           } else if (msg.type === "image") {
             msgBody = msg.image?.caption || "";
@@ -391,6 +413,7 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
             externalMsgId,
             msgType: msgType === "INTERACTIVE" || msgType === "BUTTON" ? "TEXT" : msgType,
             msgBody,
+            buttonRoute,
             mediaUrl,
             senderName,
             avatar: null,
@@ -665,11 +688,14 @@ async function handleFacebookPayload(body, agencyId, integrationId, integration)
         let msgBody = "";
         let msgType = "TEXT";
         let mediaUrl = null;
+        let buttonRoute = null; // raw postback/quick_reply payload, checked for our own routing token
 
         if (event.postback) {
           msgBody = event.postback.title || event.postback.payload || "";
+          buttonRoute = event.postback.payload || null;
         } else {
           msgBody = event.message?.quick_reply?.payload || event.message?.text || "";
+          buttonRoute = event.message?.quick_reply?.payload || null;
           if (event.message?.attachments && event.message.attachments.length > 0) {
             const att = event.message.attachments[0];
             const attType = (att.type || "image").toUpperCase();
@@ -678,13 +704,15 @@ async function handleFacebookPayload(body, agencyId, integrationId, integration)
           }
         }
 
-        // Fetch real subscriber name and profile pic from Facebook Graph API
+        // Fetch real subscriber name, profile pic & system fields from Facebook Graph API
         let senderName = externalId;
         let avatar = null;
+        let platformProfile = null;
         if (integration?.access_token) {
           const profile = await fetchMetaUserProfile("FACEBOOK", externalId, integration.access_token);
           if (profile.name) senderName = profile.name;
           if (profile.avatar) avatar = profile.avatar;
+          platformProfile = profile.systemFields;
         }
 
         await handleIncomingPayload({
@@ -694,10 +722,12 @@ async function handleFacebookPayload(body, agencyId, integrationId, integration)
           externalId,
           externalMsgId,
           msgType,
+          buttonRoute,
           msgBody,
           mediaUrl,
           senderName,
           avatar,
+          platformProfile,
           integration,
         });
       }
@@ -738,11 +768,14 @@ async function handleInstagramPayload(body, agencyId, integrationId, integration
         let msgBody = "";
         let msgType = "TEXT";
         let mediaUrl = null;
+        let buttonRoute = null;
 
         if (event.postback) {
           msgBody = event.postback.title || event.postback.payload || "";
+          buttonRoute = event.postback.payload || null;
         } else {
           msgBody = event.message?.quick_reply?.payload || event.message?.text || "";
+          buttonRoute = event.message?.quick_reply?.payload || null;
           if (event.message?.attachments && event.message.attachments.length > 0) {
             const att = event.message.attachments[0];
             const attType = (att.type || "image").toUpperCase();
@@ -751,13 +784,15 @@ async function handleInstagramPayload(body, agencyId, integrationId, integration
           }
         }
 
-        // Fetch subscriber name and profile pic from Instagram
+        // Fetch subscriber name, profile pic & system fields from Instagram
         let senderName = externalId;
         let avatar = null;
+        let platformProfile = null;
         if (integration?.access_token) {
           const profile = await fetchMetaUserProfile("INSTAGRAM", externalId, integration.access_token);
           if (profile.name) senderName = profile.name;
           if (profile.avatar) avatar = profile.avatar;
+          platformProfile = profile.systemFields;
         }
 
         await handleIncomingPayload({
@@ -767,10 +802,12 @@ async function handleInstagramPayload(body, agencyId, integrationId, integration
           externalId,
           externalMsgId,
           msgType,
+          buttonRoute,
           msgBody,
           mediaUrl,
           senderName,
           avatar,
+          platformProfile,
           integration,
         });
       }
@@ -858,6 +895,14 @@ export async function processTelegramUpdate(agencyId, integrationId, update) {
       avatar = await fetchTelegramUserProfilePhoto(fromObj.id, integration.access_token);
     }
 
+    // Telegram's own Bot API User object already carries these — no extra call needed
+    // (https://core.telegram.org/bots/api#user).
+    const platformProfile = fromObj ? {
+      username: fromObj.username || null,
+      language_code: fromObj.language_code || null,
+      is_premium: fromObj.is_premium ?? null,
+    } : null;
+
     console.log(`📩 [Telegram Incoming] From: ${senderName} (${externalId}) Avatar: ${avatar ? 'Found' : 'None'} Msg: "${msgBody}"`);
 
     await handleIncomingPayload({
@@ -867,10 +912,12 @@ export async function processTelegramUpdate(agencyId, integrationId, update) {
       externalId,
       externalMsgId,
       msgType,
+      buttonRoute: update.callback_query?.data || null,
       msgBody,
       mediaUrl,
       senderName,
       avatar,
+      platformProfile,
       integration,
     });
   } catch (err) {
@@ -957,9 +1004,11 @@ async function handleIncomingPayload({
   externalMsgId,
   msgType,
   msgBody,
+  buttonRoute = null,
   mediaUrl,
   senderName,
   avatar = null,
+  platformProfile = null,
   integration,
 }) {
   try {
@@ -967,14 +1016,16 @@ async function handleIncomingPayload({
     const isDup = await isDuplicateMessage(externalMsgId);
     if (isDup) return;
 
-    // 2. Find or create contact with real name and avatar
+    // 2. Find or create contact with real name, avatar & any extra "System Fields"
+    // the channel's own API can tell us (see contacts.platform_profile)
     const contact = await findOrCreateContact(
       agencyId,
       platform,
       externalId,
       senderName,
       platform === "WHATSAPP" ? externalId : null,
-      avatar
+      avatar,
+      platformProfile
     );
 
     // 3. Find or create conversation
@@ -1005,7 +1056,7 @@ async function handleIncomingPayload({
     }
 
     // 5. Run Flow Execution Engine
-    const flowRan = await processFlow(agencyId, platform, conversation, contact, msgBody, integration, msgType);
+    const flowRan = await processFlow(agencyId, platform, conversation, contact, msgBody, integration, msgType, buttonRoute);
     if (flowRan) return;
 
     // 6. Fallback: Run standard bot rules

@@ -175,6 +175,59 @@ router.get("/contacts/:id", async (req, res) => {
   }
 });
 
+// ─── FORM RESPONSES (completed User Input Flow submissions) ──────────────────
+// Surfaced in the Inbox's right-side subscriber panel — a subscriber's full
+// answer set from each completed Q&A run, not just whichever individual
+// answers happened to also be mapped to a Custom Field.
+router.get("/contacts/:id/form-responses", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const [[owned]] = await pool.query(
+      "SELECT id FROM contacts WHERE id = ? AND agency_id = ?",
+      [req.params.id, agencyId]
+    );
+    if (!owned) return res.status(404).json({ success: false, message: "Contact not found" });
+
+    const [rows] = await pool.query(
+      `SELECT r.id, r.user_input_flow_id, r.answers, r.created_at, u.name AS user_input_flow_name
+       FROM user_input_flow_responses r
+       JOIN user_input_flows u ON u.id = r.user_input_flow_id
+       WHERE r.contact_id = ? AND r.agency_id = ?
+       ORDER BY r.created_at DESC`,
+      [req.params.id, agencyId]
+    );
+    return res.json({ success: true, responses: rows });
+  } catch (err) {
+    console.error("Get form responses error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+router.get("/contacts/:id/sequences", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const [[owned]] = await pool.query(
+      "SELECT id FROM contacts WHERE id = ? AND agency_id = ?",
+      [req.params.id, agencyId]
+    );
+    if (!owned) return res.status(404).json({ success: false, message: "Contact not found" });
+
+    const [rows] = await pool.query(
+      `SELECT ss.id, ss.status, ss.current_node_id, ss.next_run_at, ss.subscribed_at,
+              s.id AS sequence_id, s.name AS sequence_name, s.platform
+       FROM sequence_subscribers ss
+       JOIN sequences s ON s.id = ss.sequence_id
+       WHERE ss.contact_id = ? AND s.agency_id = ?
+       ORDER BY ss.subscribed_at DESC`,
+      [req.params.id, agencyId]
+    );
+    return res.json({ success: true, sequences: rows });
+  } catch (err) {
+    console.error("Get contact sequences error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // ─── CREATE CONTACT ───────────────────────────────────────────────────────────
 router.post("/contacts", async (req, res) => {
   try {

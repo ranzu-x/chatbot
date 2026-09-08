@@ -3,8 +3,8 @@ import { useParams, useNavigate, useSearchParams, useLocation } from 'react-rout
 import {
   ReactFlow, Background, Controls, MiniMap,
   Handle, Position, useNodesState, useEdgesState,
-  addEdge, ReactFlowProvider, useReactFlow,
-  BaseEdge, EdgeLabelRenderer, getBezierPath, getSmoothStepPath, MarkerType
+  addEdge, ReactFlowProvider, useReactFlow, useNodeConnections,
+  BaseEdge, EdgeLabelRenderer, MarkerType
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
@@ -16,10 +16,11 @@ import {
   User, Settings2, CornerDownRight, Image, Upload,
   Video, Music, FileText, Globe, ExternalLink,
   Smartphone, RotateCcw, Undo2, Redo2, ThumbsUp, Sparkles, MoreVertical,
-  Copy, ChevronDown, ShoppingBag
+  Copy, ChevronDown, ShoppingBag, HelpCircle, Flag, ClipboardList
 } from 'lucide-react';
 import FlowPhonePreview from './FlowPhonePreview';
-import { flowAPI, uploadAPI, integrationAPI } from '../../services/api';
+import PlatformIcon, { getPlatformMeta } from '../../Components/Common/PlatformIcon';
+import { flowAPI, uploadAPI, integrationAPI, customFieldAPI, userInputFlowAPI, sequenceAPI, labelAPI, googleSheetsAPI } from '../../services/api';
 import Swal from 'sweetalert2';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -40,6 +41,20 @@ const PLATFORM_RULES = {
     card: false,
     carousel: false,
     collectInput: true,
+    // Channel-agnostic by construction: a question is just a message plus waiting
+    // for the next reply, which every channel supports the same way. Omitting these
+    // made isNodeSupportedOnPlatform() return false (it treats an absent rule as
+    // unsupported), which silently kept them out of every palette.
+    runUserInputFlow: true,
+    question: true,
+    finalAnswer: true,
+    // Sequence-related nodes are channel-agnostic for the same reason —
+    // "start/stop enrollment" and "wait N minutes" have nothing platform-
+    // specific about them; only the Sequence's own message content nodes are
+    // capability-checked, the normal way, when authored inside it.
+    wait: true,
+    startSequenceAction: true,
+    stopSequenceAction: true,
     condition: true,
     delay: true,
     webhook: true,
@@ -60,6 +75,20 @@ const PLATFORM_RULES = {
     card: true,        // Generic Template Card
     carousel: 10,      // Generic Template Carousel (max 10 cards)
     collectInput: true,
+    // Channel-agnostic by construction: a question is just a message plus waiting
+    // for the next reply, which every channel supports the same way. Omitting these
+    // made isNodeSupportedOnPlatform() return false (it treats an absent rule as
+    // unsupported), which silently kept them out of every palette.
+    runUserInputFlow: true,
+    question: true,
+    finalAnswer: true,
+    // Sequence-related nodes are channel-agnostic for the same reason —
+    // "start/stop enrollment" and "wait N minutes" have nothing platform-
+    // specific about them; only the Sequence's own message content nodes are
+    // capability-checked, the normal way, when authored inside it.
+    wait: true,
+    startSequenceAction: true,
+    stopSequenceAction: true,
     condition: true,
     delay: true,
     webhook: true,
@@ -80,6 +109,20 @@ const PLATFORM_RULES = {
     card: true,        // Generic Template Card
     carousel: 10,      // Generic Template Carousel (max 10 cards)
     collectInput: true,
+    // Channel-agnostic by construction: a question is just a message plus waiting
+    // for the next reply, which every channel supports the same way. Omitting these
+    // made isNodeSupportedOnPlatform() return false (it treats an absent rule as
+    // unsupported), which silently kept them out of every palette.
+    runUserInputFlow: true,
+    question: true,
+    finalAnswer: true,
+    // Sequence-related nodes are channel-agnostic for the same reason —
+    // "start/stop enrollment" and "wait N minutes" have nothing platform-
+    // specific about them; only the Sequence's own message content nodes are
+    // capability-checked, the normal way, when authored inside it.
+    wait: true,
+    startSequenceAction: true,
+    stopSequenceAction: true,
     condition: true,
     delay: true,
     webhook: true,
@@ -100,6 +143,20 @@ const PLATFORM_RULES = {
     card: true,
     carousel: false,
     collectInput: true,
+    // Channel-agnostic by construction: a question is just a message plus waiting
+    // for the next reply, which every channel supports the same way. Omitting these
+    // made isNodeSupportedOnPlatform() return false (it treats an absent rule as
+    // unsupported), which silently kept them out of every palette.
+    runUserInputFlow: true,
+    question: true,
+    finalAnswer: true,
+    // Sequence-related nodes are channel-agnostic for the same reason —
+    // "start/stop enrollment" and "wait N minutes" have nothing platform-
+    // specific about them; only the Sequence's own message content nodes are
+    // capability-checked, the normal way, when authored inside it.
+    wait: true,
+    startSequenceAction: true,
+    stopSequenceAction: true,
     condition: true,
     delay: true,
     webhook: true,
@@ -120,6 +177,20 @@ const PLATFORM_RULES = {
     card: false,
     carousel: false,
     collectInput: true,
+    // Channel-agnostic by construction: a question is just a message plus waiting
+    // for the next reply, which every channel supports the same way. Omitting these
+    // made isNodeSupportedOnPlatform() return false (it treats an absent rule as
+    // unsupported), which silently kept them out of every palette.
+    runUserInputFlow: true,
+    question: true,
+    finalAnswer: true,
+    // Sequence-related nodes are channel-agnostic for the same reason —
+    // "start/stop enrollment" and "wait N minutes" have nothing platform-
+    // specific about them; only the Sequence's own message content nodes are
+    // capability-checked, the normal way, when authored inside it.
+    wait: true,
+    startSequenceAction: true,
+    stopSequenceAction: true,
     condition: true,
     delay: true,
     webhook: true,
@@ -140,6 +211,20 @@ const PLATFORM_RULES = {
     card: true,
     carousel: true,
     collectInput: true,
+    // Channel-agnostic by construction: a question is just a message plus waiting
+    // for the next reply, which every channel supports the same way. Omitting these
+    // made isNodeSupportedOnPlatform() return false (it treats an absent rule as
+    // unsupported), which silently kept them out of every palette.
+    runUserInputFlow: true,
+    question: true,
+    finalAnswer: true,
+    // Sequence-related nodes are channel-agnostic for the same reason —
+    // "start/stop enrollment" and "wait N minutes" have nothing platform-
+    // specific about them; only the Sequence's own message content nodes are
+    // capability-checked, the normal way, when authored inside it.
+    wait: true,
+    startSequenceAction: true,
+    stopSequenceAction: true,
     condition: true,
     delay: true,
     webhook: true,
@@ -169,6 +254,82 @@ const NODE_COLORS = {
   payment: '#16a34a',      // Green
   handoff: '#6366f1',      // Indigo
   end: '#dc2626',          // Soft red
+  question: '#0d9488',           // Teal (same family as Collect Input — same concept)
+  finalAnswer: '#16a34a',        // Green (a completion, like "end")
+  runUserInputFlow: '#7c3aed',   // Violet (a distinct "module call" color)
+  startSequenceAction: '#0891b2', // Cyan (a distinct "enroll" color)
+  stopSequenceAction: '#dc2626',  // Same red family as "end" — a stop/halt action
+  wait: '#64748b',                // Slate — same family as delay, a timing step not content
+};
+
+// Dynamic light-color styling themes per connected channel for the main Save button
+const PLATFORM_SAVE_THEMES = {
+  WHATSAPP: {
+    bg: 'linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 50%, #dcfce7 100%)',
+    border: '#86efac',
+    color: '#065f46',
+    hoverBg: 'linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%)',
+    hoverBorder: '#4ade80',
+    shadow: '0 2px 8px -1px rgba(34, 197, 94, 0.2), 0 1px 2px rgba(0, 0, 0, 0.04)',
+    hoverShadow: '0 4px 14px -1px rgba(34, 197, 94, 0.35)',
+    iconColor: '#16a34a',
+    badgeBg: '#bbf7d0',
+  },
+  FACEBOOK: {
+    bg: 'linear-gradient(135deg, #eff6ff 0%, #f0f7ff 50%, #dbeafe 100%)',
+    border: '#93c5fd',
+    color: '#1e40af',
+    hoverBg: 'linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%)',
+    hoverBorder: '#60a5fa',
+    shadow: '0 2px 8px -1px rgba(59, 130, 246, 0.2), 0 1px 2px rgba(0, 0, 0, 0.04)',
+    hoverShadow: '0 4px 14px -1px rgba(59, 130, 246, 0.35)',
+    iconColor: '#2563eb',
+    badgeBg: '#bfdbfe',
+  },
+  INSTAGRAM: {
+    bg: 'linear-gradient(135deg, #fff1f2 0%, #fdf2f8 50%, #fce7f3 100%)',
+    border: '#f9a8d4',
+    color: '#9d174d',
+    hoverBg: 'linear-gradient(135deg, #fce7f3 0%, #fbcfe8 100%)',
+    hoverBorder: '#f472b6',
+    shadow: '0 2px 8px -1px rgba(244, 114, 182, 0.22), 0 1px 2px rgba(0, 0, 0, 0.04)',
+    hoverShadow: '0 4px 14px -1px rgba(244, 114, 182, 0.38)',
+    iconColor: '#db2777',
+    badgeBg: '#fbcfe8',
+  },
+  TELEGRAM: {
+    bg: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 50%, #bae6fd 100%)',
+    border: '#7dd3fc',
+    color: '#0369a1',
+    hoverBg: 'linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%)',
+    hoverBorder: '#38bdf8',
+    shadow: '0 2px 8px -1px rgba(14, 165, 233, 0.2), 0 1px 2px rgba(0, 0, 0, 0.04)',
+    hoverShadow: '0 4px 14px -1px rgba(14, 165, 233, 0.35)',
+    iconColor: '#0284c7',
+    badgeBg: '#bae6fd',
+  },
+  TIKTOK: {
+    bg: 'linear-gradient(135deg, #fafafa 0%, #f4f4f5 50%, #e4e4e7 100%)',
+    border: '#cbd5e1',
+    color: '#18181b',
+    hoverBg: 'linear-gradient(135deg, #f4f4f5 0%, #e4e4e7 100%)',
+    hoverBorder: '#94a3b8',
+    shadow: '0 2px 8px -1px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04)',
+    hoverShadow: '0 4px 14px -1px rgba(0, 0, 0, 0.15)',
+    iconColor: '#e11d48',
+    badgeBg: '#fecdd3',
+  },
+  WEBCHAT: {
+    bg: 'linear-gradient(135deg, #eef2ff 0%, #f5f3ff 50%, #e0e7ff 100%)',
+    border: '#a5b4fc',
+    color: '#3730a3',
+    hoverBg: 'linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)',
+    hoverBorder: '#818cf8',
+    shadow: '0 2px 8px -1px rgba(99, 102, 241, 0.2), 0 1px 2px rgba(0, 0, 0, 0.04)',
+    hoverShadow: '0 4px 14px -1px rgba(99, 102, 241, 0.35)',
+    iconColor: '#4f46e5',
+    badgeBg: '#c7d2fe',
+  },
 };
 
 const NODE_ICONS = {
@@ -191,6 +352,12 @@ const NODE_ICONS = {
   payment: ShoppingBag,
   handoff: Headphones,
   end: CircleStop,
+  question: HelpCircle,
+  finalAnswer: Flag,
+  runUserInputFlow: ClipboardList,
+  startSequenceAction: Play,
+  stopSequenceAction: CircleStop,
+  wait: Clock,
 };
 
 const PALETTE_CATEGORIES = [
@@ -218,6 +385,7 @@ const PALETTE_CATEGORIES = [
     label: 'Logic & Automations',
     items: [
       { type: 'collectInput', label: 'Collect Input' },
+      { type: 'runUserInputFlow', label: 'Run User Input Flow' },
       { type: 'condition', label: 'Condition' },
       { type: 'delay', label: 'Delay' },
       { type: 'webhook', label: 'Webhook / Zapier' },
@@ -227,8 +395,66 @@ const PALETTE_CATEGORIES = [
   {
     label: 'Actions',
     items: [
+      { type: 'startSequenceAction', label: 'Start Sequence' },
+      { type: 'stopSequenceAction', label: 'Stop Sequence' },
       { type: 'handoff', label: 'Agent Handoff' },
       { type: 'end', label: 'End Flow' },
+    ],
+  },
+];
+
+// A User Input Flow is a linear Q&A sequence, not a full bot — it only offers the
+// nodes that make sense inside one (ask a question, show something, finish).
+// Buttons/conditions/handoff/etc. belong to the bot Flow that calls it.
+const USER_INPUT_FLOW_PALETTE = [
+  {
+    label: 'Questions',
+    items: [
+      { type: 'question', label: 'Question' },
+      { type: 'finalAnswer', label: 'Final Answer' },
+    ],
+  },
+  {
+    label: 'Messages & Media',
+    items: [
+      { type: 'text', label: 'Text Message' },
+      { type: 'image', label: 'Image' },
+      { type: 'video', label: 'Video' },
+      { type: 'audio', label: 'Audio' },
+      { type: 'file', label: 'File / Document' },
+    ],
+  },
+];
+
+// A Sequence is a strictly one-way, non-branching broadcast (see the
+// Sequence Messages plan) — content nodes plus a `wait` delay node between
+// them. No question/collectInput (nothing waits for a reply) and no
+// runUserInputFlow/startSequenceAction/stopSequenceAction (no nesting —
+// matches the existing "a User Input Flow can't run another one" pattern).
+const SEQUENCE_PALETTE = [
+  {
+    label: 'Timing',
+    items: [
+      { type: 'wait', label: 'Wait' },
+    ],
+  },
+  {
+    label: 'Messages & Media',
+    items: [
+      { type: 'text', label: 'Text Message' },
+      { type: 'image', label: 'Image' },
+      { type: 'video', label: 'Video' },
+      { type: 'audio', label: 'Audio' },
+      { type: 'file', label: 'File / Document' },
+    ],
+  },
+  {
+    label: 'Interactive',
+    items: [
+      { type: 'buttons', label: 'Buttons' },
+      { type: 'quickReplies', label: 'Quick Replies' },
+      { type: 'listMenu', label: 'List Menu' },
+      { type: 'carousel', label: 'Carousel' },
     ],
   },
 ];
@@ -243,7 +469,14 @@ const DEFAULT_NODE_DATA = {
   file:         { label: 'File / Document', mediaUrl: '', filename: '' },
   buttons:      { label: 'Text Message', message: '', buttons: [] },
   quickReplies: { label: 'Quick Replies', message: '', replies: ['Reply 1'] },
-  listMenu:     { label: 'List Menu', title: 'Menu Options', items: ['Option 1', 'Option 2'] },
+  // `lists` (plural) is the current shape — each entry sends as its own
+  // sequential list-style message, letting an author offer more options than
+  // any single channel's native list supports (WhatsApp: 10 rows/message,
+  // Facebook/Instagram: 10 carousel elements/message). Old flows saved before
+  // this existed only have a flat `items` array — normalizeListMenuData()
+  // (used by both this panel and flowEngine.js) upgrades that into a single
+  // one-item `lists` entry on the fly, so nothing needs a data migration.
+  listMenu:     { label: 'List Menu', lists: [{ title: 'Menu Options', buttonText: 'Options', items: ['Option 1', 'Option 2'] }] },
   card:         { label: 'Card', title: '', subtitle: '', imageUrl: '' },
   carousel:     { label: 'Carousel', cards: [{ title: 'Card 1', subtitle: '', imageUrl: '' }] },
   collectInput: { label: 'Collect Input', variable: '', inputType: 'name' },
@@ -253,6 +486,14 @@ const DEFAULT_NODE_DATA = {
   payment:      { label: 'Catalog / Payment', productName: 'Order Product / Catalog', amount: 49.99, currency: 'USD', buttonLabel: '🛍️ View Catalog / Pay', successMessage: '🎉 Order received! We will process it shortly.' },
   handoff:      { label: 'Agent Handoff', message: '' },
   end:          { label: 'End', message: '' },
+  runUserInputFlow: { label: 'Run User Input Flow', userInputFlowId: null, userInputFlowName: '' },
+  startSequenceAction: { label: 'Start Sequence', sequenceId: null, sequenceName: '' },
+  stopSequenceAction: { label: 'Stop Sequence', sequenceId: null, sequenceName: '' },
+  // Sequence-only delay step, between two content nodes — see SEQUENCE_PALETTE.
+  wait: { label: 'Wait', preset: '5m', customValue: '', customUnit: 'minutes' },
+  // The following two only ever appear inside a User Input Flow's own mini-builder:
+  question:     { label: 'Question', message: '', answerType: 'keyboard', inputType: 'name', options: [], saveToFieldId: null },
+  finalAnswer:  { label: 'Final Answer', message: 'Thanks — that\'s everything I needed!' },
 };
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -506,15 +747,15 @@ const builderStyles = `
     cursor: pointer;
     transition: all 0.15s;
   }
-  .fb-props-close:hover { background: #fef2f2; border-color: #fecaca; color: #ef4444; }
+  .fb-props-close:hover { background: #f1f5f9; border-color: #cbd5e1; color: #0f172a; }
   .fb-props-body { padding: 16px; display: flex; flex-direction: column; gap: 14px; background: #ffffff; }
   .fb-field { display: flex; flex-direction: column; gap: 6px; }
   .fb-field label {
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.6px;
-    color: #64748b;
+    color: #475569;
   }
   .fb-field input,
   .fb-field textarea,
@@ -533,11 +774,12 @@ const builderStyles = `
   .fb-field input:focus,
   .fb-field textarea:focus,
   .fb-field select:focus {
-    border-color: #0284c7;
-    box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
+    border-color: #0f172a;
+    box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.08);
     background: #ffffff;
   }
   .fb-field textarea { min-height: 80px; }
+  .fb-hint { font-size: 11px; color: #94a3b8; line-height: 1.4; }
   .fb-list-item {
     display: flex;
     align-items: center;
@@ -560,34 +802,54 @@ const builderStyles = `
   .fb-add-btn {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
     padding: 8px 14px;
-    border-radius: 10px;
+    border-radius: 8px;
     border: 1.5px dashed #cbd5e1;
-    background: #f8fafc;
-    color: #0284c7;
+    background: #ffffff;
+    color: #0f172a;
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
   }
-  .fb-add-btn:hover { background: #f0f9ff; border-color: #0284c7; }
-  .fb-delete-node-btn {
+  .fb-add-btn:hover { background: #f8fafc; border-color: #94a3b8; }
+  .fb-done-btn {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
     padding: 10px;
-    border-radius: 10px;
-    border: 1px solid rgba(239, 68, 68, 0.20);
-    background: rgba(239, 68, 68, 0.05);
-    color: #ef4444;
+    border-radius: 8px;
+    border: 1px solid #0f172a;
+    background: #0f172a;
+    color: #ffffff;
     font-size: 12.5px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
-    margin-top: 8px;
+    margin-top: 4px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
   }
+  .fb-done-btn:hover { background: #1e293b; border-color: #1e293b; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15); }
+  .fb-delete-node-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 9px;
+    border-radius: 8px;
+    border: 1px solid #fee2e2;
+    background: #ffffff;
+    color: #dc2626;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-top: 6px;
+  }
+  .fb-delete-node-btn:hover { background: #fef2f2; border-color: #fca5a5; }
   /* ── Hover Node Action Toolbar (Duplicate & Delete) ────────── */
   .fb-node-hover-actions {
     position: absolute;
@@ -781,10 +1043,15 @@ const builderStyles = `
     border-radius: 50% !important;
     transition: all 0.15s ease !important;
     box-shadow: 0 0 0 1px #94a3b8, 0 2px 5px rgba(0,0,0,0.12) !important;
-    cursor: crosshair !important;
+    cursor: pointer !important;
     z-index: 10 !important;
   }
-  .react-flow__handle:hover {
+  /* Scoped away from every connector that shouldn't animate on hover — both
+     the "from"/source ones (next-step-handle / btn-handle) and the "to"/
+     target one (target-handle). Nothing matches this rule anymore, kept
+     around only in case a future handle type is added without its own
+     explicit hover treatment. */
+  .react-flow__handle:hover:not(.next-step-handle):not(.btn-handle):not(.target-handle) {
     background: #0f172a !important;
     border-color: #ffffff !important;
     transform: scale(1.25) !important;
@@ -792,22 +1059,101 @@ const builderStyles = `
   }
   .react-flow__handle-top { top: -6px !important; }
   .react-flow__handle-bottom { bottom: -6px !important; }
-  .react-flow__handle-right { right: -6px !important; }
+  /* Every "from" (source) connector in this file uses Position.Right — this
+     is the one shared rule that positions all of them, moved inward from the
+     card/chip/row's edge so the whole circle sits inside it rather than
+     straddling the border. Being an !important stylesheet rule, this already
+     wins over the couple of per-item handles that also carry their own
+     inline right value (buttons-in-a-chip, list items) — nothing further
+     needed there. */
+  .react-flow__handle-right { right: 10px !important; }
   .react-flow__handle-left { left: -5px !important; }
 
-  /* Solid connector dot on active buttons and Then triggers */
+  /* Every outgoing (source) connector circle — Next Step, per-button/
+     per-item, Start's own "Then"/"Sequence" branches, Condition's Yes/No —
+     one consistent look: blank/hollow while nothing is wired to it, filled
+     solid the instant a real edge connects (the .connected class, applied
+     per-handle in the node components via useConnectedHandles /
+     useNodeConnections). Previously these came in two different, always-on
+     looks (a hollow ring for Next Step, an always-filled dot for buttons/
+     Then) with no connection-state awareness at all. */
+  .react-flow__handle.next-step-handle,
   .react-flow__handle.btn-handle,
   .react-flow__handle[id^="btn-"],
-  .react-flow__handle[id="then"] {
-    width: 12px !important;
-    height: 12px !important;
+  .react-flow__handle[id^="qr-"],
+  .react-flow__handle[id^="item-"],
+  .react-flow__handle[id="then"],
+  .react-flow__handle[id="attach-sequence"],
+  .react-flow__handle[id="next-step"],
+  .react-flow__handle[id="next"],
+  .react-flow__handle[id="yes"],
+  .react-flow__handle[id="no"] {
+    width: 13px !important;
+    height: 13px !important;
+    background: #ffffff !important;
+    border: 2px solid #94a3b8 !important;
+    border-radius: 50% !important;
+    box-shadow: none !important;
+    cursor: pointer !important;
+  }
+  .react-flow__handle.next-step-handle.connected,
+  .react-flow__handle.btn-handle.connected,
+  .react-flow__handle[id^="btn-"].connected,
+  .react-flow__handle[id^="qr-"].connected,
+  .react-flow__handle[id^="item-"].connected,
+  .react-flow__handle[id="then"].connected,
+  .react-flow__handle[id="attach-sequence"].connected,
+  .react-flow__handle[id="next-step"].connected,
+  .react-flow__handle[id="next"].connected,
+  .react-flow__handle[id="yes"].connected,
+  .react-flow__handle[id="no"].connected {
     background: #64748b !important;
     border: 2px solid #ffffff !important;
-    border-radius: 50% !important;
+    box-shadow: 0 0 0 1px #94a3b8 !important;
+  }
+  /* No hover animation on these — hovering looks identical to not hovering,
+     for both the blank and filled state. Deliberately NOT declaring
+     transform here at all (unlike an earlier version of this rule that set
+     transform: none — that actually wiped out React Flow's own positioning
+     transform on the element, which is applied inline and only takes effect
+     when nothing more specific overrides it, causing the circle to visibly
+     jump on hover, the opposite of "no animation"). Excluding these classes
+     from the base hover rule above is what actually stops the scale;
+     nothing here needs to fight it. */
+  .react-flow__handle.next-step-handle:hover,
+  .react-flow__handle.btn-handle:hover,
+  .react-flow__handle[id^="btn-"]:hover,
+  .react-flow__handle[id^="qr-"]:hover,
+  .react-flow__handle[id^="item-"]:hover,
+  .react-flow__handle[id="then"]:hover,
+  .react-flow__handle[id="attach-sequence"]:hover,
+  .react-flow__handle[id="next-step"]:hover,
+  .react-flow__handle[id="next"]:hover,
+  .react-flow__handle[id="yes"]:hover,
+  .react-flow__handle[id="no"]:hover {
+    background: #ffffff !important;
+    border: 2px solid #94a3b8 !important;
+    box-shadow: none !important;
+  }
+  .react-flow__handle.next-step-handle.connected:hover,
+  .react-flow__handle.btn-handle.connected:hover,
+  .react-flow__handle[id^="btn-"].connected:hover,
+  .react-flow__handle[id^="qr-"].connected:hover,
+  .react-flow__handle[id^="item-"].connected:hover,
+  .react-flow__handle[id="then"].connected:hover,
+  .react-flow__handle[id="attach-sequence"].connected:hover,
+  .react-flow__handle[id="next-step"].connected:hover,
+  .react-flow__handle[id="next"].connected:hover,
+  .react-flow__handle[id="yes"].connected:hover,
+  .react-flow__handle[id="no"].connected:hover {
+    background: #64748b !important;
+    border: 2px solid #ffffff !important;
     box-shadow: 0 0 0 1px #94a3b8 !important;
   }
 
-  /* Target connector on node left side (discreet circle matching card border) */
+  /* Target connector on node left side (discreet circle matching card border,
+     always filled — the "receiving" side isn't part of the blank/filled
+     connection-state treatment above, it's always visually present). */
   .react-flow__handle-left,
   .react-flow__handle.target-handle,
   .react-flow__handle[type="target"] {
@@ -818,26 +1164,15 @@ const builderStyles = `
     box-shadow: 0 0 0 1px #cbd5e1 !important;
     left: -5px !important;
   }
-
-  /* Unfilled Next Step ring pointer handle */
-  .react-flow__handle.next-step-handle,
-  .react-flow__handle[id="next-step"],
-  .react-flow__handle[id="next"] {
-    width: 14px !important;
-    height: 14px !important;
-    background: #ffffff !important;
-    border: 2px solid #94a3b8 !important;
-    border-radius: 50% !important;
-    box-shadow: none !important;
-    cursor: crosshair !important;
-    right: -7px !important;
-  }
-  .react-flow__handle.next-step-handle:hover,
-  .react-flow__handle[id="next-step"]:hover,
-  .react-flow__handle[id="next"]:hover {
-    background: #f8fafc !important;
-    border-color: #0f172a !important;
-    transform: scale(1.2) !important;
+  /* No hover animation here either — restates the same resting look above,
+     no transform, so hovering the receiving side looks identical to not
+     hovering it (same treatment as the "from" connectors, just also applied
+     to "to"). */
+  .react-flow__handle.target-handle:hover,
+  .react-flow__handle[type="target"]:hover {
+    background: #64748b !important;
+    border: 2px solid #ffffff !important;
+    box-shadow: 0 0 0 1px #cbd5e1 !important;
   }
 
   /* ── Next Step row (bottom of card) ────────────────────────── */
@@ -846,7 +1181,12 @@ const builderStyles = `
     align-items: center;
     justify-content: flex-end;
     gap: 7px;
-    padding: 8px 14px 10px;
+    /* Extra right padding (up from 14px) so the label has real breathing
+       room before the circle — the circle itself is absolutely positioned
+       (React Flow's own Handle behavior) so it doesn't participate in this
+       row's flex gap at all; padding-right is what actually keeps it clear
+       of the text. */
+    padding: 8px 28px 10px 14px;
     font-size: 11px;
     font-weight: 600;
     color: #94a3b8;
@@ -929,48 +1269,56 @@ const builderStyles = `
     box-shadow: 0 1px 3px rgba(0,0,0,0.03);
   }
   .flow-tool-btn {
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
-    border: none;
-    background: transparent;
-    color: #64748b;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    border: 1.5px solid #e2e8f0;
+    background: #ffffff;
+    color: #475569;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: all 0.15s;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    transition: all 0.2s ease;
   }
   .flow-tool-btn:hover {
-    background: #ffffff;
+    background: #f8fafc;
+    border-color: #cbd5e1;
     color: #0f172a;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+    transform: translateY(-0.5px);
   }
   .flow-layout-btn {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
+    gap: 7px;
+    padding: 7px 16px;
     border-radius: 8px;
     background: #ffffff;
-    border: 1px solid #e2e8f0;
+    border: 1.5px solid #e2e8f0;
     color: #334155;
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 12.5px;
+    font-weight: 700;
     cursor: pointer;
-    transition: all 0.15s;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    transition: all 0.2s ease;
     height: 34px;
+    position: relative;
+    overflow: hidden;
   }
   .flow-layout-btn:hover {
     background: #f8fafc;
     border-color: #cbd5e1;
     color: #0f172a;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    transform: translateY(-0.5px);
   }
   .flow-preview-toggle-btn {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 14px;
+    gap: 7px;
+    padding: 7px 18px;
     border-radius: 8px;
     background: #ffffff;
     border: 1.5px solid #cbd5e1;
@@ -978,41 +1326,20 @@ const builderStyles = `
     font-size: 12.5px;
     font-weight: 700;
     cursor: pointer;
-    transition: all 0.15s;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    transition: all 0.2s ease;
     height: 34px;
+    position: relative;
+    overflow: hidden;
   }
   .flow-preview-toggle-btn:hover,
   .flow-preview-toggle-btn.active {
     background: #eff6ff;
-    border-color: #2563eb;
-    color: #2563eb;
+    border-color: #3b82f6;
+    color: #1d4ed8;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.18);
+    transform: translateY(-0.5px);
   }
-  .flow-set-live-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    padding: 7px 20px;
-    border-radius: 20px;
-    border: none;
-    background: #0084ff;
-    color: #ffffff;
-    font-size: 13px;
-    font-weight: 700;
-    cursor: pointer;
-    box-shadow: 0 2px 8px rgba(0, 132, 255, 0.35);
-    transition: all 0.2s;
-    height: 34px;
-  }
-  .flow-set-live-btn:hover {
-    background: #0073e6;
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 132, 255, 0.45);
-  }
-  .flow-set-live-btn:active {
-    transform: translateY(0);
-  }
-
   /* ── Canvas Floating Hint Tooltip ──────────────────────────── */
   .flow-canvas-hint {
     position: absolute;
@@ -1040,18 +1367,20 @@ const builderStyles = `
     height: calc(100vh - 56px);
     position: absolute;
     right: 16px;
-    top: 66px;
+    top: 56px;
     z-index: 30;
     pointer-events: none;
     display: flex;
     align-items: flex-start;
     justify-content: center;
+    padding-top: 18px;
+    box-sizing: border-box;
   }
   .flow-phone-device {
     pointer-events: auto;
-    width: 330px;
-    height: 640px;
-    max-height: calc(100vh - 84px);
+    width: 336px;
+    height: 740px;
+    max-height: calc(100vh - 96px);
     background: #0b0f19;
     border-radius: 44px;
     padding: 11px;
@@ -1362,6 +1691,50 @@ function isNodeSupportedOnPlatform(nodeType, platform) {
   return rule !== false && rule !== undefined;
 }
 
+// PLATFORM_RULES already carries a numeric item cap for some node types (e.g.
+// WHATSAPP.listMenu = 10, FACEBOOK.quickReplies = 13) alongside the plain
+// true/false support flags isNodeSupportedOnPlatform() reads — this is the
+// first place anything actually reads the number itself, so the builder UI
+// can enforce it instead of only hinting at it. Returns null when the
+// platform has no numeric cap for that node type (either unsupported, or
+// supported without a hard limit).
+// Sequences must stay a single linear chain (no branching, no waiting for a
+// reply — see the Sequence Messages plan). Mirrors flowGraph.js's
+// findFirstBranchingNodeId on the backend (frontend/backend can't share a
+// module in this codebase) — returns the first node with more than one
+// outgoing edge, or null if the graph is already linear.
+function findFirstBranchingNodeId(nodes, edges) {
+  const outgoingCount = new Map();
+  for (const edge of edges) {
+    outgoingCount.set(edge.source, (outgoingCount.get(edge.source) || 0) + 1);
+  }
+  for (const node of nodes) {
+    if ((outgoingCount.get(node.id) || 0) > 1) return node.id;
+  }
+  return null;
+}
+
+function getNodeItemCap(nodeType, platform) {
+  const p = (platform || 'WEBCHAT').toUpperCase();
+  const rules = PLATFORM_RULES[p] || PLATFORM_RULES.WEBCHAT;
+  const rule = rules[nodeType];
+  return typeof rule === 'number' ? rule : null;
+}
+
+// Upgrades a listMenu node's data to the current `lists: [{title, buttonText,
+// items}]` shape. Flows saved before multi-list support only have a flat
+// `items` array at the top level — that becomes a single-list `lists` entry
+// here so old data keeps working with zero migration. flowEngine.js keeps its
+// own copy of this (frontend/backend can't share a module in this codebase),
+// hand-kept in sync — see the note there.
+function normalizeListMenuData(data) {
+  if (Array.isArray(data?.lists) && data.lists.length > 0) return data.lists;
+  if (Array.isArray(data?.items)) {
+    return [{ title: data.title || 'Menu Options', buttonText: data.buttonText || 'Options', items: data.items }];
+  }
+  return [{ title: 'Menu Options', buttonText: 'Options', items: [] }];
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    HELPER: Generate node ID
    ═══════════════════════════════════════════════════════════════════ */
@@ -1381,6 +1754,10 @@ function validateNodeData(node) {
   const data = node.data || {};
   switch (node.type) {
     case 'start': {
+      // A User Input Flow's / Sequence's Start node has no trigger of its own —
+      // a UIF is invoked by a bot Flow's "Run User Input Flow" node, a Sequence
+      // by a Start Sequence action — so neither has a keyword to require.
+      if (data.uifStart || data.sequenceStart) return null;
       if (data.triggers && data.triggers.length > 0) {
         for (const trg of data.triggers) {
           if (trg.match_type !== 'thumbs_up' && trg.type !== 'first_contact' && trg.type !== 'any') {
@@ -1458,15 +1835,25 @@ function validateNodeData(node) {
       }
       return null;
 
-    case 'listMenu':
-      if (!data.title || !data.title.trim()) {
-        return 'List Menu title cannot be empty';
+    case 'listMenu': {
+      const lists = normalizeListMenuData(data);
+      if (lists.length === 0) {
+        return 'At least one list is required';
       }
-      const validItems = (data.items || []).filter((it) => (typeof it === 'string' ? it : it?.title || '').trim());
-      if (validItems.length === 0) {
-        return 'At least one menu option is required';
+      for (const list of lists) {
+        if (!list.title || !list.title.trim()) {
+          return 'Every list needs a title';
+        }
+        const validItems = (list.items || []).filter((it) => (typeof it === 'string' ? it : it?.title || '').trim());
+        if (validItems.length === 0) {
+          return 'Every list needs at least one item';
+        }
+        if (validItems.length > 10) {
+          return 'A single list cannot have more than 10 items — add another list instead';
+        }
       }
       return null;
+    }
 
     case 'card':
       if (!(data.title || '').trim() && !(data.imageUrl || '').trim()) {
@@ -1488,6 +1875,45 @@ function validateNodeData(node) {
       if (!data.variable || !data.variable.trim()) {
         return 'Variable name to save input is required';
       }
+      return null;
+
+    case 'question':
+      // A question is identified solely by its Custom Field now (no separate
+      // variable name) — the field's own field_key/name serve both roles.
+      if (!data.saveToFieldId || data.saveToFieldId === 'CREATE_NEW') {
+        return 'Select or create a Custom Field for this question';
+      }
+      if (data.answerType === 'choice') {
+        const validOptions = (data.options || []).filter((o) => o && o.trim());
+        if (validOptions.length < 2) {
+          return 'Add at least 2 options for a Multiple Choice question';
+        }
+        if (validOptions.length > 10) {
+          return 'A Multiple Choice question cannot have more than 10 options';
+        }
+      }
+      return null;
+
+    case 'runUserInputFlow':
+      if (!data.userInputFlowId) {
+        return 'Select or create a User Input Flow to run';
+      }
+      return null;
+
+    case 'startSequenceAction':
+    case 'stopSequenceAction':
+      if (!data.sequenceId) {
+        return `Select ${node.type === 'stopSequenceAction' ? 'a Sequence to stop' : 'or create a Sequence to start'}`;
+      }
+      return null;
+
+    case 'wait':
+      if (data.preset === 'custom' && !(Number(data.customValue) > 0)) {
+        return 'Enter a custom wait duration greater than 0';
+      }
+      return null;
+
+    case 'finalAnswer':
       return null;
 
     case 'condition':
@@ -1560,16 +1986,20 @@ function getNodeDimensions(node) {
       return { width, height: 90 + Math.max(1, count) * 34 };
     }
     case 'listMenu': {
-      const count = (node.data?.items || []).length;
-      return { width, height: 90 + Math.max(1, count) * 34 };
+      const lists = normalizeListMenuData(node.data);
+      const count = lists.reduce((sum, l) => sum + (l.items || []).length, 0);
+      // + a little extra per list beyond the first, for each list's own title row.
+      return { width, height: 90 + Math.max(1, count) * 34 + Math.max(0, lists.length - 1) * 26 };
     }
     case 'card':
       return { width, height: 185 };
     case 'condition':
       return { width, height: 145 };
     case 'collectInput':
+    case 'question':
     case 'payment':
     case 'webhook':
+    case 'runUserInputFlow':
       return { width, height: 130 };
     case 'delay':
     case 'video':
@@ -1578,6 +2008,7 @@ function getNodeDimensions(node) {
       return { width, height: 120 };
     case 'handoff':
     case 'end':
+    case 'finalAnswer':
     default:
       return { width, height: 100 };
   }
@@ -1588,11 +2019,19 @@ function getAutoLayoutedNodes(nodes, edges) {
 
   const H_GAP = 70; // Ample, clean horizontal gap between stages
   const V_GAP = 36; // Generous vertical gap between adjacent cards to prevent any cramping
+  const OVERLAP_BUFFER = 2; // Tight nudge used only to resolve a collision — not a second V_GAP
 
-  // Calculate actual dimensions for each node
+  // Calculate actual dimensions for each node. Prefer the size the card
+  // actually measured on canvas — the estimates below can't account for
+  // attached buttons, media previews or extra connector rows, and an
+  // under-estimate is exactly what lets auto-arranged siblings overlap.
   const dimMap = {};
   nodes.forEach((n) => {
-    dimMap[n.id] = getNodeDimensions(n);
+    const est = getNodeDimensions(n);
+    dimMap[n.id] = {
+      width: n.measured?.width || n.width || est.width,
+      height: n.measured?.height || n.height || est.height,
+    };
   });
 
   // Build edge mappings and handle-aware child ordering
@@ -1735,6 +2174,37 @@ function getAutoLayoutedNodes(nodes, edges) {
     });
   }
 
+  // Final collision sweep. Centering a parent against its children can sag a
+  // tall card down into the one below it, and columns aren't perfectly aligned
+  // (a stage's X depends on its own parent's width), so walk everything
+  // top-to-bottom and push down anything still overlapping a card already
+  // settled above it. Only downward nudges, so a single pass converges.
+  const placed = Object.keys(positions).sort(
+    (a, b) => positions[a].y - positions[b].y || positions[a].x - positions[b].x
+  );
+  for (let i = 1; i < placed.length; i++) {
+    const me = positions[placed[i]];
+    const myDim = dimMap[placed[i]] || { width: 220, height: 110 };
+    let minY = me.y;
+
+    for (let j = 0; j < i; j++) {
+      const other = positions[placed[j]];
+      const otherDim = dimMap[placed[j]] || { width: 220, height: 110 };
+
+      const sharesColumn =
+        me.x < other.x + otherDim.width + H_GAP / 2 &&
+        other.x < me.x + myDim.width + H_GAP / 2;
+      if (!sharesColumn) continue;
+
+      const collides =
+        me.y < other.y + otherDim.height + OVERLAP_BUFFER &&
+        other.y < me.y + myDim.height + OVERLAP_BUFFER;
+      if (collides) minY = Math.max(minY, other.y + otherDim.height + OVERLAP_BUFFER);
+    }
+
+    me.y = Math.round(minY);
+  }
+
   return nodes.map((node) => ({
     ...node,
     sourcePosition: Position.Right,
@@ -1752,13 +2222,15 @@ export const FlowNodeActionsContext = createContext({
   onDelete: () => {},
   onSelectNode: () => {},
   onUpdateNodeData: () => {},
+  onAddQuestionAfter: () => {},
   buttonTargetNodes: new Set(),
   emptySourceNodes: new Set(),
+  sequencesList: [],
 });
 
-/* ── Node Hover Actions Toolbar (Duplicate & Delete) ────────── */
-function NodeHoverActions({ nodeId, nodeType }) {
-  const { onDuplicate, onDelete } = useContext(FlowNodeActionsContext);
+/* ── Node Hover Actions Toolbar (Duplicate & Delete, + guided actions on a Question node) ── */
+function NodeHoverActions({ nodeId, nodeType, data }) {
+  const { onDuplicate, onDelete, onUpdateNodeData, onAddQuestionAfter } = useContext(FlowNodeActionsContext);
 
   return (
     <div
@@ -1766,6 +2238,33 @@ function NodeHoverActions({ nodeId, nodeType }) {
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
     >
+      {nodeType === 'question' && (
+        <>
+          <button
+            type="button"
+            className="fb-node-action-btn"
+            title="Add Question — creates and connects the next question"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAddQuestionAfter?.(nodeId);
+            }}
+          >
+            <Plus size={15} strokeWidth={2} />
+          </button>
+          <button
+            type="button"
+            className="fb-node-action-btn"
+            title={data?.endFlow ? 'Final Answer set — click to unset' : 'Set as Final Answer — ends the form here'}
+            style={data?.endFlow ? { color: '#16a34a' } : undefined}
+            onClick={(e) => {
+              e.stopPropagation();
+              onUpdateNodeData?.(nodeId, { ...data, endFlow: !data?.endFlow });
+            }}
+          >
+            <Flag size={15} strokeWidth={2} />
+          </button>
+        </>
+      )}
       <button
         type="button"
         className="fb-node-action-btn fb-node-duplicate-btn"
@@ -1792,8 +2291,44 @@ function NodeHoverActions({ nodeId, nodeType }) {
   );
 }
 
+/**
+ * Every outgoing (source) connector circle on the canvas should render
+ * blank/hollow while nothing is wired to it, and filled solid the moment a
+ * real edge is connected — one consistent look everywhere (Next Step,
+ * per-button/per-item, Start's own "Then"/"Sequence" branches), rather than
+ * always looking the same regardless of connection state. One
+ * useNodeConnections call per node (not per handle — hooks can't be called
+ * inside a .map() for nodes with a variable number of items) returns every
+ * outgoing connection that node has; callers just do connectedHandles.has(id)
+ * per Handle they render, including inside a loop.
+ */
+function useConnectedHandles(nodeId) {
+  const connections = useNodeConnections({ id: nodeId, handleType: 'source' });
+  return useMemo(() => {
+    const set = new Set();
+    for (const c of connections) {
+      if (c.sourceHandle) {
+        set.add(c.sourceHandle);
+      } else {
+        // Edges saved before every node's primary handle carried an explicit
+        // id (back when a node had only one source handle to draw from) never
+        // stamped a sourceHandle at all — flowGraph.js's resolveNextNodeId on
+        // the backend already treats that exactly the same as "next-step"/
+        // "then" via its no-handle fallback, so this does the same here.
+        // Blindly marking both as connected is safe: no node in this file
+        // has both a "then" and a "next-step" handle, so only the one that
+        // actually exists on a given node ever gets checked.
+        set.add('next-step');
+        set.add('then');
+      }
+    }
+    return set;
+  }, [connections]);
+}
+
 /* ── Base wrapper for standard nodes ─────────────────────────── */
-function NodeWrapper({ children, color, label, icon: Icon, selected, data, type, id, hideNextStep = false }) {
+function NodeWrapper({ children, color, label, icon: Icon, selected, data, type, id, hideNextStep = false, width }) {
+  const connectedHandles = useConnectedHandles(id);
   const unsupported = data?._unsupported;
   const validationError = data?._validationError;
 
@@ -1803,6 +2338,7 @@ function NodeWrapper({ children, color, label, icon: Icon, selected, data, type,
       style={{
         borderColor: validationError ? '#ef4444' : selected ? color : '#e2e8f0',
         background: '#ffffff',
+        ...(width ? { width, minWidth: width, maxWidth: width } : {}),
       }}
     >
       <NodeHoverActions nodeId={id} nodeType={type} />
@@ -1845,12 +2381,12 @@ function NodeWrapper({ children, color, label, icon: Icon, selected, data, type,
       {children}
       {!hideNextStep && type !== 'end' && (
         <div className="fb-next-step-row">
-          <span>Next Step</span>
+          <span>{type === 'question' ? 'Next Question' : 'Next Step'}</span>
           <Handle
             type="source"
             position={Position.Right}
             id="next-step"
-            className="next-step-handle"
+            className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`}
           />
         </div>
       )}
@@ -1861,6 +2397,100 @@ function NodeWrapper({ children, color, label, icon: Icon, selected, data, type,
 /* ── Start Node ("When...") ──────────────────────────────────── */
 function StartNode({ id, data, selected }) {
   const { onSelectNode } = useContext(FlowNodeActionsContext);
+  const connectedHandles = useConnectedHandles(id);
+
+  // A User Input Flow's Start node has no keyword trigger at all (it's invoked
+  // by a bot Flow's "Run User Input Flow" node, never by a subscriber's message)
+  // — this only ever rendered the keyword-trigger preview below regardless of
+  // context, defaulting to "hi, hello" once `data.triggers`/`keywords` were both
+  // empty, which is exactly what made every form's Start node misleadingly look
+  // like a real keyword trigger on the canvas (the properties panel already
+  // branched on this via isUserInputFlow; this card never did).
+  if (data.uifStart) {
+    return (
+      <div
+        className={`fb-node${selected ? ' selected' : ''}`}
+        style={{
+          borderColor: selected ? '#7c3aed' : '#e2e8f0', background: '#ffffff',
+          minWidth: 260, maxWidth: 280, width: 270, borderRadius: 20,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.06)', padding: '16px 16px 14px 16px',
+          position: 'relative',
+        }}
+      >
+        <NodeHoverActions nodeId={id} nodeType="start" />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, paddingLeft: 2 }}>
+          <ClipboardList size={18} strokeWidth={2.5} color="#7c3aed" />
+          <span style={{ fontWeight: 800, fontSize: 15, color: '#0f172a' }}>Form Start</span>
+        </div>
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px',
+          borderRadius: 12, background: '#faf5ff', border: '1px solid #f3e8ff',
+        }}>
+          <div style={{
+            width: 20, height: 20, borderRadius: '50%', background: '#7c3aed',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1,
+          }}>
+            <ClipboardList size={11} color="#fff" />
+          </div>
+          <div style={{ fontSize: 11.5, color: '#6b21a8', lineHeight: 1.4 }}>
+            Starts when a bot flow runs this form — click here to set its name, label, webhook and Google Sheet.
+          </div>
+        </div>
+        {/* Negative right margin cancels the card's own 16px padding so this
+            row (and its connector) reach the true card edge, exactly like
+            every other node's Next Step row does — those cards apply padding
+            per-section instead of once around the whole card, so their
+            footer row was never inset like this one was. */}
+        <div className="fb-next-step-row" style={{ marginTop: 14, marginRight: -16, marginLeft: -16, paddingLeft: 16 }}>
+          <span>First Question</span>
+          <Handle type="source" position={Position.Right} id="next-step" className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`} />
+        </div>
+      </div>
+    );
+  }
+
+  // A Sequence's Start node has no keyword trigger either — it's entered only
+  // via a "Start Sequence" action (a Flow node, or a Bot Flow's own Start node
+  // "Attach Sequence" shortcut) elsewhere. Same reasoning/fix as uifStart just
+  // above — this card used to fall straight through to the generic
+  // keyword-trigger card below regardless of context.
+  if (data.sequenceStart) {
+    return (
+      <div
+        className={`fb-node${selected ? ' selected' : ''}`}
+        style={{
+          borderColor: selected ? '#0891b2' : '#e2e8f0', background: '#ffffff',
+          minWidth: 260, maxWidth: 280, width: 270, borderRadius: 20,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.06)', padding: '16px 16px 14px 16px',
+          position: 'relative',
+        }}
+      >
+        <NodeHoverActions nodeId={id} nodeType="start" />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, paddingLeft: 2 }}>
+          <Play size={18} strokeWidth={2.5} color="#0891b2" />
+          <span style={{ fontWeight: 800, fontSize: 15, color: '#0f172a' }}>Sequence Start</span>
+        </div>
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px',
+          borderRadius: 12, background: '#ecfeff', border: '1px solid #cffafe',
+        }}>
+          <div style={{
+            width: 20, height: 20, borderRadius: '50%', background: '#0891b2',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1,
+          }}>
+            <Play size={11} color="#fff" />
+          </div>
+          <div style={{ fontSize: 11.5, color: '#0e7490', lineHeight: 1.4 }}>
+            Starts when a subscriber is enrolled via a "Start Sequence" action — click here to set this sequence's name.
+          </div>
+        </div>
+        <div className="fb-next-step-row" style={{ marginTop: 14, marginRight: -16, marginLeft: -16, paddingLeft: 16 }}>
+          <span>First Step</span>
+          <Handle type="source" position={Position.Right} id="next-step" className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`} />
+        </div>
+      </div>
+    );
+  }
 
   const triggers = (data.triggers && Array.isArray(data.triggers) && data.triggers.length > 0)
     ? data.triggers
@@ -2022,30 +2652,36 @@ function StartNode({ id, data, selected }) {
         New Trigger
       </button>
 
-      {/* Bottom right: "Then" label with connector dot */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'flex-end',
-          gap: 6,
-          marginTop: 14,
-          paddingRight: 2,
-          position: 'relative',
-        }}
-      >
-        <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600 }}>Then</span>
+      {/* Bottom right: "Then" label with connector dot. Same shared
+          .fb-next-step-row class every other node's footer uses, with a
+          negative right margin canceling this card's own 16px padding so
+          the connector reaches the true card edge instead of sitting inset
+          from it (this card applies padding once around the whole thing,
+          unlike NodeWrapper's cards which pad per-section and so never have
+          this problem). */}
+      <div className="fb-next-step-row" style={{ marginTop: 14, marginRight: -16, marginLeft: -16, paddingLeft: 16 }}>
+        <span>Then</span>
         <Handle
           type="source"
           position={Position.Right}
           id="then"
-          className="btn-handle"
-          style={{
-            position: 'absolute',
-            right: -6,
-            top: '50%',
-            transform: 'translateY(-50%)',
-          }}
+          className={`btn-handle${connectedHandles.has('then') ? ' connected' : ''}`}
+        />
+      </div>
+
+      {/* Second, independent connector for "Attach Sequence" (see
+          StartNodeSequenceAttach / handleAttachSequenceToStart) — a real
+          branch off Start, not part of the "Then" conversation path, so it
+          needs its own handle rather than sharing "then"/"next-step". Always
+          present (not just once attached) so the wire has somewhere to
+          render the moment the node is created. */}
+      <div className="fb-next-step-row" style={{ marginTop: 0, marginRight: -16, marginLeft: -16, paddingLeft: 16, borderTop: 'none' }}>
+        <span>Sequence</span>
+        <Handle
+          type="source"
+          position={Position.Right}
+          id="attach-sequence"
+          className={`btn-handle${connectedHandles.has('attach-sequence') ? ' connected' : ''}`}
         />
       </div>
     </div>
@@ -2059,6 +2695,7 @@ function TextNode({ id, data, selected }) {
   const validationError = data?._validationError;
   const messageText = data.message || '';
   const { onSelectNode, onUpdateNodeData } = useContext(FlowNodeActionsContext);
+  const connectedHandles = useConnectedHandles(id);
 
   const handleAddButton = (e) => {
     e.stopPropagation();
@@ -2218,7 +2855,7 @@ function TextNode({ id, data, selected }) {
                   type="source"
                   position={Position.Right}
                   id={`btn-${i}`}
-                  className="btn-handle"
+                  className={`btn-handle${connectedHandles.has(`btn-${i}`) ? ' connected' : ''}`}
                   style={{
                     position: 'absolute',
                     right: 12,
@@ -2227,6 +2864,36 @@ function TextNode({ id, data, selected }) {
                   }}
                 />
               )}
+              <button
+                type="button"
+                title="Remove button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUpdateNodeData(id, { ...data, buttons: buttons.filter((_, bi) => bi !== i) });
+                }}
+                style={{
+                  position: 'absolute',
+                  top: -7,
+                  right: -7,
+                  width: 16,
+                  height: 16,
+                  borderRadius: '50%',
+                  background: '#ef4444',
+                  color: '#fff',
+                  border: '1.5px solid #fff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  padding: 0,
+                  lineHeight: 1,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
+                }}
+              >
+                <X size={10} />
+              </button>
             </div>
           );
         })}
@@ -2244,7 +2911,7 @@ function TextNode({ id, data, selected }) {
               padding: '8px 12px',
               borderRadius: 12,
               background: '#f8fafc',
-              border: '1.5.px dashed #cbd5e1',
+              border: '1.5px dashed #cbd5e1',
               color: '#0084ff',
               fontSize: 11.5,
               fontWeight: 700,
@@ -2266,20 +2933,17 @@ function TextNode({ id, data, selected }) {
         )}
       </div>
 
-      {/* Next Step row with unfilled circle handle */}
-      <div className="fb-next-step-row" style={{ marginTop: 8 }}>
+      {/* Next Step row — negative right/left margin cancels this card's own
+          14px outer padding so the connector reaches the true card edge,
+          matching every NodeWrapper-based card (those pad per-section
+          instead of once around the whole card, so never have this inset). */}
+      <div className="fb-next-step-row" style={{ marginTop: 8, marginRight: -14, marginLeft: -14, paddingLeft: 14 }}>
         <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
         <Handle
           type="source"
           position={Position.Right}
           id="next-step"
-          className="next-step-handle"
-          style={{
-            position: 'absolute',
-            right: -7,
-            top: '50%',
-            transform: 'translateY(-50%)',
-          }}
+          className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`}
         />
       </div>
     </div>
@@ -2296,6 +2960,17 @@ function InteractiveNode({ id, data, selected }) {
   const headerMediaUrl = data.headerMediaUrl || '';
   const footerText = data.footerText || '';
   const { onSelectNode, onUpdateNodeData } = useContext(FlowNodeActionsContext);
+  const connectedHandles = useConnectedHandles(id);
+
+  // Real thumbnail/player once a header image or video is uploaded, matching
+  // ImageNode/VideoNode's own preview — this card only ever showed an
+  // "Image Attached"/"Video Attached" text label regardless of upload state.
+  const backendUrl = import.meta.env.VITE_API_URL
+    ? import.meta.env.VITE_API_URL.replace('/api/v1', '')
+    : 'http://localhost:5000';
+  const fullHeaderMediaUrl = headerMediaUrl && !headerMediaUrl.startsWith('http')
+    ? `${backendUrl}${headerMediaUrl}`
+    : headerMediaUrl;
 
   const handleAddButton = (e) => {
     e.stopPropagation();
@@ -2391,13 +3066,26 @@ function InteractiveNode({ id, data, selected }) {
               <span style={{ fontSize: 12, fontWeight: 600, color: '#0f172a' }}>
                 {headerText || 'Header Text'}
               </span>
+            ) : headerType === 'image' && fullHeaderMediaUrl ? (
+              <img
+                src={fullHeaderMediaUrl}
+                alt="Header preview"
+                style={{ width: '100%', maxHeight: 110, objectFit: 'cover', borderRadius: 8, display: 'block' }}
+              />
+            ) : headerType === 'video' && fullHeaderMediaUrl ? (
+              <video
+                src={fullHeaderMediaUrl}
+                controls
+                muted
+                style={{ width: '100%', maxHeight: 110, borderRadius: 8, background: '#000', display: 'block' }}
+              />
             ) : (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#25d366', fontSize: 11, fontWeight: 600 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: headerMediaUrl ? '#25d366' : '#94a3b8', fontSize: 11, fontWeight: 600 }}>
                 {headerType === 'image' && <Image size={14} />}
                 {headerType === 'video' && <Video size={14} />}
                 {headerType === 'document' && <FileText size={14} />}
                 <span style={{ textTransform: 'capitalize' }}>
-                  {headerMediaUrl ? `${headerType} Attached` : `Header ${headerType}`}
+                  {headerMediaUrl ? `${headerType} attached` : `Header ${headerType} — not uploaded yet`}
                 </span>
               </div>
             )}
@@ -2487,7 +3175,7 @@ function InteractiveNode({ id, data, selected }) {
                   type="source"
                   position={Position.Right}
                   id={`btn-${i}`}
-                  className="btn-handle"
+                  className={`btn-handle${connectedHandles.has(`btn-${i}`) ? ' connected' : ''}`}
                   style={{
                     position: 'absolute',
                     right: 12,
@@ -2496,6 +3184,36 @@ function InteractiveNode({ id, data, selected }) {
                   }}
                 />
               )}
+              <button
+                type="button"
+                title="Remove button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUpdateNodeData(id, { ...data, buttons: buttons.filter((_, bi) => bi !== i) });
+                }}
+                style={{
+                  position: 'absolute',
+                  top: -7,
+                  right: -7,
+                  width: 16,
+                  height: 16,
+                  borderRadius: '50%',
+                  background: '#ef4444',
+                  color: '#fff',
+                  border: '1.5px solid #fff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  padding: 0,
+                  lineHeight: 1,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
+                }}
+              >
+                <X size={10} />
+              </button>
             </div>
           );
         })}
@@ -2535,20 +3253,17 @@ function InteractiveNode({ id, data, selected }) {
         )}
       </div>
 
-      {/* Next Step row with unfilled circle handle */}
-      <div className="fb-next-step-row" style={{ marginTop: 8 }}>
+      {/* Next Step row — negative right/left margin cancels this card's own
+          14px outer padding so the connector reaches the true card edge,
+          matching every NodeWrapper-based card (those pad per-section
+          instead of once around the whole card, so never have this inset). */}
+      <div className="fb-next-step-row" style={{ marginTop: 8, marginRight: -14, marginLeft: -14, paddingLeft: 14 }}>
         <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
         <Handle
           type="source"
           position={Position.Right}
           id="next-step"
-          className="next-step-handle"
-          style={{
-            position: 'absolute',
-            right: -7,
-            top: '50%',
-            transform: 'translateY(-50%)',
-          }}
+          className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`}
         />
       </div>
     </div>
@@ -2562,6 +3277,7 @@ function ImageNode({ id, data, selected }) {
   const caption = data.caption || data.message || '';
   const imageUrl = data.imageUrl || data.mediaUrl || '';
   const { onSelectNode, onUpdateNodeData } = useContext(FlowNodeActionsContext);
+  const connectedHandles = useConnectedHandles(id);
 
   const handleAddButton = (e) => {
     e.stopPropagation();
@@ -2759,7 +3475,7 @@ function ImageNode({ id, data, selected }) {
                   type="source"
                   position={Position.Right}
                   id={`btn-${i}`}
-                  className="btn-handle"
+                  className={`btn-handle${connectedHandles.has(`btn-${i}`) ? ' connected' : ''}`}
                   style={{
                     position: 'absolute',
                     right: 12,
@@ -2768,6 +3484,36 @@ function ImageNode({ id, data, selected }) {
                   }}
                 />
               )}
+              <button
+                type="button"
+                title="Remove button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUpdateNodeData(id, { ...data, buttons: buttons.filter((_, bi) => bi !== i) });
+                }}
+                style={{
+                  position: 'absolute',
+                  top: -7,
+                  right: -7,
+                  width: 16,
+                  height: 16,
+                  borderRadius: '50%',
+                  background: '#ef4444',
+                  color: '#fff',
+                  border: '1.5px solid #fff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  padding: 0,
+                  lineHeight: 1,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
+                }}
+              >
+                <X size={10} />
+              </button>
             </div>
           );
         })}
@@ -2807,20 +3553,17 @@ function ImageNode({ id, data, selected }) {
         )}
       </div>
 
-      {/* Next Step row with unfilled circle handle */}
-      <div className="fb-next-step-row" style={{ marginTop: 8 }}>
+      {/* Next Step row — negative right/left margin cancels this card's own
+          14px outer padding so the connector reaches the true card edge,
+          matching every NodeWrapper-based card (those pad per-section
+          instead of once around the whole card, so never have this inset). */}
+      <div className="fb-next-step-row" style={{ marginTop: 8, marginRight: -14, marginLeft: -14, paddingLeft: 14 }}>
         <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
         <Handle
           type="source"
           position={Position.Right}
           id="next-step"
-          className="next-step-handle"
-          style={{
-            position: 'absolute',
-            right: -7,
-            top: '50%',
-            transform: 'translateY(-50%)',
-          }}
+          className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`}
         />
       </div>
     </div>
@@ -2833,6 +3576,12 @@ function VideoNode({ id, data, selected }) {
   const validationError = data?._validationError;
   const caption = data.caption || data.message || '';
   const videoUrl = data.videoUrl || data.mediaUrl || '';
+  const connectedHandles = useConnectedHandles(id);
+
+  const backendUrl = import.meta.env.VITE_API_URL
+    ? import.meta.env.VITE_API_URL.replace('/api/v1', '')
+    : 'http://localhost:5000';
+  const fullVideoUrl = videoUrl && !videoUrl.startsWith('http') ? `${backendUrl}${videoUrl}` : videoUrl;
 
   return (
     <div
@@ -2870,10 +3619,19 @@ function VideoNode({ id, data, selected }) {
           {caption}
         </div>
       )}
-      <div style={{ padding: '24px 12px', borderRadius: 12, background: '#f8fafc', border: '1.5px dashed #cbd5e1', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, color: '#94a3b8', marginBottom: buttons.length ? 8 : 0 }}>
-        <Video size={24} style={{ opacity: 0.5, color: '#64748b' }} />
-        <span style={{ fontSize: 11, fontWeight: 600 }}>{videoUrl ? 'Video Attached' : 'Video'}</span>
-      </div>
+      {fullVideoUrl ? (
+        <video
+          src={fullVideoUrl}
+          controls
+          muted
+          style={{ width: '100%', maxHeight: 160, borderRadius: 12, background: '#000', marginBottom: buttons.length ? 8 : 0, display: 'block' }}
+        />
+      ) : (
+        <div style={{ padding: '24px 12px', borderRadius: 12, background: '#f8fafc', border: '1.5px dashed #cbd5e1', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, color: '#94a3b8', marginBottom: buttons.length ? 8 : 0 }}>
+          <Video size={24} style={{ opacity: 0.5, color: '#64748b' }} />
+          <span style={{ fontSize: 11, fontWeight: 600 }}>Video</span>
+        </div>
+      )}
       {buttons.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
           {buttons.map((btn, i) => {
@@ -2889,16 +3647,16 @@ function VideoNode({ id, data, selected }) {
                 {isPhone && <Phone size={14} style={{ position: 'absolute', right: 12, color: '#0084ff' }} />}
                 {isUrl && <ExternalLink size={14} style={{ position: 'absolute', right: 12, color: '#0084ff' }} />}
                 {!isPhone && !isUrl && (
-                  <Handle type="source" position={Position.Right} id={`btn-${i}`} className="btn-handle" style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)' }} />
+                  <Handle type="source" position={Position.Right} id={`btn-${i}`} className={`btn-handle${connectedHandles.has(`btn-${i}`) ? ' connected' : ''}`} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)' }} />
                 )}
               </div>
             );
           })}
         </div>
       )}
-      <div className="fb-next-step-row" style={{ marginTop: 8 }}>
+      <div className="fb-next-step-row" style={{ marginTop: 8, marginRight: -14, marginLeft: -14, paddingLeft: 14 }}>
         <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
-        <Handle type="source" position={Position.Right} id="next-step" className="next-step-handle" style={{ position: 'absolute', right: -7, top: '50%', transform: 'translateY(-50%)' }} />
+        <Handle type="source" position={Position.Right} id="next-step" className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`} />
       </div>
     </div>
   );
@@ -2908,6 +3666,7 @@ function VideoNode({ id, data, selected }) {
 function AudioNode({ id, data, selected }) {
   const validationError = data?._validationError;
   const audioUrl = data.audioUrl || data.mediaUrl || '';
+  const connectedHandles = useConnectedHandles(id);
 
   return (
     <div
@@ -2944,9 +3703,9 @@ function AudioNode({ id, data, selected }) {
         <Music size={24} style={{ opacity: 0.5, color: '#64748b' }} />
         <span style={{ fontSize: 11, fontWeight: 600 }}>{audioUrl ? 'Audio Attached' : 'Audio Clip'}</span>
       </div>
-      <div className="fb-next-step-row" style={{ marginTop: 8 }}>
+      <div className="fb-next-step-row" style={{ marginTop: 8, marginRight: -14, marginLeft: -14, paddingLeft: 14 }}>
         <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
-        <Handle type="source" position={Position.Right} id="next-step" className="next-step-handle" style={{ position: 'absolute', right: -7, top: '50%', transform: 'translateY(-50%)' }} />
+        <Handle type="source" position={Position.Right} id="next-step" className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`} />
       </div>
     </div>
   );
@@ -2956,6 +3715,7 @@ function AudioNode({ id, data, selected }) {
 function FileNode({ id, data, selected }) {
   const validationError = data?._validationError;
   const filename = data.filename || 'Document';
+  const connectedHandles = useConnectedHandles(id);
 
   return (
     <div
@@ -2992,9 +3752,9 @@ function FileNode({ id, data, selected }) {
         <FileText size={22} style={{ color: '#0084ff', flexShrink: 0 }} />
         <span style={{ fontSize: 11.5, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{filename}</span>
       </div>
-      <div className="fb-next-step-row" style={{ marginTop: 8 }}>
+      <div className="fb-next-step-row" style={{ marginTop: 8, marginRight: -14, marginLeft: -14, paddingLeft: 14 }}>
         <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
-        <Handle type="source" position={Position.Right} id="next-step" className="next-step-handle" style={{ position: 'absolute', right: -7, top: '50%', transform: 'translateY(-50%)' }} />
+        <Handle type="source" position={Position.Right} id="next-step" className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`} />
       </div>
     </div>
   );
@@ -3006,6 +3766,7 @@ function ButtonsNode({ id, data, selected }) {
   const validationError = data?._validationError;
   const messageText = data.message || '';
   const { onSelectNode, onUpdateNodeData } = useContext(FlowNodeActionsContext);
+  const connectedHandles = useConnectedHandles(id);
 
   const handleAddButton = (e) => {
     e.stopPropagation();
@@ -3165,7 +3926,7 @@ function ButtonsNode({ id, data, selected }) {
                   type="source"
                   position={Position.Right}
                   id={`btn-${i}`}
-                  className="btn-handle"
+                  className={`btn-handle${connectedHandles.has(`btn-${i}`) ? ' connected' : ''}`}
                   style={{
                     position: 'absolute',
                     right: 12,
@@ -3174,6 +3935,36 @@ function ButtonsNode({ id, data, selected }) {
                   }}
                 />
               )}
+              <button
+                type="button"
+                title="Remove button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onUpdateNodeData(id, { ...data, buttons: buttons.filter((_, bi) => bi !== i) });
+                }}
+                style={{
+                  position: 'absolute',
+                  top: -7,
+                  right: -7,
+                  width: 16,
+                  height: 16,
+                  borderRadius: '50%',
+                  background: '#ef4444',
+                  color: '#fff',
+                  border: '1.5px solid #fff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  padding: 0,
+                  lineHeight: 1,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
+                }}
+              >
+                <X size={10} />
+              </button>
             </div>
           );
         })}
@@ -3213,20 +4004,17 @@ function ButtonsNode({ id, data, selected }) {
         )}
       </div>
 
-      {/* Next Step row with unfilled circle handle */}
-      <div className="fb-next-step-row" style={{ marginTop: 8 }}>
+      {/* Next Step row — negative right/left margin cancels this card's own
+          14px outer padding so the connector reaches the true card edge,
+          matching every NodeWrapper-based card (those pad per-section
+          instead of once around the whole card, so never have this inset). */}
+      <div className="fb-next-step-row" style={{ marginTop: 8, marginRight: -14, marginLeft: -14, paddingLeft: 14 }}>
         <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
         <Handle
           type="source"
           position={Position.Right}
           id="next-step"
-          className="next-step-handle"
-          style={{
-            position: 'absolute',
-            right: -7,
-            top: '50%',
-            transform: 'translateY(-50%)',
-          }}
+          className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`}
         />
       </div>
     </div>
@@ -3237,6 +4025,7 @@ function ButtonsNode({ id, data, selected }) {
 /* ── Quick Replies Node (With individual branch handles) ─────── */
 function QuickRepliesNode({ id, data, selected }) {
   const replies = data.replies || [];
+  const connectedHandles = useConnectedHandles(id);
   return (
     <NodeWrapper id={id} color={NODE_COLORS.quickReplies} label="Quick Replies" icon={Keyboard} selected={selected} data={data} type="quickReplies">
       <Handle type="target" position={Position.Left} />
@@ -3254,7 +4043,7 @@ function QuickRepliesNode({ id, data, selected }) {
               type="source"
               position={Position.Right}
               id={`qr-${i}`}
-              className="btn-handle"
+              className={`btn-handle${connectedHandles.has(`qr-${i}`) ? ' connected' : ''}`}
               style={{ top: '50%', right: -7, transform: 'translateY(-50%)', position: 'absolute' }}
             />
           </div>
@@ -3267,30 +4056,47 @@ function QuickRepliesNode({ id, data, selected }) {
 
 /* ── List Menu Node (WhatsApp Interactive List) ──────────────── */
 function ListMenuNode({ id, data, selected }) {
-  const items = data.items || [];
+  // Multiple lists send as separate sequential messages, but every item across
+  // all of them shares one flat "which option was picked" index space — both
+  // for the per-item outgoing edge below (item-{globalIndex}) and for the
+  // routing token flowEngine.js encodes into each option (see normalizeListMenuData
+  // + the listMenu send-side case there). Keeping the index global (not reset
+  // per list) is what lets an item in list 2 still resolve correctly even
+  // though it's the 11th item overall.
+  const lists = normalizeListMenuData(data);
+  const connectedHandles = useConnectedHandles(id);
+  let globalIndex = -1;
   return (
     <NodeWrapper id={id} color={NODE_COLORS.listMenu} label="List Menu" icon={ListOrdered} selected={selected} data={data} type="listMenu">
       <Handle type="target" position={Position.Left} />
-      <div className="fb-node-body" style={{ paddingBottom: 6 }}>
-        <div style={{ fontWeight: 700, fontSize: 11, color: '#1e293b' }}>
-          {data.title || 'Menu Options'}
-        </div>
-      </div>
-      <div className="fb-node-btn-list" style={{ marginTop: 2 }}>
-        {items.map((item, i) => (
-          <div key={i} className="fb-node-btn-chip" style={{ background: 'rgba(124, 58, 237, 0.08)', borderColor: 'rgba(124, 58, 237, 0.2)', color: '#6d28d9' }}>
-            <span style={{ fontSize: '11px', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item || `Option ${i + 1}`}</span>
-            <ChevronRight size={12} style={{ opacity: 0.6, flexShrink: 0 }} />
-            <Handle
-              type="source"
-              position={Position.Right}
-              id={`item-${i}`}
-              className="btn-handle"
-              style={{ top: '50%', right: -7, transform: 'translateY(-50%)', position: 'absolute' }}
-            />
+      {lists.map((list, li) => (
+        <div key={li}>
+          <div className="fb-node-body" style={{ paddingBottom: 4, paddingTop: li > 0 ? 6 : 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 11, color: '#1e293b' }}>
+              {list.title || `Menu ${li + 1}`}
+            </div>
           </div>
-        ))}
-      </div>
+          <div className="fb-node-btn-list" style={{ marginTop: 2 }}>
+            {(list.items || []).map((item, i) => {
+              globalIndex += 1;
+              const gi = globalIndex;
+              return (
+                <div key={i} className="fb-node-btn-chip" style={{ background: 'rgba(124, 58, 237, 0.08)', borderColor: 'rgba(124, 58, 237, 0.2)', color: '#6d28d9' }}>
+                  <span style={{ fontSize: '11px', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item || `Option ${i + 1}`}</span>
+                  <ChevronRight size={12} style={{ opacity: 0.6, flexShrink: 0 }} />
+                  <Handle
+                    type="source"
+                    position={Position.Right}
+                    id={`item-${gi}`}
+                    className={`btn-handle${connectedHandles.has(`item-${gi}`) ? ' connected' : ''}`}
+                    style={{ top: '50%', right: -7, transform: 'translateY(-50%)', position: 'absolute' }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </NodeWrapper>
   );
 }
@@ -3354,11 +4160,15 @@ function CarouselNode({ id, data, selected }) {
 }
 
 /* ── Collect Input Node ─────────────────────────────────────── */
-function CollectInputNode({ id, data, selected }) {
+function CollectInputNode({ id, data, selected, type }) {
   const typeIcons = { name: User, email: Mail, phone: Phone, custom: Settings2 };
   const TypeIcon = typeIcons[data.inputType] || Settings2;
   const promptText = data.message || data.prompt || 'Please enter your reply...';
-  const saveVariable = data.variable || 'contact_reply';
+  // A "question" (User Input Flow) node is identified by its Custom Field alone
+  // (see PropertiesPanel) — data.fieldLabel mirrors that field's name for display
+  // here. A "collectInput" (main flow) node still uses its own free-typed variable.
+  const saveVariable = data.fieldLabel || data.variable || 'contact_reply';
+  const connectedHandles = useConnectedHandles(id);
 
   return (
     <div
@@ -3374,7 +4184,12 @@ function CollectInputNode({ id, data, selected }) {
         transition: 'all 0.2s ease',
       }}
     >
-      <NodeHoverActions nodeId={id} nodeType="collectInput" />
+      {/* This card is shared by "collectInput" (main flow) and "question" (User
+          Input Flow) — nodeType was hardcoded to "collectInput" here regardless,
+          which silently hid the guided +Add Question/Final Answer actions below
+          on every real Question node. `type` is a prop React Flow already passes
+          to every custom node component. */}
+      <NodeHoverActions nodeId={id} nodeType={type} data={data} />
       <Handle
         type="target"
         position={Position.Left}
@@ -3506,7 +4321,7 @@ function CollectInputNode({ id, data, selected }) {
           type="source"
           position={Position.Right}
           id="next-step"
-          className="next-step-handle"
+          className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`}
           style={{
             position: 'absolute',
             right: -7,
@@ -3519,7 +4334,7 @@ function CollectInputNode({ id, data, selected }) {
           type="source"
           position={Position.Right}
           id="next"
-          className="next-step-handle"
+          className={`next-step-handle${connectedHandles.has('next') ? ' connected' : ''}`}
           style={{
             position: 'absolute',
             right: -7,
@@ -3538,6 +4353,7 @@ function CollectInputNode({ id, data, selected }) {
 function ConditionNode({ id, data, selected }) {
   const unsupported = data?._unsupported;
   const validationError = data?._validationError;
+  const connectedHandles = useConnectedHandles(id);
 
   return (
     <div
@@ -3599,7 +4415,7 @@ function ConditionNode({ id, data, selected }) {
             type="source"
             position={Position.Right}
             id="yes"
-            className="btn-handle"
+            className={`btn-handle${connectedHandles.has('yes') ? ' connected' : ''}`}
             style={{ right: 8, top: '50%', transform: 'translateY(-50%)', position: 'absolute' }}
           />
         </div>
@@ -3609,7 +4425,7 @@ function ConditionNode({ id, data, selected }) {
             type="source"
             position={Position.Right}
             id="no"
-            className="btn-handle"
+            className={`btn-handle${connectedHandles.has('no') ? ' connected' : ''}`}
             style={{ right: 8, top: '50%', transform: 'translateY(-50%)', position: 'absolute' }}
           />
         </div>
@@ -3621,7 +4437,7 @@ function ConditionNode({ id, data, selected }) {
           type="source"
           position={Position.Right}
           id="next-step"
-          className="next-step-handle"
+          className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`}
           style={{
             position: 'absolute',
             right: -7,
@@ -3731,6 +4547,141 @@ function EndNode({ id, data, selected }) {
   );
 }
 
+/* ── Wait Node (only used inside a Sequence) ────────────────────── */
+function WaitNode({ id, data, selected }) {
+  const label = data.preset === 'custom'
+    ? `${data.customValue || 0} ${data.customUnit || 'minutes'}`
+    : (data.preset === 'immediate' ? 'Immediately' : (data.preset || '5m').replace('m', ' min').replace('h', ' hr'));
+  return (
+    <NodeWrapper id={id} color={NODE_COLORS.wait} label="Wait" icon={Clock} selected={selected} data={data} type="wait">
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
+      <div className="fb-node-body" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <Clock size={18} style={{ color: NODE_COLORS.wait, flexShrink: 0 }} />
+        <span style={{ fontWeight: 700, fontSize: 13, color: '#1e293b' }}>{label}</span>
+      </div>
+    </NodeWrapper>
+  );
+}
+
+/* ── Start / Stop Sequence action nodes (main Flow Builder only) ── */
+// Both Start/Stop Sequence are one-shot side-effect actions, not a step in a
+// conversation path — they have nothing to continue into, so hideNextStep
+// (same as FinalAnswerNode) rather than showing an output connector that
+// doesn't lead anywhere. Attached off a Start node's own Sequence branch,
+// this is a true dead end; placed mid-flow via the palette, the engine
+// already treats it as ending execution there once it fires (same as an End
+// node), so this matches what actually happens either way.
+function StartSequenceActionNode({ id, data, selected }) {
+  // Live-looked-up from the agency's fetched Sequences (via context, same
+  // list the Start-node picker itself uses) rather than trusting a snapshot
+  // on the node's own data — so renaming/rebuilding the sequence elsewhere
+  // shows up here without needing to re-touch this node.
+  const { sequencesList } = useContext(FlowNodeActionsContext);
+  const sequence = sequencesList.find((s) => s.id === data.sequenceId);
+  const messageCount = sequence?.message_count;
+
+  return (
+    <NodeWrapper id={id} color={NODE_COLORS.startSequenceAction} label="Start Sequence" icon={Play} selected={selected} data={data} type="startSequenceAction" hideNextStep width={260}>
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
+      <div className="fb-node-body">
+        {data.sequenceName ? (
+          <>
+            <div className="fb-node-body-preview">{data.sequenceName}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 6, fontSize: 11, color: '#0891b2', fontWeight: 600 }}>
+              <MessageSquare size={12} />
+              {typeof messageCount === 'number'
+                ? `${messageCount} message${messageCount === 1 ? '' : 's'}`
+                : 'Loading...'}
+            </div>
+          </>
+        ) : (
+          <span style={{ opacity: 0.6, fontStyle: 'italic', fontSize: 11, color: '#64748b' }}>No sequence selected</span>
+        )}
+      </div>
+    </NodeWrapper>
+  );
+}
+
+function StopSequenceActionNode({ id, data, selected }) {
+  return (
+    <NodeWrapper id={id} color={NODE_COLORS.stopSequenceAction} label="Stop Sequence" icon={CircleStop} selected={selected} data={data} type="stopSequenceAction" hideNextStep>
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
+      <div className="fb-node-body">
+        {data.sequenceName ? (
+          <div className="fb-node-body-preview">{data.sequenceName}</div>
+        ) : (
+          <span style={{ opacity: 0.6, fontStyle: 'italic', fontSize: 11, color: '#64748b' }}>No sequence selected</span>
+        )}
+      </div>
+    </NodeWrapper>
+  );
+}
+
+/* ── Final Answer Node (only used inside a User Input Flow) ────── */
+function FinalAnswerNode({ id, data, selected }) {
+  return (
+    <NodeWrapper id={id} color={NODE_COLORS.finalAnswer} label="Final Answer" icon={Flag} selected={selected} data={data} type="finalAnswer" hideNextStep>
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
+      <div className="fb-node-body">
+        {data.message ? (
+          <div className="fb-node-body-preview">{data.message}</div>
+        ) : (
+          <span style={{ opacity: 0.6, fontStyle: 'italic', fontSize: 11, color: '#64748b' }}>Closing message — ends this Q&A sequence</span>
+        )}
+      </div>
+    </NodeWrapper>
+  );
+}
+
+/* ── Run User Input Flow Node ───────────────────────────────────── */
+function RunUserInputFlowNode({ id, data, selected }) {
+  // Larger than a standard 220px node — this card is a doorway into a whole
+  // separate reusable form, not a one-line message, so it needs room to show
+  // which one is selected at a glance rather than just an id/name in small type.
+  return (
+    <NodeWrapper id={id} color={NODE_COLORS.runUserInputFlow} label="Run User Input Flow" icon={ClipboardList} selected={selected} data={data} type="runUserInputFlow" width={300}>
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
+      <div className="fb-node-body" style={{ padding: '10px 12px' }}>
+        {data.userInputFlowId ? (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
+            borderRadius: 10, background: `${NODE_COLORS.runUserInputFlow}0e`,
+            border: `1px solid ${NODE_COLORS.runUserInputFlow}2a`,
+          }}>
+            <div style={{
+              width: 30, height: 30, borderRadius: 8, flexShrink: 0,
+              background: NODE_COLORS.runUserInputFlow, color: '#fff',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <ClipboardList size={15} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{
+                fontSize: 13, fontWeight: 700, color: '#1e293b',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {data.userInputFlowName || `Form #${data.userInputFlowId}`}
+              </div>
+              <div style={{ fontSize: 10.5, color: '#64748b', fontWeight: 600, marginTop: 1 }}>
+                Tap to select, create, view, or edit →
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px',
+            borderRadius: 10, border: '1.5px dashed #cbd5e1', background: '#f8fafc',
+            color: '#94a3b8', fontSize: 12, fontWeight: 600,
+          }}>
+            <ClipboardList size={16} />
+            No form selected — click to choose or create one
+          </div>
+        )}
+      </div>
+    </NodeWrapper>
+  );
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    MEDIA UPLOAD HELPERS FOR PROPERTIES PANEL
    ═══════════════════════════════════════════════════════════════════ */
@@ -3824,6 +4775,13 @@ function MediaUploadField({ label = 'Media File', value, onChange, accept = '*/*
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef(null);
 
+  const backendUrl = import.meta.env.VITE_API_URL
+    ? import.meta.env.VITE_API_URL.replace('/api/v1', '')
+    : 'http://localhost:5000';
+  const fullUrl = value && !value.startsWith('http') ? `${backendUrl}${value}` : value;
+  const isVideo = accept.includes('video');
+  const isAudio = accept.includes('audio');
+
   const handleFileChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -3859,6 +4817,13 @@ function MediaUploadField({ label = 'Media File', value, onChange, accept = '*/*
         )}
       </label>
 
+      {/* Preview once uploaded — video/audio players, same idea as the image thumbnail above */}
+      {value && isVideo ? (
+        <video src={fullUrl} controls style={{ width: '100%', maxHeight: 160, borderRadius: 8, background: '#000', marginBottom: 8, display: 'block' }} />
+      ) : value && isAudio ? (
+        <audio src={fullUrl} controls style={{ width: '100%', marginBottom: 8, display: 'block' }} />
+      ) : null}
+
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
         <input
           type="file"
@@ -3890,7 +4855,7 @@ function MediaUploadField({ label = 'Media File', value, onChange, accept = '*/*
 }
 
 /* ── Start Node Properties with Multi-Trigger & Dotted Buttons ──── */
-function StartNodeProperties({ data = {}, onUpdateNode }) {
+function StartNodeProperties({ data = {}, onUpdateNode, sequences = [], onSequenceCreated, platform, onAttachSequence, attachedSequenceNode, onSelectSequenceNode }) {
   const rawTriggers = (data.triggers && Array.isArray(data.triggers) && data.triggers.length > 0)
     ? data.triggers
     : [
@@ -4004,7 +4969,7 @@ function StartNodeProperties({ data = {}, onUpdateNode }) {
         <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.8px', color: '#5c5c80' }}>
           Flow Triggers ({triggers.length})
         </span>
-        <span style={{ fontSize: 10, color: '#059669', background: '#ecfdf5', padding: '2px 8px', borderRadius: 4, fontWeight: 600 }}>
+        <span style={{ fontSize: 10, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 8px', borderRadius: 4, fontWeight: 600 }}>
           Starts automation
         </span>
       </div>
@@ -4032,7 +4997,7 @@ function StartNodeProperties({ data = {}, onUpdateNode }) {
               {/* Trigger header */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Zap size={13} style={{ color: '#059669' }} />
+                  <Zap size={13} style={{ color: '#0f172a' }} />
                   <span style={{ fontSize: 12, fontWeight: 700, color: '#0f172a' }}>
                     Rule #{rIdx + 1}
                   </span>
@@ -4096,10 +5061,10 @@ function StartNodeProperties({ data = {}, onUpdateNode }) {
                       style={{
                         padding: '8px 10px',
                         borderRadius: 6,
-                        background: '#f0fdf4',
-                        border: '1px solid #bbf7d0',
+                        background: '#f8fafc',
+                        border: '1px solid #e2e8f0',
                         fontSize: 11,
-                        color: '#15803d',
+                        color: '#475569',
                         display: 'flex',
                         alignItems: 'center',
                         gap: 8,
@@ -4115,7 +5080,7 @@ function StartNodeProperties({ data = {}, onUpdateNode }) {
                       <label>Keywords ({kws.length})</label>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, minHeight: 24, marginBottom: 6 }}>
                         {kws.length === 0 ? (
-                          <span style={{ fontSize: 11, color: '#f59e0b', fontStyle: 'italic' }}>
+                          <span style={{ fontSize: 11, color: '#64748b', fontStyle: 'italic' }}>
                             No keywords added yet.
                           </span>
                         ) : (
@@ -4128,11 +5093,11 @@ function StartNodeProperties({ data = {}, onUpdateNode }) {
                                 gap: 4,
                                 padding: '3px 8px',
                                 borderRadius: 5,
-                                background: 'rgba(16, 185, 129, 0.12)',
-                                color: '#047857',
+                                background: '#f1f5f9',
+                                color: '#0f172a',
                                 fontSize: 11,
                                 fontWeight: 600,
-                                border: '1px solid rgba(16, 185, 129, 0.25)',
+                                border: '1px solid #cbd5e1',
                               }}
                             >
                               {kw}
@@ -4142,7 +5107,7 @@ function StartNodeProperties({ data = {}, onUpdateNode }) {
                                 style={{
                                   background: 'transparent',
                                   border: 'none',
-                                  color: '#dc2626',
+                                  color: '#64748b',
                                   cursor: 'pointer',
                                   padding: 0,
                                   fontSize: 11,
@@ -4183,9 +5148,9 @@ function StartNodeProperties({ data = {}, onUpdateNode }) {
                             gap: 4,
                             padding: '6px 12px',
                             borderRadius: 6,
-                            border: '1.5px dashed #059669',
-                            background: '#f0fdf4',
-                            color: '#059669',
+                            border: '1.5px dashed #cbd5e1',
+                            background: '#ffffff',
+                            color: '#0f172a',
                             fontSize: 11.5,
                             fontWeight: 600,
                             cursor: 'pointer',
@@ -4216,17 +5181,145 @@ function StartNodeProperties({ data = {}, onUpdateNode }) {
           width: '100%',
           padding: '9px 12px',
           borderRadius: 8,
-          border: '1.5px dashed #059669',
-          background: '#f0fdf4',
-          color: '#059669',
-          fontSize: 12.5,
-          fontWeight: 700,
+          border: '1.5px dashed #cbd5e1',
+          background: '#ffffff',
+          color: '#0f172a',
+          fontSize: 12,
+          fontWeight: 600,
           cursor: 'pointer',
           transition: 'all 0.15s ease',
         }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.borderColor = '#94a3b8';
+          e.currentTarget.style.background = '#f8fafc';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.borderColor = '#cbd5e1';
+          e.currentTarget.style.background = '#ffffff';
+        }}
       >
-        <Plus size={15} /> + Add Trigger Rule
+        <Plus size={14} /> + Add Trigger Rule
       </button>
+
+      <StartNodeSequenceAttach
+        sequences={sequences}
+        onSequenceCreated={onSequenceCreated}
+        platform={platform}
+        onAttachSequence={onAttachSequence}
+        attachedSequenceNode={attachedSequenceNode}
+        onSelectSequenceNode={onSelectSequenceNode}
+      />
+    </div>
+  );
+}
+
+/* ── Auto-enroll into a Sequence right when this Flow starts ─────────
+   A separate "Start Sequence" action node already covers mid-flow
+   enrollment; this is the common shortcut for "enroll them the moment they
+   trigger this flow" without needing an extra node wired after Start. */
+// Picking a sequence here doesn't hide the enrollment inside the Start node's
+// own data — it adds a real, visible "Start Sequence" node as its OWN branch
+// off Start (wired via onAttachSequence, implemented in FlowBuilderInner as
+// handleAttachSequenceToStart), on a second dedicated connector separate from
+// Start's "Then" edge into the real conversation. Two independent wires out
+// of Start — one to the flow's own first step (untouched), one to this
+// Sequence — rather than inserting a step into the conversation path itself.
+function StartNodeSequenceAttach({ sequences, onSequenceCreated, platform, onAttachSequence, attachedSequenceNode, onSelectSequenceNode }) {
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleCreate = async () => {
+    if (!newName.trim() || saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      const res = await sequenceAPI.create({ name: newName.trim(), platform });
+      const created = res.data?.sequence;
+      onSequenceCreated?.(created);
+      onAttachSequence(created.id, created.name);
+      setCreating(false);
+      setNewName('');
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Failed to create Sequence');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Already wired — the picker's job is done, editing from here on happens on
+  // the "Start Sequence" node itself (same place any other node is edited).
+  if (attachedSequenceNode) {
+    return (
+      <div style={{ paddingTop: 4, borderTop: '1px solid #e2e8f0' }}>
+        <div className="fb-field" style={{ marginTop: 10 }}>
+          <label>Attached Sequence</label>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+            padding: '8px 10px', border: '1px solid #cffafe', borderRadius: 8, background: '#ecfeff',
+          }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: '#0e7490' }}>
+              {attachedSequenceNode.data?.sequenceName || 'Sequence'}
+            </span>
+            <button type="button" className="fb-add-btn" style={{ padding: '4px 10px' }} onClick={() => onSelectSequenceNode(attachedSequenceNode.id)}>
+              Edit →
+            </button>
+          </div>
+          <span className="fb-hint">
+            That's the "Start Sequence" node wired to Start's own Sequence branch on the canvas — click Edit to
+            change or remove it (deleting that node removes the auto-enrollment; the flow itself is unaffected).
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ paddingTop: 4, borderTop: '1px solid #e2e8f0' }}>
+      <div className="fb-field" style={{ marginTop: 10 }}>
+        <label>Attach Sequence (optional)</label>
+        {creating ? (
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              autoFocus
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="e.g. Welcome Series"
+              onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+            />
+            <button type="button" className="fb-add-btn" disabled={saving || !newName.trim()} onClick={handleCreate}>
+              {saving ? 'Creating...' : 'Create'}
+            </button>
+            <button type="button" className="fb-add-btn" style={{ background: 'transparent' }} onClick={() => setCreating(false)}>
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <select
+            value=""
+            onChange={(e) => {
+              if (e.target.value === 'CREATE_NEW') { setCreating(true); return; }
+              if (!e.target.value) return;
+              const id = Number(e.target.value);
+              const seq = sequences.find((s) => s.id === id);
+              onAttachSequence(id, seq?.name || '');
+            }}
+          >
+            <option value="">None</option>
+            {sequences.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+            <option value="CREATE_NEW">+ Create new Sequence...</option>
+          </select>
+        )}
+        {error && <span className="fb-hint" style={{ color: '#ef4444' }}>{error}</span>}
+        <span className="fb-hint">
+          Adds a "Start Sequence" node as its own branch off Start (a separate wire, below) — the subscriber
+          is enrolled the moment they trigger this flow, while the flow's own conversation continues
+          completely unaffected. The Sequence sends its messages on its own schedule, independent of the flow.
+        </span>
+      </div>
     </div>
   );
 }
@@ -4250,7 +5343,6 @@ function ButtonActionEditor({ btn, index, onChange, onRemove, platform }) {
     { value: 'flow', label: 'Continue Flow (Next Step)', icon: '➡️' },
     { value: 'url', label: 'Open Website / URL', icon: '🌐' },
     ...(isFB || p === 'WEBCHAT' ? [{ value: 'phone', label: 'Call Phone Number', icon: '📞' }] : []),
-    { value: 'text_reply', label: 'Send Text Reply', icon: '💬' },
   ];
 
   const updateProp = (field, val) => {
@@ -4259,10 +5351,9 @@ function ButtonActionEditor({ btn, index, onChange, onRemove, platform }) {
 
   const getActionBadge = () => {
     switch (btnObj.action) {
-      case 'url': return { label: 'URL', bg: '#eff6ff', color: '#2563eb' };
-      case 'phone': return { label: 'Call', bg: '#f0fdf4', color: '#16a34a' };
-      case 'text_reply': return { label: 'Text', bg: '#fdf4ff', color: '#a855f7' };
-      default: return { label: 'Flow', bg: '#f0f9ff', color: '#0284c7' };
+      case 'url': return { label: 'URL', bg: '#f1f5f9', color: '#334155' };
+      case 'phone': return { label: 'Call', bg: '#f1f5f9', color: '#334155' };
+      default: return { label: 'Flow', bg: '#f1f5f9', color: '#334155' };
     }
   };
 
@@ -4316,6 +5407,7 @@ function ButtonActionEditor({ btn, index, onChange, onRemove, platform }) {
             borderRadius: 4,
             background: badge.bg,
             color: badge.color,
+            border: '1px solid #e2e8f0',
             flexShrink: 0,
           }}
         >
@@ -4396,7 +5488,7 @@ function ButtonActionEditor({ btn, index, onChange, onRemove, platform }) {
                 style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, background: '#ffffff' }}
               />
               {isWA && (
-                <span style={{ fontSize: 9.5, color: '#0369a1', fontStyle: 'italic', marginTop: 2 }}>
+                <span style={{ fontSize: 9.5, color: '#64748b', fontStyle: 'italic', marginTop: 2 }}>
                   ℹ️ WhatsApp CTA URL button: opens browser directly upon tap.
                 </span>
               )}
@@ -4422,30 +5514,15 @@ function ButtonActionEditor({ btn, index, onChange, onRemove, platform }) {
             </div>
           )}
 
-          {/* Action: Send Text Reply */}
-          {btnObj.action === 'text_reply' && (
-            <div className="fb-field" style={{ margin: 0 }}>
-              <label style={{ fontSize: 10, fontWeight: 700, color: '#475569' }}>
-                Text Reply Message
-              </label>
-              <textarea
-                value={btnObj.reply_text || ''}
-                onChange={(e) => updateProp('reply_text', e.target.value)}
-                placeholder="Message to automatically send..."
-                rows={2}
-                style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, background: '#ffffff' }}
-              />
-            </div>
-          )}
 
           {/* Action: Continue Flow */}
           {(btnObj.action === 'flow' || !btnObj.action) && (
             <div
               style={{
                 fontSize: 10.5,
-                color: '#0284c7',
-                background: '#f0f9ff',
-                border: '1px dashed #bae6fd',
+                color: '#475569',
+                background: '#f8fafc',
+                border: '1px dashed #cbd5e1',
                 padding: '6px 8px',
                 borderRadius: 6,
                 lineHeight: 1.35,
@@ -4464,7 +5541,469 @@ function ButtonActionEditor({ btn, index, onChange, onRemove, platform }) {
    PROPERTIES PANEL
    ═══════════════════════════════════════════════════════════════════ */
 
-function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
+// Mirrors utils/flowEngine.js's inputTypeToFieldType() on the backend — kept in
+// sync manually since frontend/backend can't share a module here.
+function inputTypeToFieldType(inputType) {
+  if (inputType === 'number') return 'NUMBER';
+  if (inputType === 'date') return 'DATE';
+  return 'TEXT'; // name / email / phone / custom
+}
+
+/* ── Inline "create a new custom field" mini-form (used from a Question node) ── */
+function NewCustomFieldInline({ fieldType, options, onCreated, onCancel }) {
+  const [name, setName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleCreate = async () => {
+    if (!name.trim() || saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      // For a Multiple Choice question, the field's own options ARE the
+      // question's options — one list, defined once (same principle as the
+      // Custom-Field-only simplification: no separate copy to keep in sync).
+      const res = await customFieldAPI.create({ name: name.trim(), fieldType, options });
+      onCreated(res.data.field);
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Failed to create field');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={`New ${fieldType.toLowerCase()} field name...`}
+          onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+        />
+        <button type="button" className="fb-add-btn" disabled={saving || !name.trim()} onClick={handleCreate}>
+          {saving ? 'Creating...' : 'Create'}
+        </button>
+        <button type="button" className="fb-add-btn" onClick={onCancel} style={{ background: 'transparent' }}>
+          Cancel
+        </button>
+      </div>
+      {error && <span className="fb-hint" style={{ color: '#ef4444' }}>{error}</span>}
+    </div>
+  );
+}
+
+/* ── "Run User Input Flow" node config: pick an existing one or create new ── */
+function RunUserInputFlowFields({ data, updateFields, userInputFlows, onCreated, platform, onDrillIn }) {
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [viewing, setViewing] = useState(false);
+
+  const handleCreate = async () => {
+    if (!newName.trim() || saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      // Created against THIS flow's channel — a User Input Flow is locked to one
+      // channel, so it can only ever be reused by other automations on the same one.
+      const res = await userInputFlowAPI.create({
+        name: newName.trim(),
+        platform,
+        nodesJson: [],
+        edgesJson: [],
+      });
+      const newId = res.data.userInputFlowId;
+      onCreated({ id: newId, name: newName.trim(), platform });
+      setCreating(false);
+      setNewName('');
+      // Drill into the form builder RIGHT HERE — same canvas, same session — a
+      // brand-new one has no questions yet, so leaving the user on this panel
+      // would be a dead end. See FlowBuilderInner's drillIntoUif.
+      onDrillIn?.(newId, newName.trim());
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Failed to create User Input Flow');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (creating) {
+    return (
+      <div className="fb-field">
+        <label>New User Input Flow Name</label>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input
+            autoFocus
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="e.g. Lead Capture Form"
+            onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+          />
+          <button type="button" className="fb-add-btn" disabled={saving || !newName.trim()} onClick={handleCreate}>
+            {saving ? 'Creating...' : 'Create'}
+          </button>
+          <button type="button" className="fb-add-btn" style={{ background: 'transparent' }} onClick={() => setCreating(false)}>
+            Cancel
+          </button>
+        </div>
+        {error && <span className="fb-hint" style={{ color: '#ef4444' }}>{error}</span>}
+      </div>
+    );
+  }
+
+  const selected = userInputFlows.find((f) => f.id === data.userInputFlowId);
+
+  return (
+    <div className="fb-field">
+      <label>User Input Flow</label>
+      <select
+        value={data.userInputFlowId || ''}
+        onChange={(e) => {
+          if (e.target.value === 'CREATE_NEW') { setCreating(true); return; }
+          const id = e.target.value ? Number(e.target.value) : null;
+          const uif = userInputFlows.find((f) => f.id === id);
+          updateFields({ userInputFlowId: id, userInputFlowName: uif?.name || '' });
+          setViewing(false);
+        }}
+      >
+        <option value="">Select a User Input Flow...</option>
+        {userInputFlows.map((f) => (
+          <option key={f.id} value={f.id}>{f.name}{f.nodeCount ? '' : ' (empty)'}</option>
+        ))}
+        <option value="CREATE_NEW">+ Create new User Input Flow...</option>
+      </select>
+      <span className="fb-hint">
+        Runs that reusable Q&A sequence right here, then continues this flow once the form finishes.
+        Only forms built for this channel are listed.
+      </span>
+      {data.userInputFlowId && (
+        <>
+          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <button
+              type="button"
+              className="fb-add-btn"
+              style={{ flex: 1 }}
+              onClick={() => onDrillIn?.(data.userInputFlowId, data.userInputFlowName)}
+            >
+              Edit questions →
+            </button>
+            <button
+              type="button"
+              className="fb-add-btn"
+              style={{ background: 'transparent' }}
+              onClick={() => setViewing((v) => !v)}
+            >
+              {viewing ? 'Hide' : 'View'}
+            </button>
+          </div>
+          {viewing && (
+            <div style={{
+              marginTop: 8, padding: '8px 10px', borderRadius: 8, border: '1px solid #e2e8f0',
+              background: '#f8fafc', fontSize: 11.5, color: '#475569', lineHeight: 1.6,
+            }}>
+              <strong>{selected?.name || data.userInputFlowName}</strong><br />
+              {selected?.nodeCount ? `${selected.nodeCount} step${selected.nodeCount === 1 ? '' : 's'}` : 'Not built yet'}
+              {typeof selected?.responseCount === 'number' && ` · ${selected.responseCount} response${selected.responseCount === 1 ? '' : 's'} so far`}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ── Start Sequence / Stop Sequence action node config ────────────────
+   Fires a real side-effect step in a main Flow (enroll/stop a contact in a
+   Sequence), then continues the flow via its own edge — same shape as
+   RunUserInputFlowFields above, minus drill-in: a Sequence is edited on its
+   own dedicated page (not inline here), per the Sequence Messages plan's
+   scoped-down triggering design. `stop` distinguishes the two node types;
+   both just pick a sequenceId. */
+function SequenceActionFields({ data, updateFields, sequences, onCreated, platform, stop = false }) {
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleCreate = async () => {
+    if (!newName.trim() || saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      const res = await sequenceAPI.create({ name: newName.trim(), platform });
+      const created = res.data?.sequence;
+      onCreated?.(created);
+      updateFields({ sequenceId: created.id, sequenceName: created.name });
+      setCreating(false);
+      setNewName('');
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Failed to create Sequence');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (creating) {
+    return (
+      <div className="fb-field">
+        <label>New Sequence Name</label>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input
+            autoFocus
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="e.g. Welcome Series"
+            onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+          />
+          <button type="button" className="fb-add-btn" disabled={saving || !newName.trim()} onClick={handleCreate}>
+            {saving ? 'Creating...' : 'Create'}
+          </button>
+          <button type="button" className="fb-add-btn" style={{ background: 'transparent' }} onClick={() => setCreating(false)}>
+            Cancel
+          </button>
+        </div>
+        {error && <span className="fb-hint" style={{ color: '#ef4444' }}>{error}</span>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="fb-field">
+      <label>Sequence</label>
+      <select
+        value={data.sequenceId || ''}
+        onChange={(e) => {
+          if (e.target.value === 'CREATE_NEW') { setCreating(true); return; }
+          const id = e.target.value ? Number(e.target.value) : null;
+          const seq = sequences.find((s) => s.id === id);
+          updateFields({ sequenceId: id, sequenceName: seq?.name || '' });
+        }}
+      >
+        <option value="">Select a Sequence...</option>
+        {sequences.map((s) => (
+          <option key={s.id} value={s.id}>{s.name}</option>
+        ))}
+        {!stop && <option value="CREATE_NEW">+ Create new Sequence...</option>}
+      </select>
+      <span className="fb-hint">
+        {stop
+          ? "Stops this contact's enrollment in the selected Sequence — any scheduled messages still pending are cancelled."
+          : "Enrolls this contact into the selected Sequence's scheduled messages. Already-active enrollment in this same Sequence is left alone (never double-enrolled); other Sequences are unaffected."}
+      </span>
+      {data.sequenceId && !stop && (
+        <button
+          type="button"
+          className="fb-add-btn"
+          style={{ marginTop: 8 }}
+          onClick={() => window.open(`/sequences/${data.sequenceId}/edit`, '_blank')}
+        >
+          Edit steps →
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ── User Input Flow: Start node settings ───────────────────────────
+   A User Input Flow's Start node has no trigger (a bot Flow's "Run User Input
+   Flow" node invokes it). Instead it carries the settings that apply to the
+   whole form: its name, the channel it's locked to, an optional label to tag
+   the subscriber with, and where completed submissions get exported to. */
+function UserInputFlowStartProperties({ data, updateField, platform, flowName, onFlowNameChange }) {
+  const [labels, setLabels] = useState([]);
+  const [sheetStatus, setSheetStatus] = useState(null);
+  const [spreadsheets, setSpreadsheets] = useState([]);
+  const [tabs, setTabs] = useState([]);
+  const [loadingSheets, setLoadingSheets] = useState(false);
+  const [testingHook, setTestingHook] = useState(false);
+  const [hookResult, setHookResult] = useState(null);
+
+  useEffect(() => {
+    labelAPI.getAll().then((r) => setLabels(r.data?.labels || [])).catch(() => {});
+    googleSheetsAPI.getStatus().then((r) => setSheetStatus(r.data)).catch(() => setSheetStatus({ connected: false }));
+  }, []);
+
+  // Only pull the spreadsheet list once we know an account is actually connected.
+  useEffect(() => {
+    if (!sheetStatus?.connected) return;
+    setLoadingSheets(true);
+    googleSheetsAPI.listSpreadsheets()
+      .then((r) => setSpreadsheets(r.data?.spreadsheets || []))
+      .catch(() => setSpreadsheets([]))
+      .finally(() => setLoadingSheets(false));
+  }, [sheetStatus?.connected]);
+
+  useEffect(() => {
+    if (!data.googleSheetId || !sheetStatus?.connected) { setTabs([]); return; }
+    googleSheetsAPI.listTabs(data.googleSheetId)
+      .then((r) => setTabs(r.data?.tabs || []))
+      .catch(() => setTabs([]));
+  }, [data.googleSheetId, sheetStatus?.connected]);
+
+  const selectedLabelIds = Array.isArray(data.labelIds) ? data.labelIds : [];
+  const toggleLabel = (labelId) => {
+    updateField('labelIds', selectedLabelIds.includes(labelId)
+      ? selectedLabelIds.filter((l) => l !== labelId)
+      : [...selectedLabelIds, labelId]);
+  };
+
+  const testWebhook = async () => {
+    if (!data.webhookUrl) return;
+    setTestingHook(true);
+    setHookResult(null);
+    try {
+      // Sent straight from the browser purely as a reachability check — the real
+      // export is sent server-side when a subscriber completes the form.
+      await fetch(data.webhookUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ test: true, source: 'User Input Flow test', sentAt: new Date().toISOString() }),
+      });
+      setHookResult('sent');
+    } catch {
+      setHookResult('failed');
+    } finally {
+      setTestingHook(false);
+    }
+  };
+
+  const meta = getPlatformMeta(platform);
+
+  return (
+    <>
+      <div className="fb-field">
+        <label>Form Name</label>
+        <input
+          value={flowName || ''}
+          onChange={(e) => onFlowNameChange?.(e.target.value)}
+          placeholder="e.g. Lead Capture Form"
+        />
+        <span className="fb-hint">How this form is listed, and what it's called on a subscriber's saved submissions.</span>
+      </div>
+
+      <div className="fb-field">
+        <label>Channel</label>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
+          border: '1px solid #e2e8f0', borderRadius: 8, background: '#f8fafc', fontSize: 12, fontWeight: 600, color: '#334155',
+        }}>
+          <PlatformIcon platform={platform} size={15} />
+          <span>{meta.label}</span>
+        </div>
+        <span className="fb-hint">
+          Locked to the channel this form was created for — it can only be reused by other automations on {meta.label}.
+        </span>
+      </div>
+
+      <div className="fb-field">
+        <label>Tag Subscriber With Label (optional)</label>
+        {labels.length === 0 ? (
+          <span className="fb-hint">No labels created yet — add them from the Inbox or Contacts page.</span>
+        ) : (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {labels.map((l) => {
+              const on = selectedLabelIds.includes(l.id);
+              return (
+                <button
+                  key={l.id}
+                  type="button"
+                  onClick={() => toggleLabel(l.id)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 5,
+                    padding: '4px 10px', borderRadius: 999, cursor: 'pointer',
+                    fontSize: 11, fontWeight: 700,
+                    border: `1.5px solid ${on ? (l.color || '#4f46e5') : '#e2e8f0'}`,
+                    background: on ? `${l.color || '#4f46e5'}18` : '#fff',
+                    color: on ? (l.color || '#4f46e5') : '#64748b',
+                  }}
+                >
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: l.color || '#4f46e5' }} />
+                  {l.name}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <span className="fb-hint">Applied to the subscriber the moment they start this form.</span>
+      </div>
+
+      <div className="fb-field">
+        <label>Send Responses To Webhook (optional)</label>
+        <input
+          value={data.webhookUrl || ''}
+          onChange={(e) => { updateField('webhookUrl', e.target.value); setHookResult(null); }}
+          placeholder="https://your-server.com/hook"
+        />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+          <button
+            type="button"
+            className="fb-add-btn"
+            disabled={!data.webhookUrl || testingHook}
+            onClick={testWebhook}
+          >
+            {testingHook ? 'Sending...' : 'Send test'}
+          </button>
+          {hookResult === 'sent' && <span className="fb-hint" style={{ color: '#16a34a' }}>Test sent — check your endpoint.</span>}
+          {hookResult === 'failed' && <span className="fb-hint" style={{ color: '#ef4444' }}>Couldn't reach that URL from the browser.</span>}
+        </div>
+        <span className="fb-hint">Every completed submission is POSTed here as JSON.</span>
+      </div>
+
+      <div className="fb-field">
+        <label>Send Responses To Google Sheet (optional)</label>
+        {!sheetStatus ? (
+          <span className="fb-hint">Checking connection...</span>
+        ) : !sheetStatus.connected ? (
+          <div style={{
+            padding: '10px 12px', borderRadius: 8, border: '1px dashed #cbd5e1',
+            background: '#f8fafc', fontSize: 11.5, color: '#64748b', lineHeight: 1.5,
+          }}>
+            No Google account connected yet.{' '}
+            <a href="/settings/google-sheets" style={{ color: '#4f46e5', fontWeight: 700 }}>
+              Connect one in Settings
+            </a>{' '}
+            to pick a spreadsheet here.
+          </div>
+        ) : (
+          <>
+            <select
+              value={data.googleSheetId || ''}
+              onChange={(e) => { updateField('googleSheetId', e.target.value || null); updateField('googleSheetTab', null); }}
+              disabled={loadingSheets}
+            >
+              <option value="">{loadingSheets ? 'Loading your sheets...' : "Don't send to a sheet"}</option>
+              {spreadsheets.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+            {data.googleSheetId && (
+              <select
+                value={data.googleSheetTab || ''}
+                onChange={(e) => updateField('googleSheetTab', e.target.value || null)}
+                style={{ marginTop: 6 }}
+              >
+                <option value="">Select a tab...</option>
+                {tabs.map((t) => (
+                  <option key={t.id} value={t.title}>{t.title}</option>
+                ))}
+              </select>
+            )}
+            <span className="fb-hint">
+              Connected as {sheetStatus.email || 'your Google account'}. Each submission is appended as a
+              new row: timestamp, subscriber, then one column per answer.
+            </span>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
+function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFields = [], onCustomFieldCreated, userInputFlows = [], onUserInputFlowCreated, isUserInputFlow = false, sequences = [], onSequenceCreated, isSequence = false, flowName, onFlowNameChange, onDrillIn, onAttachSequence, attachedSequenceNode, onSelectSequenceNode }) {
   if (!node) return null;
 
   const { data, type } = node;
@@ -4473,13 +6012,55 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
     onUpdate(node.id, { ...data, [field]: value });
   };
 
+  // For setting more than one field at once. updateField always spreads the
+  // CURRENT `data` prop, which doesn't change until this component re-renders —
+  // so two separate updateField(...) calls back to back (e.g. userInputFlowId
+  // then userInputFlowName) each spread the same stale `data`, and the second
+  // call's onUpdate full-replaces the node's data, silently discarding whatever
+  // the first call just set. This merges both changes into one onUpdate instead.
+  const updateFields = (partial) => {
+    onUpdate(node.id, { ...data, ...partial });
+  };
+
   const renderFields = () => {
     switch (type) {
       case 'start':
-        return (
+        // A User Input Flow's / Sequence's Start node configures the form/
+        // sequence itself, not a trigger — neither is ever keyword-triggered.
+        if (isSequence) {
+          return (
+            <div className="fb-field">
+              <label>Sequence Name</label>
+              <input
+                value={flowName || ''}
+                onChange={(e) => onFlowNameChange?.(e.target.value)}
+                placeholder="e.g. Welcome Series"
+              />
+              <span className="fb-hint">
+                Locked to {(platform || 'WEBCHAT')} — enrolled via a "Start Sequence" action elsewhere in a Flow.
+                Steps run in a single straight line; add a Wait node between messages to space them out.
+              </span>
+            </div>
+          );
+        }
+        return isUserInputFlow ? (
+          <UserInputFlowStartProperties
+            data={data}
+            updateField={updateField}
+            platform={platform}
+            flowName={flowName}
+            onFlowNameChange={onFlowNameChange}
+          />
+        ) : (
           <StartNodeProperties
             data={data}
             onUpdateNode={(newData) => onUpdate(node.id, newData)}
+            sequences={sequences}
+            onSequenceCreated={(seq) => onSequenceCreated?.(seq)}
+            platform={platform}
+            onAttachSequence={(sequenceId, sequenceName) => onAttachSequence?.(node.id, sequenceId, sequenceName)}
+            attachedSequenceNode={attachedSequenceNode}
+            onSelectSequenceNode={onSelectSequenceNode}
           />
         );
 
@@ -4519,7 +6100,7 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
             <div className="fb-field">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
                 <label style={{ margin: 0 }}>Buttons ({textBtnList.length}/3)</label>
-                <span style={{ fontSize: 10, color: '#d97706', background: '#fef3c7', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>
+                <span style={{ fontSize: 10, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>
                   Optional
                 </span>
               </div>
@@ -4538,10 +6119,34 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
               {textBtnList.length < 3 && (
                 <button
                   type="button"
-                  className="fb-add-btn"
                   onClick={handleAddTextButton}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: 8,
+                    border: '1.5px dashed #cbd5e1',
+                    background: '#ffffff',
+                    color: '#0f172a',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    marginTop: 4,
+                    transition: 'all 0.15s',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = '#94a3b8';
+                    e.currentTarget.style.background = '#f8fafc';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = '#cbd5e1';
+                    e.currentTarget.style.background = '#ffffff';
+                  }}
                 >
-                  <Plus size={14} /> Add Button
+                  <Plus size={14} /> + Add Button
                 </button>
               )}
             </div>
@@ -4656,7 +6261,7 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
             <div className="fb-field">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
                 <label style={{ margin: 0 }}>Reply Buttons ({interactiveBtnList.length}/3)</label>
-                <span style={{ fontSize: 10, color: '#16a34a', background: '#dcfce7', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>
+                <span style={{ fontSize: 10, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>
                   WhatsApp Interactive
                 </span>
               </div>
@@ -4678,10 +6283,34 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
               {interactiveBtnList.length < 3 && (
                 <button
                   type="button"
-                  className="fb-add-btn"
                   onClick={handleAddInteractiveButton}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: 8,
+                    border: '1.5px dashed #cbd5e1',
+                    background: '#ffffff',
+                    color: '#0f172a',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    marginTop: 4,
+                    transition: 'all 0.15s',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = '#94a3b8';
+                    e.currentTarget.style.background = '#f8fafc';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = '#cbd5e1';
+                    e.currentTarget.style.background = '#ffffff';
+                  }}
                 >
-                  <Plus size={14} /> Add Reply Button
+                  <Plus size={14} /> + Add Reply Button
                 </button>
               )}
             </div>
@@ -4737,12 +6366,12 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
             <div className="fb-field" style={{ marginTop: 4 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
                 <label style={{ margin: 0 }}>Interactive Buttons ({imageButtons.length}/3)</label>
-                <span style={{ fontSize: 10, color: '#0284c7', background: '#e0f2fe', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>
+                <span style={{ fontSize: 10, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>
                   Channel Aware
                 </span>
               </div>
               <p style={{ fontSize: 11, color: '#64748b', margin: '0 0 8px 0', lineHeight: 1.3 }}>
-                Attach up to 3 interactive buttons. Configure click actions (flow step, URL, phone call, or text reply).
+                Attach up to 3 interactive buttons. Configure click actions (flow step, URL, or phone call).
               </p>
 
               {imageButtons.map((btn, i) => (
@@ -4766,15 +6395,24 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
                     justifyContent: 'center',
                     gap: 6,
                     width: '100%',
-                    padding: '7px 12px',
-                    borderRadius: 6,
-                    border: '1.5px dashed #0284c7',
-                    background: '#f0f9ff',
-                    color: '#0284c7',
+                    padding: '8px 12px',
+                    borderRadius: 8,
+                    border: '1.5px dashed #cbd5e1',
+                    background: '#ffffff',
+                    color: '#0f172a',
                     fontSize: 12,
                     fontWeight: 600,
                     cursor: 'pointer',
                     marginTop: 4,
+                    transition: 'all 0.15s',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = '#94a3b8';
+                    e.currentTarget.style.background = '#f8fafc';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = '#cbd5e1';
+                    e.currentTarget.style.background = '#ffffff';
                   }}
                 >
                   <Plus size={14} /> + Add Button
@@ -4872,7 +6510,7 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
             <div className="fb-field">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
                 <label>Buttons ({btnList.length}/3)</label>
-                <span style={{ fontSize: 10, color: '#d97706', background: '#fef3c7', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>
+                <span style={{ fontSize: 10, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>
                   Channel Actions
                 </span>
               </div>
@@ -4891,10 +6529,34 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
               {btnList.length < 3 && (
                 <button
                   type="button"
-                  className="fb-add-btn"
                   onClick={handleAddButton}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: 8,
+                    border: '1.5px dashed #cbd5e1',
+                    background: '#ffffff',
+                    color: '#0f172a',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    marginTop: 4,
+                    transition: 'all 0.15s',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = '#94a3b8';
+                    e.currentTarget.style.background = '#f8fafc';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = '#cbd5e1';
+                    e.currentTarget.style.background = '#ffffff';
+                  }}
                 >
-                  <Plus size={14} /> Add Button
+                  <Plus size={14} /> + Add Button
                 </button>
               )}
             </div>
@@ -4916,18 +6578,18 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
             <div className="fb-field">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
                 <label>Quick Replies</label>
-                <span style={{ fontSize: '10px', color: '#0284c7', fontWeight: 700 }}>
+                <span style={{ fontSize: '10px', color: '#475569', fontWeight: 600 }}>
                   {(data.replies || []).length} replies
                 </span>
               </div>
-              <div style={{ fontSize: '11px', color: '#0369a1', marginBottom: 8, lineHeight: 1.45, background: 'rgba(2, 132, 199, 0.08)', border: '1px solid rgba(2, 132, 199, 0.2)', padding: '8px 10px', borderRadius: '8px' }}>
+              <div style={{ fontSize: '11px', color: '#475569', marginBottom: 8, lineHeight: 1.45, background: '#f8fafc', border: '1px solid #e2e8f0', padding: '8px 10px', borderRadius: '8px' }}>
                 <strong>📌 Meta Platform Rule:</strong> Quick replies pause and wait for the user to tap an option. Immediate automatic follow-up replies are prohibited because Meta instantly dismisses quick replies if another message is sent. Connect your responses directly to each individual option handle on the right.
               </div>
               {(data.replies || []).map((reply, i) => (
                 <div key={i} className="fb-list-item">
                   <div style={{
-                    width: 22, height: 22, borderRadius: 5, background: 'rgba(2, 132, 199, 0.1)',
-                    color: '#0284c7', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                    width: 22, height: 22, borderRadius: 6, background: '#f1f5f9',
+                    color: '#0f172a', border: '1px solid #e2e8f0', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
                   }}>
                     {i + 1}
                   </div>
@@ -4961,50 +6623,81 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
           </>
         );
 
-      case 'listMenu':
+      case 'listMenu': {
+        const listCap = getNodeItemCap('listMenu', platform) || 10;
+        const lists = normalizeListMenuData(data);
+        const updateLists = (next) => updateField('lists', next);
+        const updateList = (li, patch) => {
+          const next = lists.map((l, idx) => (idx === li ? { ...l, ...patch } : l));
+          updateLists(next);
+        };
         return (
           <>
-            <div className="fb-field">
-              <label>Section Title</label>
-              <input
-                value={data.title || ''}
-                onChange={(e) => updateField('title', e.target.value)}
-                placeholder="Menu title..."
-              />
-            </div>
-            <div className="fb-field">
-              <label>Menu Items</label>
-              {(data.items || []).map((item, i) => (
-                <div key={i} className="fb-list-item">
-                  <input
-                    value={item}
-                    onChange={(e) => {
-                      const updated = [...(data.items || [])];
-                      updated[i] = e.target.value;
-                      updateField('items', updated);
-                    }}
-                    placeholder={`Item ${i + 1}`}
-                  />
-                  <button
-                    className="fb-list-item-del"
-                    onClick={() => {
-                      const updated = (data.items || []).filter((_, idx) => idx !== i);
-                      updateField('items', updated);
-                    }}
-                  >
-                    <Trash2 size={14} />
-                  </button>
+            {lists.map((list, li) => (
+              <div key={li} className="fb-field" style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: 10, marginBottom: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <label style={{ margin: 0 }}>List {li + 1} Title</label>
+                  {lists.length > 1 && (
+                    <button className="fb-list-item-del" onClick={() => updateLists(lists.filter((_, idx) => idx !== li))}>
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                 </div>
-              ))}
-              <button
-                className="fb-add-btn"
-                onClick={() => updateField('items', [...(data.items || []), ''])}
-              >
-                <Plus size={14} /> Add Item
-              </button>
-            </div>
+                <input
+                  value={list.title || ''}
+                  onChange={(e) => updateList(li, { title: e.target.value })}
+                  placeholder="Menu title..."
+                  style={{ marginBottom: 8 }}
+                />
+                <label>Button Text</label>
+                <input
+                  value={list.buttonText || ''}
+                  onChange={(e) => updateList(li, { buttonText: e.target.value })}
+                  placeholder="e.g. Options"
+                  style={{ marginBottom: 8 }}
+                />
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <label style={{ margin: 0 }}>Items</label>
+                  <span style={{ fontSize: 10, color: '#475569', fontWeight: 600 }}>{(list.items || []).length}/{listCap}</span>
+                </div>
+                {(list.items || []).map((item, i) => (
+                  <div key={i} className="fb-list-item">
+                    <input
+                      value={item}
+                      onChange={(e) => {
+                        const updated = [...(list.items || [])];
+                        updated[i] = e.target.value;
+                        updateList(li, { items: updated });
+                      }}
+                      placeholder={`Item ${i + 1}`}
+                    />
+                    <button
+                      className="fb-list-item-del"
+                      onClick={() => updateList(li, { items: (list.items || []).filter((_, idx) => idx !== i) })}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+                {(list.items || []).length >= listCap ? (
+                  <span className="fb-hint">Maximum {listCap} items per list on {(platform || 'WEBCHAT')} — add another list below for more.</span>
+                ) : (
+                  <button className="fb-add-btn" onClick={() => updateList(li, { items: [...(list.items || []), ''] })}>
+                    <Plus size={14} /> Add Item
+                  </button>
+                )}
+              </div>
+            ))}
+            <button
+              className="fb-add-btn"
+              onClick={() => updateLists([...lists, { title: `Menu ${lists.length + 1}`, buttonText: 'Options', items: [] }])}
+            >
+              <Plus size={14} /> Add Another List
+            </button>
+            <span className="fb-hint">Each list sends as its own message, one after another — the subscriber can tap an option from any of them and the flow continues the same way.</span>
           </>
         );
+      }
 
       case 'card':
         return (
@@ -5107,18 +6800,255 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
           </>
         );
 
-      case 'collectInput':
+      case 'question': {
+        // A User Input Flow's question is identified ONLY by its Custom Field —
+        // no separate "Variable Name" or "Field Label" to keep in sync with it.
+        // The field's own `field_key` is the storage/template key and its `name`
+        // is the display label, everywhere (Inbox, Form Submissions, webhook,
+        // Google Sheet export) — one name, one place it's defined.
+        const answerType = data.answerType || 'keyboard';
+        const isChoice = answerType === 'choice';
+        const fieldType = isChoice ? 'SELECT' : inputTypeToFieldType(data.inputType || 'name');
+        const matchingFields = customFields.filter((f) => f.field_type === fieldType);
+        const choiceOptions = data.options || [];
+        // Buttons are the fast-tap path (renders instantly, no extra bubble);
+        // beyond that cap the engine sends a list message instead (see Part A/B
+        // of the send-side change in flowEngine.js) so every option stays
+        // tappable rather than degrading into "type the option's name".
+        const buttonCap = getNodeItemCap('buttons', platform) || 3;
+        const choiceCap = getNodeItemCap('listMenu', platform) || buttonCap;
         return (
           <>
+            <div className="fb-field">
+              <label>Prompt Message</label>
+              <textarea
+                rows={2}
+                value={data.message || ''}
+                onChange={(e) => updateField('message', e.target.value)}
+                placeholder="e.g. What's your email address?"
+              />
+              <span className="fb-hint">Sent to the subscriber to ask the question. Works the same on every channel.</span>
+            </div>
+
+            <div className="fb-field">
+              <label>Answer Type</label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {[
+                  { value: 'keyboard', label: 'Keyboard Input' },
+                  { value: 'choice', label: 'Multiple Choice' },
+                ].map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => updateField('answerType', opt.value)}
+                    style={{
+                      flex: 1, padding: '8px 10px', borderRadius: 8, cursor: 'pointer',
+                      border: `1.5px solid ${answerType === opt.value ? '#0d9488' : '#e2e8f0'}`,
+                      background: answerType === opt.value ? '#f0fdfa' : '#fff',
+                      color: answerType === opt.value ? '#0f766e' : '#64748b',
+                      fontSize: 12, fontWeight: 700,
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <span className="fb-hint">
+                {isChoice
+                  ? 'The subscriber picks from the options below (sent as real tappable buttons where the channel supports it).'
+                  : 'The subscriber types their own reply.'}
+              </span>
+            </div>
+
+            {isChoice ? (
+              <div className="fb-field">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <label style={{ margin: 0 }}>Options</label>
+                  <span style={{ fontSize: 10, color: '#475569', fontWeight: 600 }}>{choiceOptions.length}/{choiceCap} option{choiceOptions.length === 1 ? '' : 's'}</span>
+                </div>
+                {choiceOptions.map((opt, i) => (
+                  <div key={i} className="fb-list-item">
+                    <input
+                      value={opt}
+                      onChange={(e) => {
+                        const updated = [...choiceOptions];
+                        updated[i] = e.target.value;
+                        updateField('options', updated);
+                      }}
+                      placeholder={`Option ${i + 1}`}
+                    />
+                    <button
+                      className="fb-list-item-del"
+                      onClick={() => updateField('options', choiceOptions.filter((_, idx) => idx !== i))}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+                {choiceOptions.length >= choiceCap ? (
+                  <span className="fb-hint">Maximum {choiceCap} options on {(platform || 'WEBCHAT')}.</span>
+                ) : (
+                  <button className="fb-add-btn" onClick={() => updateField('options', [...choiceOptions, ''])}>
+                    <Plus size={14} /> Add Option
+                  </button>
+                )}
+                {choiceOptions.length > buttonCap && (
+                  <span className="fb-hint">More than {buttonCap} options — this sends as a tappable list message instead of buttons on channels that support one, so every option stays tappable.</span>
+                )}
+              </div>
+            ) : (
+              <>
+                <div className="fb-field">
+                  <label>Input Type</label>
+                  <select value={data.inputType || 'name'} onChange={(e) => updateField('inputType', e.target.value)}>
+                    <option value="name">Name</option>
+                    <option value="email">Email</option>
+                    <option value="phone">Phone</option>
+                    <option value="number">Number</option>
+                    <option value="date">Date</option>
+                    <option value="custom">Custom (any text)</option>
+                  </select>
+                  {data.inputType !== 'custom' && (
+                    <span className="fb-hint">Replies that don't look like a valid {data.inputType} will be re-asked automatically.</span>
+                  )}
+                </div>
+                {data.inputType !== 'custom' && (
+                  <div className="fb-field">
+                    <label>Invalid Reply Message (optional)</label>
+                    <input
+                      value={data.invalidMessage || ''}
+                      onChange={(e) => updateField('invalidMessage', e.target.value)}
+                      placeholder={`e.g. That doesn't look like a valid ${data.inputType}, please try again.`}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+
+            {isChoice && (
+              <div className="fb-field">
+                <label>Invalid Reply Message (optional)</label>
+                <input
+                  value={data.invalidMessage || ''}
+                  onChange={(e) => updateField('invalidMessage', e.target.value)}
+                  placeholder={`e.g. Please choose one of: ${choiceOptions.filter(Boolean).join(', ') || 'the options above'}`}
+                />
+              </div>
+            )}
+
+            <div className="fb-field">
+              <label>Custom Field *</label>
+              {data.saveToFieldId === 'CREATE_NEW' ? (
+                <NewCustomFieldInline
+                  fieldType={fieldType}
+                  options={isChoice ? choiceOptions.filter(Boolean) : undefined}
+                  onCreated={(field) => {
+                    onCustomFieldCreated?.(field);
+                    // fieldLabel/fieldKey aren't separate concepts the user sets — they
+                    // mirror the field's own name/field_key, kept alongside the id so the
+                    // canvas card can show it without needing the full field list (the
+                    // engine re-reads the live field on each answer, so a rename later
+                    // still takes effect — these are just a display cache).
+                    updateFields({ saveToFieldId: field.id, fieldLabel: field.name, fieldKey: field.field_key });
+                  }}
+                  onCancel={() => updateField('saveToFieldId', null)}
+                />
+              ) : (
+                <select
+                  value={data.saveToFieldId || ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === 'CREATE_NEW') { updateField('saveToFieldId', 'CREATE_NEW'); return; }
+                    const id = val ? Number(val) : null;
+                    const field = matchingFields.find((f) => f.id === id);
+                    updateFields({ saveToFieldId: id, fieldLabel: field?.name || '', fieldKey: field?.field_key || '' });
+                  }}
+                >
+                  <option value="">Select or create a field...</option>
+                  {matchingFields.map((f) => (
+                    <option key={f.id} value={f.id}>{f.name}</option>
+                  ))}
+                  <option value="CREATE_NEW">+ Create new {fieldType.toLowerCase()} field...</option>
+                </select>
+              )}
+              <span className="fb-hint">
+                {matchingFields.length === 0
+                  ? `No ${fieldType.toLowerCase()}-type custom fields yet — only fields matching this question's input type are offered, so the answer always fits.`
+                  : "The answer is saved here — shows on the subscriber's profile in the Inbox, and this field's name is what's used in Form Submissions and any webhook/Google Sheet export."}
+              </span>
+            </div>
+
+            <div className="fb-field">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={!!data.endFlow}
+                  onChange={(e) => updateField('endFlow', e.target.checked)}
+                  style={{ width: 'auto', margin: 0 }}
+                />
+                <span>Finish the form after this question</span>
+              </label>
+              <span className="fb-hint">
+                Ends the User Input Flow right here — sends the closing message below, saves the
+                submission, and hands control back to the bot flow that called it. Leave this off
+                to continue to the next question instead.
+              </span>
+            </div>
+
+            {data.endFlow && (
+              <div className="fb-field">
+                <label>Closing Message</label>
+                <textarea
+                  rows={2}
+                  value={data.finalMessage || ''}
+                  onChange={(e) => updateField('finalMessage', e.target.value)}
+                  placeholder="e.g. Perfect — that's everything, thank you!"
+                />
+              </div>
+            )}
+          </>
+        );
+      }
+
+      case 'collectInput': {
+        const fieldType = inputTypeToFieldType(data.inputType || 'name');
+        const matchingFields = customFields.filter((f) => f.field_type === fieldType);
+        return (
+          <>
+            <div className="fb-field">
+              <label>Prompt Message</label>
+              <textarea
+                rows={2}
+                value={data.message || ''}
+                onChange={(e) => updateField('message', e.target.value)}
+                placeholder="e.g. What's your email address?"
+              />
+              <span className="fb-hint">Sent to the subscriber to ask the question. Works the same on every channel.</span>
+            </div>
             <div className="fb-field">
               <label>Input Type</label>
               <select value={data.inputType || 'name'} onChange={(e) => updateField('inputType', e.target.value)}>
                 <option value="name">Name</option>
                 <option value="email">Email</option>
                 <option value="phone">Phone</option>
-                <option value="custom">Custom</option>
+                <option value="number">Number</option>
+                <option value="date">Date</option>
+                <option value="custom">Custom (any text)</option>
               </select>
+              {data.inputType !== 'custom' && (
+                <span className="fb-hint">Replies that don't look like a valid {data.inputType} will be re-asked automatically.</span>
+              )}
             </div>
+            {data.inputType !== 'custom' && (
+              <div className="fb-field">
+                <label>Invalid Reply Message (optional)</label>
+                <input
+                  value={data.invalidMessage || ''}
+                  onChange={(e) => updateField('invalidMessage', e.target.value)}
+                  placeholder={`e.g. That doesn't look like a valid ${data.inputType}, please try again.`}
+                />
+              </div>
+            )}
             <div className="fb-field">
               <label>Variable Name</label>
               <input
@@ -5126,9 +7056,43 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
                 onChange={(e) => updateField('variable', e.target.value)}
                 placeholder="e.g. user_name"
               />
+              <span className="fb-hint">Use as {'{{' + (data.variable || 'variable_name') + '}}'} later in this flow.</span>
+            </div>
+            <div className="fb-field">
+              <label>Also Save To Custom Field (optional)</label>
+              {data.saveToFieldId === 'CREATE_NEW' ? (
+                <NewCustomFieldInline
+                  fieldType={fieldType}
+                  onCreated={(field) => {
+                    onCustomFieldCreated?.(field);
+                    updateField('saveToFieldId', field.id);
+                  }}
+                  onCancel={() => updateField('saveToFieldId', null)}
+                />
+              ) : (
+                <select
+                  value={data.saveToFieldId || ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    updateField('saveToFieldId', val === 'CREATE_NEW' ? 'CREATE_NEW' : (val ? Number(val) : null));
+                  }}
+                >
+                  <option value="">Don't save to a custom field</option>
+                  {matchingFields.map((f) => (
+                    <option key={f.id} value={f.id}>{f.name}</option>
+                  ))}
+                  <option value="CREATE_NEW">+ Create new {fieldType.toLowerCase()} field...</option>
+                </select>
+              )}
+              <span className="fb-hint">
+                {matchingFields.length === 0
+                  ? `No ${fieldType.toLowerCase()}-type custom fields yet — only fields matching this question's input type are offered, so the answer always fits.`
+                  : 'Saves the reply onto the subscriber\'s profile so it shows in the Inbox, not just inside this flow.'}
+              </span>
             </div>
           </>
         );
+      }
 
       case 'condition':
         return (
@@ -5292,7 +7256,7 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
               />
             </div>
 
-            <div style={{ padding: '10px 12px', borderRadius: 8, background: '#f0fdf4', border: '1px solid #bbf7d0', fontSize: 11, color: '#15803d', lineHeight: 1.4 }}>
+            <div style={{ padding: '10px 12px', borderRadius: 8, background: '#f8fafc', border: '1px solid #e2e8f0', fontSize: 11, color: '#475569', lineHeight: 1.4 }}>
               💳 A dynamic 1-click checkout link will be generated in WhatsApp, Messenger, or Instagram chat. When paid, the bot will auto-deliver the confirmation message.
             </div>
           </div>
@@ -5322,6 +7286,93 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
           </div>
         );
 
+      case 'finalAnswer':
+        return (
+          <div className="fb-field">
+            <label>Closing Message</label>
+            <textarea
+              value={data.message || ''}
+              onChange={(e) => updateField('message', e.target.value)}
+              placeholder="e.g. Thanks — that's everything I needed!"
+            />
+            <span className="fb-hint">Sent once all questions are answered, then control returns to wherever this User Input Flow was run from.</span>
+          </div>
+        );
+
+      case 'runUserInputFlow':
+        return (
+          <RunUserInputFlowFields
+            data={data}
+            updateFields={updateFields}
+            userInputFlows={userInputFlows}
+            platform={platform}
+            onDrillIn={onDrillIn}
+            onCreated={(uif) => {
+              onUserInputFlowCreated?.(uif);
+              updateFields({ userInputFlowId: uif.id, userInputFlowName: uif.name });
+            }}
+          />
+        );
+
+      case 'startSequenceAction':
+        return (
+          <SequenceActionFields
+            data={data}
+            updateFields={updateFields}
+            sequences={sequences}
+            platform={platform}
+            onCreated={(seq) => onSequenceCreated?.(seq)}
+          />
+        );
+
+      case 'stopSequenceAction':
+        return (
+          <SequenceActionFields
+            data={data}
+            updateFields={updateFields}
+            sequences={sequences}
+            platform={platform}
+            stop
+          />
+        );
+
+      case 'wait': {
+        const preset = data.preset || '5m';
+        return (
+          <div className="fb-field">
+            <label>Wait Duration</label>
+            <select value={preset} onChange={(e) => updateField('preset', e.target.value)}>
+              <option value="immediate">Immediately</option>
+              <option value="5m">5 Minutes</option>
+              <option value="10m">10 Minutes</option>
+              <option value="15m">15 Minutes</option>
+              <option value="30m">30 Minutes</option>
+              {Array.from({ length: 23 }, (_, i) => i + 1).map((h) => (
+                <option key={h} value={`${h}h`}>{h} Hour{h === 1 ? '' : 's'}</option>
+              ))}
+              <option value="custom">Custom...</option>
+            </select>
+            {preset === 'custom' && (
+              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                <input
+                  type="number"
+                  min="0"
+                  value={data.customValue ?? ''}
+                  onChange={(e) => updateField('customValue', e.target.value)}
+                  placeholder="e.g. 90"
+                  style={{ flex: 1 }}
+                />
+                <select value={data.customUnit || 'minutes'} onChange={(e) => updateField('customUnit', e.target.value)} style={{ flex: 1 }}>
+                  <option value="minutes">Minutes</option>
+                  <option value="hours">Hours</option>
+                </select>
+              </div>
+            )}
+            <span className="fb-hint">How long to wait after the previous step before sending the next one.</span>
+          </div>
+        );
+      }
+
       default:
         return <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>No editable properties</div>;
     }
@@ -5335,11 +7386,12 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
       <div className="fb-props-header">
         <h3>
           <div style={{
-            width: 24, height: 24, borderRadius: 6,
-            background: nodeColor, display: 'flex',
+            width: 26, height: 26, borderRadius: 7,
+            background: '#0f172a', display: 'flex',
             alignItems: 'center', justifyContent: 'center',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.06)'
           }}>
-            <NodeIcon size={13} color="#fff" />
+            <NodeIcon size={13} color="#ffffff" />
           </div>
           {data.label || type}
         </h3>
@@ -5349,6 +7401,9 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
       </div>
       <div className="fb-props-body">
         {renderFields()}
+        <button className="fb-done-btn" onClick={onClose}>
+          <Check size={14} /> Done
+        </button>
         {type !== 'start' && (
           <button className="fb-delete-node-btn" onClick={() => onDelete(node.id)}>
             <Trash2 size={14} /> Delete Node
@@ -5363,18 +7418,19 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform }) {
    NODE PALETTE (Left Sidebar)
    ═══════════════════════════════════════════════════════════════════ */
 
-function NodePalette({ platform }) {
+function NodePalette({ platform, isUserInputFlow = false, isSequence = false }) {
   const onDragStart = (event, nodeType) => {
     event.dataTransfer.setData('application/reactflow', nodeType);
     event.dataTransfer.effectAllowed = 'move';
   };
 
   const permittedCategories = useMemo(() => {
-    return PALETTE_CATEGORIES.map((cat) => ({
+    const source = isSequence ? SEQUENCE_PALETTE : (isUserInputFlow ? USER_INPUT_FLOW_PALETTE : PALETTE_CATEGORIES);
+    return source.map((cat) => ({
       ...cat,
       items: cat.items.filter((item) => isNodeSupportedOnPlatform(item.type, platform)),
     })).filter((cat) => cat.items.length > 0);
-  }, [platform]);
+  }, [platform, isUserInputFlow, isSequence]);
 
   const channelLabel = (platform || 'WEBCHAT').toUpperCase();
 
@@ -5450,6 +7506,12 @@ const nodeTypes = {
   payment: PaymentNode,
   handoff: HandoffNode,
   end: EndNode,
+  runUserInputFlow: RunUserInputFlowNode,
+  question: CollectInputNode, // same "ask & wait" UI as Collect Input — see PropertiesPanel for shared config
+  finalAnswer: FinalAnswerNode,
+  startSequenceAction: StartSequenceActionNode,
+  stopSequenceAction: StopSequenceActionNode,
+  wait: WaitNode,
 };
 
 /* ── Removable / Deletable Edge ────────────────────────────── */
@@ -5460,8 +7522,6 @@ function RemovableEdge({
   sourceY,
   targetX,
   targetY,
-  sourcePosition,
-  targetPosition,
   style = {},
   markerEnd,
   selected,
@@ -5472,23 +7532,29 @@ function RemovableEdge({
 
   const isEmpty = emptySourceNodes?.has(source);
 
-  // Force pure horizontal Left-to-Right edge routing (source exits right, target enters left)
-  const actualSourcePos = (sourcePosition === Position.Bottom || !sourcePosition) ? Position.Right : sourcePosition;
-  const actualTargetPos = (targetPosition === Position.Top || !targetPosition) ? Position.Left : targetPosition;
+  // Plain curve straight from the connector — no straight exit stub (that's
+  // being revisited separately, per-element, later). Keep the bow modest so
+  // close nodes still read as a curve without ballooning into a big loop.
+  const gapX = targetX - sourceX;
+  const gapY = targetY - sourceY;
 
-  // Dynamic curvature: when elements are close (dx < 180), use higher curvature so the curve bends gracefully
-  const dx = Math.max(1, Math.abs(targetX - sourceX));
-  const dynamicCurvature = dx < 140 ? 0.95 : dx < 220 ? 0.8 : 0.65;
+  let pull;
+  let bow = 0;
+  if (gapX >= 0) {
+    pull = Math.min(Math.max(gapX * 0.4, 30), 90);
+  } else {
+    // Target sits behind the source: needs a loop wide enough to swing clear.
+    pull = Math.min(Math.abs(gapX) * 0.3 + 60, 150);
+    bow = Math.abs(gapY) < 90 ? 50 : 0;
+  }
 
-  const [edgePath, labelX, labelY] = getBezierPath({
-    sourceX,
-    sourceY,
-    sourcePosition: actualSourcePos,
-    targetX,
-    targetY,
-    targetPosition: actualTargetPos,
-    curvature: dynamicCurvature,
-  });
+  const edgePath =
+    `M ${sourceX},${sourceY} ` +
+    `C ${sourceX + pull},${sourceY + bow} ${targetX - pull},${targetY + bow} ${targetX},${targetY}`;
+
+  // Midpoint of that cubic, used to park the delete button on the wire.
+  const labelX = (sourceX + targetX) / 2;
+  const labelY = (sourceY + targetY) / 2 + bow * 0.5;
 
   const onEdgeDelete = (e) => {
     e.stopPropagation();
@@ -5584,7 +7650,7 @@ const edgeTypes = {
 };
 
 /* ── Floating Quick Component Picker (drag-to-connect) ──────── */
-function QuickComponentPicker({ position, onClose, onSelect, platform }) {
+function QuickComponentPicker({ position, onClose, onSelect, platform, isUserInputFlow = false, isSequence = false }) {
   const [search, setSearch] = useState('');
   const pickerRef = useRef(null);
 
@@ -5606,7 +7672,8 @@ function QuickComponentPicker({ position, onClose, onSelect, platform }) {
   }, [onClose]);
 
   const filteredCategories = useMemo(() => {
-    return PALETTE_CATEGORIES.map((cat) => ({
+    const source = isSequence ? SEQUENCE_PALETTE : (isUserInputFlow ? USER_INPUT_FLOW_PALETTE : PALETTE_CATEGORIES);
+    return source.map((cat) => ({
       ...cat,
       items: cat.items.filter((item) => {
         if (item.type === 'start') return false; // don't spawn multiple start nodes
@@ -5620,7 +7687,7 @@ function QuickComponentPicker({ position, onClose, onSelect, platform }) {
         return true;
       }),
     })).filter((cat) => cat.items.length > 0);
-  }, [search, platform]);
+  }, [search, platform, isUserInputFlow, isSequence]);
 
   return (
     <div
@@ -5852,11 +7919,61 @@ function getPlatformUrl(account, platform, flowData = null) {
 }
 
 function FlowBuilderInner() {
-  const { id } = useParams();
+  const { id: routeId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
-  const { screenToFlowPosition, fitView } = useReactFlow();
+  const { screenToFlowPosition, fitView, getViewport, setViewport } = useReactFlow();
+
+  // ── In-session User Input Flow editing ("drill in") ─────────────────────
+  // Clicking Create New / Edit on a "Run User Input Flow" node used to navigate
+  // to a different route, unmounting this whole page and losing whatever was
+  // unsaved in the Main Flow. Instead: while `drilledIn` is set, this SAME
+  // mounted component swaps to editing that User Input Flow's own nodes/edges —
+  // `id`/`isUserInputFlow` below resolve to it instead of the route — and
+  // `parentContext` holds a full snapshot of the Main Flow to restore on
+  // "Back to Main Flow." No navigate(), no remount, no lost work. See
+  // drillIntoUif/drillBackToMain below (defined after handleSave/pushHistory,
+  // which they call).
+  const [drilledIn, setDrilledIn] = useState(null); // null | { uifId, uifName }
+  const [parentContext, setParentContext] = useState(null); // snapshot to restore on "Back"
+  const [uifDirty, setUifDirty] = useState(false);
+  const skipNextDirtyRef = useRef(false);
+
+  // Resolves to the route's own id/mode normally; while drilled in, resolves to
+  // the User Input Flow's own id and forces UIF mode — every other reference to
+  // `id`/`isUserInputFlow` in this component (save, load, display) is unchanged
+  // and just naturally follows whichever one is currently active.
+  const id = drilledIn ? drilledIn.uifId : routeId;
+
+  // ── User Input Flow mode ────────────────────────────────────────────────
+  // Same canvas, same node components, same save/undo machinery — just bound to
+  // userInputFlowAPI instead of flowAPI, with a restricted palette and a Start
+  // node that carries the flow's own settings (name/label/webhook/Google Sheet)
+  // instead of a keyword trigger. A User Input Flow is never triggered by a
+  // keyword: a bot Flow invokes it through a "Run User Input Flow" node.
+  const isUserInputFlow = drilledIn ? true : location.pathname.startsWith('/user-input-flows');
+
+  // ── Sequence Messages mode ──────────────────────────────────────────────
+  // Same canvas/save/undo machinery again, bound to sequenceAPI instead —
+  // restricted to content nodes + a `wait` delay node, and enforced as a
+  // single linear chain (no branching, no waiting for a reply) since a
+  // Sequence is strictly a one-way broadcast — see validateSequenceIsLinear
+  // below and the Sequence Messages plan. Not drilled into from the Main
+  // Flow Builder (unlike User Input Flows) — reached only via its own
+  // /sequences/:id/edit route from the Sequences list page.
+  const isSequence = location.pathname.startsWith('/sequences');
+
+  // Agency's Custom Field catalog (Settings/Inbox) — offered as a save target on Collect Input nodes
+  const [customFields, setCustomFields] = useState([]);
+  useEffect(() => {
+    customFieldAPI.getAll().then((res) => setCustomFields(res.data?.fields || [])).catch(() => {});
+  }, []);
+
+  // Agency's reusable User Input Flows — offered as a target on "Run User Input Flow"
+  // nodes. Scoped to this flow's own channel: a User Input Flow is locked to the
+  // channel it was built for, so a WhatsApp flow never sees a Messenger one.
+  const [userInputFlows, setUserInputFlows] = useState([]);
 
   // Track referring location for the back button and breadcrumb
   const referrerState = location.state;
@@ -5937,6 +8054,25 @@ function FlowBuilderInner() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [selectedNode, setSelectedNode] = useState(null);
+
+  // Re-fetched whenever the channel changes, so the "Run User Input Flow" picker
+  // only ever offers same-channel flows (see the userInputFlows note above).
+  useEffect(() => {
+    if (isUserInputFlow || isSequence) return; // neither can run/reference another one
+    userInputFlowAPI
+      .getAll(platform ? { platform } : undefined)
+      .then((res) => setUserInputFlows(res.data?.userInputFlows || []))
+      .catch(() => {});
+  }, [platform, isUserInputFlow, isSequence]);
+
+  // Agency's reusable Sequences — offered as a target on "Start Sequence" /
+  // "Stop Sequence" action nodes (main Flow Builder only, per the Sequence
+  // Messages plan — a Sequence step can't itself start another Sequence).
+  const [sequencesList, setSequencesList] = useState([]);
+  useEffect(() => {
+    if (isUserInputFlow || isSequence) return;
+    sequenceAPI.getAll().then((res) => setSequencesList(res.data?.sequences || [])).catch(() => {});
+  }, [isUserInputFlow, isSequence]);
   const [autoSaveStatus, setAutoSaveStatus] = useState('');
   const [previewOpen, setPreviewOpen] = useState(false);
   const [isLive, setIsLive] = useState(false);
@@ -5957,6 +8093,16 @@ function FlowBuilderInner() {
     historyRef.current = nextHistory;
     historyIndexRef.current = nextHistory.length - 1;
   }, []);
+
+  // Marks the drilled-in User Input Flow dirty on any real edit, so "Back to Main
+  // Flow" knows to ask before discarding it. Skips exactly one run right after
+  // drillIntoUif sets nodes/edges/flowName to the freshly-loaded form — that's a
+  // load, not an edit — via skipNextDirtyRef, which drillIntoUif arms.
+  useEffect(() => {
+    if (!drilledIn) return;
+    if (skipNextDirtyRef.current) { skipNextDirtyRef.current = false; return; }
+    setUifDirty(true);
+  }, [nodes, edges, flowName, drilledIn]);
 
   const handleUndo = useCallback(() => {
     if (historyIndexRef.current > 0) {
@@ -6048,7 +8194,7 @@ function FlowBuilderInner() {
       try {
         setLoading(true);
         const [res, intRes] = await Promise.allSettled([
-          flowAPI.getOne(id),
+          isSequence ? sequenceAPI.getOne(id) : (isUserInputFlow ? userInputFlowAPI.getOne(id) : flowAPI.getOne(id)),
           integrationAPI.getAll(),
         ]);
         if (intRes.status === 'fulfilled') {
@@ -6065,7 +8211,9 @@ function FlowBuilderInner() {
           }
         }
 
-        const flow = res.status === 'fulfilled' ? (res.value.data?.flow || res.value.data) : null;
+        const flow = res.status === 'fulfilled'
+          ? (res.value.data?.userInputFlow || res.value.data?.sequence || res.value.data?.flow || res.value.data)
+          : null;
         if (!flow) {
           // Initialize empty flow with start node
           setNodes([{
@@ -6104,14 +8252,22 @@ function FlowBuilderInner() {
             : (flow.edges_json || []);
         } catch { loadedEdges = []; }
 
-        // Auto-add start node if empty
+        // Auto-add start node if empty. A brand-new User Input Flow starts with its
+        // Start node plus one Question, so it opens ready to fill in rather than
+        // as a bare canvas.
         if (!loadedNodes.length) {
-          loadedNodes = [{
-            id: generateNodeId('start'),
-            type: 'start',
-            position: { x: 400, y: 100 },
-            data: { ...DEFAULT_NODE_DATA.start },
-          }];
+          if (isUserInputFlow) {
+            const seeded = buildDefaultUifNodesEdges();
+            loadedNodes = seeded.nodes;
+            loadedEdges = seeded.edges;
+          } else {
+            loadedNodes = [{
+              id: generateNodeId('start'),
+              type: 'start',
+              position: { x: 400, y: 100 },
+              data: { ...DEFAULT_NODE_DATA.start },
+            }];
+          }
         }
 
         // Ensure all nodes have proper data defaults merged and Left-to-Right handle positions
@@ -6119,10 +8275,18 @@ function FlowBuilderInner() {
           const nodeData = {
             ...(DEFAULT_NODE_DATA[n.type] || {}),
             ...n.data,
+            // Marks this Start node as a User Input Flow's / a Sequence's (no
+            // keyword trigger) — stamped on load so a flow saved before this
+            // existed still validates.
+            ...(isUserInputFlow && n.type === 'start' ? { uifStart: true } : {}),
+            ...(isSequence && n.type === 'start' ? { sequenceStart: true } : {}),
             _unsupported: !isNodeSupportedOnPlatform(n.type, flow.platform || 'WEBCHAT'),
           };
 
-          if (n.type === 'start') {
+          // Skipped for a User Input Flow's / Sequence's Start node — neither
+          // has a trigger to backfill, and injecting placeholder keywords
+          // there would be misleading.
+          if (n.type === 'start' && !isUserInputFlow && !isSequence) {
             if (!nodeData.triggers || !Array.isArray(nodeData.triggers) || nodeData.triggers.length === 0) {
               const kws = nodeData.keywords !== undefined
                 ? (Array.isArray(nodeData.keywords) ? nodeData.keywords : [nodeData.keywords])
@@ -6168,7 +8332,7 @@ function FlowBuilderInner() {
 
         setNodes(loadedNodes);
         setEdges(loadedEdges);
-        setIsLive(flow.status === 'active');
+        setIsLive(flow.is_active === 1 || flow.is_active === true || flow.status === 'active');
         pushHistory(loadedNodes, loadedEdges);
       } catch (err) {
         console.error('Failed to load flow:', err);
@@ -6209,18 +8373,39 @@ function FlowBuilderInner() {
             : startNode.data.keywords;
         }
 
-        await flowAPI.update(id, {
-          name: flowName,
-          platform,
-          integration_id: integrationId || null,
-          trigger_type: triggerType,
-          trigger_keyword: triggerKeyword,
-          nodes_json: JSON.stringify(currentNodes.map((n) => {
-            const { _unsupported, _validationError, ...rest } = n.data;
-            return { ...n, data: rest };
-          })),
-          edges_json: JSON.stringify(edgesRef.current),
-        });
+        const serializedNodes = JSON.stringify(currentNodes.map((n) => {
+          const { _unsupported, _validationError, ...rest } = n.data;
+          return { ...n, data: rest };
+        }));
+
+        if (isSequence) {
+          // No trigger/integration, same reasoning as a User Input Flow below
+          // — a Sequence is enrolled into via a Start/Stop Sequence action,
+          // and its channel is locked at creation.
+          await sequenceAPI.update(id, {
+            name: flowName,
+            nodes_json: serializedNodes,
+            edges_json: JSON.stringify(edgesRef.current),
+          });
+        } else if (isUserInputFlow) {
+          // No trigger/integration — a User Input Flow is invoked by a bot Flow's
+          // "Run User Input Flow" node, and its channel is locked at creation.
+          await userInputFlowAPI.update(id, {
+            name: flowName,
+            nodes_json: serializedNodes,
+            edges_json: JSON.stringify(edgesRef.current),
+          });
+        } else {
+          await flowAPI.update(id, {
+            name: flowName,
+            platform,
+            integration_id: integrationId || null,
+            trigger_type: triggerType,
+            trigger_keyword: triggerKeyword,
+            nodes_json: serializedNodes,
+            edges_json: JSON.stringify(edgesRef.current),
+          });
+        }
       } catch (err) {
         console.error('Save before exit error:', err);
       }
@@ -6279,7 +8464,9 @@ function FlowBuilderInner() {
   }, [nodes, edges, setNodes, setEdges, fitView]);
 
   /* ── Manual save (with strict data validation) ─────────── */
-  const handleSave = async () => {
+  // Memoised because drillBackToMain depends on it; an inline function here
+  // would change identity every render and defeat that useCallback entirely.
+  const handleSave = useCallback(async () => {
     try {
       // 1. Validate all components have required data
       const currentNodes = nodesRef.current || [];
@@ -6288,6 +8475,25 @@ function FlowBuilderInner() {
         const err = validateNodeData(n);
         if (err) invalidList.push({ node: n, error: err });
       });
+
+      // Sequences are strictly one-way broadcasts — enforced structurally as a
+      // single linear chain, same way a `question` node's choice answers
+      // already never branch the graph, just applied to the whole canvas here.
+      if (isSequence) {
+        const branchNodeId = findFirstBranchingNodeId(currentNodes, edgesRef.current || []);
+        if (branchNodeId) {
+          const branchNode = currentNodes.find((n) => n.id === branchNodeId);
+          Swal.fire({
+            title: 'Sequences Can\'t Branch',
+            html: `<div style="text-align:left; font-size:13px; color:#475569;">"<strong>${branchNode?.data?.label || branchNode?.type}</strong>" has more than one outgoing connection. A Sequence is a single straight line of steps — remove the extra connection before saving.</div>`,
+            icon: 'warning',
+            confirmButtonText: 'OK',
+            confirmButtonColor: '#4f46e5',
+          });
+          setSelectedNode(branchNode || null);
+          return;
+        }
+      }
 
       if (invalidList.length > 0) {
         // Highlight invalid nodes on canvas
@@ -6337,28 +8543,90 @@ function FlowBuilderInner() {
           : startNode.data.keywords;
       }
 
-      await flowAPI.update(id, {
-        name: flowName,
-        platform,
-        integration_id: integrationId || null,
-        trigger_type: triggerType,
-        trigger_keyword: triggerKeyword,
-        nodes_json: JSON.stringify(currentNodes.map((n) => {
-          const { _unsupported, _validationError, ...rest } = n.data;
-          return { ...n, data: rest };
-        })),
-        edges_json: JSON.stringify(edges),
-      });
+      const serializedNodes = JSON.stringify(currentNodes.map((n) => {
+        const { _unsupported, _validationError, ...rest } = n.data;
+        return { ...n, data: rest };
+      }));
+
+      if (isSequence) {
+        // No trigger/integration — see the note in flushAutoSave above.
+        await sequenceAPI.update(id, {
+          name: flowName,
+          nodes_json: serializedNodes,
+          edges_json: JSON.stringify(edges),
+        });
+      } else if (isUserInputFlow) {
+        // No trigger/integration — see the note in flushAutoSave above.
+        await userInputFlowAPI.update(id, {
+          name: flowName,
+          nodes_json: serializedNodes,
+          edges_json: JSON.stringify(edges),
+        });
+      } else {
+        await flowAPI.update(id, {
+          name: flowName,
+          platform,
+          integration_id: integrationId || null,
+          trigger_type: triggerType,
+          trigger_keyword: triggerKeyword,
+          nodes_json: serializedNodes,
+          edges_json: JSON.stringify(edges),
+        });
+      }
       setAutoSaveStatus('saved');
       setTimeout(() => setAutoSaveStatus(''), 2500);
+      if (drilledIn) setUifDirty(false);
+
+      const currentPlatformKey = (platform || 'WEBCHAT').toUpperCase();
+      const currentTheme = PLATFORM_SAVE_THEMES[currentPlatformKey] || PLATFORM_SAVE_THEMES.WEBCHAT;
+      const platformLabel = getPlatformMeta(platform).label || 'Channel';
 
       Swal.fire({
         toast: true,
         position: 'top-end',
-        icon: 'success',
-        title: 'Flow saved successfully!',
         showConfirmButton: false,
-        timer: 2000,
+        timer: 2600,
+        timerProgressBar: true,
+        background: 'transparent',
+        customClass: {
+          popup: '!p-0 !bg-transparent !shadow-none !border-none',
+        },
+        html: `
+          <div style="
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 18px;
+            border-radius: 12px;
+            background: #ffffff;
+            border: 1.5px solid ${currentTheme.border};
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04), ${currentTheme.shadow};
+            font-family: inherit;
+          ">
+            <div style="
+              width: 32px;
+              height: 32px;
+              border-radius: 8px;
+              background: ${currentTheme.badgeBg};
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              flex-shrink: 0;
+            ">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${currentTheme.iconColor}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+            </div>
+            <div style="display: flex; flex-direction: column; text-align: left;">
+              <div style="font-size: 13px; font-weight: 700; color: #0f172a; line-height: 1.3;">
+                Flow Saved Successfully
+              </div>
+              <div style="font-size: 11.5px; font-weight: 500; color: #64748b; margin-top: 1px;">
+                Changes live on <span style="font-weight: 700; color: ${currentTheme.iconColor};">${platformLabel}</span>
+              </div>
+            </div>
+          </div>
+        `,
       });
     } catch (err) {
       console.error('Save failed:', err);
@@ -6371,7 +8639,136 @@ function FlowBuilderInner() {
     } finally {
       setSaving(false);
     }
-  };
+  }, [
+    id, isSequence, isUserInputFlow, edges, flowName, flowData,
+    platform, integrationId, drilledIn, setNodes,
+  ]);
+
+  // Fresh Start + Question pair for a brand-new User Input Flow — matches what a
+  // linear form needs to open ready-to-fill rather than as a bare canvas. Shared
+  // by the initial-load effect (a UIF row with no nodes yet) and drillIntoUif
+  // (a just-created one, same situation).
+  const buildDefaultUifNodesEdges = useCallback(() => {
+    const startId = generateNodeId('start');
+    const qId = generateNodeId('question');
+    const seededNodes = [
+      { id: startId, type: 'start', position: { x: 180, y: 140 },
+        data: { ...DEFAULT_NODE_DATA.start, uifStart: true, label: 'Form Start' } },
+      { id: qId, type: 'question', position: { x: 560, y: 140 },
+        data: { ...DEFAULT_NODE_DATA.question } },
+    ];
+    const seededEdges = [{
+      id: `e_${startId}_${qId}`,
+      source: startId, sourceHandle: 'next-step', target: qId,
+      type: 'default', animated: false,
+      style: { stroke: '#64748b', strokeWidth: 2 },
+      markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#64748b' },
+    }];
+    return { nodes: seededNodes, edges: seededEdges };
+  }, []);
+
+  // ── Drill in: swap this SAME mounted canvas to a User Input Flow's own
+  // nodes/edges, in place — no navigate(), no remount. See the comment on
+  // `drilledIn` above for why this exists.
+  const drillIntoUif = useCallback(async (uifId, uifNameHint = '') => {
+    const snapshot = {
+      id, isUserInputFlow, flowName, platform, integrationId, flowData,
+      nodes: nodesRef.current || [],
+      edges: edgesRef.current || [],
+      viewport: getViewport(),
+    };
+
+    let uifNodes = [];
+    let uifEdges = [];
+    let uifNameFinal = uifNameHint;
+    let uifRow = null;
+    try {
+      const res = await userInputFlowAPI.getOne(uifId);
+      uifRow = res.data?.userInputFlow || null;
+      uifNodes = typeof uifRow?.nodes_json === 'string' ? JSON.parse(uifRow.nodes_json) : (uifRow?.nodes_json || []);
+      uifEdges = typeof uifRow?.edges_json === 'string' ? JSON.parse(uifRow.edges_json) : (uifRow?.edges_json || []);
+      uifNameFinal = uifRow?.name || uifNameHint;
+    } catch (err) {
+      console.error('Failed to load User Input Flow:', err);
+    }
+
+    if (!uifNodes.length) {
+      const seeded = buildDefaultUifNodesEdges();
+      uifNodes = seeded.nodes;
+      uifEdges = seeded.edges;
+    } else {
+      // Stamp uifStart on load, same as the route-based load effect does, so a
+      // form saved before this flag existed still validates/renders correctly.
+      uifNodes = uifNodes.map((n) => (n.type === 'start' ? { ...n, data: { ...n.data, uifStart: true } } : n));
+    }
+
+    setParentContext(snapshot);
+    setDrilledIn({ uifId, uifName: uifNameFinal });
+    setFlowName(uifNameFinal || 'Untitled Form');
+    setFlowData(uifRow);
+    skipNextDirtyRef.current = true;
+    setNodes(uifNodes);
+    setEdges(uifEdges);
+    setSelectedNode(null);
+    setUifDirty(false);
+    historyRef.current = [];
+    historyIndexRef.current = -1;
+    pushHistory(uifNodes, uifEdges);
+    setTimeout(() => fitView({ padding: 0.25, duration: 300 }), 50);
+  }, [id, isUserInputFlow, flowName, platform, integrationId, flowData, getViewport, buildDefaultUifNodesEdges, setNodes, setEdges, fitView, pushHistory]);
+
+  // ── Drill back out: restore the Main Flow's exact snapshot. Asks first if the
+  // User Input Flow being left has unsaved changes (Save / Discard / Cancel) —
+  // per the user's explicit choice, never silently auto-saves or discards.
+  const drillBackToMain = useCallback(async () => {
+    if (!parentContext) return;
+
+    const restoreParent = () => {
+      setDrilledIn(null);
+      setFlowName(parentContext.flowName);
+      setPlatform(parentContext.platform);
+      setIntegrationId(parentContext.integrationId);
+      setFlowData(parentContext.flowData);
+      setNodes(parentContext.nodes);
+      setEdges(parentContext.edges);
+      setSelectedNode(null);
+      setUifDirty(false);
+      historyRef.current = [];
+      historyIndexRef.current = -1;
+      pushHistory(parentContext.nodes, parentContext.edges);
+      setParentContext(null);
+      setTimeout(() => {
+        if (parentContext.viewport) setViewport(parentContext.viewport);
+        else fitView({ padding: 0.25, duration: 300 });
+      }, 60);
+    };
+
+    if (!uifDirty) {
+      restoreParent();
+      return;
+    }
+
+    const result = await Swal.fire({
+      title: 'Save changes to this form?',
+      text: `You have unsaved changes in "${flowName || 'this User Input Flow'}".`,
+      icon: 'question',
+      showDenyButton: true,
+      showCancelButton: true,
+      confirmButtonText: 'Save & Go Back',
+      denyButtonText: "Discard",
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#4f46e5',
+      denyButtonColor: '#ef4444',
+    });
+
+    if (result.isConfirmed) {
+      await handleSave();
+      restoreParent();
+    } else if (result.isDenied) {
+      restoreParent();
+    }
+    // Cancel (or dismiss): do nothing — stay exactly where they are.
+  }, [parentContext, uifDirty, flowName, handleSave, setNodes, setEdges, setViewport, fitView, pushHistory]);
 
   const connectingNodeRef = useRef(null);
   const [quickPicker, setQuickPicker] = useState(null);
@@ -6408,9 +8805,13 @@ function FlowBuilderInner() {
     (event) => {
       if (!connectingNodeRef.current) return;
 
-      const targetIsPane =
-        event.target?.classList?.contains('react-flow__pane') ||
-        event.target?.closest('.react-flow__pane');
+      // Only truly empty canvas counts as "open the quick-add list" — every
+      // node/handle on the canvas is a DOM descendant of .react-flow__pane,
+      // so the previous .closest('.react-flow__pane') fallback matched
+      // almost anything you could drop on (including a real handle), which
+      // is why the list kept opening even after successfully connecting to
+      // an existing node. Only the exact pane element itself should count.
+      const targetIsPane = event.target?.classList?.contains('react-flow__pane');
 
       if (targetIsPane) {
         const clientX = event.clientX || ('changedTouches' in event ? event.changedTouches[0]?.clientX : 0);
@@ -6625,6 +9026,117 @@ function FlowBuilderInner() {
     [nodes, edges, setNodes, pushHistory, setSelectedNode]
   );
 
+  // Guided "+ Add Question" hover action on a Question node — auto-creates and
+  // auto-connects the next Question node via its "Next Question" handle, instead
+  // of dragging one in from the palette and manually wiring it (the exact manual
+  // step that's caused edge-loss bugs elsewhere in this builder). Replaces any
+  // existing "next-step" edge from this node so it never ends up with two.
+  const handleAddQuestionAfter = useCallback(
+    (sourceNodeId) => {
+      const source = nodes.find((n) => n.id === sourceNodeId);
+      if (!source) return;
+
+      const newId = generateNodeId('question');
+      const newNode = {
+        id: newId,
+        type: 'question',
+        position: { x: (source.position?.x || 0) + 320, y: source.position?.y || 0 },
+        sourcePosition: Position.Right,
+        targetPosition: Position.Left,
+        data: { ...DEFAULT_NODE_DATA.question },
+      };
+      const newEdge = {
+        id: `e_${sourceNodeId}_${newId}_${Date.now()}`,
+        source: sourceNodeId, sourceHandle: 'next-step', target: newId,
+        type: 'default', animated: false,
+        style: { stroke: '#64748b', strokeWidth: 2 },
+        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#64748b' },
+      };
+
+      const nextNodes = nodes.concat(newNode);
+      const nextEdges = edges
+        .filter((e) => !(e.source === sourceNodeId && (e.sourceHandle || null) === 'next-step'))
+        .concat(newEdge);
+
+      setNodes(nextNodes);
+      setEdges(nextEdges);
+      setSelectedNode(newNode);
+      pushHistory(nextNodes, nextEdges);
+    },
+    [nodes, edges, setNodes, setEdges, pushHistory, setSelectedNode]
+  );
+
+  // ── Attach Sequence (Start node picker) ──────────────────────────────────
+  // Adds a real "Start Sequence" node as its OWN separate branch off Start —
+  // a second wire from a dedicated "attach-sequence" handle, alongside
+  // (never replacing or splicing into) Start's existing "Then" connection to
+  // the real conversation. The two are genuinely independent: the flow's own
+  // path is completely untouched, and the engine (flowEngine.js's `case
+  // "start"`) fires the enrollment as a side effect without ever making this
+  // node part of the executed conversation path — see the note there for why
+  // a second edge off the SAME handle wouldn't work (this engine resolves
+  // "the next node" as a single pointer, not a true multi-branch walk).
+  const handleAttachSequenceToStart = useCallback(
+    (startNodeId, sequenceId, sequenceName) => {
+      const startNode = nodes.find((n) => n.id === startNodeId);
+      if (!startNode) return;
+
+      const newId = generateNodeId('startSequenceAction');
+      const newNode = {
+        id: newId,
+        type: 'startSequenceAction',
+        // Below the Start node rather than inline to its right — reads as a
+        // branch, not a step in the "Then" conversation path drawn straight
+        // across.
+        position: { x: (startNode.position?.x || 0) + 40, y: (startNode.position?.y || 0) + 200 },
+        sourcePosition: Position.Right,
+        targetPosition: Position.Left,
+        data: { ...DEFAULT_NODE_DATA.startSequenceAction, sequenceId, sequenceName },
+      };
+      const newEdge = {
+        id: `e_${startNodeId}_${newId}_${Date.now()}`,
+        source: startNodeId, sourceHandle: 'attach-sequence', target: newId,
+        type: 'default', animated: false,
+        // Same neutral slate as every other wire on the canvas — no special
+        // color for this connection.
+        style: { stroke: '#64748b', strokeWidth: 2 },
+        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#64748b' },
+      };
+
+      const nextNodes = nodes.concat(newNode);
+      const nextEdges = edges.concat(newEdge);
+
+      setNodes(nextNodes);
+      setEdges(nextEdges);
+      setSelectedNode(newNode);
+      pushHistory(nextNodes, nextEdges);
+    },
+    [nodes, edges, setNodes, setEdges, pushHistory, setSelectedNode]
+  );
+
+  // The Start node's "Attach Sequence" UI needs to know whether it already has
+  // a Start Sequence node wired to its dedicated branch handle (to show
+  // "Edit" instead of the picker) — computed once here rather than passing
+  // the whole nodes/edges graph down through PropertiesPanel/StartNodeProperties
+  // for one field.
+  const startAttachedSequenceNode = useMemo(() => {
+    if (isSequence || isUserInputFlow) return null;
+    const startNode = nodes.find((n) => n.type === 'start');
+    if (!startNode) return null;
+    const edge = edges.find((e) => e.source === startNode.id && e.sourceHandle === 'attach-sequence');
+    if (!edge) return null;
+    const nextNode = nodes.find((n) => n.id === edge.target);
+    return nextNode?.type === 'startSequenceAction' ? nextNode : null;
+  }, [nodes, edges, isSequence, isUserInputFlow]);
+
+  const handleSelectSequenceNode = useCallback(
+    (nodeId) => {
+      const target = nodes.find((n) => n.id === nodeId);
+      if (target) setSelectedNode(target);
+    },
+    [nodes, setSelectedNode]
+  );
+
   /* ── Keep selectedNode synced with nodes state ──────────── */
   useEffect(() => {
     if (selectedNode) {
@@ -6694,8 +9206,10 @@ function FlowBuilderInner() {
         }
       },
       onUpdateNodeData: handleUpdateNodeData,
+      onAddQuestionAfter: handleAddQuestionAfter,
       buttonTargetNodes,
       emptySourceNodes,
+      sequencesList,
     }}>
       <div className="flow-builder-root">
       {/* ── Flow Top Bar ────────────────────────────────── */}
@@ -6718,8 +9232,8 @@ function FlowBuilderInner() {
           <button
             type="button"
             className="flow-tool-btn"
-            onClick={handleGoBack}
-            title={`Back to ${backLabel}`}
+            onClick={drilledIn ? drillBackToMain : handleGoBack}
+            title={drilledIn ? `Back to ${parentContext?.flowName || 'Main Flow'}` : `Back to ${backLabel}`}
             style={{
               width: 34,
               height: 34,
@@ -6736,16 +9250,26 @@ function FlowBuilderInner() {
             <ArrowLeft size={16} />
           </button>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#64748b' }}>
-            <span
-              style={{ fontWeight: 500, cursor: 'pointer' }}
-              onClick={handleGoBack}
-              title={`Back to ${backLabel}`}
-            >
-              {backLabel}
-            </span>
-            <span>&gt;</span>
-          </div>
+          {/* Editing a User Input Flow drilled into from a Main Flow: the arrow
+              and this segment go back ONE level (to the Main Flow, in-memory,
+              no navigate()) rather than skipping past it — the outer "back to
+              Bot Manager" breadcrumb is hidden while drilled in so leaving isn't
+              two different meanings for the same arrow. See drillBackToMain. */}
+          {drilledIn ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#7c3aed', fontWeight: 700 }}>
+              <span style={{ cursor: 'pointer' }} onClick={drillBackToMain} title="Back to Main Flow">
+                {parentContext?.flowName || 'Main Flow'}
+              </span>
+              <span style={{ color: '#c4b5fd' }}>&gt;</span>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#64748b' }}>
+              <span style={{ fontWeight: 500, cursor: 'pointer' }} onClick={handleGoBack} title={`Back to ${backLabel}`}>
+                {backLabel}
+              </span>
+              <span>&gt;</span>
+            </div>
+          )}
 
           <input
             value={flowName}
@@ -6797,17 +9321,32 @@ function FlowBuilderInner() {
             onClick={handleUndo}
             disabled={historyIndexRef.current <= 0}
             title="Undo"
+            className="group"
             style={{
-              width: 32,
-              height: 32,
-              borderRadius: 6,
-              border: '1px solid #e2e8f0',
+              width: 34,
+              height: 34,
+              borderRadius: 8,
+              border: '1.5px solid #e2e8f0',
               background: '#ffffff',
               color: historyIndexRef.current <= 0 ? '#cbd5e1' : '#475569',
               cursor: historyIndexRef.current <= 0 ? 'not-allowed' : 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+              transition: 'all 0.2s ease',
+            }}
+            onMouseEnter={(e) => {
+              if (historyIndexRef.current > 0) {
+                e.currentTarget.style.borderColor = '#cbd5e1';
+                e.currentTarget.style.background = '#f8fafc';
+                e.currentTarget.style.transform = 'translateY(-0.5px)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = '#e2e8f0';
+              e.currentTarget.style.background = '#ffffff';
+              e.currentTarget.style.transform = 'translateY(0)';
             }}
           >
             <Undo2 size={14} />
@@ -6817,17 +9356,32 @@ function FlowBuilderInner() {
             onClick={handleRedo}
             disabled={historyIndexRef.current >= historyRef.current.length - 1}
             title="Redo"
+            className="group"
             style={{
-              width: 32,
-              height: 32,
-              borderRadius: 6,
-              border: '1px solid #e2e8f0',
+              width: 34,
+              height: 34,
+              borderRadius: 8,
+              border: '1.5px solid #e2e8f0',
               background: '#ffffff',
               color: historyIndexRef.current >= historyRef.current.length - 1 ? '#cbd5e1' : '#475569',
               cursor: historyIndexRef.current >= historyRef.current.length - 1 ? 'not-allowed' : 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+              transition: 'all 0.2s ease',
+            }}
+            onMouseEnter={(e) => {
+              if (historyIndexRef.current < historyRef.current.length - 1) {
+                e.currentTarget.style.borderColor = '#cbd5e1';
+                e.currentTarget.style.background = '#f8fafc';
+                e.currentTarget.style.transform = 'translateY(-0.5px)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = '#e2e8f0';
+              e.currentTarget.style.background = '#ffffff';
+              e.currentTarget.style.transform = 'translateY(0)';
             }}
           >
             <Redo2 size={14} />
@@ -6838,7 +9392,7 @@ function FlowBuilderInner() {
             className="flow-layout-btn"
             title="Auto-rearrange components cleanly"
           >
-            <LayoutGrid size={13} style={{ color: '#4f46e5' }} />
+            <LayoutGrid size={14} style={{ color: '#4f46e5' }} />
             <span>Auto Layout</span>
           </button>
 
@@ -6847,38 +9401,37 @@ function FlowBuilderInner() {
             href={platformUrl}
             target="_blank"
             rel="noopener noreferrer"
-            title={`Open ${currentAccountName || platform} in new tab`}
+            title={`Open ${currentAccountName || getPlatformMeta(platform).label} in new tab`}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
-              gap: 6,
-              padding: '5px 10px',
+              gap: 7,
+              padding: '6px 14px',
               borderRadius: 8,
-              background: '#f8fafc',
-              border: '1px solid #e2e8f0',
+              background: '#ffffff',
+              border: '1.5px solid #e2e8f0',
               color: '#334155',
-              fontSize: 11.5,
+              fontSize: 12.5,
               textDecoration: 'none',
               fontWeight: 600,
-              height: 32,
-              transition: 'all 0.15s',
+              height: 34,
+              boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+              transition: 'all 0.2s ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = '#cbd5e1';
+              e.currentTarget.style.background = '#f8fafc';
+              e.currentTarget.style.transform = 'translateY(-0.5px)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = '#e2e8f0';
+              e.currentTarget.style.background = '#ffffff';
+              e.currentTarget.style.transform = 'translateY(0)';
             }}
           >
-            <span style={{ fontSize: 13 }}>
-              {platform === 'FACEBOOK'
-                ? '📘'
-                : platform === 'INSTAGRAM'
-                ? '📸'
-                : platform === 'WHATSAPP'
-                ? '💬'
-                : platform === 'TELEGRAM'
-                ? '✈️'
-                : platform === 'TIKTOK'
-                ? '🎵'
-                : '🌐'}
-            </span>
-            <span>{currentAccountName || `${platform} Channel`}</span>
-            <ExternalLink size={11} style={{ color: '#94a3b8' }} />
+            <PlatformIcon platform={platform} size={18} />
+            <span>{currentAccountName || getPlatformMeta(platform).defaultName}</span>
+            <ExternalLink size={11} style={{ color: '#94a3b8', marginLeft: 2 }} />
           </a>
         </div>
 
@@ -6912,39 +9465,70 @@ function FlowBuilderInner() {
             <span style={{ fontSize: 9, opacity: 0.7 }}>▾</span>
           </button>
 
-          {/* Manual Save Draft Button */}
-          <button
-            type="button"
-            className="flow-preview-toggle-btn"
-            onClick={handleSave}
-            disabled={saving}
-            title="Save draft"
-            style={{ fontWeight: 600 }}
-          >
-            {saving ? <Loader2 size={13} className="spin" /> : <Save size={13} />}
-            <span>Save</span>
-          </button>
+          {/* Save Button with dynamic light-color channel theme, generous padding, and gorgeous micro-effects */}
+          {(() => {
+            const currentPlatformKey = (platform || 'WEBCHAT').toUpperCase();
+            const theme = PLATFORM_SAVE_THEMES[currentPlatformKey] || PLATFORM_SAVE_THEMES.WEBCHAT;
 
-          {/* Set Live / Save Button */}
-          <button
-            type="button"
-            className="flow-set-live-btn"
-            onClick={async () => {
-              await handleSave();
-              setIsLive(true);
-            }}
-            disabled={saving}
-          >
-            {saving ? <Loader2 size={14} className="spin" /> : <Zap size={14} />}
-            <span>{isLive ? 'Update Live' : 'Set Live'}</span>
-          </button>
+            return (
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving}
+                title={`Save flow for ${currentAccountName || getPlatformMeta(platform).label}`}
+                className="group relative overflow-hidden inline-flex items-center justify-center gap-2 rounded-lg text-[13px] font-bold h-[34px] cursor-pointer transition-all duration-200 ease-out active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100 select-none"
+                style={{
+                  padding: '7px 22px',
+                  background: theme.bg,
+                  border: `1.5px solid ${theme.border}`,
+                  color: theme.color,
+                  boxShadow: theme.shadow,
+                }}
+                onMouseEnter={(e) => {
+                  if (!saving) {
+                    e.currentTarget.style.background = theme.hoverBg;
+                    e.currentTarget.style.borderColor = theme.hoverBorder;
+                    e.currentTarget.style.boxShadow = theme.hoverShadow;
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!saving) {
+                    e.currentTarget.style.background = theme.bg;
+                    e.currentTarget.style.borderColor = theme.border;
+                    e.currentTarget.style.boxShadow = theme.shadow;
+                  }
+                }}
+              >
+                {/* Subtle light sweep shimmer animation across the button */}
+                <span
+                  className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-in-out pointer-events-none"
+                  style={{
+                    background: 'linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent)',
+                  }}
+                />
+
+                {/* Save icon / spinner */}
+                {saving ? (
+                  <Loader2 size={15} className="animate-spin" style={{ color: theme.iconColor }} />
+                ) : (
+                  <Save
+                    size={15}
+                    className="transition-transform duration-200 group-hover:scale-110"
+                    style={{ color: theme.iconColor }}
+                  />
+                )}
+
+                <span className="relative tracking-wide font-bold">{saving ? 'Saving...' : 'Save'}</span>
+              </button>
+            );
+          })()}
         </div>
       </div>
 
       {/* ── Main Area ───────────────────────────────────────── */}
       <div className="fb-main" style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
         {/* Left: Component Palette (always present) */}
-        <NodePalette platform={platform} />
+        <NodePalette platform={platform} isUserInputFlow={isUserInputFlow} isSequence={isSequence} />
 
         {/* Canvas */}
         <div className="fb-canvas" style={{ flex: 1, position: 'relative', height: '100%' }}>
@@ -6997,6 +9581,8 @@ function FlowBuilderInner() {
               onClose={() => setQuickPicker(null)}
               onSelect={handleSelectQuickPicker}
               platform={platform}
+              isUserInputFlow={isUserInputFlow}
+              isSequence={isSequence}
             />
           )}
         </div>
@@ -7009,6 +9595,20 @@ function FlowBuilderInner() {
             onUpdate={handleUpdateNodeData}
             onDelete={handleDeleteNode}
             platform={platform}
+            customFields={customFields}
+            onCustomFieldCreated={(field) => setCustomFields((prev) => [...prev, field])}
+            userInputFlows={userInputFlows}
+            onUserInputFlowCreated={(uif) => setUserInputFlows((prev) => [...prev, { ...uif, nodeCount: 0 }])}
+            isUserInputFlow={isUserInputFlow}
+            sequences={sequencesList}
+            onSequenceCreated={(seq) => setSequencesList((prev) => [...prev, seq])}
+            isSequence={isSequence}
+            flowName={flowName}
+            onFlowNameChange={setFlowName}
+            onDrillIn={drillIntoUif}
+            onAttachSequence={handleAttachSequenceToStart}
+            attachedSequenceNode={startAttachedSequenceNode}
+            onSelectSequenceNode={handleSelectSequenceNode}
           />
         )}
 
@@ -7019,7 +9619,7 @@ function FlowBuilderInner() {
           nodes={nodes}
           edges={edges}
           platform={platform}
-          businessName={currentAccountName || 'CareSphere'}
+          businessName={currentAccountName}
         />
       </div>
     </div>

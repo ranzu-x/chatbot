@@ -19,7 +19,14 @@ import { encryptSecret, decryptSecret } from "../utils/cryptoVault.js";
 const router = express.Router();
 
 // Only an Agency manages its own gateways (scoped to req.user.agencyId).
-router.use(authMiddleware, roleMiddleware("AGENCY"));
+// NOTE: scoped to this router's own path prefix on purpose. A bare
+// `router.use(...)` here ran on EVERY request that reached this router — and
+// since every router is mounted on the same "/api/v1" prefix, that meant an
+// ADMIN or AGENT was 403'd here before ever reaching the routers mounted after
+// this one (custom fields, user input flows, google sheets), even though those
+// allow those roles. All four routes below live under this prefix, so the
+// protection is unchanged.
+router.use("/agency/payment-gateways", authMiddleware, roleMiddleware("AGENCY"));
 
 // Per-provider shape of the credentials JSON blob before encryption, and
 // which fields are safe to echo back in full vs must stay masked.

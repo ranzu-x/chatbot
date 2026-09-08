@@ -8,8 +8,11 @@ router.use(authMiddleware);
 
 /**
  * Helper: Sync contact_labels back to contacts.tags JSON column
+ * Exported so other modules (e.g. utils/flowEngine.js's User Input Flow
+ * "apply this label on start" step) can reuse the exact same attach-label
+ * sequence instead of re-implementing it.
  */
-async function syncContactTagsJson(contactId) {
+export async function syncContactTagsJson(contactId) {
   try {
     const [rows] = await pool.query(
       `SELECT l.name 
@@ -25,6 +28,32 @@ async function syncContactTagsJson(contactId) {
     ]);
   } catch (err) {
     console.error("Failed to sync contact tags JSON:", err);
+  }
+}
+
+/**
+ * Helper: attach one existing label to a contact (idempotent) and broadcast the
+ * update — the same three-step sequence the "attach label" route below uses.
+ * Exported for utils/flowEngine.js's User Input Flow Start-node auto-label step.
+ */
+export async function applyLabelToContact(agencyId, contactId, labelId) {
+  try {
+    await pool.query(
+      "INSERT IGNORE INTO contact_labels (contact_id, label_id) VALUES (?, ?)",
+      [contactId, labelId]
+    );
+    await syncContactTagsJson(contactId);
+    const [contactLabels] = await pool.query(
+      `SELECT l.id, l.name, l.color
+       FROM labels l
+       JOIN contact_labels cl ON cl.label_id = l.id
+       WHERE cl.contact_id = ?
+       ORDER BY l.name ASC`,
+      [contactId]
+    );
+    emitToAgency(agencyId, "contact_labels_updated", { contactId: Number(contactId), labels: contactLabels });
+  } catch (err) {
+    console.error("Failed to apply label to contact:", err);
   }
 }
 

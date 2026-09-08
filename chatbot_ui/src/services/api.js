@@ -250,6 +250,38 @@ export const tiktokAppAPI = {
 };
 
 // ─── Flows ─────────────────────────────────────────────────────────
+// A User Input Flow is locked to one channel — pass { platform } to getAll to
+// only get the ones usable from a flow on that channel.
+export const userInputFlowAPI = {
+  getAll: (params) => api.get('/user-input-flows', { params }),
+  getOne: (id) => api.get(`/user-input-flows/${id}`),
+  create: (data) => api.post('/user-input-flows', data),
+  update: (id, data) => api.put(`/user-input-flows/${id}`, data),
+  delete: (id) => api.delete(`/user-input-flows/${id}`),
+  getResponses: (id, params) => api.get(`/user-input-flows/${id}/responses`, { params }),
+};
+
+// ─── Sequence Messages (scheduled drip messages) ──
+export const sequenceAPI = {
+  getAll: () => api.get('/sequences'),
+  getOne: (id) => api.get(`/sequences/${id}`),
+  create: (data) => api.post('/sequences', data),
+  update: (id, data) => api.put(`/sequences/${id}`, data),
+  delete: (id) => api.delete(`/sequences/${id}`),
+  subscribe: (id, data) => api.post(`/sequences/${id}/subscribe`, data),
+  unsubscribe: (id, data) => api.post(`/sequences/${id}/unsubscribe`, data),
+  getLog: (id) => api.get(`/sequences/${id}/log`),
+};
+
+// ─── Google Sheets connection (User Input Flow export destination) ──
+export const googleSheetsAPI = {
+  getAuthUrl: () => api.get('/integrations/google-sheets/auth-url'),
+  getStatus: () => api.get('/integrations/google-sheets/status'),
+  disconnect: () => api.delete('/integrations/google-sheets'),
+  listSpreadsheets: () => api.get('/integrations/google-sheets/spreadsheets'),
+  listTabs: (spreadsheetId) => api.get(`/integrations/google-sheets/spreadsheets/${spreadsheetId}/tabs`),
+};
+
 export const flowAPI = {
   getAll: () => api.get('/flows'),
   getOne: (id) => api.get(`/flows/${id}`),
@@ -269,9 +301,12 @@ export const contactAPI = {
   addTag: (id, tag) => api.post(`/contacts/${id}/tags`, { tag }),
   removeTag: (id, tag) => api.delete(`/contacts/${id}/tags/${encodeURIComponent(tag)}`),
   getNotes: (id) => api.get(`/contacts/${id}/notes`),
+  getSequences: (id) => api.get(`/contacts/${id}/sequences`),
   addNote: (id, note) => api.post(`/contacts/${id}/notes`, { note }),
   deleteNote: (contactId, noteId) => api.delete(`/contacts/${contactId}/notes/${noteId}`),
   toggleBot: (id) => api.patch(`/contacts/${id}/toggle-bot`),
+  // Completed User Input Flow submissions for this subscriber (Inbox side panel)
+  getFormResponses: (id) => api.get(`/contacts/${id}/form-responses`),
   syncAvatars: () => api.post('/contacts/sync-avatars'),
   exportCSV: (params) => api.get('/contacts/export/csv', { params, responseType: 'blob' }),
 };
@@ -328,13 +363,6 @@ export const campaignAPI = {
   delete: (id) => api.delete(`/campaigns/${id}`),
 };
 
-// ─── Drip Sequences ───────────────────────────────────────────────────
-export const sequenceAPI = {
-  getAll: () => api.get('/sequences'),
-  getOne: (id) => api.get(`/sequences/${id}`),
-  create: (data) => api.post('/sequences', data),
-  subscribe: (id, data) => api.post(`/sequences/${id}/subscribe`, data),
-  delete: (id) => api.delete(`/sequences/${id}`),
-};
+// (sequenceAPI now defined once, above, alongside the other Sequence Messages exports)
 
 export default api;

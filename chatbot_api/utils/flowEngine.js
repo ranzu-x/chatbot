@@ -2,6 +2,11 @@ import pool from "../db.js";
 import { sendPlatformMessage } from "./platformSender.js";
 import { emitToAgency, emitToConversation } from "./socket.js";
 import { logBotError, extractErrorMessage } from "./botLogger.js";
+import { applyLabelToContact } from "../routes/labels.js";
+import { sendWebhook } from "./outboundWebhook.js";
+import * as googleSheetsUtil from "./googleSheets.js";
+import { resolveNextNodeId, resolveNextStepNodeId } from "./flowGraph.js";
+import { enrollContactsInSequence, unsubscribeContactFromSequence } from "../routes/sequences.js";
 
 /**
  * Helper to find matching flow based on triggers
@@ -142,7 +147,7 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
  * Main Flow Engine Processor
  * Returns true if a flow was processed/executed (so the webhook knows NOT to run standard bot rules).
  */
-export async function processFlow(agencyId, platform, conversation, contact, incomingMsgBody, integration, msgType = "TEXT") {
+export async function processFlow(agencyId, platform, conversation, contact, incomingMsgBody, integration, msgType = "TEXT", buttonRoute = null) {
   const conversationId = conversation.id;
 
   try {
@@ -152,18 +157,95 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
       return false;
     }
 
+    // 0. Direct button routing. Every button this engine sends now carries an
+    // encoded "which flow, which node, which button index sent it" token as its
+    // own id/payload (see encodeButtonRoute below) — Meta doesn't disable old
+    // buttons after one is clicked, so a customer can legitimately tap ANY
+    // previously-sent button at ANY time, not just the one belonging to
+    // whatever the conversation's session happens to be parked at right now.
+    // When we recognize one of our own tokens, it always wins: resolve it
+    // directly by flow+node+button-index and start fresh execution there,
+    // superseding whatever session currently exists — independent of whether
+    // that session already moved on, completed, or belongs to a different flow.
+    let forcedSession = null;
+    const decodedRoute = decodeButtonRoute(buttonRoute) || decodeButtonRoute(incomingMsgBody);
+    if (decodedRoute) {
+      const [[routedFlow]] = await pool.query(
+        "SELECT * FROM flows WHERE id = ? AND agency_id = ? AND is_active = 1",
+        [decodedRoute.flowId, agencyId]
+      );
+      if (routedFlow) {
+        const routedNodes = JSON.parse(routedFlow.nodes_json || "[]");
+        const routedEdges = JSON.parse(routedFlow.edges_json || "[]");
+        const sourceNode = routedNodes.find((n) => n.id === decodedRoute.nodeId);
+        if (sourceNode) {
+          // A listMenu node's items now live under data.lists (see
+          // normalizeListMenuData below) rather than a flat data.items — flatten
+          // them here too so the single-option fallback right below still counts
+          // correctly for a node using the new shape.
+          const flatListCount = Array.isArray(sourceNode.data?.lists)
+            ? sourceNode.data.lists.reduce((sum, l) => sum + (l.items?.length || 0), 0)
+            : 0;
+          const optionCount = (sourceNode.data?.buttons || sourceNode.data?.replies || sourceNode.data?.quickReplies || sourceNode.data?.items || []).length || flatListCount;
+          let targetId = routedEdges.find((e) => e.source === decodedRoute.nodeId &&
+            (e.sourceHandle === `btn-${decodedRoute.idx}` || e.sourceHandle === `btn_${decodedRoute.idx}` ||
+             e.sourceHandle === `qr-${decodedRoute.idx}` || e.sourceHandle === `qr_${decodedRoute.idx}` ||
+             e.sourceHandle === `item_${decodedRoute.idx}` || e.sourceHandle === `item-${decodedRoute.idx}`)
+          )?.target;
+          // Single-option nodes may only have a plain unlabeled edge (see the
+          // strict-routing notes below) — unambiguous, safe to use here too.
+          if (!targetId && optionCount === 1) {
+            targetId = routedEdges.find((e) => e.source === decodedRoute.nodeId)?.target;
+          }
+
+          if (targetId) {
+            await pool.query(
+              "UPDATE flow_sessions SET status = 'COMPLETED' WHERE conversation_id = ? AND status = 'ACTIVE'",
+              [conversationId]
+            );
+            const [newSessRes] = await pool.query(
+              "INSERT INTO flow_sessions (agency_id, conversation_id, flow_id, current_node_id, variables, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')",
+              [agencyId, conversationId, routedFlow.id, targetId, JSON.stringify({})]
+            );
+            forcedSession = {
+              id: newSessRes.insertId,
+              agency_id: agencyId,
+              conversation_id: conversationId,
+              flow_id: routedFlow.id,
+              current_node_id: targetId,
+              variables: {},
+              status: "ACTIVE",
+              // created_at/updated_at deliberately omitted (same as any other
+              // freshly-created session below) so the "was this already
+              // executed and now waiting for input" resume check further down
+              // (created_at !== updated_at) naturally reads as false here.
+              // flow/nodes/edges aren't attached here — the existing "load flow
+              // details" step right below re-derives them from flow_id exactly
+              // the same way it does for any other session.
+            };
+          }
+          // Else: this specific button has nothing wired for it — a legitimate
+          // no-op click (dead end by design). Fall through to normal handling;
+          // it's very unlikely incomingMsgBody/buttonRoute also happens to match
+          // a real keyword trigger, so this typically just quietly does nothing.
+        }
+      }
+      // Flow deleted/deactivated since the button was sent — falls through to
+      // normal handling below rather than erroring.
+    }
+
     // 1. Check for active flow session
-    const [sessions] = await pool.query(
+    const [sessions] = forcedSession ? [[]] : await pool.query(
       "SELECT * FROM flow_sessions WHERE conversation_id = ? AND status = 'ACTIVE' LIMIT 1",
       [conversationId]
     );
 
-    let session = sessions[0];
+    let session = forcedSession || sessions[0];
     let flow = null;
     let nodes = [];
     let edges = [];
 
-    if (session) {
+    if (session && !forcedSession) {
       // Expire session if older than 24 hours
       const sessionAgeMs = Date.now() - new Date(session.updated_at).getTime();
       if (sessionAgeMs > 24 * 60 * 60 * 1000) {
@@ -221,24 +303,55 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
     // Parse variables if it's a string
     let variables = typeof session.variables === "string" ? JSON.parse(session.variables) : (session.variables || {});
 
+    // ── User Input Flow (sub-flow) call/return tracking ─────────────────────
+    // `mainNodes`/`mainEdges` are always the top-level bot Flow's own nodes — kept
+    // around so a "Final Answer" node inside a User Input Flow can pop back to
+    // them. `nodes`/`edges` (below) point at whichever is *active* right now:
+    // the main flow normally, or the running User Input Flow's own nodes while
+    // a "Run User Input Flow" node has handed off control.
+    let mainNodes = nodes;
+    let mainEdges = edges;
+    let inUIF = false;
+    let activeUifId = session.user_input_flow_id || null;
+    let returnNodeId = session.return_node_id || null;
+    let mainParkedNodeId = session.current_node_id;
+
+    if (session.active_context === "USER_INPUT_FLOW" && session.user_input_flow_id) {
+      const [[uifRow]] = await pool.query(
+        "SELECT * FROM user_input_flows WHERE id = ? AND agency_id = ? AND is_active = 1",
+        [session.user_input_flow_id, agencyId]
+      );
+      if (uifRow) {
+        nodes = JSON.parse(uifRow.nodes_json || "[]");
+        edges = JSON.parse(uifRow.edges_json || "[]");
+        inUIF = true;
+      } else {
+        console.warn(`[Flow Engine] User Input Flow ${session.user_input_flow_id} missing/inactive; resuming main flow instead.`);
+      }
+    }
+
+    const originalSessionId = session.id;
+
     // 3. Resume and Execute Flow Node Loop
-    let currentNodeId = session.current_node_id;
+    let currentNodeId = inUIF ? session.uif_current_node_id : session.current_node_id;
     let nextNodeId = null;
     let stopFlow = false;
 
-    // Helper to get next node ID based on edge connections
-    const getNextNodeId = (sourceId, sourceHandle = null) => {
-      let matchedEdge = null;
-      if (sourceHandle) {
-        matchedEdge = edges.find(e => e.source === sourceId && e.sourceHandle === sourceHandle);
-        if (matchedEdge) return matchedEdge.target;
-      }
-      matchedEdge = edges.find(e => e.source === sourceId && (!e.sourceHandle || e.sourceHandle === "next-step" || e.sourceHandle === "default"));
-      if (!matchedEdge) {
-        matchedEdge = edges.find(e => e.source === sourceId);
-      }
-      return matchedEdge ? matchedEdge.target : null;
-    };
+    // Helper to get next node ID based on edge connections (always resolves
+    // against whichever node set is currently active — see `nodes`/`edges`
+    // above). Delegates to flowGraph.js so the Sequence runner walks its own
+    // canvas with identical edge-resolution logic instead of a second
+    // implementation that could drift out of sync.
+    const getNextNodeId = (sourceId, sourceHandle = null) => resolveNextNodeId(edges, sourceId, sourceHandle);
+
+    // Strictly whatever is wired to this node's own "Next Step" handle — never a
+    // button / quick-reply / list-item branch, and deliberately NOT falling back
+    // to "any edge from this node" the way getNextNodeId does (that fallback
+    // would happily grab a btn-0 edge and fire button 1's reply with nobody
+    // having clicked anything). The Flow Builder gives every option-bearing node
+    // its own "Next Step" handle whose edges are always tagged exactly
+    // "next-step", so this match is unambiguous.
+    const getNextStepNodeId = (sourceId) => resolveNextStepNodeId(edges, sourceId);
 
     // If resuming from a node that was waiting for input
     const currentNode = nodes.find(n => n.id === currentNodeId);
@@ -277,17 +390,160 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
     } else if (session.created_at !== session.updated_at) {
       // We had already executed this node in a previous step and were waiting for input.
       // Now process the user's input.
-      if (currentNode.type === "collectInput") {
-        const varName = currentNode.data?.variableName || "last_input";
-        variables[varName] = incomingMsgBody;
-        
-        // Save variables
+      if (currentNode.type === "collectInput" || currentNode.type === "question") {
+        const isQuestion = currentNode.type === "question";
+
+        // A "question" (User Input Flow) node is identified ONLY by its Custom
+        // Field — no separate variable name to keep in sync with it. Look the
+        // field up live (not the Flow Builder's mirrored fieldKey/fieldLabel,
+        // which only exist so the canvas card has something to show without a
+        // full field list) so a field renamed after this question was built is
+        // still reflected correctly here. A plain "collectInput" node (main
+        // flow) is unaffected — it still uses its own free-typed variable name.
+        let questionField = null;
+        if (isQuestion && currentNode.data?.saveToFieldId) {
+          const [[fieldRow]] = await pool.query(
+            "SELECT id, name, field_key FROM custom_field_definitions WHERE id = ? AND agency_id = ?",
+            [currentNode.data.saveToFieldId, agencyId]
+          );
+          questionField = fieldRow || null;
+        }
+
+        // Note: the Flow Builder UI saves the variable name to `data.variable` — this used to
+        // read `data.variableName` (never set by the UI), so every captured answer silently
+        // fell back to the generic "last_input" key regardless of what was configured.
+        const varName = isQuestion
+          ? (questionField?.field_key || currentNode.data?.fieldKey || currentNode.data?.variable || "last_input")
+          : (currentNode.data?.variable || currentNode.data?.variableName || "last_input");
+        const inputType = (currentNode.data?.inputType || "text").toLowerCase();
+        let rawInput = (incomingMsgBody || "").trim();
+
+        // Multiple Choice questions validate against their own option list instead
+        // of an input-type format — a tapped button's reply arrives as its title
+        // text (WhatsApp/Facebook/Telegram all echo the button's title as the
+        // message body in this codebase's webhook parsing), so a plain
+        // case-insensitive match against the configured options handles a real
+        // tap and someone just typing the option's name identically.
+        const isChoice = isQuestion && currentNode.data?.answerType === "choice";
+        const choiceOptions = isChoice
+          ? (currentNode.data?.options || []).map((o) => (typeof o === "string" ? o : (o.title || o.label || ""))).filter(Boolean)
+          : [];
+
+        if (isChoice) {
+          const matched = choiceOptions.find((opt) => opt.toLowerCase() === rawInput.toLowerCase());
+          if (!matched) {
+            const invalidMsg = currentNode.data?.invalidMessage?.trim()
+              || `Please choose one of: ${choiceOptions.join(", ")}`;
+            await sendMsg(agencyId, conversation, invalidMsg, "TEXT", integration, {
+              flowId: flow?.id || session?.flow_id || null,
+              nodeId: currentNode.id,
+              contactIdentifier: contact?.external_id || contact?.phone || null,
+            });
+            return true; // stay on this node; wait for another reply
+          }
+          rawInput = matched; // normalize to the option's exact configured text/casing
+        } else if (!isValidCollectedInput(rawInput, inputType)) {
+          // Re-ask instead of silently accepting/advancing on bad input — works identically
+          // on every channel since it's driven by the same plain-text reply path they all share.
+          const invalidMsg = currentNode.data?.invalidMessage?.trim() || DEFAULT_INVALID_INPUT_MESSAGE[inputType]
+            || DEFAULT_INVALID_INPUT_MESSAGE.text;
+          await sendMsg(agencyId, conversation, invalidMsg, "TEXT", integration, {
+            flowId: flow?.id || session?.flow_id || null,
+            nodeId: currentNode.id,
+            contactIdentifier: contact?.external_id || contact?.phone || null,
+          });
+          return true; // stay on this node; wait for another reply
+        }
+
+        variables[varName] = rawInput;
+
+        // Save the flow-session variable (as before) ...
         await pool.query("UPDATE flow_sessions SET variables = ? WHERE id = ?", [JSON.stringify(variables), session.id]);
-        
-        // Follow default outgoing handle
-        nextNodeId = getNextNodeId(currentNodeId);
-      } 
-      else if (currentNode.type === "buttons" || currentNode.type === "interactive" || (currentNode.type === "image" && (currentNode.data?.buttons || []).length > 0)) {
+
+        // ... and, if this node is configured to save into a real Custom Field, persist it
+        // there too so it shows up on the subscriber's profile in the Inbox, not just for the
+        // lifetime of this flow session.
+        const saveFieldId = currentNode.data?.saveToFieldId;
+        if (saveFieldId && conversation?.contact_id) {
+          try {
+            await pool.query(
+              `INSERT INTO contact_custom_field_values (contact_id, field_id, value)
+               VALUES (?, ?, ?)
+               ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = NOW()`,
+              [conversation.contact_id, saveFieldId, rawInput]
+            );
+            emitToAgency(agencyId, "contact_custom_field_updated", {
+              contactId: conversation.contact_id,
+              fieldId: Number(saveFieldId),
+              value: rawInput,
+            });
+          } catch (cfErr) {
+            console.warn(`[Flow Engine] Failed to save collectInput value to custom field ${saveFieldId}:`, cfErr.message);
+          }
+        }
+
+        // "question" nodes (User Input Flow only) also accumulate into the running
+        // Q&A trail used to build the full submission once the flow completes —
+        // see completeUserInputFlowResponse. A plain "collectInput" node (main flow)
+        // has no such submission to build, so it's excluded.
+        if (isQuestion) {
+          if (!Array.isArray(variables.__uifAnswers)) variables.__uifAnswers = [];
+          variables.__uifAnswers.push({
+            label: questionField?.name || currentNode.data?.fieldLabel || "Answer",
+            message: currentNode.data?.message || "",
+            value: rawInput,
+          });
+          await pool.query("UPDATE flow_sessions SET variables = ? WHERE id = ?", [JSON.stringify(variables), session.id]);
+        }
+
+        if (currentNode.type === "question" && currentNode.data?.endFlow) {
+          // This question is configured to end the User Input Flow itself — an
+          // inline shortcut for the common case, instead of always needing a
+          // separate "Final Answer" node wired after it. Same completion path,
+          // just triggered here instead of from a dedicated node.
+          const finalMsg = replaceVariables(
+            currentNode.data?.finalMessage || "Thanks — that's everything I needed!",
+            variables, contact
+          );
+          if (finalMsg) {
+            await sendMsg(agencyId, conversation, finalMsg, "TEXT", integration, {
+              flowId: flow?.id || session?.flow_id || null,
+              nodeId: currentNode.id,
+              contactIdentifier: contact?.external_id || contact?.phone || null,
+            });
+          }
+
+          if (activeUifId) {
+            await completeUserInputFlowResponse({
+              agencyId,
+              uifId: activeUifId,
+              uifStartData: nodes.find(n => n.type === "start")?.data,
+              variables,
+              contact,
+              conversation,
+              mainFlowId: flow?.id || null,
+            });
+          }
+
+          if (inUIF && returnNodeId) {
+            nodes = mainNodes;
+            edges = mainEdges;
+            nextNodeId = returnNodeId;
+            inUIF = false;
+            activeUifId = null;
+            returnNodeId = null;
+          } else {
+            // Defensive: a User Input Flow isn't directly triggerable, so this
+            // shouldn't happen, but end the session cleanly if it ever does.
+            await pool.query("UPDATE flow_sessions SET status = 'COMPLETED', current_node_id = ? WHERE id = ?", [currentNode.id, session.id]);
+            return true;
+          }
+        } else {
+          // Follow default outgoing handle (Next Question / Next Step)
+          nextNodeId = getNextNodeId(currentNodeId);
+        }
+      }
+      else if (currentNode.type === "buttons" || currentNode.type === "interactive" || ((currentNode.type === "image" || currentNode.type === "text") && (currentNode.data?.buttons || []).length > 0)) {
         const choice = (incomingMsgBody || "").trim().toLowerCase();
         const btns = currentNode.data?.buttons || [];
         let matchedIdx = -1;
@@ -315,14 +571,28 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         }
 
         if (matchedIdx !== -1) {
+          // Only ever follow THIS button's own edge (tried under its few possible
+          // handle-naming variants) — never fall back to the node's generic
+          // "next-step" edge or any other edge. That fallback used to mean a
+          // button with no edge of its own would silently hijack whatever
+          // "next step" happened to be wired for a completely different purpose
+          // (e.g. the plain no-buttons continuation path), sending the user down
+          // a path that had nothing to do with the button they actually clicked.
           nextNodeId = getNextNodeId(currentNodeId, matchedHandleId) ||
                        getNextNodeId(currentNodeId, `btn-${matchedIdx}`) ||
-                       getNextNodeId(currentNodeId, `btn_${matchedIdx}`) ||
-                       getNextNodeId(currentNodeId, "next-step") ||
-                       getNextNodeId(currentNodeId);
-          
+                       getNextNodeId(currentNodeId, `btn_${matchedIdx}`);
+
+          // A node with only ONE button is unambiguous — the Flow Builder often
+          // draws its single outgoing edge as a plain unlabeled/"default" edge
+          // rather than tagging it "btn-0", since there's nothing else it could
+          // mean. Only fall back to that generic edge in this single-button case;
+          // with 2+ buttons this stays strict (that's the actual fix from before).
+          if (!nextNodeId && btns.length === 1) {
+            nextNodeId = getNextNodeId(currentNodeId);
+          }
+
           if (!nextNodeId) {
-            // Button reached a leaf, mark session completed
+            // This specific button has no edge wired at all — dead end, complete.
             await pool.query("UPDATE flow_sessions SET status = 'COMPLETED', current_node_id = ? WHERE id = ?", [currentNodeId, session.id]);
             return true;
           }
@@ -391,7 +661,13 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           nextNodeId = getNextNodeId(currentNodeId, matchedHandleId) ||
                        getNextNodeId(currentNodeId, `qr-${matchedIdx}`) ||
                        getNextNodeId(currentNodeId, `qr_${matchedIdx}`);
-          
+
+          // Same single-option exception as buttons above — unambiguous when
+          // there's only one quick reply to begin with.
+          if (!nextNodeId && replies.length === 1) {
+            nextNodeId = getNextNodeId(currentNodeId);
+          }
+
           if (!nextNodeId) {
             await pool.query("UPDATE flow_sessions SET status = 'COMPLETED', current_node_id = ? WHERE id = ?", [currentNodeId, session.id]);
             return true;
@@ -431,17 +707,31 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
       }
       else if (currentNode.type === "listMenu") {
         const choice = (incomingMsgBody || "").trim().toLowerCase();
-        const items = currentNode.data?.items || [];
-        const matchedItem = items.find((item, idx) => 
-          (item.title && item.title.toLowerCase() === choice) ||
-          (item.payload && item.payload.toLowerCase() === choice) ||
-          (item.id && item.id.toLowerCase() === choice) ||
+        // Flatten every list's items into one array — a tap arrives as the
+        // row's own title text (per how each channel's webhook extracts
+        // msgBody, same as buttons/quickReplies), and a typed reply is matched
+        // the same way, so both resolve identically regardless of which of the
+        // N sent lists the option actually lived in.
+        const flatTitles = [];
+        normalizeListMenuData(currentNode.data).forEach((list) => {
+          (list.items || []).forEach((item) => {
+            flatTitles.push(typeof item === "string" ? item : (item?.title || item?.label || ""));
+          });
+        });
+        const matchedIdx = flatTitles.findIndex((title, idx) =>
+          (title && title.toLowerCase() === choice) ||
           `item_${idx}` === choice ||
           `item-${idx}` === choice
         );
-        
-        if (matchedItem) {
-          nextNodeId = getNextNodeId(currentNodeId, matchedItem.id);
+
+        if (matchedIdx !== -1) {
+          nextNodeId = getNextNodeId(currentNodeId, `item-${matchedIdx}`);
+
+          // Same single-option exception as buttons/quickReplies above.
+          if (!nextNodeId && flatTitles.length === 1) {
+            nextNodeId = getNextNodeId(currentNodeId);
+          }
+
           if (!nextNodeId) {
             await pool.query("UPDATE flow_sessions SET status = 'COMPLETED', current_node_id = ? WHERE id = ?", [currentNodeId, session.id]);
             return true;
@@ -484,6 +774,18 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
       }
 
       currentNodeId = nextNodeId || currentNodeId;
+
+      // Any of the fallback paths above may have started a brand-new top-level
+      // flow match (a different session.id) — that always begins fresh in the
+      // MAIN context, since a User Input Flow is never a trigger target itself.
+      if (session.id !== originalSessionId) {
+        inUIF = false;
+        activeUifId = null;
+        returnNodeId = null;
+        mainNodes = nodes;
+        mainEdges = edges;
+        mainParkedNodeId = currentNodeId;
+      }
     }
 
     // Main Execution Loop
@@ -498,21 +800,80 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
 
       switch (node.type) {
         case "start": {
-          currentNodeId = getNextNodeId(node.id);
+          // "Attach Sequence" (Start node's own properties panel) wires a
+          // real "Start Sequence" node onto a dedicated `attach-sequence`
+          // branch — a second, independent connector off Start, alongside
+          // (never replacing) its normal "then"/next-step edge into the
+          // real conversation. That branch node is a visible, editable
+          // canvas element, but it is NOT part of the executed conversation
+          // path — this engine resolves "the next node" as a single
+          // pointer, not a true multi-branch walk, so making it a real step
+          // would require picking just one of the two edges (ambiguous,
+          // order-dependent). Instead: fire the enrollment as a side effect
+          // right here, then resolve the real continuation excluding this
+          // branch edge, so Start's actual "then" edge is unaffected
+          // regardless of what handle it happens to use.
+          const attachEdge = edges.find((e) => e.source === node.id && e.sourceHandle === "attach-sequence");
+          if (attachEdge) {
+            const seqNode = nodes.find((n) => n.id === attachEdge.target);
+            const sequenceId = seqNode?.data?.sequenceId;
+            if (sequenceId) {
+              try {
+                await enrollContactsInSequence(sequenceId, agencyId, { contactId: contact?.id, enrolledVia: "flow-start" });
+              } catch (err) {
+                console.error(`[Flow Engine] Auto-attach Sequence ${sequenceId} on flow start failed:`, err.message);
+              }
+            }
+          }
+          const continuationEdges = attachEdge ? edges.filter((e) => e !== attachEdge) : edges;
+          currentNodeId = resolveNextNodeId(continuationEdges, node.id);
           break;
         }
 
         case "text": {
           const textBody = replaceVariables(node.data?.message || node.data?.text || node.data?.body || "", variables, contact);
-          if (textBody) {
+          // The Flow Builder lets buttons be attached directly to a plain Text node
+          // (same as Image/Interactive) — this used to be silently dropped since
+          // this case never read node.data.buttons at all.
+          const rawTextButtons = node.data?.buttons || [];
+          const formattedTextButtons = rawTextButtons.map((btn, idx) => ({
+            // .id and .payload both carry the same route token — WhatsApp echoes
+            // back .id, Facebook/Instagram echo back .payload, Telegram uses
+            // .payload as callback_data — so whichever the platform returns,
+            // the click resolves directly by flow+node+index (see decodeButtonRoute).
+            id: encodeButtonRoute(flow.id, node.id, idx),
+            title: typeof btn === "string" ? btn : (btn.title || btn.label || `Button ${idx + 1}`),
+            payload: encodeButtonRoute(flow.id, node.id, idx),
+            type: normalizeButtonType(btn),
+            url: typeof btn === "object" ? btn.url : null,
+          }));
+
+          if (textBody || formattedTextButtons.length > 0) {
             await sendMsg(agencyId, conversation, textBody, "TEXT", integration, {
               flowId: flow?.id || session?.flow_id || null,
               nodeId: node.id,
               contactIdentifier: contact?.external_id || contact?.phone || null,
+              buttons: formattedTextButtons.length > 0 ? formattedTextButtons : undefined,
             });
           }
-          
-          currentNodeId = getNextNodeId(node.id);
+
+          // A node that shows buttons used to ALWAYS stop here and wait for a
+          // click, which silently killed the node's own "Next Step" wiring: the
+          // rest of the sequence the user drew after it (an image, a video, more
+          // text) simply never sent. That wait is no longer necessary — every
+          // button now carries its own routing token (see step 0) and resolves
+          // whenever it's clicked, regardless of where the session has moved on
+          // to. So an explicit "Next Step" connection is followed immediately
+          // and the buttons stay live; we only park when there's nothing else
+          // wired to do.
+          const textNextStep = getNextStepNodeId(node.id);
+          if (textNextStep) {
+            currentNodeId = textNextStep;
+          } else if (hasWaitableButtons(formattedTextButtons, platform)) {
+            stopFlow = true;
+          } else {
+            currentNodeId = getNextNodeId(node.id);
+          }
           break;
         }
 
@@ -521,10 +882,14 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           const mediaUrl = (node.data?.imageUrl || node.data?.mediaUrl || node.data?.url || "").trim();
           const rawButtons = node.data?.buttons || [];
           const formattedButtons = rawButtons.map((btn, idx) => ({
-            id: typeof btn === "string" ? `btn-${idx}` : (btn.id || `btn-${idx}`),
+            // .id and .payload both carry the same route token — WhatsApp echoes
+            // back .id, Facebook/Instagram echo back .payload, Telegram uses
+            // .payload as callback_data — so whichever the platform returns,
+            // the click resolves directly by flow+node+index (see decodeButtonRoute).
+            id: encodeButtonRoute(flow.id, node.id, idx),
             title: typeof btn === "string" ? btn : (btn.title || btn.label || `Button ${idx + 1}`),
-            payload: typeof btn === "string" ? btn : (btn.payload || btn.title || `btn_${idx}`),
-            type: typeof btn === "object" && btn.type === "URL" ? "URL" : "POSTBACK",
+            payload: encodeButtonRoute(flow.id, node.id, idx),
+            type: normalizeButtonType(btn),
             url: typeof btn === "object" ? btn.url : null,
           }));
 
@@ -552,8 +917,13 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             caption,
             buttons: formattedButtons.length > 0 ? formattedButtons : undefined,
           });
-          
-          if (formattedButtons.length > 0) {
+
+          // See the "Next Step" note on the text case above — an explicit
+          // continuation wins over parking, since the buttons stay clickable.
+          const imageNextStep = getNextStepNodeId(node.id);
+          if (imageNextStep) {
+            currentNodeId = imageNextStep;
+          } else if (hasWaitableButtons(formattedButtons, platform)) {
             stopFlow = true;
           } else {
             currentNodeId = getNextNodeId(node.id);
@@ -608,10 +978,14 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           const rawButtons = node.data?.buttons || [];
           
           const formattedButtons = rawButtons.map((btn, idx) => ({
-            id: typeof btn === "string" ? `btn-${idx}` : (btn.id || `btn-${idx}`),
+            // .id and .payload both carry the same route token — WhatsApp echoes
+            // back .id, Facebook/Instagram echo back .payload, Telegram uses
+            // .payload as callback_data — so whichever the platform returns,
+            // the click resolves directly by flow+node+index (see decodeButtonRoute).
+            id: encodeButtonRoute(flow.id, node.id, idx),
             title: typeof btn === "string" ? btn : (btn.title || btn.label || `Button ${idx + 1}`),
-            payload: typeof btn === "string" ? btn : (btn.payload || btn.title || `btn_${idx}`),
-            type: typeof btn === "object" && btn.type === "URL" ? "URL" : "POSTBACK",
+            payload: encodeButtonRoute(flow.id, node.id, idx),
+            type: normalizeButtonType(btn),
             url: typeof btn === "object" ? btn.url : null,
           }));
 
@@ -619,11 +993,25 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             flowId: flow?.id || session?.flow_id || null,
             nodeId: node.id,
             contactIdentifier: contact?.external_id || contact?.phone || null,
-            buttons: formattedButtons,
+            buttons: formattedButtons.length > 0 ? formattedButtons : undefined,
           });
 
-          // Stop execution and wait for user button click/reply
-          stopFlow = true;
+          // See the "Next Step" note on the text case above — an explicit
+          // continuation wins over parking, since the buttons stay clickable.
+          const buttonsNextStep = getNextStepNodeId(node.id);
+          if (buttonsNextStep) {
+            currentNodeId = buttonsNextStep;
+          } else if (hasWaitableButtons(formattedButtons, platform)) {
+            // Stop execution and wait for user button click/reply
+            stopFlow = true;
+          } else {
+            // No buttons actually configured on this node (or only URL ones, which never
+            // reply to the bot) — previously this stopped and waited for a reply
+            // regardless, permanently parking the session, which then silently swallowed
+            // the next unrelated inbound message (e.g. a stray click on an earlier
+            // message's button).
+            currentNodeId = getNextNodeId(node.id);
+          }
           break;
         }
 
@@ -636,10 +1024,14 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           const rawButtons = node.data?.buttons || [];
 
           const formattedButtons = rawButtons.map((btn, idx) => ({
-            id: typeof btn === "string" ? `btn-${idx}` : (btn.id || `btn-${idx}`),
+            // .id and .payload both carry the same route token — WhatsApp echoes
+            // back .id, Facebook/Instagram echo back .payload, Telegram uses
+            // .payload as callback_data — so whichever the platform returns,
+            // the click resolves directly by flow+node+index (see decodeButtonRoute).
+            id: encodeButtonRoute(flow.id, node.id, idx),
             title: typeof btn === "string" ? btn : (btn.title || btn.label || btn.reply_text || `Button ${idx + 1}`),
-            payload: typeof btn === "string" ? btn : (btn.payload || btn.reply_text || btn.title || `btn_${idx}`),
-            type: typeof btn === "object" && btn.type === "URL" ? "URL" : "POSTBACK",
+            payload: encodeButtonRoute(flow.id, node.id, idx),
+            type: normalizeButtonType(btn),
             url: typeof btn === "object" ? btn.url : null,
           }));
 
@@ -654,7 +1046,12 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             buttons: formattedButtons,
           });
 
-          if (formattedButtons.length > 0) {
+          // See the "Next Step" note on the text case above — an explicit
+          // continuation wins over parking, since the buttons stay clickable.
+          const interactiveNextStep = getNextStepNodeId(node.id);
+          if (interactiveNextStep) {
+            currentNodeId = interactiveNextStep;
+          } else if (hasWaitableButtons(formattedButtons, platform)) {
             stopFlow = true;
           } else {
             currentNodeId = getNextNodeId(node.id);
@@ -667,42 +1064,88 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           const rawQr = node.data?.quickReplies || node.data?.replies || [];
 
           const formattedQr = rawQr.map((qr, idx) => ({
-            id: typeof qr === "string" ? `qr-${idx}` : (qr.id || `qr-${idx}`),
+            id: encodeButtonRoute(flow.id, node.id, idx),
             title: typeof qr === "string" ? qr : (qr.title || qr.label || `Option ${idx + 1}`),
-            payload: typeof qr === "string" ? qr : (qr.payload || qr.title || `qr_${idx}`)
+            payload: encodeButtonRoute(flow.id, node.id, idx),
           }));
 
           await sendMsg(agencyId, conversation, textBody, "TEXT", integration, {
             flowId: flow?.id || session?.flow_id || null,
             nodeId: node.id,
             contactIdentifier: contact?.external_id || contact?.phone || null,
-            quickReplies: formattedQr,
+            quickReplies: formattedQr.length > 0 ? formattedQr : undefined,
           });
 
-          stopFlow = true;
+          // See the "Next Step" note on the text case above — quick replies also
+          // carry their own routing token, so an explicit continuation wins.
+          const qrNextStep = getNextStepNodeId(node.id);
+          if (qrNextStep) {
+            currentNodeId = qrNextStep;
+          } else if (formattedQr.length > 0) {
+            stopFlow = true;
+          } else {
+            currentNodeId = getNextNodeId(node.id);
+          }
           break;
         }
 
         case "listMenu": {
           const textBody = replaceVariables(node.data?.message || node.data?.text || "Select from menu:", variables, contact);
-          const items = node.data?.items || [];
+          const lists = normalizeListMenuData(node.data);
 
-          await sendMsg(agencyId, conversation, textBody, "TEXT", integration, {
-            flowId: flow?.id || session?.flow_id || null,
-            nodeId: node.id,
-            contactIdentifier: contact?.external_id || contact?.phone || null,
-            listMenu: {
-              buttonText: node.data?.buttonText || "Options",
-              title: node.data?.title || "Menu",
-              items: items.map((item, idx) => ({
-                id: typeof item === "string" ? `item_${idx}` : (item.id || `item_${idx}`),
-                title: typeof item === "string" ? item : (item.title || `Item ${idx + 1}`),
-                description: typeof item === "object" ? (item.description || "") : ""
-              }))
-            }
-          });
+          // Each configured list sends as its OWN sequential message (WhatsApp:
+          // a separate interactive list message per list, since Meta caps rows
+          // at 10 total per message; Facebook/Instagram: a separate Generic
+          // Template carousel each, see platformSender.js; Telegram: a separate
+          // inline-keyboard message each) — this is what lets an author offer
+          // more options than any single channel's native list supports. Every
+          // item across ALL lists shares one flat index space (globalIdx) so a
+          // tap on item 11 (the 1st item of the 2nd list) still resolves to the
+          // right outgoing edge — see ListMenuNode's matching `item-{gi}`
+          // handle ids in FlowBuilderPage.jsx and the resume-side match below.
+          let globalIdx = -1;
+          let totalItems = 0;
+          for (let li = 0; li < lists.length; li++) {
+            const list = lists[li];
+            const listItems = (list.items || [])
+              .filter((item) => (typeof item === "string" ? item : item?.title || "").trim())
+              .map((item) => {
+                globalIdx += 1;
+                const gi = globalIdx;
+                return {
+                  id: encodeButtonRoute(flow.id, node.id, gi),
+                  title: typeof item === "string" ? item : (item.title || `Item ${gi + 1}`),
+                  description: typeof item === "object" ? (item.description || "") : "",
+                };
+              });
+            if (listItems.length === 0) continue;
+            totalItems += listItems.length;
 
-          stopFlow = true;
+            await sendMsg(
+              agencyId, conversation,
+              // Only the first list's message carries the actual prompt text —
+              // the rest are the continuation of the same logical question.
+              li === 0 ? textBody : (list.title || "More options:"),
+              "TEXT", integration,
+              {
+                flowId: flow?.id || session?.flow_id || null,
+                nodeId: node.id,
+                contactIdentifier: contact?.external_id || contact?.phone || null,
+                listMenu: { buttonText: list.buttonText || "Options", title: list.title || "Menu", items: listItems },
+              }
+            );
+          }
+
+          // See the "Next Step" note on the text case above — list items also
+          // carry their own routing token, so an explicit continuation wins.
+          const listNextStep = getNextStepNodeId(node.id);
+          if (listNextStep) {
+            currentNodeId = listNextStep;
+          } else if (totalItems > 0) {
+            stopFlow = true;
+          } else {
+            currentNodeId = getNextNodeId(node.id);
+          }
           break;
         }
 
@@ -746,12 +1189,150 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           break;
         }
 
-        case "collectInput": {
+        case "collectInput":
+        case "question": {
+          // "question" is the node type used inside a User Input Flow — behaves
+          // identically to "collectInput" (same resume-branch handles both above).
           const prompt = replaceVariables(node.data?.message || node.data?.text || "Please enter details:", variables, contact);
-          await sendMsg(agencyId, conversation, prompt, "TEXT", integration);
+
+          // Multiple Choice: within the channel's real button-tap cap, send as
+          // buttons (fastest UX, renders inline with no extra message). Past
+          // that cap, send as a list message instead (same mechanism the
+          // listMenu node case above uses) so every option — not just the
+          // first few — stays genuinely tappable rather than degrading into
+          // "type the option's name". Either way the resume branch above
+          // matches purely by the option's text, so which one was used here
+          // doesn't matter there. Plain "keyboard" questions send just the
+          // prompt, as before.
+          const rawOptions = node.data?.answerType === "choice" ? (node.data?.options || []) : [];
+          const validOptions = rawOptions.filter((opt) => (typeof opt === "string" ? opt : opt?.title || "").trim());
+          const buttonCap = getButtonTapCap(platform);
+
+          if (validOptions.length > 0 && validOptions.length > buttonCap) {
+            const listItems = validOptions.slice(0, 10).map((opt, idx) => ({
+              id: encodeButtonRoute(flow.id, node.id, idx),
+              title: typeof opt === "string" ? opt : (opt.title || opt.label || `Option ${idx + 1}`),
+              description: "",
+            }));
+            await sendMsg(agencyId, conversation, prompt, "TEXT", integration, {
+              flowId: flow?.id || session?.flow_id || null,
+              nodeId: node.id,
+              contactIdentifier: contact?.external_id || contact?.phone || null,
+              listMenu: { buttonText: "Choose", title: "Options", items: listItems },
+            });
+          } else {
+            const formattedOptions = validOptions.map((opt, idx) => {
+              const title = typeof opt === "string" ? opt : (opt.title || opt.label || `Option ${idx + 1}`);
+              return { id: `opt-${idx}`, title, payload: title, type: "POSTBACK" };
+            });
+
+            await sendMsg(agencyId, conversation, prompt, "TEXT", integration, {
+              flowId: flow?.id || session?.flow_id || null,
+              nodeId: node.id,
+              contactIdentifier: contact?.external_id || contact?.phone || null,
+              buttons: formattedOptions.length > 0 ? formattedOptions : undefined,
+            });
+          }
 
           // Stop execution and wait for input
           stopFlow = true;
+          break;
+        }
+
+        // Runs a reusable User Input Flow (its own Question/Final Answer sequence)
+        // as a sub-flow call: park the main flow's position, hand off execution to
+        // the referenced flow's own nodes/edges, and resume here once its "Final
+        // Answer" node completes — same mechanism on every channel.
+        case "runUserInputFlow": {
+          const uifId = node.data?.userInputFlowId;
+          if (!uifId) {
+            console.warn(`[Flow Engine] "Run User Input Flow" node "${node.id}" has no flow selected.`);
+            currentNodeId = getNextNodeId(node.id);
+            break;
+          }
+
+          const [[uifRow]] = await pool.query(
+            "SELECT * FROM user_input_flows WHERE id = ? AND agency_id = ? AND is_active = 1",
+            [uifId, agencyId]
+          );
+          if (!uifRow) {
+            console.warn(`[Flow Engine] "Run User Input Flow" node "${node.id}" references missing/inactive flow ${uifId}.`);
+            currentNodeId = getNextNodeId(node.id);
+            break;
+          }
+
+          const uifNodes = JSON.parse(uifRow.nodes_json || "[]");
+          const uifEdges = JSON.parse(uifRow.edges_json || "[]");
+          const uifStart = uifNodes.find(n => n.type === "start") || uifNodes[0];
+          if (!uifStart) {
+            console.warn(`[Flow Engine] User Input Flow "${uifRow.name}" (${uifId}) has no nodes.`);
+            currentNodeId = getNextNodeId(node.id);
+            break;
+          }
+
+          // Resolve the return point against the MAIN flow's edges (still active —
+          // we swap `nodes`/`edges` to the sub-flow's own right after this).
+          returnNodeId = getNextNodeId(node.id);
+          activeUifId = uifId;
+          inUIF = true;
+          mainParkedNodeId = node.id;
+          nodes = uifNodes;
+          edges = uifEdges;
+          currentNodeId = uifStart.id;
+
+          // Each run starts a fresh Q&A trail. Without this reset, a conversation
+          // that runs a second User Input Flow later (or re-runs this one) would
+          // append onto the previous run's answers and submit both sets together.
+          variables.__uifAnswers = [];
+
+          // Start node's optional "auto-tag with this label" setting — applied once,
+          // right when the sub-flow actually begins (not on every question inside it).
+          const labelIds = Array.isArray(uifStart.data?.labelIds) ? uifStart.data.labelIds : [];
+          for (const labelId of labelIds) {
+            await applyLabelToContact(agencyId, contact.id, labelId);
+          }
+          break;
+        }
+
+        // Only ever reached inside a User Input Flow — sends the closing message
+        // and pops back to wherever the main flow left off.
+        case "finalAnswer": {
+          const closingMsg = replaceVariables(node.data?.message || "Thanks — that's everything I needed!", variables, contact);
+          if (closingMsg) {
+            await sendMsg(agencyId, conversation, closingMsg, "TEXT", integration, {
+              flowId: flow?.id || session?.flow_id || null,
+              nodeId: node.id,
+              contactIdentifier: contact?.external_id || contact?.phone || null,
+            });
+          }
+
+          if (activeUifId) {
+            const uifStartNode = nodes.find(n => n.type === "start");
+            await completeUserInputFlowResponse({
+              agencyId,
+              uifId: activeUifId,
+              uifStartData: uifStartNode?.data,
+              variables,
+              contact,
+              conversation,
+              mainFlowId: flow?.id || null,
+            });
+          }
+
+          if (inUIF && returnNodeId) {
+            nodes = mainNodes;
+            edges = mainEdges;
+            currentNodeId = returnNodeId;
+            inUIF = false;
+            activeUifId = null;
+            returnNodeId = null;
+          } else {
+            // Defensive: a User Input Flow isn't directly triggerable, but if this
+            // is ever reached with no parent context, just end the session cleanly.
+            await pool.query("UPDATE flow_sessions SET status = 'COMPLETED', current_node_id = ? WHERE id = ?", [node.id, session.id]);
+            stopFlow = true;
+            currentNodeId = null;
+          }
           break;
         }
 
@@ -782,6 +1363,36 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             await new Promise(resolve => setTimeout(resolve, delaySecs * 1000));
           }
           
+          currentNodeId = getNextNodeId(node.id);
+          break;
+        }
+
+        case "startSequenceAction": {
+          const sequenceId = node.data?.sequenceId;
+          if (sequenceId) {
+            try {
+              await enrollContactsInSequence(sequenceId, agencyId, { contactId: contact?.id, enrolledVia: "flow-node" });
+            } catch (seqErr) {
+              console.error(`[Flow Engine] Start Sequence node "${node.id}" failed:`, seqErr.message);
+            }
+          } else {
+            console.warn(`[Flow Engine] Start Sequence node "${node.id}" has no sequence selected.`);
+          }
+          currentNodeId = getNextNodeId(node.id);
+          break;
+        }
+
+        case "stopSequenceAction": {
+          const sequenceId = node.data?.sequenceId;
+          if (sequenceId) {
+            try {
+              await unsubscribeContactFromSequence(sequenceId, agencyId, contact?.id);
+            } catch (seqErr) {
+              console.error(`[Flow Engine] Stop Sequence node "${node.id}" failed:`, seqErr.message);
+            }
+          } else {
+            console.warn(`[Flow Engine] Stop Sequence node "${node.id}" has no sequence selected.`);
+          }
           currentNodeId = getNextNodeId(node.id);
           break;
         }
@@ -837,16 +1448,40 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
 
     // 4. Update flow session current node & variables in DB if active
     if (!stopFlow && !currentNodeId) {
-      // Flow completed because it hit a leaf node
+      // Flow completed because it hit a leaf node. Clear the sub-flow context too —
+      // a session that finished while it happened to be inside (or just returned
+      // from) a User Input Flow would otherwise be left permanently stamped with a
+      // stale active_context/user_input_flow_id. Harmless to execution, since only
+      // ACTIVE sessions are ever resumed, but it makes a completed row lie about
+      // where it ended.
       await pool.query(
-        "UPDATE flow_sessions SET status = 'COMPLETED', current_node_id = ? WHERE id = ?",
-        [currentNodeId, session.id]
-      );
-    } else if (session.status === "ACTIVE") {
-      await pool.query(
-        "UPDATE flow_sessions SET current_node_id = ?, variables = ? WHERE id = ?",
+        `UPDATE flow_sessions
+         SET status = 'COMPLETED', current_node_id = ?, variables = ?,
+             active_context = 'MAIN', user_input_flow_id = NULL,
+             uif_current_node_id = NULL, return_node_id = NULL
+         WHERE id = ?`,
         [currentNodeId, JSON.stringify(variables), session.id]
       );
+    } else if (session.status === "ACTIVE") {
+      if (inUIF) {
+        // Paused mid-way through a User Input Flow (e.g. a Question node awaiting a
+        // reply) — the MAIN flow's own position stays parked at `mainParkedNodeId`.
+        await pool.query(
+          `UPDATE flow_sessions
+           SET active_context = 'USER_INPUT_FLOW', user_input_flow_id = ?, uif_current_node_id = ?,
+               return_node_id = ?, current_node_id = ?, variables = ?
+           WHERE id = ?`,
+          [activeUifId, currentNodeId, returnNodeId, mainParkedNodeId, JSON.stringify(variables), session.id]
+        );
+      } else {
+        await pool.query(
+          `UPDATE flow_sessions
+           SET active_context = 'MAIN', user_input_flow_id = NULL, uif_current_node_id = NULL, return_node_id = NULL,
+               current_node_id = ?, variables = ?
+           WHERE id = ?`,
+          [currentNodeId, JSON.stringify(variables), session.id]
+        );
+      }
     }
 
     return true; // Flow was successfully executed
@@ -865,6 +1500,134 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
     });
     return false;
   }
+}
+
+const BUTTON_ROUTE_PREFIX = "FBTN";
+
+/**
+ * Encodes "which flow, which node, which option index" into a short token used
+ * as a button's own id/payload — so a click can be resolved directly by flow +
+ * node + index, independent of the conversation's current session state. Node
+ * ids are our own (Flow Builder-generated) and don't contain the `:` separator,
+ * so this is safe to split on.
+ */
+function encodeButtonRoute(flowId, nodeId, idx) {
+  return `${BUTTON_ROUTE_PREFIX}:${flowId}:${nodeId}:${idx}`;
+}
+
+/** Reverses encodeButtonRoute(); returns null if `value` isn't one of our tokens. */
+function decodeButtonRoute(value) {
+  if (!value || typeof value !== "string" || !value.startsWith(`${BUTTON_ROUTE_PREFIX}:`)) return null;
+  const parts = value.split(":");
+  if (parts.length !== 4) return null;
+  const flowId = Number(parts[1]);
+  const idx = Number(parts[3]);
+  if (!Number.isInteger(flowId) || !Number.isInteger(idx)) return null;
+  return { flowId, nodeId: parts[2], idx };
+}
+
+/**
+ * Mirrors normalizeListMenuData() in FlowBuilderPage.jsx (frontend/backend can't
+ * share a module in this codebase — hand-kept in sync). Upgrades a listMenu
+ * node's data to the current `lists: [{title, buttonText, items}]` shape;
+ * flows saved before multi-list support only have a flat top-level `items`
+ * array, which becomes a single-list `lists` entry so old data keeps working.
+ */
+export function normalizeListMenuData(data) {
+  if (Array.isArray(data?.lists) && data.lists.length > 0) return data.lists;
+  if (Array.isArray(data?.items)) {
+    return [{ title: data?.title || "Menu Options", buttonText: data?.buttonText || "Options", items: data.items }];
+  }
+  return [];
+}
+
+/**
+ * How many options fit as real tappable buttons (vs. needing to fall back to a
+ * list message) on a given channel — mirrors the button caps already hardcoded
+ * in platformSender.js (WhatsApp/Facebook: 3) and PLATFORM_RULES in
+ * FlowBuilderPage.jsx. Instagram has no standalone button node and TikTok has
+ * no button/list support at all (isValidCollectedInput's typed-text matching
+ * is the only path there), so both return 0 — a Multiple Choice question on
+ * either always sends as a list (Instagram) or falls back to typed text
+ * entirely once past the caller's own list-cap check (TikTok).
+ */
+function getButtonTapCap(platform) {
+  const p = (platform || "WEBCHAT").toUpperCase();
+  if (p === "WHATSAPP" || p === "FACEBOOK") return 3;
+  if (p === "INSTAGRAM" || p === "TIKTOK") return 0;
+  return Infinity; // Telegram, Webchat: no real platform-enforced cap
+}
+
+/**
+ * The Flow Builder stores a button's action under `.action` ('flow' | 'url' | 'phone'),
+ * not `.type` — normalizes either into the "URL" / "PHONE" / "POSTBACK" values the
+ * rest of the engine (and platformSender.js) expects.
+ */
+function normalizeButtonType(btn) {
+  if (typeof btn !== "object" || !btn) return "POSTBACK";
+  const action = (btn.action || btn.type || "").toString().toLowerCase();
+  if (action === "url") return "URL";
+  if (action === "phone" || action === "call") return "PHONE";
+  return "POSTBACK";
+}
+
+/**
+ * True if at least one of these formatted buttons can actually generate a reply
+ * back to the bot. A URL-type button just opens a link client-side — it never
+ * messages the bot — so a node whose buttons are *all* URL-type has nothing to
+ * wait for and should continue immediately instead of parking the session on a
+ * reply that structurally can never arrive.
+ */
+function hasWaitableButtons(formattedButtons, platform) {
+  if (formattedButtons.length === 0) return false;
+  if (platform === "WHATSAPP") {
+    // platformSender.js sends a single URL-type button as a real CTA-URL message
+    // (see sendPlatformMessage) — that genuinely opens a link and never replies to
+    // the bot. Any other combination (2-3 buttons, or one non-URL button) still
+    // uses WhatsApp's plain reply-button type, which always replies regardless of
+    // the configured action — so only the exact single-URL-button case doesn't wait.
+    const isSingleUrlButton = formattedButtons.length === 1 && formattedButtons[0].type === "URL";
+    return !isSingleUrlButton;
+  }
+  // Telegram: platformSender.js's current inline keyboard implementation always
+  // sends a callback (reply) button, never a real `url` button, regardless of the
+  // configured action — so every Telegram button still replies.
+  if (platform === "TELEGRAM") return true;
+  // Facebook/Instagram web_url buttons genuinely open a link and generate no reply.
+  return formattedButtons.some((b) => b.type !== "URL" && b.type !== "PHONE");
+}
+
+/**
+ * Validate a "Collect Input" node's captured reply against its configured input type.
+ * Deliberately lenient (this is a plain-text reply on a messaging channel, not a form field) —
+ * only rejects clearly-wrong input for email/phone, everything else passes.
+ */
+function isValidCollectedInput(value, inputType) {
+  if (!value) return false;
+  if (inputType === "email") return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  if (inputType === "phone") return /^\+?[0-9\s\-().]{7,20}$/.test(value);
+  if (inputType === "number") return /^-?\d+(\.\d+)?$/.test(value.trim());
+  if (inputType === "date") return !isNaN(Date.parse(value));
+  return true; // name / custom / text — accept anything non-empty
+}
+
+const DEFAULT_INVALID_INPUT_MESSAGE = {
+  email: "That doesn't look like a valid email address. Could you try again?",
+  phone: "That doesn't look like a valid phone number. Could you try again?",
+  number: "That doesn't look like a number. Could you try again?",
+  date: "That doesn't look like a valid date. Could you try again?",
+  text: "Sorry, I didn't quite catch that. Could you try again?",
+};
+
+/**
+ * Maps a Collect Input / Question node's `inputType` to the matching Custom
+ * Field `field_type`, so its "save to custom field" picker only offers
+ * fields that actually make sense for the kind of answer being collected.
+ */
+export function inputTypeToFieldType(inputType) {
+  if (inputType === "number") return "NUMBER";
+  if (inputType === "date") return "DATE";
+  return "TEXT"; // name / email / phone / custom
 }
 
 /**
@@ -895,9 +1658,84 @@ function replaceVariables(text, variables, contact) {
 }
 
 /**
- * Save and send message to external channel, then emit to socket
+ * Called whenever a User Input Flow run actually finishes — either its
+ * "Final Answer" node, or a "question" node configured to end the flow
+ * itself. Records the full Q&A trail (`variables.__uifAnswers`, built up by
+ * the "question" resume branch above) as one row, so a subscriber's complete
+ * submission is visible in the Inbox regardless of whether any individual
+ * question was also mapped to a Custom Field, then fires the Start node's
+ * optional Webhook/Google Sheet export. Neither export can ever block the
+ * subscriber's flow from completing — both are logged on failure, never thrown.
  */
-async function sendMsg(agencyId, conversation, bodyText, type, integration, extraFields = {}) {
+async function completeUserInputFlowResponse({
+  agencyId,
+  uifId,
+  uifStartData,
+  variables,
+  contact,
+  conversation,
+  mainFlowId,
+}) {
+  const answers = Array.isArray(variables.__uifAnswers) ? variables.__uifAnswers : [];
+
+  try {
+    const [res] = await pool.query(
+      `INSERT INTO user_input_flow_responses (agency_id, user_input_flow_id, contact_id, conversation_id, flow_id, answers)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [agencyId, uifId, contact?.id || null, conversation?.id || null, mainFlowId || null, JSON.stringify(answers)]
+    );
+    emitToAgency(agencyId, "user_input_flow_response_saved", {
+      id: res.insertId,
+      userInputFlowId: uifId,
+      contactId: contact?.id || null,
+      answers,
+    });
+  } catch (err) {
+    console.error("[Flow Engine] Failed to save User Input Flow response:", err.message);
+  }
+
+  const contactIdentifier = contact?.external_id || contact?.phone || null;
+
+  if (uifStartData?.webhookUrl) {
+    await sendWebhook(
+      uifStartData.webhookUrl,
+      {
+        userInputFlowId: uifId,
+        contact: { id: contact?.id || null, name: contact?.name || null, identifier: contactIdentifier },
+        answers,
+        completedAt: new Date().toISOString(),
+      },
+      { agencyId, contactId: contact?.id || null, contactIdentifier }
+    );
+  }
+
+  if (uifStartData?.googleSheetId && uifStartData?.googleSheetTab) {
+    try {
+      const row = [
+        new Date().toISOString(),
+        contact?.name || "",
+        contactIdentifier || "",
+        ...answers.map((a) => (a && a.value !== undefined && a.value !== null ? String(a.value) : "")),
+      ];
+      await googleSheetsUtil.appendRow(agencyId, uifStartData.googleSheetId, uifStartData.googleSheetTab, row);
+    } catch (err) {
+      await logBotError({
+        agencyId,
+        contactId: contact?.id || null,
+        contactIdentifier,
+        customMessage: `User Input Flow Google Sheet export failed: ${err.message}`,
+      });
+    }
+  }
+}
+
+/**
+ * Save and send message to external channel, then emit to socket. Exported
+ * so utils/sequenceRunner.js can send Sequence steps through the exact same
+ * path a Flow does — before this, drip sends bypassed it entirely and never
+ * showed up in the Inbox message timeline.
+ */
+export async function sendMsg(agencyId, conversation, bodyText, type, integration, extraFields = {}) {
   const conversationId = conversation.id;
 
   let activeIntegration = integration;

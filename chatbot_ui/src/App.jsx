@@ -49,6 +49,12 @@ import TikTokAppPage         from './Pages/Settings/TikTokAppPage';
 import FlowListPage     from './Pages/Flows/FlowListPage';
 import FlowBuilderPage  from './Pages/Flows/FlowBuilderPage';
 
+// User Input Flows (reusable question sequences) — the builder is FlowBuilderPage
+// running in User Input Flow mode, keyed off the /user-input-flows route. The
+// list itself now lives inside Bot Manager → Automation (UserInputFlowManagerList),
+// not a standalone page — same reasoning /flows below already redirects to /bots.
+import GoogleSheetsSettingsPage   from './Pages/Settings/GoogleSheetsSettingsPage';
+
 // Contacts & Campaigns
 import ContactsPage          from './Pages/Contacts/ContactsPage';
 import CampaignListPage      from './Pages/Campaigns/CampaignListPage';
@@ -116,6 +122,24 @@ export default function App() {
             <Route path="/flows/new" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
             <Route path="/flows/:id" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
             <Route path="/flows/:id/edit" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
+
+            {/* ── User Input Flows (reusable question sequences) ──
+                The builder is the same FlowBuilderPage; it switches into User Input
+                Flow mode from this route (restricted palette, no keyword trigger).
+                The list lives in Bot Manager → Automation now, not a standalone
+                page — same pattern as /flows below redirecting to /bots. */}
+            <Route path="/user-input-flows" element={<Navigate to="/bots" replace />} />
+            <Route path="/user-input-flows/:id" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
+            <Route path="/user-input-flows/:id/edit" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
+            <Route path="/settings/google-sheets" element={<ProtectedRoute roles={ALL_ROLES}><GoogleSheetsSettingsPage /></ProtectedRoute>} />
+
+            {/* ── Sequence Messages ── same builder, Sequence mode (restricted
+                palette, a Wait node, enforced single linear chain). The list
+                lives in Bot Manager → Automation now, not a standalone page. */}
+            <Route path="/sequences" element={<Navigate to="/bots" replace />} />
+            <Route path="/sequences/:id" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
+            <Route path="/sequences/:id/edit" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
+
             <Route path="/campaigns" element={<ProtectedRoute roles={ADMIN_AGENCY}><CampaignListPage /></ProtectedRoute>} />
             <Route path="/social-posting" element={<ProtectedRoute roles={ADMIN_AGENCY}><SocialPostingPage /></ProtectedRoute>} />
             <Route path="/publishing" element={<ProtectedRoute roles={ADMIN_AGENCY}><SocialPostingPage /></ProtectedRoute>} />

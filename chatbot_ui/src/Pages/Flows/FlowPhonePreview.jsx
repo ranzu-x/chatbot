@@ -1,8 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  X, RotateCcw, Send, MessageSquare, Image as ImageIcon,
+  X, RotateCcw, Send, MessageSquare, Image as ImageIcon, Video,
   Clock, Sparkles, User, ExternalLink
 } from 'lucide-react';
+import PlatformIcon from '../../Components/Common/PlatformIcon';
+
+const backendUrl = import.meta.env.VITE_API_URL
+  ? import.meta.env.VITE_API_URL.replace('/api/v1', '')
+  : 'http://localhost:5000';
+
+function resolveMediaUrl(url) {
+  if (!url) return '';
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || url.startsWith('blob:')) {
+    return url;
+  }
+  return `${backendUrl}${url.startsWith('/') ? '' : '/'}${url}`;
+}
 
 export default function FlowPhonePreview({
   open = true,
@@ -75,11 +88,13 @@ export default function FlowPhonePreview({
 
     // 1. Text Message
     if (node.type === 'text') {
+      const btns = Array.isArray(data.buttons) ? data.buttons : [];
       newItems.push({
         id: `msg-${Date.now()}-text`,
         sender: 'bot',
         type: 'text',
         text: data.message || 'Hello! (Empty message)',
+        buttons: btns,
         nodeId: node.id,
       });
     }
@@ -114,7 +129,7 @@ export default function FlowPhonePreview({
       });
     }
 
-    // 3. Image (with optional Facebook interactive buttons)
+    // 3. Image (with optional interactive buttons)
     else if (node.type === 'image') {
       const btns = Array.isArray(data.buttons) ? data.buttons : [];
       newItems.push({
@@ -123,6 +138,20 @@ export default function FlowPhonePreview({
         type: 'image',
         imageUrl: data.imageUrl || data.mediaUrl || '',
         caption: data.caption || '',
+        buttons: btns,
+        nodeId: node.id,
+      });
+    }
+
+    // 3b. Video (with optional interactive buttons)
+    else if (node.type === 'video') {
+      const btns = Array.isArray(data.buttons) ? data.buttons : [];
+      newItems.push({
+        id: `msg-${Date.now()}-video`,
+        sender: 'bot',
+        type: 'video',
+        videoUrl: data.mediaUrl || data.videoUrl || '',
+        caption: data.caption || data.message || '',
         buttons: btns,
         nodeId: node.id,
       });
@@ -184,10 +213,13 @@ export default function FlowPhonePreview({
     setMessages(updated);
     scrollToBottom();
 
-    // If this node has a direct single outgoing edge and is not waiting for input/button click:
-    const hasButtons = (node.type === 'buttons' || node.type === 'interactive' || (node.type === 'image' && (node.data?.buttons || []).length > 0));
-    if (node.type !== 'collectInput' && !hasButtons && node.type !== 'quickReplies') {
-      const nextEdge = edges.find((e) => e.source === node.id && !e.sourceHandle);
+    // Auto-progress to connected next steps (text, image, video, etc.):
+    // If the node has an outgoing next-step / default edge and is not a collectInput,
+    // continue automatically so images, videos, and sequential steps show in preview immediately!
+    if (node.type !== 'collectInput') {
+      const nextEdge =
+        edges.find((e) => e.source === node.id && (e.sourceHandle === 'next-step' || !e.sourceHandle)) ||
+        edges.find((e) => e.source === node.id);
       if (nextEdge) {
         const nextNode = nodes.find((n) => n.id === nextEdge.target);
         if (nextNode) {
@@ -202,24 +234,41 @@ export default function FlowPhonePreview({
   };
 
   // Handle user clicking an interactive button
-  const handleButtonClick = (buttonTitle, index, sourceNodeId) => {
+  const handleButtonClick = (buttonObjOrTitle, index, sourceNodeId) => {
+    const title = typeof buttonObjOrTitle === 'string'
+      ? buttonObjOrTitle
+      : buttonObjOrTitle?.title || `Button ${index + 1}`;
+    const action = typeof buttonObjOrTitle === 'object' ? buttonObjOrTitle?.action : 'flow';
+    const targetUrl = typeof buttonObjOrTitle === 'object' ? buttonObjOrTitle?.url : '';
+
+    // If button is URL action, open in new tab
+    if (action === 'url' && targetUrl) {
+      const urlToOpen = targetUrl.startsWith('http://') || targetUrl.startsWith('https://')
+        ? targetUrl
+        : `https://${targetUrl}`;
+      window.open(urlToOpen, '_blank', 'noopener,noreferrer');
+    }
+
     // Append user response
     const userMsg = {
       id: `user-${Date.now()}`,
       sender: 'user',
       type: 'text',
-      text: buttonTitle,
+      text: title,
     };
     const updated = [...messages, userMsg];
     setMessages(updated);
     scrollToBottom();
 
-    // Find matching edge for this button handle
+    // Find matching edge for this specific button handle first
     const matchedEdge =
       edges.find((e) => e.source === sourceNodeId && e.sourceHandle === `btn-${index}`) ||
       edges.find((e) => e.source === sourceNodeId && e.sourceHandle === `btn_${index}`) ||
       edges.find((e) => e.source === sourceNodeId && e.sourceHandle === `qr-${index}`) ||
-      edges.find((e) => e.source === sourceNodeId && !e.sourceHandle);
+      edges.find((e) => e.source === sourceNodeId && e.sourceHandle === `button-${index}`) ||
+      edges.find((e) => e.source === sourceNodeId && e.sourceHandle === 'next-step') ||
+      edges.find((e) => e.source === sourceNodeId && !e.sourceHandle) ||
+      edges.find((e) => e.source === sourceNodeId);
 
     if (matchedEdge) {
       const nextNode = nodes.find((n) => n.id === matchedEdge.target);
@@ -337,7 +386,7 @@ export default function FlowPhonePreview({
           <div className="flow-phone-header">
             <div className="flow-phone-header-left">
               <div className="flow-phone-avatar">
-                {platform === 'WHATSAPP' ? '💬' : platform === 'INSTAGRAM' ? '📸' : '⚡'}
+                <PlatformIcon platform={platform} size={22} />
               </div>
               <div className="flow-phone-header-info">
                 <div className="flow-phone-header-name">{businessName || 'CareSphere'}</div>
@@ -373,71 +422,51 @@ export default function FlowPhonePreview({
                 <div key={m.id} className={`flow-phone-msg-row ${isUser ? 'user-row' : 'bot-row'}`}>
                   {!isUser && (
                     <div className="flow-phone-chat-avatar">
-                      {platform === 'WHATSAPP' ? '💬' : platform === 'INSTAGRAM' ? '📸' : '⚡'}
+                      <PlatformIcon platform={platform} size={18} />
                     </div>
                   )}
 
-                  {/* Image with Buttons (Messenger Card: Zero space between image & buttons) */}
-                  {m.type === 'image' && m.buttons && m.buttons.length > 0 ? (
-                    <div className="max-w-[85%] w-full rounded-2xl overflow-hidden bg-slate-800 border border-slate-700/80 shadow-md text-slate-100 flex flex-col my-1">
-                      {m.imageUrl ? (
-                        <img
-                          src={m.imageUrl}
-                          alt="Attached"
-                          className="w-full max-h-[160px] object-cover block m-0 p-0"
-                        />
-                      ) : (
-                        <div className="h-28 bg-slate-800 flex flex-col items-center justify-center gap-1.5 text-slate-400 text-xs">
-                          <ImageIcon size={28} />
-                          <span>Image Attachment</span>
-                        </div>
-                      )}
+                  <div className={`flow-phone-bubble ${isUser ? 'user-bubble' : 'bot-bubble'}`}>
+                    {/* Text content */}
+                    {m.text && <div className="flow-phone-text">{m.text}</div>}
 
-                      {m.caption && (
-                        <div className="px-3.5 py-2 text-xs text-slate-200 bg-slate-800/90 border-t border-slate-700/50 leading-relaxed font-medium">
-                          {m.caption}
-                        </div>
-                      )}
-
-                      {/* Attached Buttons for Messenger Card (Flush directly against image/caption with ZERO space) */}
-                      <div className="flex flex-col m-0 p-0 border-t border-slate-700/80 divide-y divide-slate-700/60 bg-slate-800">
-                        {m.buttons.map((b, bIdx) => {
-                          const title = typeof b === 'string' ? b : b.title || `Button ${bIdx + 1}`;
-                          return (
-                            <button
-                              key={bIdx}
-                              type="button"
-                              className="w-full py-2.5 px-3 text-xs font-semibold text-sky-400 hover:text-sky-300 hover:bg-slate-700/60 active:bg-slate-700/90 transition-colors flex items-center justify-center gap-1.5 cursor-pointer bg-slate-800"
-                              onClick={() => handleButtonClick(title, bIdx, m.nodeId)}
-                            >
-                              <span>{title}</span>
-                            </button>
-                          );
-                        })}
+                    {/* Image content */}
+                    {m.type === 'image' && (
+                      <div className="flow-phone-image-box">
+                        {m.imageUrl ? (
+                          <img src={resolveMediaUrl(m.imageUrl)} alt="Attached" className="flow-phone-img" />
+                        ) : (
+                          <div className="flow-phone-img-placeholder">
+                            <ImageIcon size={32} />
+                            <span>Image Attachment</span>
+                          </div>
+                        )}
+                        {m.caption && <div className="flow-phone-caption">{m.caption}</div>}
                       </div>
-                    </div>
-                  ) : (
-                    <div className={`flow-phone-bubble ${isUser ? 'user-bubble' : 'bot-bubble'}`}>
-                      {/* Text content */}
-                      {m.text && <div className="flow-phone-text">{m.text}</div>}
+                    )}
 
-                      {/* Image content (No buttons) */}
-                      {m.type === 'image' && (
-                        <div className="flow-phone-image-box">
-                          {m.imageUrl ? (
-                            <img src={m.imageUrl} alt="Attached" className="flow-phone-img" />
-                          ) : (
-                            <div className="flow-phone-img-placeholder">
-                              <ImageIcon size={32} />
-                              <span>Image Attachment</span>
-                            </div>
-                          )}
-                          {m.caption && <div className="flow-phone-caption">{m.caption}</div>}
-                        </div>
-                      )}
+                    {/* Video content */}
+                    {m.type === 'video' && (
+                      <div className="flow-phone-image-box">
+                        {m.videoUrl ? (
+                          <video
+                            src={resolveMediaUrl(m.videoUrl)}
+                            controls
+                            className="flow-phone-img"
+                            style={{ maxHeight: 180, width: '100%', objectFit: 'contain', background: '#000000' }}
+                          />
+                        ) : (
+                          <div className="flow-phone-img-placeholder">
+                            <Video size={32} />
+                            <span>Video Attachment</span>
+                          </div>
+                        )}
+                        {m.caption && <div className="flow-phone-caption">{m.caption}</div>}
+                      </div>
+                    )}
 
-                    {/* Interactive Buttons */}
-                    {m.type === 'buttons' && m.buttons && m.buttons.length > 0 && (
+                    {/* Interactive Buttons (identical sleek design for text, image, and video) */}
+                    {m.type !== 'interactive' && m.buttons && m.buttons.length > 0 && (
                       <div className="flow-phone-btn-list">
                         {m.buttons.map((b, bIdx) => {
                           const title = typeof b === 'string' ? b : b.title || `Button ${bIdx + 1}`;
@@ -446,7 +475,7 @@ export default function FlowPhonePreview({
                               key={bIdx}
                               type="button"
                               className="flow-phone-choice-btn"
-                              onClick={() => handleButtonClick(title, bIdx, m.nodeId)}
+                              onClick={() => handleButtonClick(b, bIdx, m.nodeId)}
                             >
                               {title}
                             </button>
@@ -463,6 +492,22 @@ export default function FlowPhonePreview({
                           <div className="pb-1.5 border-b border-slate-700/50">
                             {m.headerType === 'text' ? (
                               <div className="text-xs font-bold text-slate-100">{m.headerText}</div>
+                            ) : m.headerMediaUrl ? (
+                              m.headerType === 'video' ? (
+                                <video
+                                  src={resolveMediaUrl(m.headerMediaUrl)}
+                                  controls
+                                  className="flow-phone-img"
+                                  style={{ maxHeight: 140, width: '100%', objectFit: 'cover' }}
+                                />
+                              ) : (
+                                <img
+                                  src={resolveMediaUrl(m.headerMediaUrl)}
+                                  alt="Header Media"
+                                  className="flow-phone-img"
+                                  style={{ maxHeight: 140, width: '100%', objectFit: 'cover' }}
+                                />
+                              )
                             ) : (
                               <div className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1">
                                 <span>[{m.headerType.toUpperCase()} HEADER]</span>
@@ -491,7 +536,7 @@ export default function FlowPhonePreview({
                                   key={bIdx}
                                   type="button"
                                   className="flow-phone-choice-btn text-emerald-400 font-semibold"
-                                  onClick={() => handleButtonClick(title, bIdx, m.nodeId)}
+                                  onClick={() => handleButtonClick(b, bIdx, m.nodeId)}
                                 >
                                   {title}
                                 </button>
@@ -521,7 +566,6 @@ export default function FlowPhonePreview({
                       </div>
                     )}
                   </div>
-                  )}
                 </div>
               );
             })}
@@ -530,7 +574,7 @@ export default function FlowPhonePreview({
             {isTyping && (
               <div className="flow-phone-msg-row bot-row">
                 <div className="flow-phone-chat-avatar">
-                  {platform === 'WHATSAPP' ? '💬' : platform === 'INSTAGRAM' ? '📸' : '⚡'}
+                  <PlatformIcon platform={platform} size={18} />
                 </div>
                 <div className="flow-phone-bubble bot-bubble flow-phone-typing">
                   <span className="dot" />

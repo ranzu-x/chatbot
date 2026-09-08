@@ -41,6 +41,8 @@ import labelsRoutes from "./routes/labels.js";
 import mediaRoutes from "./routes/media.js";
 import agencyPaymentGatewayRoutes from "./routes/agencyPaymentGateways.js";
 import customFieldRoutes from "./routes/customFields.js";
+import userInputFlowRoutes from "./routes/userInputFlows.js";
+import googleSheetsRoutes from "./routes/googleSheets.js";
 
 import http from "http";
 import { initSocket } from "./utils/socket.js";
@@ -157,6 +159,8 @@ app.use("/api/v1", slotRoutes);
 app.use("/api/v1", labelsRoutes);
 app.use("/api/v1", agencyPaymentGatewayRoutes);
 app.use("/api/v1", customFieldRoutes);
+app.use("/api/v1", userInputFlowRoutes);
+app.use("/api/v1", googleSheetsRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {

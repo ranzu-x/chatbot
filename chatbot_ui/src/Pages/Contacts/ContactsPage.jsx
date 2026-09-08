@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import AppLayout from '../../Layout/AppLayout';
-import { contactAPI, labelAPI } from '../../services/api';
+import { contactAPI, labelAPI, sequenceAPI } from '../../services/api';
 import { useNavigate } from 'react-router';
 import {
   Users,
@@ -194,6 +194,7 @@ function SubscriberDetailDrawer({ contact, onClose, onNavigateInbox, onUpdateSta
   const [notes, setNotes] = useState([]);
   const [newNote, setNewNote] = useState('');
   const [savingNote, setSavingNote] = useState(false);
+  const [sequences, setSequences] = useState([]);
   const pInfo = getPlatform(contact.platform);
   const PlatformIcon = pInfo.icon;
 
@@ -201,8 +202,16 @@ function SubscriberDetailDrawer({ contact, onClose, onNavigateInbox, onUpdateSta
     setActiveTab('Overview');
     if (contact?.id) {
       contactAPI.getNotes(contact.id).then((r) => setNotes(r.data.notes || [])).catch(() => {});
+      contactAPI.getSequences(contact.id).then((r) => setSequences(r.data.sequences || [])).catch(() => {});
     }
   }, [contact?.id]);
+
+  const handleStopSequence = async (seq) => {
+    try {
+      await sequenceAPI.unsubscribe(seq.sequence_id, { contactId: contact.id });
+      setSequences((prev) => prev.map((s) => (s.id === seq.id ? { ...s, status: 'STOPPED' } : s)));
+    } catch {}
+  };
 
   const handleAddNote = async (e) => {
     e?.preventDefault();
@@ -494,7 +503,35 @@ function SubscriberDetailDrawer({ contact, onClose, onNavigateInbox, onUpdateSta
 
           {activeTab === 'Sequences' && (
             <div style={{ padding: 10 }}>
-              <span style={{ fontSize: '0.84rem', color: '#64748b' }}>No automated drip sequences running.</span>
+              {sequences.length === 0 ? (
+                <span style={{ fontSize: '0.84rem', color: '#64748b' }}>No automated sequences enrolled.</span>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {sequences.map((s) => (
+                    <div key={s.id} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                      <div>
+                        <div style={{ fontSize: '0.84rem', fontWeight: 700, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          {s.status === 'ACTIVE' ? '✓' : (s.status === 'COMPLETED' ? '✔' : '⏸')} {s.sequence_name}
+                        </div>
+                        <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: 2 }}>
+                          {s.status === 'ACTIVE' && s.next_run_at
+                            ? `Next message: ${fmtDate(s.next_run_at)}`
+                            : s.status === 'COMPLETED' ? 'Completed' : 'Stopped'}
+                        </div>
+                      </div>
+                      {s.status === 'ACTIVE' && (
+                        <button
+                          type="button"
+                          onClick={() => handleStopSequence(s)}
+                          style={{ padding: '5px 10px', borderRadius: 7, border: '1px solid #fecaca', background: '#fef2f2', color: '#dc2626', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer' }}
+                        >
+                          Stop
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

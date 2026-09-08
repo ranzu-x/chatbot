@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import AppLayout from '../../Layout/AppLayout';
 import { flowAPI } from '../../services/api';
 import { useNavigate, useLocation } from 'react-router';
+import PlatformIcon from '../../Components/Common/PlatformIcon';
 
 /* ─── constants ─── */
 const PLATFORMS = {
@@ -9,6 +10,7 @@ const PLATFORMS = {
   FACEBOOK:  { label: 'Facebook',  emoji: '👤', color: '#1877f2' },
   INSTAGRAM: { label: 'Instagram', emoji: '📸', color: '#e1306c' },
   TELEGRAM:  { label: 'Telegram',  emoji: '✈️', color: '#229ed9' },
+  TIKTOK:    { label: 'TikTok',    emoji: '🎵', color: '#FE2C55' },
   WEBCHAT:   { label: 'Webchat',   emoji: '🌐', color: '#6366f1' },
 };
 
@@ -253,7 +255,7 @@ function CreateModal({ open, onClose, onCreate, creating }) {
           {/* platform */}
           <div>
             <label style={labelStyle}>Platform</label>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8 }}>
               {Object.entries(PLATFORMS).map(([key, p]) => (
                 <button type="button" key={key} onClick={() => setPlatform(key)} style={{
                   padding: '10px 4px', borderRadius: 'var(--radius, 12px)',
@@ -261,10 +263,10 @@ function CreateModal({ open, onClose, onCreate, creating }) {
                   background: platform === key ? `${p.color}18` : 'transparent',
                   color: platform === key ? p.color : 'var(--text-secondary, #a1a1aa)',
                   fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
                   transition: 'all .2s',
                 }}>
-                  <span style={{ fontSize: 20 }}>{p.emoji}</span>
+                  <PlatformIcon platform={key} size={22} />
                   <span>{p.label}</span>
                 </button>
               ))}
@@ -381,12 +383,13 @@ function FlowCard({ flow, index, onEdit, onToggle, onDelete }) {
               margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
             }}>{flow.name}</h3>
             <span style={{
-              display: 'inline-flex', alignItems: 'center', gap: 5,
+              display: 'inline-flex', alignItems: 'center', gap: 6,
               marginTop: 8, padding: '4px 10px', borderRadius: 20,
               background: `${p.color}18`, color: p.color,
               fontSize: 12, fontWeight: 600, letterSpacing: '.3px',
             }}>
-              {p.emoji} {p.label}
+              <PlatformIcon platform={flow.platform} size={15} />
+              <span>{p.label}</span>
             </span>
           </div>
 

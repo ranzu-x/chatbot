@@ -83,7 +83,7 @@ router.put("/flows/:id", async (req, res) => {
   const botId = req.body.botId || req.body.bot_id || null;
   const nodes = req.body.nodesJson !== undefined ? req.body.nodesJson : req.body.nodes_json;
   const edges = req.body.edgesJson !== undefined ? req.body.edgesJson : req.body.edges_json;
-  const isActive = req.body.isActive !== undefined ? req.body.isActive : (req.body.is_active !== undefined ? req.body.is_active : 1);
+  const isActive = req.body.isActive !== undefined ? req.body.isActive : (req.body.is_active !== undefined ? req.body.is_active : null);
 
   const nodesStr = typeof nodes === "string" ? nodes : JSON.stringify(nodes || []);
   const edgesStr = typeof edges === "string" ? edges : JSON.stringify(edges || []);
@@ -91,7 +91,7 @@ router.put("/flows/:id", async (req, res) => {
   try {
     await pool.query(
       `UPDATE flows SET name=?, platform=COALESCE(?, platform), integration_id=?, trigger_keyword=?, trigger_type=?, bot_id=?,
-       nodes_json=?, edges_json=?, is_active=? WHERE id=? AND agency_id=?`,
+       nodes_json=?, edges_json=?, is_active=COALESCE(?, is_active) WHERE id=? AND agency_id=?`,
       [name, platform || null, integrationId || null, triggerKeyword, triggerType, botId,
         nodesStr, edgesStr,
         isActive, req.params.id, req.user.agencyId]

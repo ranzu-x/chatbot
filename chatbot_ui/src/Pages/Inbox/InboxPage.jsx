@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import AppLayout from '../../Layout/AppLayout';
 import {
   conversationAPI,
@@ -59,6 +59,7 @@ import {
   Sliders,
   CheckSquare,
   Square,
+  ChevronDown,
 } from 'lucide-react';
 
 /* ─── Platform Map ─── */
@@ -119,6 +120,21 @@ function getInitials(name = '') {
   return (name || '').trim().split(/\s+/).map((w) => w[0]).join('').toUpperCase().slice(0, 2) || '?';
 }
 
+// Human-readable labels for the read-only "System Fields" pulled from each
+// channel's own profile API (Messenger/Instagram/Telegram — see webhook.js).
+const SYSTEM_FIELD_LABELS = {
+  first_name: 'First Name',
+  last_name: 'Last Name',
+  locale: 'Locale',
+  timezone: 'Timezone (GMT offset)',
+  gender: 'Gender',
+  username: 'Username',
+  is_verified_user: 'Verified Account',
+  follower_count: 'Follower Count',
+  language_code: 'Language',
+  is_premium: 'Telegram Premium',
+};
+
 const STATUS_CHIPS = ['All', 'OPEN', 'PENDING', 'RESOLVED'];
 const DRAWER_TABS = ['Overview', 'Labels', 'Flows & Agent', 'Custom Fields', 'Notes'];
 
@@ -163,6 +179,9 @@ export default function InboxPage() {
   // Custom Fields (agency-defined field types + per-subscriber values)
   const [customFieldDefs, setCustomFieldDefs] = useState([]);
   const [customFieldValues, setCustomFieldValues] = useState({}); // { [fieldId]: value }
+  // Completed User Input Flow submissions for the selected subscriber
+  const [formResponses, setFormResponses] = useState([]);
+  const [expandedResponseId, setExpandedResponseId] = useState(null);
   const [savingFieldId, setSavingFieldId] = useState(null);
   const [showNewFieldForm, setShowNewFieldForm] = useState(false);
   const [newFieldDraft, setNewFieldDraft] = useState({ name: '', fieldType: 'TEXT', options: '' });
@@ -263,6 +282,11 @@ export default function InboxPage() {
           for (const f of fields) values[f.field_id] = f.value ?? '';
           setCustomFieldValues(values);
         }).catch(() => setCustomFieldValues({}));
+
+        // Completed User Input Flow submissions (the full answer set per run)
+        contactAPI.getFormResponses(contactId)
+          .then((r) => setFormResponses(r.data?.responses || []))
+          .catch(() => setFormResponses([]));
       }
     } catch (err) {
       console.error('Failed to load conversation details', err);
@@ -400,6 +424,16 @@ export default function InboxPage() {
     socket.on('contact_custom_field_updated', (data) => {
       if (String(data.contactId) === String(selectedContactIdRef.current)) {
         setCustomFieldValues((prev) => ({ ...prev, [data.fieldId]: data.value ?? '' }));
+      }
+    });
+
+    // A subscriber just finished a User Input Flow — pull their submissions again so
+    // the panel fills in live, the same way a new message does.
+    socket.on('user_input_flow_response_saved', (data) => {
+      if (String(data.contactId) === String(selectedContactIdRef.current)) {
+        contactAPI.getFormResponses(data.contactId)
+          .then((r) => setFormResponses(r.data?.responses || []))
+          .catch(() => {});
       }
     });
 
@@ -815,6 +849,17 @@ export default function InboxPage() {
 
   const activePlatformInfo = getPlatformInfo(selectedConv?.platform || selectedConv?.integrationPlatform || selectedConv?.contactPlatform);
   const ActivePlatformIcon = activePlatformInfo.icon || MessageSquare;
+
+  // Read-only "System Fields" the channel's own profile API returned (see webhook.js) —
+  // mysql2 auto-parses native JSON columns, but guard against a raw string just in case.
+  const platformProfileEntries = useMemo(() => {
+    let raw = selectedConv?.contactPlatformProfile;
+    if (typeof raw === 'string') {
+      try { raw = JSON.parse(raw); } catch { raw = null; }
+    }
+    if (!raw || typeof raw !== 'object') return [];
+    return Object.entries(raw).filter(([, v]) => v !== null && v !== undefined && v !== '');
+  }, [selectedConv?.contactPlatformProfile]);
 
   return (
     <AppLayout>
@@ -1356,11 +1401,11 @@ export default function InboxPage() {
                         <div
                           style={{
                             maxWidth: '72%',
-                            padding: hasAttachedButtons ? 0 : (isImage && isMediaOnly ? '4px' : '10px 14px'),
+                            padding: (isImage && isMediaOnly && !buttons) ? '4px' : '10px 14px',
                             borderRadius: isOutbound ? '14px 14px 2px 14px' : '14px 14px 14px 2px',
-                            background: hasAttachedButtons ? '#ffffff' : (isOutbound ? '#f1f5f9' : '#ffffff'),
+                            background: isOutbound ? '#f1f5f9' : '#ffffff',
                             color: '#0f172a',
-                            border: hasAttachedButtons ? '1px solid #cbd5e1' : '1px solid #e2e8f0',
+                            border: '1px solid #e2e8f0',
                             fontSize: '0.86rem',
                             lineHeight: 1.45,
                             boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
@@ -1386,14 +1431,14 @@ export default function InboxPage() {
 
                           {/* ── Image Rendering ── */}
                           {isImage && (
-                            <div style={{ marginBottom: (isMediaOnly || hasAttachedButtons) ? 0 : 8 }}>
+                            <div style={{ marginBottom: (isMediaOnly && !buttons) ? 0 : 8 }}>
                               <img
                                 src={mediaUrl}
                                 alt="Attachment"
                                 style={{
                                   width: '100%',
                                   maxHeight: 280,
-                                  borderRadius: hasAttachedButtons ? 0 : 10,
+                                  borderRadius: 10,
                                   cursor: 'pointer',
                                   display: 'block',
                                   objectFit: 'cover',
@@ -1456,7 +1501,7 @@ export default function InboxPage() {
 
                           {/* Text message */}
                           {!isMediaOnly && text && (
-                            <div style={{ padding: hasAttachedButtons ? '8px 12px' : 0 }}>
+                            <div>
                               {text}
                             </div>
                           )}
@@ -1468,14 +1513,16 @@ export default function InboxPage() {
                             </div>
                           )}
 
-                          {/* Attached Buttons for Messenger Card / Interactive — full-width bars
-                              matching how WhatsApp/Messenger actually render these natively.
-                              Deliberately neutral (not platform-colored) so it looks identical
-                              and consistent across every channel. */}
+                          {/* Attached Interactive Buttons — matches preview button design */}
                           {buttons && buttons.length > 0 && (
                             <div
-                              className={`flex flex-col m-0 p-0 border-t divide-y divide-slate-200 border-slate-200 bg-white ${hasAttachedButtons ? '' : 'mt-2 -mx-3.5 -mb-2.5'}`}
-                              style={{ borderRadius: '0 0 10px 10px', overflow: 'hidden' }}
+                              style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 6,
+                                marginTop: 8,
+                                width: '100%',
+                              }}
                             >
                               {buttons.map((b, bIdx) => {
                                 const bTitle = typeof b === 'string' ? b : (b.title || b.text || b.label || b.reply_text || `Option ${bIdx + 1}`);
@@ -1485,10 +1532,35 @@ export default function InboxPage() {
                                   <Tag
                                     key={bIdx}
                                     {...(isUrlButton ? { href: b.url, target: '_blank', rel: 'noopener noreferrer' } : {})}
-                                    className="w-full py-8 px-4 text-sm font-semibold flex items-center justify-center gap-2 text-slate-800 transition-colors cursor-pointer hover:bg-slate-50 active:bg-slate-100"
-                                    style={{ textDecoration: 'none' }}
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      gap: 6,
+                                      width: '100%',
+                                      padding: '7px 12px',
+                                      borderRadius: 8,
+                                      border: '1px solid #cbd5e1',
+                                      background: '#ffffff',
+                                      color: '#0284c7',
+                                      fontSize: '12px',
+                                      fontWeight: 600,
+                                      textDecoration: 'none',
+                                      cursor: isUrlButton ? 'pointer' : 'default',
+                                      transition: 'all 0.15s ease',
+                                      boxSizing: 'border-box',
+                                      textAlign: 'center',
+                                    }}
+                                    onMouseEnter={(e) => {
+                                      e.currentTarget.style.background = '#f8fafc';
+                                      e.currentTarget.style.borderColor = '#94a3b8';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      e.currentTarget.style.background = '#ffffff';
+                                      e.currentTarget.style.borderColor = '#cbd5e1';
+                                    }}
                                   >
-                                    {isUrlButton && <ExternalLink size={14} className="text-slate-500" />}
+                                    {isUrlButton && <ExternalLink size={12} style={{ color: '#0284c7' }} />}
                                     <span>{bTitle}</span>
                                   </Tag>
                                 );
@@ -2077,6 +2149,74 @@ export default function InboxPage() {
                   )}
                 </div>
 
+                {/* Completed User Input Flow submissions — the full answer set from
+                    each form this subscriber finished, newest first. */}
+                <div>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
+                    Form Submissions
+                  </span>
+                  {formResponses.length === 0 ? (
+                    <div style={{ fontSize: '0.8rem', color: '#94a3b8', padding: '8px 0 0' }}>
+                      This subscriber hasn't completed any User Input Flow yet.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+                      {formResponses.map((resp) => {
+                        const answers = Array.isArray(resp.answers)
+                          ? resp.answers
+                          : (() => { try { return JSON.parse(resp.answers || '[]'); } catch { return []; } })();
+                        const open = expandedResponseId === resp.id;
+                        return (
+                          <div
+                            key={resp.id}
+                            style={{ border: '1px solid #e2e8f0', borderRadius: 9, background: '#fff', overflow: 'hidden' }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setExpandedResponseId(open ? null : resp.id)}
+                              style={{
+                                width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                gap: 8, padding: '9px 11px', border: 'none', background: open ? '#f8fafc' : '#fff',
+                                cursor: 'pointer', textAlign: 'left',
+                              }}
+                            >
+                              <span style={{ minWidth: 0 }}>
+                                <span style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {resp.user_input_flow_name || 'Form'}
+                                </span>
+                                <span style={{ display: 'block', fontSize: '0.7rem', color: '#94a3b8', marginTop: 1 }}>
+                                  {new Date(resp.created_at).toLocaleString()} · {answers.length} answer{answers.length === 1 ? '' : 's'}
+                                </span>
+                              </span>
+                              <ChevronDown
+                                size={14}
+                                color="#94a3b8"
+                                style={{ flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}
+                              />
+                            </button>
+                            {open && (
+                              <div style={{ padding: '4px 11px 10px', borderTop: '1px solid #f1f5f9' }}>
+                                {answers.length === 0 ? (
+                                  <div style={{ fontSize: '0.76rem', color: '#94a3b8', paddingTop: 8 }}>No answers recorded.</div>
+                                ) : answers.map((a, i) => (
+                                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, paddingTop: 8 }}>
+                                    <strong style={{ fontSize: '0.75rem', color: '#475569', fontWeight: 700, flexShrink: 0 }}>
+                                      {a.label || `Answer ${i + 1}`}
+                                    </strong>
+                                    <span style={{ fontSize: '0.78rem', color: '#0f172a', textAlign: 'right', wordBreak: 'break-word' }}>
+                                      {String(a.value ?? '—')}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
                 <div>
                   <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
                     System Variables (read-only)
@@ -2090,11 +2230,25 @@ export default function InboxPage() {
                       <strong style={{ color: '#0f172a' }}>External ID:</strong>
                       <span>{selectedConv.external_id || '—'}</span>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: platformProfileEntries.length ? 6 : 0 }}>
                       <strong style={{ color: '#0f172a' }}>Bot Session:</strong>
                       <span>{botPaused ? 'Agent Handled' : 'Active'}</span>
                     </div>
+                    {platformProfileEntries.map(([key, value], idx) => (
+                      <div
+                        key={key}
+                        style={{ display: 'flex', justifyContent: 'space-between', marginTop: idx === 0 ? 0 : 6 }}
+                      >
+                        <strong style={{ color: '#0f172a' }}>{SYSTEM_FIELD_LABELS[key] || key}:</strong>
+                        <span>{typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}</span>
+                      </div>
+                    ))}
                   </div>
+                  {platformProfileEntries.length > 0 && (
+                    <span className="fb-hint" style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'block', marginTop: 6 }}>
+                      Pulled automatically from {activePlatformInfo.label}'s own profile API — not editable.
+                    </span>
+                  )}
                 </div>
               </div>
             )}

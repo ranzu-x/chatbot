@@ -6,7 +6,7 @@ import { logBotError, extractErrorMessage } from "./botLogger.js";
 /**
  * Find or create a Contact in DB
  */
-export async function findOrCreateContact(agencyId, platform, externalId, name, phone, avatar = null) {
+export async function findOrCreateContact(agencyId, platform, externalId, name, phone, avatar = null, platformProfile = null) {
   const [existingContact] = await pool.query(
     "SELECT * FROM contacts WHERE agency_id = ? AND platform = ? AND external_id = ?",
     [agencyId, platform, externalId]
@@ -27,12 +27,28 @@ export async function findOrCreateContact(agencyId, platform, externalId, name, 
       contact.name = updatedName;
       contact.avatar = updatedAvatar;
     }
+
+    // Merge in any freshly-fetched "System Fields" (read-only channel profile data)
+    // rather than overwrite wholesale — a later fetch that came back with fewer
+    // fields (e.g. a permission was revoked) shouldn't erase what we already had.
+    if (platformProfile && Object.values(platformProfile).some((v) => v !== null && v !== undefined)) {
+      let existingProfile = {};
+      try {
+        existingProfile = typeof contact.platform_profile === "string"
+          ? JSON.parse(contact.platform_profile || "{}")
+          : (contact.platform_profile || {});
+      } catch { existingProfile = {}; }
+      const merged = { ...existingProfile, ...Object.fromEntries(Object.entries(platformProfile).filter(([, v]) => v !== null && v !== undefined)) };
+      await pool.query("UPDATE contacts SET platform_profile = ? WHERE id = ?", [JSON.stringify(merged), contact.id]);
+      contact.platform_profile = merged;
+    }
+
     return contact;
   }
 
   const [newContact] = await pool.query(
-    "INSERT INTO contacts (agency_id, platform, external_id, name, avatar, phone, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())",
-    [agencyId, platform, externalId, name || externalId, avatar || null, phone || null]
+    "INSERT INTO contacts (agency_id, platform, external_id, name, avatar, phone, platform_profile, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())",
+    [agencyId, platform, externalId, name || externalId, avatar || null, phone || null, platformProfile ? JSON.stringify(platformProfile) : null]
   );
 
   const [createdContact] = await pool.query("SELECT * FROM contacts WHERE id = ?", [newContact.insertId]);

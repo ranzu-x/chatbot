@@ -472,6 +472,34 @@ export default function AppSettingsHubPage() {
                   </div>
                 </div>
 
+                {/* The live Google Sheets connection (used by User Input Flow exports)
+                    is a real, working feature on its own page — the credential form
+                    below is still a UI placeholder and does not persist anything yet. */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+                  padding: '14px 16px', marginBottom: 18, borderRadius: 10,
+                  border: '1px solid rgba(16,185,129,0.25)', background: 'rgba(16,185,129,0.06)',
+                }}>
+                  <div style={{ flex: 1, minWidth: 220 }}>
+                    <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#065f46' }}>
+                      Google Sheets connection
+                    </div>
+                    <div style={{ fontSize: '0.78rem', color: '#047857', marginTop: 2, lineHeight: 1.5 }}>
+                      Connect a Google account so User Input Flow responses can be written straight into a spreadsheet.
+                    </div>
+                  </div>
+                  <a
+                    href="/settings/google-sheets"
+                    style={{
+                      padding: '9px 16px', borderRadius: 8, textDecoration: 'none',
+                      background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                      color: '#fff', fontSize: '0.82rem', fontWeight: 700, whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Open Google Sheets setup →
+                  </a>
+                </div>
+
                 <form onSubmit={handleSaveGoogle} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                   <div>
                     <label className="form-label" style={{ fontWeight: 600, fontSize: '0.8rem' }}>Google Client ID *</label>

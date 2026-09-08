@@ -107,11 +107,11 @@ router.get("/conversations/:id", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
     const [rows] = await pool.query(`
-      SELECT cv.*, 
+      SELECT cv.*,
              i.platform as platform, i.platform as integrationPlatform, i.name as integrationName,
              c.name as contactName, c.phone as contactPhone, c.email as contactEmail,
              c.avatar as contactAvatar, c.platform as contactPlatform, c.external_id as contactExternalId,
-             c.tags as contactTags, c.bot_paused as contactBotPaused,
+             c.tags as contactTags, c.bot_paused as contactBotPaused, c.platform_profile as contactPlatformProfile,
              u.name as assignedAgentName
       FROM conversations cv
       JOIN contacts c ON c.id = cv.contact_id

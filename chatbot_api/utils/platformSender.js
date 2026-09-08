@@ -9,6 +9,10 @@ ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 const META_API_VERSION = process.env.META_API_VERSION || "v21.0";
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function convertAudioToWhatsAppVoice(inputPath, outputPath) {
   return new Promise((resolve, reject) => {
     ffmpeg(inputPath)
@@ -176,6 +180,7 @@ export async function sendPlatformMessage(platform, integration, contactExternal
     headerText,
     headerMediaUrl,
     footerText,
+    whatsappTemplate,
   } = messageData;
   const accessToken = integration.access_token;
   const backendUrl = process.env.BACKEND_URL || "http://localhost:5000";
@@ -194,10 +199,71 @@ export async function sendPlatformMessage(platform, integration, contactExternal
         to: contactExternalId,
       };
 
+      // Outside the 24h customer-service window, WhatsApp only accepts a
+      // pre-approved Template message — used by Sequence Messages
+      // (utils/messagingWindow.js) when a scheduled step falls outside the
+      // window and the step has a linked approved template. No dynamic
+      // component values yet (name + language only) — a template that
+      // requires variables isn't supported here; the caller is expected to
+      // only pass templates that don't need any.
+      if (whatsappTemplate?.name) {
+        payload.type = "template";
+        payload.template = {
+          name: whatsappTemplate.name,
+          language: { code: whatsappTemplate.language || "en_US" },
+        };
+        const response = await axios.post(url, payload, {
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        });
+        return response.data?.messages?.[0]?.id || null;
+      }
+
       const hasButtons = Array.isArray(buttons) && buttons.length > 0;
       const isInteractive = upperType === "INTERACTIVE" || Boolean(headerType || footerText);
 
-      if (hasButtons) {
+      // WhatsApp's plain interactive "reply button" message type has no real
+      // link-button concept at all — a button configured as a URL action still
+      // just replies with its title when tapped, it never opens anything. A
+      // single URL button needs the dedicated CTA-URL message type instead, which
+      // genuinely opens the link in the browser. Meta only allows exactly one
+      // button on a CTA-URL message (no mixing with reply buttons), so this only
+      // applies when the whole message is just that one URL button.
+      // https://developers.facebook.com/docs/whatsapp/cloud-api/messages/interactive-cta-url-messages/
+      const singleUrlButton = hasButtons && buttons.length === 1 && (() => {
+        const btn = buttons[0];
+        if (typeof btn !== "object" || !btn) return null;
+        const isUrlType = btn.type === "URL" || btn.action === "url";
+        return (isUrlType && btn.url) ? btn : null;
+      })();
+
+      if (singleUrlButton) {
+        const ctaBodyText = (body && body.trim()) || (caption && caption.trim()) || "Tap below to continue:";
+        payload.type = "interactive";
+        payload.interactive = {
+          type: "cta_url",
+          body: { text: ctaBodyText.slice(0, 1024) },
+          action: {
+            name: "cta_url",
+            parameters: {
+              display_text: String(singleUrlButton.title || singleUrlButton.label || "Open Link").slice(0, 20),
+              url: singleUrlButton.url,
+            },
+          },
+        };
+
+        const effectiveHeaderType = (headerType || "").toLowerCase();
+        if (effectiveHeaderType === "text" && headerText && headerText.trim()) {
+          payload.interactive.header = { type: "text", text: headerText.trim().slice(0, 60) };
+        }
+        if (footerText && footerText.trim()) {
+          payload.interactive.footer = { text: footerText.trim().slice(0, 60) };
+        }
+
+        const response = await axios.post(url, payload, {
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        });
+        return response.data?.messages?.[0]?.id || null;
+      } else if (hasButtons) {
         // WhatsApp interactive buttons (Max 3)
         const interactiveBodyText = (body && body.trim()) || (caption && caption.trim()) || (upperType === "IMAGE" ? "\u200B" : "Please select an option:");
         payload.type = "interactive";
@@ -303,6 +369,17 @@ export async function sendPlatformMessage(platform, integration, contactExternal
             console.log(`📤 [WhatsApp Upload] Uploading binary to Meta: ${localPath} (${mimeType})`);
             mediaId = await uploadLocalWhatsAppMedia(phoneNumberId, accessToken, localPath, mimeType);
             console.log(`📤 [WhatsApp Upload] Got media ID: ${mediaId}`);
+
+            if (mediaId && (upperType === "VIDEO" || upperType === "DOCUMENT" || upperType === "FILE")) {
+              // Documented Meta Cloud API quirk: referencing a media id in a message
+              // send immediately after uploading it can fail with error 131053
+              // ("no video/media stream found") because Meta hasn't finished
+              // indexing the upload yet — video (and large documents) need more
+              // server-side processing time than images do. A short delay before
+              // the send fixes it. Confirmed against two separate, independently
+              // valid H.264 video files that both failed identically without this.
+              await sleep(1500);
+            }
           } catch (uploadErr) {
             console.error(`❌ [WhatsApp Upload Error]:`, uploadErr.response?.data || uploadErr.message);
             if (!fullMediaUrl || isLocalHostUrl(fullMediaUrl)) {
@@ -571,6 +648,34 @@ export async function sendPlatformMessage(platform, integration, contactExternal
                   title: (btn.title || "Select").slice(0, 20),
                   [btn.type === "URL" ? "url" : "payload"]: btn.url || btn.payload || btn.title || "select",
                 })) : undefined,
+              })),
+            },
+          },
+        };
+      } else if (listMenu && listMenu.items && listMenu.items.length > 0) {
+        // Messenger/Instagram have no native "list message" type — the closest
+        // real equivalent is a Generic Template carousel, one element per list
+        // row (title from the row, a single postback button carrying the row's
+        // own routing id so a tap resolves exactly like a WhatsApp/Telegram list
+        // tap does). flowEngine.js already caps each call here to 10 items (its
+        // own configured-list cap) and sends multiple lists as separate calls,
+        // so the `.slice(0, 10)` here is defensive, matching the `carousel`
+        // node type's own cap just above rather than a new limit.
+        payload.message = {
+          attachment: {
+            type: "template",
+            payload: {
+              template_type: "generic",
+              elements: listMenu.items.slice(0, 10).map((item) => ({
+                title: (item.title || "Option").slice(0, 80),
+                subtitle: item.description ? item.description.slice(0, 80) : undefined,
+                buttons: [
+                  {
+                    type: "postback",
+                    title: (listMenu.buttonText || "Select").slice(0, 20),
+                    payload: item.id || item.title || "select",
+                  },
+                ],
               })),
             },
           },

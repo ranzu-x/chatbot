@@ -5,6 +5,8 @@ import { flowAPI, integrationAPI, channelAPI, botAPI, templateAPI } from '../../
 import WhatsAppTemplateManager from '../../Components/Templates/WhatsAppTemplateManager';
 import FacebookUtilityTemplateManager from '../../Components/Templates/FacebookUtilityTemplateManager';
 import CommentAutomationManager from '../../Components/Comments/CommentAutomationManager';
+import SequenceMessageReport from '../../Components/Sequences/SequenceMessageReport';
+import UserInputFlowManagerList from '../../Components/UserInputFlows/UserInputFlowManagerList';
 import Swal from 'sweetalert2';
 import {
   Bot,
@@ -90,14 +92,14 @@ const SUB_TABS = {
     { id: 'keywordReplies',   label: 'Keyword Replies' },
     { id: 'messageTemplates', label: 'Message Templates' },
     { id: 'clickAds',         label: 'Click Ads' },
-    { id: 'followUpSequences',label: 'Follow-up Sequences' },
+    { id: 'userInputFlows',   label: 'User Input Flows' },
+    { id: 'followUpSequences',label: 'Sequences' },
     { id: 'quickActions',     label: 'Quick Actions' },
     { id: 'outboundActions',  label: 'Outbound Actions' },
     { id: 'webhookWorkflows', label: 'Webhook Workflows' },
     { id: 'whatsappCalling',  label: 'WhatsApp Calling' },
   ],
   dataCollection: [
-    { id: 'userInputFlows', label: 'User Input Flows' },
     { id: 'customFields',   label: 'Custom Variables' },
     { id: 'contactLabels',  label: 'Contact Labels' },
     { id: 'segments',       label: 'Subscriber Segments' },
@@ -744,6 +746,23 @@ export default function BotManagerPage() {
     }
   };
 
+  /* ─── Play / Pause Flow ─── */
+  const handleToggleFlow = async (flow, e) => {
+    if (e) e.stopPropagation();
+    const isCurrentlyActive = flow.is_active !== 0 && flow.is_active !== false;
+    try {
+      const res = await flowAPI.toggle(flow.id);
+      const newActive = res.data?.isActive !== undefined ? (res.data.isActive ? 1 : 0) : (isCurrentlyActive ? 0 : 1);
+      setFlows((prev) =>
+        prev.map((f) => (f.id === flow.id ? { ...f, is_active: newActive } : f))
+      );
+      showToast(newActive ? `Bot "${flow.name}" is now Active` : `Bot "${flow.name}" is now Paused`);
+    } catch (err) {
+      console.error(err);
+      showToast('Failed to toggle bot status', 'error');
+    }
+  };
+
   const currentPlatformInfo = getPlatformInfo(selectedAccount?.platform);
 
   return (
@@ -1071,6 +1090,16 @@ export default function BotManagerPage() {
           border-color: #ef4444;
           color: #ef4444;
           background: rgba(239, 68, 68, 0.08);
+        }
+        .bm-row-action.play:hover {
+          border-color: #16a34a;
+          color: #16a34a;
+          background: rgba(22, 163, 74, 0.12);
+        }
+        .bm-row-action.pause:hover {
+          border-color: #d97706;
+          color: #d97706;
+          background: rgba(217, 119, 6, 0.12);
         }
       `}</style>
 
@@ -1483,6 +1512,7 @@ export default function BotManagerPage() {
                       <th style={{ width: 50 }}>#</th>
                       <th>UNIQUE ID</th>
                       <th>REFERENCE NAME</th>
+                      <th style={{ textAlign: 'center' }}>STATUS</th>
                       <th>UPDATED AT</th>
                       <th style={{ textAlign: 'right', paddingRight: 24 }}>ACTIONS</th>
                     </tr>
@@ -1490,14 +1520,14 @@ export default function BotManagerPage() {
                   <tbody>
                     {loading ? (
                       <tr>
-                        <td colSpan={5} style={{ padding: 60, textAlign: 'center' }}>
+                        <td colSpan={6} style={{ padding: 60, textAlign: 'center' }}>
                           <div className="loading-spinner" style={{ margin: '0 auto 8px' }} />
                           <p style={{ color: '#5c5c80', fontSize: '0.82rem' }}>Loading keyword bot replies...</p>
                         </td>
                       </tr>
                     ) : displayedFlows.length === 0 ? (
                       <tr>
-                        <td colSpan={5} style={{ padding: 60, textAlign: 'center' }}>
+                        <td colSpan={6} style={{ padding: 60, textAlign: 'center' }}>
                           <div style={{ fontSize: '2rem', marginBottom: 6 }}>🤖</div>
                           <h4 style={{ fontSize: '0.94rem', fontWeight: 700, margin: '0 0 4px 0', color: '#1a1a2e' }}>
                             No keyword reply flows yet
@@ -1523,7 +1553,9 @@ export default function BotManagerPage() {
                         </td>
                       </tr>
                     ) : (
-                      displayedFlows.map((flow, idx) => (
+                      displayedFlows.map((flow, idx) => {
+                        const isFlowActive = flow.is_active !== 0 && flow.is_active !== false;
+                        return (
                         <tr key={flow.id} style={{ cursor: 'pointer' }} onClick={() => openFlowBuilder(flow.id)}>
                           <td style={{ fontWeight: 700, color: '#5c5c80' }}>
                             {idx + 1}
@@ -1544,12 +1576,69 @@ export default function BotManagerPage() {
                             </div>
                           </td>
 
+                          {/* Status Badge */}
+                          <td style={{ textAlign: 'center' }}>
+                            {isFlowActive ? (
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 5,
+                                  padding: '3px 10px',
+                                  borderRadius: 12,
+                                  fontSize: '0.72rem',
+                                  fontWeight: 700,
+                                  background: '#dcfce7',
+                                  color: '#15803d',
+                                }}
+                              >
+                                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e' }} />
+                                Active
+                              </span>
+                            ) : (
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 5,
+                                  padding: '3px 10px',
+                                  borderRadius: 12,
+                                  fontSize: '0.72rem',
+                                  fontWeight: 700,
+                                  background: '#fef3c7',
+                                  color: '#b45309',
+                                }}
+                              >
+                                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#f59e0b' }} />
+                                Paused
+                              </span>
+                            )}
+                          </td>
+
                           <td style={{ color: '#5c5c80', fontSize: '0.8rem' }}>
                             {formatDate(flow.updated_at || flow.created_at)}
                           </td>
 
                           <td onClick={(e) => e.stopPropagation()} style={{ textAlign: 'right', paddingRight: 20 }}>
                             <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                              {/* Play / Pause Toggle Button */}
+                              <button
+                                className={`bm-row-action ${isFlowActive ? 'pause' : 'play'}`}
+                                title={isFlowActive ? 'Pause Bot' : 'Play / Resume Bot'}
+                                onClick={(e) => handleToggleFlow(flow, e)}
+                                style={
+                                  isFlowActive
+                                    ? { color: '#d97706', borderColor: '#fde68a', background: '#fffbeb' }
+                                    : { color: '#16a34a', borderColor: '#bbf7d0', background: '#f0fdf4' }
+                                }
+                              >
+                                {isFlowActive ? (
+                                  <Pause size={13} />
+                                ) : (
+                                  <Play size={13} fill="currentColor" />
+                                )}
+                              </button>
+
                               <button
                                 className="bm-row-action"
                                 title="Open Live Visual Builder"
@@ -1581,7 +1670,8 @@ export default function BotManagerPage() {
                             </div>
                           </td>
                         </tr>
-                      ))
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -1725,7 +1815,44 @@ export default function BotManagerPage() {
           {/* ═════════════════════════════════════════════════════════════════
               VIEW 4: DEFAULT FALLBACK VIEW FOR OTHER SUB-TABS
               ═════════════════════════════════════════════════════════════════ */}
-          {!['keywordReplies', 'messageTemplates'].includes(activeSubTab) && (activeCategory !== 'engagement' || activeSubTab !== 'commentAutomation') && activeCategory !== 'ai' && (
+          {/* User Input Flows — full list (create/open/rename/delete + a
+              "Reports" drill-down of submitted answers) lives right here in
+              Bot Manager → Automation now, not a separate page off the main
+              sidebar. The builder itself is still its own route
+              (/user-input-flows/:id/edit — a full canvas can't reasonably
+              live inside this tab), opened via the row's Open action. */}
+          {activeCategory === 'automation' && activeSubTab === 'userInputFlows' && (
+            <div className="bm-content-card">
+              <div className="bm-card-header">
+                <h3 className="bm-card-title">User Input Flows</h3>
+                <p className="bm-card-sub">
+                  Reusable question sequences for collecting subscriber data — run them from any bot flow
+                  on the same channel with a "Run User Input Flow" node.
+                </p>
+              </div>
+              <UserInputFlowManagerList />
+            </div>
+          )}
+
+          {/* Sequences — same pattern: full list management here, the
+              delivery report (sent / skipped-by-window / failed, with a
+              per-subscriber drill-down) right alongside it so a stuck
+              enrollment is diagnosable without a database query. */}
+          {activeCategory === 'automation' && activeSubTab === 'followUpSequences' && (
+            <div className="bm-content-card">
+              <div className="bm-card-header">
+                <h3 className="bm-card-title">Sequence Messages</h3>
+                <p className="bm-card-sub">
+                  Scheduled message series a subscriber is enrolled into over time — start or stop one from
+                  any bot flow with a "Start Sequence" / "Stop Sequence" action. Each channel's own
+                  messaging-window rules are respected automatically — a skipped send shows why below.
+                </p>
+              </div>
+              <SequenceMessageReport />
+            </div>
+          )}
+
+          {!['keywordReplies', 'messageTemplates'].includes(activeSubTab) && !(activeCategory === 'automation' && activeSubTab === 'userInputFlows') && !(activeCategory === 'automation' && activeSubTab === 'followUpSequences') && (activeCategory !== 'engagement' || activeSubTab !== 'commentAutomation') && activeCategory !== 'ai' && (
             <div className="bm-content-card">
               <div className="bm-card-header">
                 <h3 className="bm-card-title">{activeSubTab.replace(/([A-Z])/g, ' $1').trim()}</h3>
