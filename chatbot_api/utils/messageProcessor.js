@@ -2,9 +2,26 @@ import pool from "../db.js";
 import { sendPlatformMessage } from "./platformSender.js";
 import { emitToAgency, emitToConversation } from "./socket.js";
 import { logBotError, extractErrorMessage } from "./botLogger.js";
+import { assertLimit } from "./entitlements.js";
+import { broadcastAgentAlert } from "../services/notificationService.js";
 
 /**
- * Find or create a Contact in DB
+ * Find or create a Contact in DB.
+ *
+ * Subscriber-limit enforcement (max_subscribers, reseller-pool aware via
+ * utils/entitlements.js's assertLimit — the same engine every other limit in
+ * this app uses) only applies to a genuinely NEW contact, never to one
+ * already found — an existing subscriber can never be locked out of their
+ * own conversation. When a brand-new inbound message would push the agency
+ * over its limit, the contact and message are still always created and
+ * saved (a customer's first message is never dropped just because billing
+ * caught up with them — see routes/webhook.js/webchat.js, which still call
+ * saveMessage() right after this regardless), but the new contact is
+ * created already bot_paused — reusing the exact same flag every existing
+ * bot/AI check (flowEngine.js, this file's matchBotRules, aiReplyEngine.js)
+ * already honors — so only a human agent can reply until the agency
+ * upgrades. The agency is notified in real time via the existing
+ * agent:alert mechanism.
  */
 export async function findOrCreateContact(agencyId, platform, externalId, name, phone, avatar = null, platformProfile = null) {
   const [existingContact] = await pool.query(
@@ -46,22 +63,46 @@ export async function findOrCreateContact(agencyId, platform, externalId, name, 
     return contact;
   }
 
+  let overLimit = false;
+  try {
+    await assertLimit(agencyId, "max_subscribers", 1, null);
+  } catch {
+    overLimit = true;
+  }
+
   const [newContact] = await pool.query(
-    "INSERT INTO contacts (agency_id, platform, external_id, name, avatar, phone, platform_profile, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())",
-    [agencyId, platform, externalId, name || externalId, avatar || null, phone || null, platformProfile ? JSON.stringify(platformProfile) : null]
+    "INSERT INTO contacts (agency_id, platform, external_id, name, avatar, phone, platform_profile, bot_paused, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())",
+    [agencyId, platform, externalId, name || externalId, avatar || null, phone || null, platformProfile ? JSON.stringify(platformProfile) : null, overLimit ? 1 : 0]
   );
 
   const [createdContact] = await pool.query("SELECT * FROM contacts WHERE id = ?", [newContact.insertId]);
-  return createdContact[0];
+  const contact = createdContact[0];
+  contact._overLimit = overLimit; // non-persisted hint for findOrCreateConversation, below
+
+  if (overLimit) {
+    console.warn(`[Subscriber Limit] Agency ${agencyId} is over its subscriber limit — new contact ${contact.id} (${platform}) created with Bot/AI paused.`);
+    broadcastAgentAlert({
+      agencyId,
+      title: "Subscriber limit reached",
+      body: `${name || externalId} just messaged in, but you're at your plan's subscriber limit. Bot/AI replies are paused for them until you upgrade — a human agent can still reply.`,
+      eventType: "SUBSCRIBER_LIMIT_REACHED",
+      channel: platform,
+    }).catch(() => {}); // best-effort — must never block message ingestion
+  }
+
+  return contact;
 }
 
 
 /**
- * Find or create an open Conversation in DB
+ * Find or create an open Conversation in DB. `contactOverLimit` (pass
+ * `contact._overLimit` from findOrCreateContact, above) stamps a brand-new
+ * conversation as already bot_paused/OVER_LIMIT so the Live Inbox shows why
+ * — an existing conversation is never touched by this, only a new one.
  */
-export async function findOrCreateConversation(agencyId, contactId, integrationId, platform) {
+export async function findOrCreateConversation(agencyId, contactId, integrationId, platform, contactOverLimit = false) {
   const [existingConv] = await pool.query(
-    `SELECT * FROM conversations 
+    `SELECT * FROM conversations
      WHERE agency_id = ? AND contact_id = ? AND integration_id = ? AND status != 'RESOLVED'
      LIMIT 1`,
     [agencyId, contactId, integrationId]
@@ -70,18 +111,19 @@ export async function findOrCreateConversation(agencyId, contactId, integrationI
   if (existingConv.length) {
     const conversation = existingConv[0];
     await pool.query(
-      "UPDATE conversations SET unread_count = unread_count + 1, last_message_at = NOW() WHERE id = ?",
+      "UPDATE conversations SET unread_count = unread_count + 1, last_message_at = NOW(), last_inbound_at = NOW() WHERE id = ?",
       [conversation.id]
     );
     conversation.unread_count += 1;
     conversation.last_message_at = new Date();
+    conversation.last_inbound_at = new Date();
     return { conversation, isNew: false };
   }
 
   const [newConv] = await pool.query(
-    `INSERT INTO conversations (agency_id, contact_id, integration_id, status, unread_count, last_message_at, created_at) 
-     VALUES (?, ?, ?, 'OPEN', 1, NOW(), NOW())`,
-    [agencyId, contactId, integrationId]
+    `INSERT INTO conversations (agency_id, contact_id, integration_id, status, unread_count, last_message_at, last_inbound_at, bot_paused, pause_reason, created_at)
+     VALUES (?, ?, ?, 'OPEN', 1, NOW(), NOW(), ?, ?, NOW())`,
+    [agencyId, contactId, integrationId, contactOverLimit ? 1 : 0, contactOverLimit ? "OVER_LIMIT" : null]
   );
 
   const [createdConv] = await pool.query("SELECT * FROM conversations WHERE id = ?", [newConv.insertId]);

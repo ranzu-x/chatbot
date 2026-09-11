@@ -12,7 +12,7 @@ import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { emitToAgency } from "../utils/socket.js";
 
 const router = express.Router();
-router.use(authMiddleware, roleMiddleware("AGENCY", "ADMIN", "AGENT"));
+router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
 
 function slugify(name) {
   return String(name || "")

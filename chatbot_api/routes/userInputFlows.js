@@ -13,7 +13,7 @@ import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 
 const router = express.Router();
-router.use(authMiddleware, roleMiddleware("AGENCY", "ADMIN", "AGENT"));
+router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
 
 // ── LIST ──────────────────────────────────────────────────────────
 // A User Input Flow is locked to the channel it was created for (set once,

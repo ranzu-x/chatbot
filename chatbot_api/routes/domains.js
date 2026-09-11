@@ -8,7 +8,7 @@ import { roleMiddleware } from "../middleware/roleMiddleware.js";
 const router = express.Router();
 
 // ─── GET CURRENT AGENCY DOMAIN & WHITE-LABEL CONFIG ──────────────────────────
-router.get("/agency/domain", authMiddleware, roleMiddleware("AGENCY", "ADMIN"), async (req, res) => {
+router.get("/agency/domain", authMiddleware, roleMiddleware("RESELLER", "ADMIN"), async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
     const [rows] = await pool.query(
@@ -59,7 +59,7 @@ router.get("/agency/domain", authMiddleware, roleMiddleware("AGENCY", "ADMIN"), 
 });
 
 // ─── UPDATE AGENCY DOMAIN & WHITE-LABEL CONFIG ───────────────────────────────
-router.put("/agency/domain", authMiddleware, roleMiddleware("AGENCY", "ADMIN"), async (req, res) => {
+router.put("/agency/domain", authMiddleware, roleMiddleware("RESELLER", "ADMIN"), async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
     const {
@@ -128,7 +128,7 @@ router.put("/agency/domain", authMiddleware, roleMiddleware("AGENCY", "ADMIN"), 
 });
 
 // ─── VERIFY CUSTOM DOMAIN DNS ────────────────────────────────────────────────
-router.post("/agency/domain/verify", authMiddleware, roleMiddleware("AGENCY", "ADMIN"), async (req, res) => {
+router.post("/agency/domain/verify", authMiddleware, roleMiddleware("RESELLER", "ADMIN"), async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
     const [rows] = await pool.query("SELECT custom_domain FROM agencies WHERE id = ?", [agencyId]);

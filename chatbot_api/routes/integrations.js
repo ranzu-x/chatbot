@@ -2,10 +2,44 @@ import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
+import { resolveMetaAppSettings } from "../utils/appCredentials.js";
 
 const router = express.Router();
 
-router.use(authMiddleware, roleMiddleware("AGENCY", "ADMIN"));
+// Scoped to this router's own path — an unscoped router.use(mw) here would
+// run for EVERY /api/v1/* request that reaches this router in Express's
+// middleware chain (not just this file's own routes), silently blocking
+// every router mounted after it in index.js for any role other than
+// AGENCY/ADMIN. Confirmed this exact bug in routes/channels.js (fixed
+// alongside this one) — was blocking AGENT from ~35 unrelated routers'
+// worth of endpoints (Subscribers, Appointments, Team Members, Flows,
+// Canned Responses, etc.), even ones that explicitly allow AGENT in their
+// own role checks.
+//
+// USER is included here too — ConnectAccountsPage.jsx's hub view is backed
+// by GET /integrations (this is the "Connect Account" listing team members
+// now have nav access to, mirrored in routes/channels.js). See
+// stripSecrets() below: raw access_token/verify_token columns are redacted
+// out of the response for a USER-role requester before it goes out.
+router.use("/integrations", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
+
+// Same redaction as routes/channels.js's stripSecrets() — kept as a
+// separate small copy rather than a shared import so this file's role gate
+// can evolve independently without silently changing channels.js's
+// behavior (and vice versa).
+const SECRET_FIELDS = ["access_token", "user_access_token", "verify_token", "bot_token"];
+function stripSecrets(rowOrRows, req) {
+  if (req.user?.role !== "USER") return rowOrRows;
+  const redact = (row) => {
+    if (!row || typeof row !== "object") return row;
+    const copy = { ...row };
+    for (const field of SECRET_FIELDS) {
+      if (field in copy) copy[field] = undefined;
+    }
+    return copy;
+  };
+  return Array.isArray(rowOrRows) ? rowOrRows.map(redact) : redact(rowOrRows);
+}
 
 // ─── GET ALL INTEGRATIONS ─────────────────────────────────────────────────────
 router.get("/integrations", async (req, res) => {
@@ -28,12 +62,9 @@ router.get("/integrations", async (req, res) => {
       // Get agency-level system token as fallback
       let systemToken = null;
       try {
-        const [appRows] = await pool.query(
-          "SELECT system_user_token FROM meta_app_settings WHERE agency_id = ? AND is_configured = 1 LIMIT 1",
-          [req.user.agencyId]
-        );
-        if (appRows[0]?.system_user_token?.startsWith('EAA')) {
-          systemToken = appRows[0].system_user_token;
+        const appSettings = await resolveMetaAppSettings(req.user.agencyId);
+        if (appSettings?.system_user_token?.startsWith('EAA')) {
+          systemToken = appSettings.system_user_token;
         }
       } catch (_) {}
 
@@ -59,7 +90,7 @@ router.get("/integrations", async (req, res) => {
       }));
     }
 
-    return res.json({ success: true, integrations });
+    return res.json({ success: true, integrations: stripSecrets(integrations, req) });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: "Server error" });

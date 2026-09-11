@@ -153,7 +153,7 @@ export function NotificationProvider({ children }) {
               width: 36,
               height: 36,
               borderRadius: 10,
-              background: activeAlert.eventType === 'HANDOVER_REQUEST' ? '#dc2626' : (activeAlert.eventType === 'ORDER_PAID' ? '#16a34a' : '#2563eb'),
+              background: activeAlert.eventType === 'HANDOVER_REQUEST' ? '#dc2626' : (activeAlert.eventType === 'ORDER_PAID' ? '#16a34a' : (activeAlert.eventType === 'SUBSCRIBER_LIMIT_REACHED' ? '#f59e0b' : '#2563eb')),
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -164,6 +164,8 @@ export function NotificationProvider({ children }) {
               <Shield size={18} />
             ) : activeAlert.eventType === 'ORDER_PAID' ? (
               <CreditCard size={18} />
+            ) : activeAlert.eventType === 'SUBSCRIBER_LIMIT_REACHED' ? (
+              <AlertCircle size={18} />
             ) : (
               <MessageSquare size={18} />
             )}

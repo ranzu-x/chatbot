@@ -5,7 +5,7 @@ import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { executeCampaign } from "../utils/campaignRunner.js";
 
 const router = express.Router();
-router.use(authMiddleware, roleMiddleware("AGENCY", "ADMIN", "AGENT"));
+router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
 
 // ─── LIST CAMPAIGNS ───────────────────────────────────────────────────────────
 router.get("/campaigns", async (req, res) => {

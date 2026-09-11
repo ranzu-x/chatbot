@@ -29,7 +29,6 @@ import domainRoutes from "./routes/domains.js";
 import commentRoutes from "./routes/comments.js";
 import packageRoutes from "./routes/packages.js";
 import billingRoutes from "./routes/billing.js";
-import aiRoutes from "./routes/ai.js";
 import flowWebhookRoutes from "./routes/flowWebhooks.js";
 import chatPaymentRoutes from "./routes/chatPayments.js";
 import notificationRoutes from "./routes/notifications.js";
@@ -40,9 +39,20 @@ import slotRoutes from "./routes/slots.js";
 import labelsRoutes from "./routes/labels.js";
 import mediaRoutes from "./routes/media.js";
 import agencyPaymentGatewayRoutes from "./routes/agencyPaymentGateways.js";
+import aiProviderRoutes from "./routes/aiProviders.js";
+import aiAgentRoutes from "./routes/aiAgents.js";
+import aiReplySettingsRoutes from "./routes/aiReplySettings.js";
+import aiKnowledgeRoutes from "./routes/aiKnowledge.js";
 import customFieldRoutes from "./routes/customFields.js";
 import userInputFlowRoutes from "./routes/userInputFlows.js";
 import googleSheetsRoutes from "./routes/googleSheets.js";
+import followupRoutes from "./routes/followups.js";
+import whatsappFlowRefRoutes from "./routes/whatsappFlowRefs.js";
+import aiRewriteRoutes from "./routes/aiRewrite.js";
+import roleRoutes from "./routes/roles.js";
+import resellerCustomerRoutes from "./routes/resellerCustomers.js";
+import agencyPackageRoutes from "./routes/agencyPackages.js";
+import platformSettingsRoutes from "./routes/platformSettings.js";
 
 import http from "http";
 import { initSocket } from "./utils/socket.js";
@@ -50,6 +60,8 @@ import { startSequenceScheduler } from "./utils/sequenceRunner.js";
 import { startTelegramPoller } from "./utils/telegramPoller.js";
 import { initBotErrorLogsTable } from "./utils/botLogger.js";
 import { startSocialPostScheduler } from "./utils/socialPostScheduler.js";
+import { startFlowDelayScheduler } from "./utils/flowDelayScheduler.js";
+import { startBotResumeScheduler } from "./utils/botResumeScheduler.js";
 
 dotenv.config();
 
@@ -62,6 +74,8 @@ initSocket(server, process.env.FRONTEND_URL || "http://localhost:5173");
 startSequenceScheduler();
 startTelegramPoller();
 startSocialPostScheduler();
+startFlowDelayScheduler();
+startBotResumeScheduler();
 
 // ─── Middleware ────────────────────────────────────────────────────────────────
 app.use(
@@ -72,7 +86,7 @@ app.use(
 app.use(compression());
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
-app.use(cors({
+const corsAppDashboard = cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (mobile apps, curl, etc.)
     if (!origin) return callback(null, true);
@@ -98,7 +112,18 @@ app.use(cors({
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
-}));
+});
+// The Webchat widget (public/widget.js) is embedded on arbitrary third-party
+// sites an agency's customers choose — it can never be known ahead of time,
+// so it can't go through the dashboard's fixed origin allowlist above. Those
+// two endpoints are already scoped/secured by widgetKey + agency_id (see
+// routes/webchat.js), not by origin trust, so any origin is safe to allow
+// here without loosening the dashboard's own CORS policy at all.
+const corsWebchatWidget = cors({ origin: true, credentials: false });
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/v1/webchat')) return corsWebchatWidget(req, res, next);
+  return corsAppDashboard(req, res, next);
+});
 app.use(cookieParser());
 app.use(
   "/uploads",
@@ -148,7 +173,6 @@ app.use("/api/v1", domainRoutes);
 app.use("/api/v1", commentRoutes);
 app.use("/api/v1", packageRoutes);
 app.use("/api/v1", billingRoutes);
-app.use("/api/v1", aiRoutes);
 app.use("/api/v1", flowWebhookRoutes);
 app.use("/api/v1", chatPaymentRoutes);
 app.use("/api/v1", notificationRoutes);
@@ -158,9 +182,20 @@ app.use("/api/v1", appointmentRoutes);
 app.use("/api/v1", slotRoutes);
 app.use("/api/v1", labelsRoutes);
 app.use("/api/v1", agencyPaymentGatewayRoutes);
+app.use("/api/v1", aiProviderRoutes);
+app.use("/api/v1", aiAgentRoutes);
+app.use("/api/v1", aiReplySettingsRoutes);
+app.use("/api/v1", aiKnowledgeRoutes);
 app.use("/api/v1", customFieldRoutes);
 app.use("/api/v1", userInputFlowRoutes);
 app.use("/api/v1", googleSheetsRoutes);
+app.use("/api/v1", followupRoutes);
+app.use("/api/v1", whatsappFlowRefRoutes);
+app.use("/api/v1", aiRewriteRoutes);
+app.use("/api/v1", roleRoutes);
+app.use("/api/v1", resellerCustomerRoutes);
+app.use("/api/v1", agencyPackageRoutes);
+app.use("/api/v1", platformSettingsRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {

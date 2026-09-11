@@ -3,9 +3,14 @@ import crypto from "crypto";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
+import { resolveTikTokAppSettings } from "../utils/appCredentials.js";
 
 const router = express.Router();
-router.use(authMiddleware, roleMiddleware("AGENCY", "ADMIN"));
+// Scoped to "/settings/tiktok-app" — an unscoped router.use(mw) would run
+// for every /api/v1/* request reaching this router, silently blocking every
+// later-mounted router for non-AGENCY/ADMIN roles. See the identical fix +
+// full explanation in routes/channels.js.
+router.use("/settings/tiktok-app", authMiddleware, roleMiddleware("RESELLER", "ADMIN"));
 
 async function resolveAgencyId(req) {
   if (req.user?.agencyId) return Number(req.user.agencyId);
@@ -123,18 +128,21 @@ router.post("/settings/tiktok-app/test", async (req, res) => {
 });
 
 // ─── GET CLIENT KEY (PUBLIC/AGENCY FOR OAUTH) ─────────────────────
+// Same inheritance as Meta's app-id endpoint — a Reseller's own customer
+// connecting TikTok sees the Reseller's app (or the Platform's, if neither
+// has configured one), not a dead end.
 router.get("/settings/tiktok-app/client-key", async (req, res) => {
   const agencyId = await resolveAgencyId(req);
   try {
-    const [rows] = await pool.query("SELECT client_key, redirect_uri, is_configured FROM tiktok_app_settings WHERE agency_id = ? AND is_active = 1", [agencyId]);
-    if (!rows.length || !rows[0].client_key) {
+    const appSettings = await resolveTikTokAppSettings(agencyId);
+    if (!appSettings?.client_key) {
       return res.json({ success: false, clientKey: null, message: "TikTok App not configured" });
     }
     return res.json({
       success: true,
-      clientKey: rows[0].client_key,
-      redirectUri: rows[0].redirect_uri,
-      isConfigured: Boolean(rows[0].is_configured),
+      clientKey: appSettings.client_key,
+      redirectUri: appSettings.redirect_uri,
+      isConfigured: Boolean(appSettings.is_configured),
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });

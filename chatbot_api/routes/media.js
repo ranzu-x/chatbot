@@ -1,79 +1,28 @@
 import express from "express";
 import pool from "../db.js";
-import axios from "axios";
+import { fetchMessageMediaBytes } from "../utils/mediaFetcher.js";
 
 const router = express.Router();
 
 /**
  * GET /media/whatsapp/:messageId
  * Streams incoming WhatsApp media (images, videos, audio, documents) securely without saving files on disk.
- * Automatically refreshes temporary lookaside URLs from Meta Graph API if expired.
+ * Automatically refreshes temporary lookaside URLs from Meta Graph API if expired — the fetch-with-refresh
+ * logic itself lives in utils/mediaFetcher.js, shared with the AI Reply vision fallback (Phase 6).
  */
 router.get("/media/whatsapp/:messageId", async (req, res) => {
   try {
     const { messageId } = req.params;
 
-    const [rows] = await pool.query(`
-      SELECT m.*, cv.integration_id, i.access_token, i.platform 
-      FROM messages m 
-      JOIN conversations cv ON cv.id = m.conversation_id 
-      JOIN integrations i ON i.id = cv.integration_id 
-      WHERE m.id = ?
-    `, [messageId]);
-
+    const [rows] = await pool.query("SELECT media_url FROM messages WHERE id = ?", [messageId]);
     if (!rows.length || !rows[0].media_url) {
       return res.status(404).json({ success: false, message: "Media not found" });
     }
-
-    const row = rows[0];
-    let targetUrl = row.media_url;
-    const token = row.access_token;
-
-    // If already a local file path in /uploads/
-    if (targetUrl.startsWith("/uploads/")) {
-      return res.redirect(targetUrl);
+    if (rows[0].media_url.startsWith("/uploads/")) {
+      return res.redirect(rows[0].media_url);
     }
 
-    // Helper to fetch from Meta
-    const fetchFromMeta = async (url) => {
-      const resp = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!resp.ok) {
-        const err = new Error(`HTTP ${resp.status}`);
-        err.status = resp.status;
-        throw err;
-      }
-      const mime = resp.headers.get("content-type") || "image/jpeg";
-      const buffer = await resp.arrayBuffer();
-      return { buffer: Buffer.from(buffer), mime };
-    };
-
-    let mediaData = null;
-    try {
-      mediaData = await fetchFromMeta(targetUrl);
-    } catch (err) {
-      // If 401 / 403 or error, attempt automatic refresh from Meta Graph API
-      const midMatch = targetUrl.match(/mid=([0-9]+)/);
-      if (midMatch && token) {
-        const mediaId = midMatch[1];
-        try {
-          const metaResp = await fetch(`https://graph.facebook.com/v21.0/${mediaId}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          const metaData = await metaResp.json();
-
-          if (metaData.url) {
-            targetUrl = metaData.url;
-            await pool.query("UPDATE messages SET media_url = ? WHERE id = ?", [targetUrl, messageId]);
-            mediaData = await fetchFromMeta(targetUrl);
-          }
-        } catch (refreshErr) {
-          console.error(`[WhatsApp Media Proxy] Failed to refresh media ID ${mediaId}:`, refreshErr.message);
-        }
-      }
-    }
-
+    const mediaData = await fetchMessageMediaBytes(Number(messageId));
     if (!mediaData || !mediaData.buffer) {
       return res.status(404).send("Unable to retrieve media from Meta");
     }

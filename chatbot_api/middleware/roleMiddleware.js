@@ -1,6 +1,6 @@
 /**
  * Role-based access control middleware.
- * Usage: roleMiddleware("ADMIN") or roleMiddleware("ADMIN", "AGENCY")
+ * Usage: roleMiddleware("ADMIN") or roleMiddleware("ADMIN", "RESELLER")
  */
 export const roleMiddleware = (...allowedRoles) => {
   return (req, res, next) => {

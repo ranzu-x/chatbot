@@ -180,7 +180,7 @@ export default function TikTokAppPage({ embedded = false }) {
               </span>
             </div>
 
-            <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <form onSubmit={handleSave} autoComplete="off" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               <div>
                 <label className="form-label" style={{ fontWeight: 700, fontSize: '0.82rem' }}>App Name *</label>
                 <input
@@ -190,6 +190,9 @@ export default function TikTokAppPage({ embedded = false }) {
                   placeholder="e.g. My Chatbot TikTok App"
                   value={form.appName}
                   onChange={(e) => setForm({ ...form, appName: e.target.value })}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  spellCheck="false"
                 />
               </div>
 
@@ -202,6 +205,9 @@ export default function TikTokAppPage({ embedded = false }) {
                   placeholder="e.g. awxxxxxxxxxxxxxx"
                   value={form.clientKey}
                   onChange={(e) => setForm({ ...form, clientKey: e.target.value })}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  spellCheck="false"
                 />
                 <span style={{ fontSize: '0.72rem', color: '#64748b' }}>Found in your TikTok Developer Portal App Overview.</span>
               </div>
@@ -224,6 +230,11 @@ export default function TikTokAppPage({ embedded = false }) {
                   placeholder="e.g. 1a2b3c4d5e6f7g8h9i0j..."
                   value={form.clientSecret}
                   onChange={(e) => setForm({ ...form, clientSecret: e.target.value })}
+                  autoComplete="new-password"
+                  autoCorrect="off"
+                  spellCheck="false"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
                 />
               </div>
 
@@ -245,6 +256,7 @@ export default function TikTokAppPage({ embedded = false }) {
                     readOnly
                     className="form-input w-full font-mono text-sm bg-slate-50"
                     value={form.verifyToken}
+                    autoComplete="off"
                   />
                   <button
                     type="button"

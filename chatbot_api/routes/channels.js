@@ -3,9 +3,47 @@ import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { assertModuleAccess, assertLimit } from "../utils/entitlements.js";
+import { buildDeepLink } from "../utils/deepLinkBuilder.js";
+import { resolveMetaAppSettings } from "../utils/appCredentials.js";
 
 const router = express.Router();
-router.use(authMiddleware, roleMiddleware("AGENCY", "ADMIN"));
+// Scoped to "/channels" — an unscoped router.use(mw) here runs for EVERY
+// /api/v1/* request that reaches this router in Express's middleware chain,
+// not just this file's own routes, which silently blocked every router
+// mounted after this one in index.js (~35 files: Subscribers, Appointments,
+// Team Members, Flows, Canned Responses, and more) for any role other than
+// AGENCY/ADMIN — including AGENT, even on routes that explicitly allow
+// AGENT in their own role checks. See the same fix in routes/integrations.js.
+//
+// USER (a workspace's team member) is included here — the "Connect Account"
+// nav item is available to them — but see stripSecrets() below: several of
+// this file's GET endpoints do `SELECT * FROM integrations`/`telegram_bots`,
+// which includes live access_token/verify_token/bot_token columns. Those
+// are redacted before the response reaches a non-owner (USER) role so a
+// team member can see and manage connected accounts without being able to
+// read the workspace's raw API credentials off the network tab.
+router.use("/channels", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
+
+// Strips live credential fields (access_token, user_access_token,
+// verify_token, bot_token) from integrations/telegram_bots rows before they
+// reach a USER-role requester. RESELLER/ADMIN (workspace owners) still see
+// the full row — they're the ones who configured these credentials in the
+// first place. Accepts a single row or an array; always returns a shallow
+// copy so callers never accidentally mutate rows still needed elsewhere
+// (e.g. for an outbound Graph API call using the very token being stripped).
+const SECRET_FIELDS = ["access_token", "user_access_token", "verify_token", "bot_token"];
+function stripSecrets(rowOrRows, req) {
+  if (req.user?.role !== "USER") return rowOrRows;
+  const redact = (row) => {
+    if (!row || typeof row !== "object") return row;
+    const copy = { ...row };
+    for (const field of SECRET_FIELDS) {
+      if (field in copy) copy[field] = undefined;
+    }
+    return copy;
+  };
+  return Array.isArray(rowOrRows) ? rowOrRows.map(redact) : redact(rowOrRows);
+}
 
 // Helper to resolve agencyId cleanly for both AGENCY owners and ADMIN users.
 // SECURITY: Only looks up agency owned by the current user — never picks up
@@ -78,7 +116,7 @@ router.get("/channels/whatsapp", async (req, res) => {
 
     await Promise.allSettled(backfillPromises);
 
-    return res.json({ success: true, accounts: rows });
+    return res.json({ success: true, accounts: stripSecrets(rows, req) });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
@@ -93,12 +131,9 @@ router.post("/channels/whatsapp", async (req, res) => {
 
     let accessToken = inputToken?.trim() || null;
     if (!accessToken) {
-      const [appRows] = await pool.query(
-        "SELECT system_user_token FROM meta_app_settings WHERE agency_id = ? AND is_configured = 1 LIMIT 1",
-        [agencyId]
-      );
-      if (appRows.length && appRows[0].system_user_token) {
-        accessToken = appRows[0].system_user_token.trim();
+      const appSettings = await resolveMetaAppSettings(agencyId);
+      if (appSettings?.system_user_token) {
+        accessToken = appSettings.system_user_token.trim();
       }
     }
     if (!accessToken) {
@@ -154,12 +189,9 @@ router.post("/channels/whatsapp/:id/register", async (req, res) => {
     } else if (isValidMetaToken(integration.access_token)) {
       accessToken = integration.access_token.trim();
     } else {
-      const [appRows] = await pool.query(
-        "SELECT system_user_token FROM meta_app_settings WHERE agency_id = ? AND is_configured = 1 LIMIT 1",
-        [agencyId]
-      );
-      if (isValidMetaToken(appRows[0]?.system_user_token)) {
-        accessToken = appRows[0].system_user_token.trim();
+      const appSettings = await resolveMetaAppSettings(agencyId);
+      if (isValidMetaToken(appSettings?.system_user_token)) {
+        accessToken = appSettings.system_user_token.trim();
         await pool.query("UPDATE integrations SET access_token = ? WHERE id = ?", [accessToken, integration.id]);
       }
     }
@@ -231,16 +263,15 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
     await assertModuleAccess(agencyId, "channel_whatsapp");
     await assertLimit(agencyId, "max_bot_accounts");
 
-    // 1. Fetch Meta App credentials for this agency
-    const [appRows] = await pool.query(
-      "SELECT app_id, app_secret, system_user_token, verify_token FROM meta_app_settings WHERE agency_id = ? AND is_configured = 1 LIMIT 1",
-      [agencyId]
-    );
+    // 1. Fetch Meta App credentials — this agency's own if configured,
+    // otherwise its parent Reseller's, otherwise the Platform's (Super
+    // Admin's) app. See utils/appCredentials.js.
+    const appSettings = await resolveMetaAppSettings(agencyId);
 
     let accessToken = isValidMetaToken(clientAccessToken) ? clientAccessToken.trim() : null;
-    let appId = appRows[0]?.app_id || process.env.META_APP_ID;
-    let appSecret = appRows[0]?.app_secret || process.env.META_APP_SECRET;
-    let verifyToken = appRows[0]?.verify_token || "nexa_meta_verify_token";
+    let appId = appSettings?.app_id || process.env.META_APP_ID;
+    let appSecret = appSettings?.app_secret || process.env.META_APP_SECRET;
+    let verifyToken = appSettings?.verify_token || "nexa_meta_verify_token";
 
     // 2. Exchange authorization code for permanent/long-lived access token if code provided
     if (code && appId && appSecret) {
@@ -259,8 +290,8 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
       }
     }
 
-    if (!accessToken && isValidMetaToken(appRows[0]?.system_user_token)) {
-      accessToken = appRows[0].system_user_token.trim();
+    if (!accessToken && isValidMetaToken(appSettings?.system_user_token)) {
+      accessToken = appSettings.system_user_token.trim();
     }
 
     // Save valid token to meta_app_settings for workspace reuse
@@ -478,7 +509,7 @@ router.get("/channels/facebook", async (req, res) => {
       "SELECT * FROM integrations WHERE agency_id = ? AND platform = 'FACEBOOK' ORDER BY created_at DESC",
       [req.agencyId]
     );
-    return res.json({ success: true, pages: rows });
+    return res.json({ success: true, pages: stripSecrets(rows, req) });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
@@ -495,13 +526,10 @@ router.post("/channels/facebook", async (req, res) => {
     let finalAccessToken = accessToken;
     let finalUserToken = userAccessToken || null;
     try {
-      const [appRows] = await pool.query(
-        "SELECT app_id, app_secret FROM meta_app_settings WHERE agency_id = ? AND is_configured = 1 LIMIT 1",
-        [req.agencyId]
-      );
-      if (appRows.length && appRows[0].app_id && appRows[0].app_secret) {
-        const { app_id, app_secret } = appRows[0];
-        
+      const appSettings = await resolveMetaAppSettings(req.agencyId);
+      if (appSettings?.app_id && appSettings?.app_secret) {
+        const { app_id, app_secret } = appSettings;
+
         // 1. Exchange token for long-lived user token
         const exchangeUrl = `https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${app_id}&client_secret=${app_secret}&fb_exchange_token=${userAccessToken || accessToken}`;
         const exRes = await fetch(exchangeUrl);
@@ -580,14 +608,15 @@ router.post("/channels/facebook/quick-connect", async (req, res) => {
     await assertModuleAccess(agencyId, "channel_facebook");
     await assertLimit(agencyId, "max_bot_accounts");
 
-    const [settings] = await pool.query(
-      "SELECT app_id, app_secret FROM meta_app_settings WHERE agency_id = ? OR is_configured = 1 LIMIT 1",
-      [agencyId]
-    );
+    // Was "WHERE agency_id = ? OR is_configured = 1" — due to SQL operator
+    // precedence that matched ANY configured agency's row, not necessarily
+    // this caller's own, a real cross-tenant credential leak. Fixed via the
+    // shared resolver (own app -> parent Reseller's -> Platform's).
+    const appSettings = await resolveMetaAppSettings(agencyId);
 
     let effectiveToken = token.trim();
-    if (settings.length && settings[0].app_id && settings[0].app_secret) {
-      const { app_id, app_secret } = settings[0];
+    if (appSettings?.app_id && appSettings?.app_secret) {
+      const { app_id, app_secret } = appSettings;
       try {
         const exchangeUrl = `https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${app_id}&client_secret=${app_secret}&fb_exchange_token=${effectiveToken}`;
         const exRes = await fetch(exchangeUrl);
@@ -883,13 +912,12 @@ router.post("/channels/facebook/import-pages", async (req, res) => {
     let appSecret = null;
     let appId = null;
     try {
-      const [settings] = await pool.query(
-        "SELECT app_id, app_secret FROM meta_app_settings WHERE agency_id = ? OR is_configured = 1 LIMIT 1",
-        [agencyId]
-      );
-      if (settings.length) {
-        appId = settings[0].app_id;
-        appSecret = settings[0].app_secret;
+      // Was "WHERE agency_id = ? OR is_configured = 1" — same cross-tenant
+      // leak as Quick Connect above, fixed via the shared resolver.
+      const appSettings = await resolveMetaAppSettings(agencyId);
+      if (appSettings) {
+        appId = appSettings.app_id;
+        appSecret = appSettings.app_secret;
       }
     } catch (e) {
       console.error('[FB import-pages] error fetching app settings:', e.message || e);
@@ -1020,7 +1048,7 @@ router.get("/channels/instagram", async (req, res) => {
       "SELECT * FROM integrations WHERE agency_id = ? AND platform = 'INSTAGRAM' ORDER BY created_at DESC",
       [req.agencyId]
     );
-    return res.json({ success: true, accounts: rows });
+    return res.json({ success: true, accounts: stripSecrets(rows, req) });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
@@ -1088,13 +1116,10 @@ router.post("/channels/instagram/quick-connect", async (req, res) => {
     // 1. Fetch Meta App Credentials to auto-upgrade to long-lived token
     let appId = null, appSecret = null;
     try {
-      const [appRows] = await pool.query(
-        "SELECT app_id, app_secret FROM meta_app_settings WHERE agency_id = ? AND is_configured = 1 LIMIT 1",
-        [agencyId]
-      );
-      if (appRows.length && appRows[0].app_id && appRows[0].app_secret) {
-        appId = appRows[0].app_id;
-        appSecret = appRows[0].app_secret;
+      const appSettings = await resolveMetaAppSettings(agencyId);
+      if (appSettings?.app_id && appSettings?.app_secret) {
+        appId = appSettings.app_id;
+        appSecret = appSettings.app_secret;
       }
     } catch (_) {}
 
@@ -1306,7 +1331,7 @@ router.get("/channels/telegram", async (req, res) => {
       "SELECT * FROM telegram_bots WHERE agency_id = ? ORDER BY created_at DESC",
       [req.agencyId]
     );
-    return res.json({ success: true, bots: rows });
+    return res.json({ success: true, bots: stripSecrets(rows, req) });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
@@ -1443,7 +1468,7 @@ router.get("/channels/tiktok", async (req, res) => {
       "SELECT * FROM integrations WHERE agency_id = ? AND platform = 'TIKTOK' ORDER BY created_at DESC",
       [req.agencyId]
     );
-    return res.json({ success: true, accounts: rows });
+    return res.json({ success: true, accounts: stripSecrets(rows, req) });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
@@ -1497,45 +1522,191 @@ router.delete("/channels/tiktok/:id", async (req, res) => {
 
 router.get("/channels/webchat", async (req, res) => {
   try {
+    // For DEEPLINK widgets, `integration_id` points at an EXISTING WhatsApp/
+    // Facebook/Telegram/Instagram account (not one this widget owns) — join
+    // its identifying fields + computed deep link so the list can show what
+    // the widget actually opens without a second round-trip per row.
     const [rows] = await pool.query(
-      "SELECT * FROM webchat_widgets WHERE agency_id = ? ORDER BY created_at DESC",
+      `SELECT w.*, i.platform AS target_integration_platform, i.name AS target_integration_name,
+              i.wa_display_phone, i.fb_page_id, i.ig_username, tb.bot_username AS tg_bot_username
+       FROM webchat_widgets w
+       LEFT JOIN integrations i ON i.id = w.integration_id
+       LEFT JOIN telegram_bots tb ON tb.integration_id = i.id
+       WHERE w.agency_id = ?
+       ORDER BY w.created_at DESC`,
       [req.agencyId]
     );
-    return res.json({ success: true, widgets: rows });
+    const widgets = rows.map((w) => ({
+      ...w,
+      deepLink: w.widget_type === "DEEPLINK" ? buildDeepLink(
+        { platform: w.target_integration_platform, wa_display_phone: w.wa_display_phone, fb_page_id: w.fb_page_id, ig_username: w.ig_username, tg_bot_username: w.tg_bot_username },
+        { prefillMessage: w.prefill_message }
+      ) : null,
+    }));
+    return res.json({ success: true, widgets });
+  } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
+});
+
+// Looks up the widget linked to a given reply Flow — used by the Flow
+// Builder's "Widget Appearance" panel to know whether the flow currently
+// being edited is a Chat Widget's reply flow (and if so, load its
+// appearance fields alongside the flow's own nodes/edges).
+router.get("/channels/webchat/by-flow/:flowId", async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT * FROM webchat_widgets WHERE flow_id = ? AND agency_id = ? LIMIT 1",
+      [req.params.flowId, req.agencyId]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, message: "No widget linked to this flow" });
+    return res.json({ success: true, widget: rows[0] });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
 router.post("/channels/webchat", async (req, res) => {
-  const { name, primaryColor, greetingMessage, placeholderText, allowedDomains } = req.body;
+  const {
+    name, primaryColor, greetingMessage, placeholderText, allowedDomains,
+    flowId, logoUrl, displayName, headerBgColor, headerTextColor, prefillMessage,
+    position, openOnStartup, offsetX, offsetY, buttonText, buttonBgColor, buttonTextColor, buttonSize,
+    widgetType, integrationId, // DEEPLINK-only: which EXISTING account to link to
+  } = req.body;
   if (!name) return res.status(400).json({ success: false, message: "Widget name is required" });
+
+  const isDeepLink = (widgetType || "WEBCHAT").toUpperCase() === "DEEPLINK";
+
   try {
-    // Create integration record
-    const [integ] = await pool.query(
-      "INSERT INTO integrations (agency_id, platform, name, is_active) VALUES (?, 'WEBCHAT', ?, 1)",
-      [req.agencyId, name]
-    );
+    let targetIntegrationId;
+    let targetPlatform = null;
+
+    if (isDeepLink) {
+      // Deep-link widgets don't own a channel — they point at one the
+      // agency already connected (WhatsApp/Facebook/Telegram/Instagram).
+      if (!integrationId) {
+        return res.status(400).json({ success: false, message: "Select which connected account this widget links to" });
+      }
+      const [[integ]] = await pool.query(
+        "SELECT id, platform FROM integrations WHERE id = ? AND agency_id = ?",
+        [integrationId, req.agencyId]
+      );
+      if (!integ) return res.status(404).json({ success: false, message: "Connected account not found" });
+      if (!["WHATSAPP", "FACEBOOK", "TELEGRAM", "INSTAGRAM"].includes((integ.platform || "").toUpperCase())) {
+        return res.status(400).json({ success: false, message: "This channel doesn't support a deep-link chat widget" });
+      }
+      targetIntegrationId = integ.id;
+      targetPlatform = integ.platform.toUpperCase();
+    } else {
+      // WEBCHAT — unchanged: each widget gets its own dedicated integration.
+      const [integ] = await pool.query(
+        "INSERT INTO integrations (agency_id, platform, name, is_active) VALUES (?, 'WEBCHAT', ?, 1)",
+        [req.agencyId, name]
+      );
+      targetIntegrationId = integ.insertId;
+    }
 
     const widgetKey = `wc_${req.agencyId}_${Date.now()}`;
-    await pool.query(
-      `INSERT INTO webchat_widgets (agency_id, integration_id, name, widget_key, primary_color, greeting_message, placeholder_text, allowed_domains)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [req.agencyId, integ.insertId, name, widgetKey,
-        primaryColor || "#6366f1", greetingMessage || "Hello! How can we help you today?",
-        placeholderText || "Type a message…", allowedDomains || null]
+    const [result] = await pool.query(
+      `INSERT INTO webchat_widgets (
+        agency_id, widget_type, target_platform, integration_id, flow_id, name, widget_key, primary_color,
+        logo_url, display_name, header_bg_color, header_text_color,
+        greeting_message, placeholder_text, prefill_message, allowed_domains,
+        position, open_on_startup, offset_x, offset_y,
+        button_text, button_bg_color, button_text_color, button_size
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        req.agencyId, isDeepLink ? "DEEPLINK" : "WEBCHAT", targetPlatform, targetIntegrationId,
+        isDeepLink ? null : (flowId || null), name, widgetKey,
+        primaryColor || "#6366f1",
+        logoUrl || null, displayName || name, headerBgColor || primaryColor || "#6366f1", headerTextColor || "#ffffff",
+        greetingMessage || "Hello! How can we help you today?",
+        placeholderText || "Type a message…", prefillMessage || null, allowedDomains || null,
+        position || "BOTTOM_RIGHT", openOnStartup ? 1 : 0, offsetX ?? 20, offsetY ?? 20,
+        buttonText || (isDeepLink ? "Chat with us" : "Chat with us"), buttonBgColor || primaryColor || "#6366f1", buttonTextColor || "#ffffff", buttonSize || "MEDIUM",
+      ]
     );
-    return res.status(201).json({ success: true, message: "Webchat widget created", widgetKey });
+    return res.status(201).json({ success: true, message: "Widget created", widgetKey, id: result.insertId, integrationId: targetIntegrationId });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
 router.put("/channels/webchat/:id", async (req, res) => {
-  const { name, primaryColor, greetingMessage, placeholderText, allowedDomains, isActive } = req.body;
+  const {
+    name, primaryColor, greetingMessage, placeholderText, allowedDomains, isActive,
+    flowId, logoUrl, displayName, headerBgColor, headerTextColor, prefillMessage,
+    position, openOnStartup, offsetX, offsetY, buttonText, buttonBgColor, buttonTextColor, buttonSize,
+    integrationId, // DEEPLINK only — re-target which connected account this widget links to
+  } = req.body;
   try {
+    let newIntegrationId = null;
+    if (integrationId) {
+      const [[widgetRow]] = await pool.query("SELECT widget_type FROM webchat_widgets WHERE id = ? AND agency_id = ?", [req.params.id, req.agencyId]);
+      if (widgetRow?.widget_type === "DEEPLINK") {
+        const [[integ]] = await pool.query("SELECT id, platform FROM integrations WHERE id = ? AND agency_id = ?", [integrationId, req.agencyId]);
+        if (integ) {
+          newIntegrationId = integ.id;
+          await pool.query("UPDATE webchat_widgets SET target_platform = ? WHERE id = ? AND agency_id = ?", [integ.platform.toUpperCase(), req.params.id, req.agencyId]);
+        }
+      }
+    }
+
+    // Every field is COALESCE'd against its current value so a partial-field
+    // call (e.g. the Flow Builder panel saving only appearance fields, or
+    // the list page's Rename saving only `name`) never blanks out the rest —
+    // same convention as routes/comments.js's campaign UPDATE.
     await pool.query(
-      `UPDATE webchat_widgets SET name=?, primary_color=?, greeting_message=?, placeholder_text=?, allowed_domains=?, is_active=?
+      `UPDATE webchat_widgets SET
+        name = COALESCE(?, name),
+        primary_color = COALESCE(?, primary_color),
+        greeting_message = COALESCE(?, greeting_message),
+        placeholder_text = COALESCE(?, placeholder_text),
+        allowed_domains = ?,
+        is_active = COALESCE(?, is_active),
+        flow_id = COALESCE(?, flow_id),
+        logo_url = ?,
+        display_name = COALESCE(?, display_name),
+        header_bg_color = COALESCE(?, header_bg_color),
+        header_text_color = COALESCE(?, header_text_color),
+        prefill_message = ?,
+        position = COALESCE(?, position),
+        open_on_startup = COALESCE(?, open_on_startup),
+        offset_x = COALESCE(?, offset_x),
+        offset_y = COALESCE(?, offset_y),
+        button_text = COALESCE(?, button_text),
+        button_bg_color = COALESCE(?, button_bg_color),
+        button_text_color = COALESCE(?, button_text_color),
+        button_size = COALESCE(?, button_size),
+        integration_id = COALESCE(?, integration_id)
        WHERE id=? AND agency_id=?`,
-      [name, primaryColor, greetingMessage, placeholderText, allowedDomains, isActive ?? 1, req.params.id, req.agencyId]
+      [
+        name, primaryColor, greetingMessage, placeholderText, allowedDomains ?? null,
+        isActive === undefined ? null : (isActive ? 1 : 0),
+        flowId, logoUrl ?? null, displayName, headerBgColor, headerTextColor, prefillMessage ?? null,
+        position, openOnStartup === undefined ? null : (openOnStartup ? 1 : 0), offsetX, offsetY,
+        buttonText, buttonBgColor, buttonTextColor, buttonSize, newIntegrationId,
+        req.params.id, req.agencyId,
+      ]
     );
     return res.json({ success: true, message: "Widget updated" });
+  } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
+});
+
+// Was missing entirely — the frontend's channelAPI.deleteWebchat() has
+// called this route since it was first added, silently 404ing every time.
+router.delete("/channels/webchat/:id", async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT integration_id, widget_type FROM webchat_widgets WHERE id = ? AND agency_id = ?",
+      [req.params.id, req.agencyId]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, message: "Widget not found" });
+
+    await pool.query("DELETE FROM webchat_widgets WHERE id = ? AND agency_id = ?", [req.params.id, req.agencyId]);
+    // Only a WEBCHAT widget owns its integration (auto-created alongside it
+    // in POST above) — remove that so it doesn't linger orphaned. A DEEPLINK
+    // widget's integration_id points at an EXISTING WhatsApp/Facebook/
+    // Telegram/Instagram account the agency still uses for real messaging —
+    // deleting the widget must never touch that connection.
+    if (rows[0].integration_id && rows[0].widget_type === "WEBCHAT") {
+      await pool.query("DELETE FROM integrations WHERE id = ? AND agency_id = ?", [rows[0].integration_id, req.agencyId]);
+    }
+    return res.json({ success: true, message: "Widget deleted" });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 

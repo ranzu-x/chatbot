@@ -5,7 +5,7 @@ import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 
 const router = express.Router();
-router.use(authMiddleware, roleMiddleware("AGENCY", "ADMIN", "AGENT"));
+router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
 
 const META_API_VERSION = process.env.META_API_VERSION || "v21.0";
 
@@ -183,9 +183,14 @@ router.post("/comments/campaigns", async (req, res) => {
       excludeKeywords,
       autoReplyComment,
       commentVariations = [],
+      autoReplyMediaUrl,
+      replyMode = "STATIC",
+      aiPromptInstruction,
+      aiAgentId,
       enableLikeComment = true,
       autoReplyPrivateMessage,
       privateReplyButtons = [],
+      privateReplyMode = "TEXT",
       flowId,
       offensiveKeywords,
       offensiveAction = "NONE",
@@ -197,7 +202,7 @@ router.post("/comments/campaigns", async (req, res) => {
       return res.status(400).json({ success: false, message: "Campaign name is required" });
     }
 
-    if (!autoReplyComment && !autoReplyPrivateMessage && offensiveAction === "NONE") {
+    if (!autoReplyComment && !autoReplyPrivateMessage && !flowId && offensiveAction === "NONE") {
       return res.status(400).json({
         success: false,
         message: "Please configure at least one action: Public Comment Reply, Private DM Reply, or Offensive Comment Moderation.",
@@ -208,11 +213,12 @@ router.post("/comments/campaigns", async (req, res) => {
       `INSERT INTO comment_automation_rules (
         agency_id, integration_id, platform, campaign_name, post_id, post_data,
         trigger_type, trigger_keywords, match_type, exclude_keywords,
-        auto_reply_comment, comment_variations, enable_like_comment,
-        auto_reply_private_message, private_reply_buttons, flow_id,
+        auto_reply_comment, comment_variations, auto_reply_media_url,
+        reply_mode, ai_prompt_instruction, ai_agent_id, enable_like_comment,
+        auto_reply_private_message, private_reply_buttons, private_reply_mode, flow_id,
         offensive_keywords, offensive_action, offensive_reply_message,
         reply_multiple_times, is_active, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW())`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW())`,
       [
         agencyId,
         integrationId && integrationId !== "all" ? integrationId : null,
@@ -226,9 +232,14 @@ router.post("/comments/campaigns", async (req, res) => {
         excludeKeywords || null,
         autoReplyComment || null,
         JSON.stringify(commentVariations || []),
+        autoReplyMediaUrl || null,
+        (replyMode || "STATIC").toUpperCase() === "AI" ? "AI" : "STATIC",
+        aiPromptInstruction || null,
+        aiAgentId || null,
         enableLikeComment ? 1 : 0,
         autoReplyPrivateMessage || null,
         JSON.stringify(privateReplyButtons || []),
+        (privateReplyMode || "TEXT").toUpperCase() === "FLOW" ? "FLOW" : "TEXT",
         flowId || null,
         offensiveKeywords || null,
         offensiveAction || "NONE",
@@ -262,9 +273,14 @@ router.put("/comments/campaigns/:id", async (req, res) => {
       excludeKeywords,
       autoReplyComment,
       commentVariations = [],
+      autoReplyMediaUrl,
+      replyMode,
+      aiPromptInstruction,
+      aiAgentId,
       enableLikeComment,
       autoReplyPrivateMessage,
       privateReplyButtons = [],
+      privateReplyMode,
       flowId,
       offensiveKeywords,
       offensiveAction,
@@ -290,9 +306,14 @@ router.put("/comments/campaigns/:id", async (req, res) => {
         exclude_keywords = ?,
         auto_reply_comment = ?,
         comment_variations = ?,
+        auto_reply_media_url = ?,
+        reply_mode = ?,
+        ai_prompt_instruction = ?,
+        ai_agent_id = ?,
         enable_like_comment = ?,
         auto_reply_private_message = ?,
         private_reply_buttons = ?,
+        private_reply_mode = ?,
         flow_id = ?,
         offensive_keywords = ?,
         offensive_action = COALESCE(?, offensive_action),
@@ -307,9 +328,14 @@ router.put("/comments/campaigns/:id", async (req, res) => {
         excludeKeywords || null,
         autoReplyComment || null,
         JSON.stringify(commentVariations || []),
+        autoReplyMediaUrl || null,
+        (replyMode || "STATIC").toUpperCase() === "AI" ? "AI" : "STATIC",
+        aiPromptInstruction || null,
+        aiAgentId || null,
         enableLikeComment ? 1 : 0,
         autoReplyPrivateMessage || null,
         JSON.stringify(privateReplyButtons || []),
+        (privateReplyMode || "TEXT").toUpperCase() === "FLOW" ? "FLOW" : "TEXT",
         flowId || null,
         offensiveKeywords || null,
         offensiveAction || "NONE",

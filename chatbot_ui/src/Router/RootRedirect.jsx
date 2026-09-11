@@ -2,9 +2,9 @@ import { Navigate } from 'react-router';
 import { useAuth } from '../Provider/AuthContext';
 
 const ROLE_HOME = {
-  ADMIN:  '/admin',
-  AGENCY: '/agency',
-  AGENT:  '/inbox',
+  ADMIN:    '/admin',
+  RESELLER: '/agency',
+  USER:     '/agency',
 };
 
 export default function RootRedirect() {

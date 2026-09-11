@@ -35,7 +35,7 @@ router.get("/integrations/google-sheets/callback", async (req, res) => {
   }
 });
 
-router.use(authMiddleware, roleMiddleware("AGENCY", "ADMIN", "AGENT"));
+router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
 
 router.get("/integrations/google-sheets/auth-url", async (req, res) => {
   try {

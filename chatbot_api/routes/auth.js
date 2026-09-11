@@ -5,14 +5,23 @@ import pool from "../db.js";
 
 const router = express.Router();
 
-// Helper to resolve agency from domain/hostname
+// Helper to resolve agency from domain/hostname. Deliberately never resolves
+// the reserved PLATFORM row — it isn't a customer-facing tenant, and (per
+// the approved SaaS hierarchy plan §13) tenant assignment must only ever
+// come from a VERIFIED domain/subdomain match, never a fallback that could
+// land an anonymous visitor on the platform's own org.
 async function resolveAgencyFromDomain(rawHost) {
   if (!rawHost) return null;
   const host = rawHost.toLowerCase().trim().replace(/:\d+$/, ""); // Strip port
 
-  // 1. Direct match on custom_domain
+  // 1. Direct match on custom_domain. A RESELLER's domain must be
+  // DNS-verified to resolve at all — self-signup there creates a brand new
+  // customer account (see POST /auth/register below), so an unverified
+  // reseller domain claim must never be trusted for that. A DIRECT_CUSTOMER's
+  // custom_domain can still resolve unverified (matches prior behavior —
+  // it only affects login-page branding there, never account creation).
   const [domainRows] = await pool.query(
-    "SELECT * FROM agencies WHERE custom_domain = ? AND is_active = 1 LIMIT 1",
+    "SELECT * FROM agencies WHERE custom_domain = ? AND is_active = 1 AND account_type != 'PLATFORM' AND (account_type != 'RESELLER' OR domain_verified = 1) LIMIT 1",
     [host]
   );
   if (domainRows.length) return domainRows[0];
@@ -22,7 +31,7 @@ async function resolveAgencyFromDomain(rawHost) {
   if (parts.length > 2) {
     const sub = parts[0];
     const [subRows] = await pool.query(
-      "SELECT * FROM agencies WHERE (subdomain = ? OR slug = ?) AND is_active = 1 LIMIT 1",
+      "SELECT * FROM agencies WHERE (subdomain = ? OR slug = ?) AND is_active = 1 AND account_type != 'PLATFORM' LIMIT 1",
       [sub, sub]
     );
     if (subRows.length) return subRows[0];
@@ -40,9 +49,12 @@ router.get("/auth/tenant", async (req, res) => {
     let agency = matchedAgency;
     let isCustomTenant = Boolean(matchedAgency);
 
-    // Fallback to default/main agency
+    // Fallback to default/main agency — never the reserved PLATFORM row,
+    // which isn't a customer-facing tenant (see resolveAgencyFromDomain).
     if (!agency) {
-      const [mainRows] = await pool.query("SELECT * FROM agencies WHERE is_active = 1 ORDER BY id ASC LIMIT 1");
+      const [mainRows] = await pool.query(
+        "SELECT * FROM agencies WHERE is_active = 1 AND account_type = 'DIRECT_CUSTOMER' ORDER BY id ASC LIMIT 1"
+      );
       if (mainRows.length) agency = mainRows[0];
     }
 
@@ -126,50 +138,123 @@ router.post(["/auth/register", "/hospital-admin/signup"], async (req, res) => {
     // 1. Resolve Target Agency from Domain / Host
     const targetHost = domain || host || req.headers.host || "";
     let targetAgency = await resolveAgencyFromDomain(targetHost);
+    // A RESELLER's own domain never gets *joined* as a team member — it
+    // mints a brand-new RESELLER_CUSTOMER account instead (step below).
+    const signingUpUnderReseller = targetAgency?.account_type === "RESELLER" ? targetAgency : null;
 
     if (!targetAgency) {
-      // Default to main agency
-      const [mainRows] = await pool.query("SELECT * FROM agencies WHERE is_active = 1 ORDER BY id ASC LIMIT 1");
+      // No verified domain/subdomain match — default to the lowest-id
+      // active, non-reseller, non-platform agency (preserves the prior
+      // "join the default single-tenant workspace" behavior for plain/
+      // unbranded installs; the reserved PLATFORM row is never a valid
+      // signup target — see resolveAgencyFromDomain's docs above).
+      const [mainRows] = await pool.query(
+        "SELECT * FROM agencies WHERE is_active = 1 AND account_type = 'DIRECT_CUSTOMER' ORDER BY id ASC LIMIT 1"
+      );
       if (mainRows.length) targetAgency = mainRows[0];
     }
 
-    if (!targetAgency) {
-      const [newAg] = await pool.query("INSERT INTO agencies (name, slug, is_active) VALUES ('Main Workspace', 'main-workspace', 1)");
-      targetAgency = { id: newAg.insertId, name: "Main Workspace" };
-    }
+    // Literally no agency exists yet anywhere (fresh install) — the
+    // signing-up user becomes the OWNER of a brand-new Main Workspace
+    // rather than an ownerless placeholder (agencies.owner_id is NOT NULL),
+    // handled as its own branch below since it needs the user row created
+    // first.
+    const bootstrapNoAgency = !targetAgency;
 
     // Check registration allowed
-    if (targetAgency.allow_user_registration === 0) {
+    if (targetAgency && targetAgency.allow_user_registration === 0) {
       return res.status(403).json({
         success: false,
         message: "User registration is currently disabled for this workspace. Please contact support.",
       });
     }
 
-    // 2. Create User
     const hashedPassword = await bcrypt.hash(password, 10);
-    const [userResult] = await pool.query(
-      "INSERT INTO users (name, email, password, role, is_active, created_at) VALUES (?, ?, ?, 'AGENT', 1, NOW())",
-      [fullName, email.toLowerCase().trim(), hashedPassword]
-    );
+    let userId, jwtRole, finalAgencyId, finalAgencyName;
 
-    const userId = userResult.insertId;
+    if (bootstrapNoAgency) {
+      const [userResult] = await pool.query(
+        "INSERT INTO users (name, email, password, role, is_active, created_at) VALUES (?, ?, ?, 'RESELLER', 1, NOW())",
+        [fullName, email.toLowerCase().trim(), hashedPassword]
+      );
+      userId = userResult.insertId;
+      const [agResult] = await pool.query(
+        "INSERT INTO agencies (name, slug, owner_id, is_active, account_type) VALUES ('Main Workspace', 'main-workspace', ?, 1, 'DIRECT_CUSTOMER')",
+        [userId]
+      );
+      finalAgencyId = agResult.insertId;
+      finalAgencyName = "Main Workspace";
+      jwtRole = "RESELLER";
+      const [[ownerRole]] = await pool.query("SELECT id FROM roles WHERE scope_type='AGENCY' AND agency_id IS NULL AND slug='owner'");
+      if (ownerRole) {
+        await pool.query(
+          "INSERT INTO organization_members (user_id, agency_id, role_id, member_kind, chat_access) VALUES (?,?,?, 'OWNER', 'ALL')",
+          [userId, finalAgencyId, ownerRole.id]
+        );
+      }
+      console.log(`✅ [Bootstrap Registration] User "${fullName}" (${email}) created the first workspace (Agency ID ${finalAgencyId}) as its owner`);
+    } else if (signingUpUnderReseller) {
+      // ─── Reseller-domain signup: creates a NEW RESELLER_CUSTOMER account,
+      // owned by the signing-up user — never a team member of the
+      // reseller's own org. "Signup Domain → Identify Reseller → Create
+      // Customer → customer.parent_agency_id = Reseller" per the approved plan.
+      const [userResult] = await pool.query(
+        "INSERT INTO users (name, email, password, role, is_active, created_at) VALUES (?, ?, ?, 'RESELLER', 1, NOW())",
+        [fullName, email.toLowerCase().trim(), hashedPassword]
+      );
+      userId = userResult.insertId;
+      const custSlug = `${fullName}-${Date.now().toString(36)}`.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      const [agResult] = await pool.query(
+        "INSERT INTO agencies (name, slug, owner_id, account_type, parent_agency_id) VALUES (?, ?, ?, 'RESELLER_CUSTOMER', ?)",
+        [`${fullName}'s Workspace`, custSlug, userId, signingUpUnderReseller.id]
+      );
+      finalAgencyId = agResult.insertId;
+      finalAgencyName = `${fullName}'s Workspace`;
+      jwtRole = "RESELLER";
+      const [[ownerRole]] = await pool.query("SELECT id FROM roles WHERE scope_type='AGENCY' AND agency_id IS NULL AND slug='owner'");
+      if (ownerRole) {
+        await pool.query(
+          "INSERT INTO organization_members (user_id, agency_id, role_id, member_kind, chat_access) VALUES (?,?,?, 'OWNER', 'ALL')",
+          [userId, finalAgencyId, ownerRole.id]
+        );
+      }
+      console.log(`✅ [Reseller Signup] User "${fullName}" (${email}) created a new customer account (Agency ID ${finalAgencyId}) under Reseller ID ${signingUpUnderReseller.id} via domain "${targetHost}"`);
+    } else {
+      // ─── Unchanged prior behavior: joins the resolved workspace as a
+      // team member (USER role) — now also backed by a real
+      // organization_members row (previously missing entirely, which would
+      // have failed every requirePermission-gated route post-signup).
+      const [userResult] = await pool.query(
+        "INSERT INTO users (name, email, password, role, is_active, created_at) VALUES (?, ?, ?, 'USER', 1, NOW())",
+        [fullName, email.toLowerCase().trim(), hashedPassword]
+      );
+      userId = userResult.insertId;
+      await pool.query(
+        "INSERT INTO agent_profiles (user_id, agency_id, user_type, is_online, created_at) VALUES (?, ?, 'AGENCY_USER', 1, NOW())",
+        [userId, targetAgency.id]
+      );
+      finalAgencyId = targetAgency.id;
+      finalAgencyName = targetAgency.name;
+      jwtRole = "USER";
+      const [[agentRole]] = await pool.query("SELECT id FROM roles WHERE scope_type='AGENCY' AND agency_id IS NULL AND slug='agent'");
+      if (agentRole) {
+        await pool.query(
+          "INSERT INTO organization_members (user_id, agency_id, role_id, member_kind, chat_access) VALUES (?,?,?, 'TEAM_MEMBER', 'ASSIGNED_ONLY')",
+          [userId, finalAgencyId, agentRole.id]
+        );
+      }
+      console.log(`✅ [Tenant Registration] User "${fullName}" (${email}) created under Agency ID ${finalAgencyId} ("${finalAgencyName}") via domain "${targetHost}"`);
+    }
 
-    // 3. Create Agent Profile under the resolved Agency
-    await pool.query(
-      "INSERT INTO agent_profiles (user_id, agency_id, user_type, is_online, created_at) VALUES (?, ?, 'AGENCY_USER', 1, NOW())",
-      [userId, targetAgency.id]
-    );
-
-    console.log(`✅ [Tenant Registration] User "${fullName}" (${email}) created under Agency ID ${targetAgency.id} ("${targetAgency.name}") via domain "${targetHost}"`);
-
-    // 4. Generate JWT
+    // Generate JWT
+    const [[registeredAccountType]] = await pool.query("SELECT account_type FROM agencies WHERE id = ?", [finalAgencyId]);
     const payload = {
       id: userId,
       name: fullName,
       email: email.toLowerCase().trim(),
-      role: "AGENT",
-      agencyId: targetAgency.id,
+      role: jwtRole,
+      agencyId: finalAgencyId,
+      accountType: registeredAccountType?.account_type || "DIRECT_CUSTOMER",
     };
 
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
@@ -183,10 +268,10 @@ router.post(["/auth/register", "/hospital-admin/signup"], async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: `Account created successfully under ${targetAgency.name}!`,
+      message: `Account created successfully under ${finalAgencyName}!`,
       user: payload,
       token,
-      agencyName: targetAgency.name,
+      agencyName: finalAgencyName,
     });
   } catch (err) {
     console.error("Registration error:", err);
@@ -220,14 +305,27 @@ router.post("/auth/login", async (req, res) => {
 
     let resolvedAgencyId = user.agencyId || user.agentAgencyId || null;
     if (!resolvedAgencyId) {
-      const [agRows] = await pool.query("SELECT id FROM agencies WHERE owner_id = ? OR is_active = 1 ORDER BY id ASC LIMIT 1", [user.id]);
+      // An orphaned user (no owned agency, no agent_profiles row — e.g.
+      // created via the raw POST /admin/users endpoint) — never silently
+      // land them on the reserved PLATFORM row (id may now be the lowest
+      // id in the table); fall back to their own agency, else the lowest
+      // active DIRECT_CUSTOMER, else bootstrap one with them as owner.
+      const [agRows] = await pool.query(
+        "SELECT id FROM agencies WHERE owner_id = ? OR (is_active = 1 AND account_type = 'DIRECT_CUSTOMER') ORDER BY (owner_id = ?) DESC, id ASC LIMIT 1",
+        [user.id, user.id]
+      );
       if (agRows.length) {
         resolvedAgencyId = agRows[0].id;
       } else {
-        const [newAg] = await pool.query("INSERT INTO agencies (name, slug, owner_id, is_active) VALUES ('Main Workspace', 'main-workspace', ?, 1)", [user.id]);
+        const [newAg] = await pool.query(
+          "INSERT INTO agencies (name, slug, owner_id, is_active, account_type) VALUES ('Main Workspace', 'main-workspace', ?, 1, 'DIRECT_CUSTOMER')",
+          [user.id]
+        );
         resolvedAgencyId = newAg.insertId;
       }
     }
+
+    const [[accountTypeRow]] = await pool.query("SELECT account_type FROM agencies WHERE id = ?", [resolvedAgencyId]);
 
     const payload = {
       id: user.id,
@@ -235,6 +333,7 @@ router.post("/auth/login", async (req, res) => {
       email: user.email,
       role: user.role,
       agencyId: resolvedAgencyId,
+      accountType: accountTypeRow?.account_type || "DIRECT_CUSTOMER",
     };
 
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
@@ -298,10 +397,18 @@ router.get("/auth/me", async (req, res) => {
 
     if (!decoded.agencyId) {
       const [agRows] = await pool.query(
-        "SELECT id FROM agencies WHERE owner_id = ? OR is_active = 1 ORDER BY id ASC LIMIT 1",
-        [decoded.id || 0]
+        "SELECT id FROM agencies WHERE owner_id = ? OR (is_active = 1 AND account_type = 'DIRECT_CUSTOMER') ORDER BY (owner_id = ?) DESC, id ASC LIMIT 1",
+        [decoded.id || 0, decoded.id || 0]
       );
       if (agRows.length) decoded.agencyId = agRows[0].id;
+    }
+    // Always refreshed from the DB (not just carried from the JWT) so an
+    // older token issued before accountType existed still gets it, and so
+    // an account_type change (e.g. Super Admin converts an agency to a
+    // reseller) is reflected without waiting for re-login.
+    if (decoded.agencyId) {
+      const [[agencyRow]] = await pool.query("SELECT account_type FROM agencies WHERE id = ?", [decoded.agencyId]);
+      decoded.accountType = agencyRow?.account_type || "DIRECT_CUSTOMER";
     }
     return res.json({ success: true, user: decoded });
   } catch {

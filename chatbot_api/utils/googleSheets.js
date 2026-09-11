@@ -142,6 +142,23 @@ export async function listTabs(agencyId, spreadsheetId) {
   return (data.sheets || []).map((s) => ({ id: s.properties.sheetId, title: s.properties.title }));
 }
 
+/**
+ * Reads every populated cell of one tab (Sheets API) — used by the AI Agent
+ * "Google Sheet" knowledge source (utils/aiKnowledge.js) to turn a sheet
+ * into indexable text, formatted as one line per row with the header row's
+ * labels attached to each value (reads far better as knowledge-base prose
+ * than a raw CSV dump would).
+ */
+export async function readSheetValues(agencyId, spreadsheetId, sheetName) {
+  const auth = await getAuthedClient(agencyId);
+  const sheets = google.sheets({ version: "v4", auth });
+  const { data } = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: sheetName ? `${sheetName}` : undefined,
+  });
+  return data.values || [];
+}
+
 /** Appends one row of values to the given spreadsheet/tab. */
 export async function appendRow(agencyId, spreadsheetId, sheetName, values) {
   const auth = await getAuthedClient(agencyId);

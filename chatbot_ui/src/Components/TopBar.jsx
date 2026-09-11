@@ -3,7 +3,11 @@ import { useNavigate, Link } from 'react-router';
 import { useAuth } from '../Provider/AuthContext';
 import { useLayout } from '../Provider/LayoutContext';
 import { useNotification } from '../Provider/NotificationContext';
-import { Menu, PanelLeft, PanelLeftClose, Sun, Moon, Plug, LogOut, Bell } from 'lucide-react';
+import { Menu, PanelLeft, PanelLeftClose, Sun, Moon, Plug, LogOut, Bell, UserCircle } from 'lucide-react';
+
+// Internal role identifiers (ADMIN/RESELLER/USER) now match the human-facing
+// label, consistent with Sidebar.jsx's ROLE_SUBTITLES.
+const ROLE_LABELS = { ADMIN: 'Super Admin', RESELLER: 'Reseller', USER: 'User' };
 
 export default function TopBar() {
   const { user, logout } = useAuth();
@@ -46,7 +50,7 @@ export default function TopBar() {
 
   const getApiLink = () => {
     if (user?.role === 'ADMIN') return '/admin/integrations';
-    if (user?.role === 'AGENCY') return '/agency/integrations';
+    if (user?.role === 'RESELLER') return '/agency/integrations';
     return null;
   };
 
@@ -130,10 +134,23 @@ export default function TopBar() {
             <div className="dropdown-section dropdown-header">
               <div className="dropdown-user-name">{user?.name || 'Account'}</div>
               <div className="dropdown-user-email">{user?.email || ''}</div>
-              <span className="role-badge">{user?.role || 'AGENT'}</span>
+              <span className="role-badge">{ROLE_LABELS[user?.role] || 'User'}</span>
             </div>
 
             <div className="dropdown-section">
+              <Link
+                to="/my-account"
+                className="dropdown-item"
+                onClick={() => setMenuOpen(false)}
+                style={{ textDecoration: 'none', color: 'inherit' }}
+              >
+                <UserCircle size={15} style={{ marginRight: 8 }} />
+                <div className="dropdown-text">
+                  <div className="dropdown-label">My Account</div>
+                  <div className="dropdown-desc">{user?.role === 'RESELLER' ? 'Profile & billing' : 'Profile settings'}</div>
+                </div>
+              </Link>
+
               {apiLink && (
                 <Link 
                   to={apiLink}

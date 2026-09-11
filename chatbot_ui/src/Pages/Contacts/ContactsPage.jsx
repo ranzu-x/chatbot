@@ -84,6 +84,8 @@ function SubscriberAvatar({ name, avatar, size = 36, platform, style = {} }) {
       <img
         src={resolveMediaUrl(avatar)}
         alt={name || 'Avatar'}
+        referrerPolicy="no-referrer"
+        crossOrigin="anonymous"
         style={{
           width: size,
           height: size,

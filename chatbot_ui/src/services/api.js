@@ -72,16 +72,47 @@ export const billingAPI = {
   getInvoices: () => api.get("/billing/invoices"),
 };
 
-// ─── AI Agent & Knowledge Base ────────────────────────────────────
-export const aiAPI = {
-  getAgent: () => api.get("/ai/agent"),
-  updateAgent: (data) => api.put("/ai/agent", data),
-  getKnowledge: () => api.get("/ai/knowledge"),
-  addTextKnowledge: (data) => api.post("/ai/knowledge/text", data),
-  addFaqKnowledge: (data) => api.post("/ai/knowledge/faq", data),
-  addUrlKnowledge: (data) => api.post("/ai/knowledge/url", data),
-  deleteKnowledge: (id) => api.delete(`/ai/knowledge/${id}`),
-  testChat: (data) => api.post("/ai/test-chat", data),
+// ─── AI Providers (Settings → AI Providers, agency-wide BYOK) ─────
+export const aiProviderAPI = {
+  getAll: () => api.get("/ai/providers"),
+  save: (providerId, data) => api.put(`/ai/providers/${providerId}`, data),
+  test: (providerId) => api.post(`/ai/providers/${providerId}/test`),
+  remove: (providerId) => api.delete(`/ai/providers/${providerId}`),
+};
+
+// ─── AI Rewrite (Live Inbox composer) ──────────────────────────────
+export const aiRewriteAPI = {
+  rewrite: (text, style) => api.post('/ai/rewrite-message', { text, style }),
+};
+
+// ─── AI Agents (reusable, channel-independent) ────────────────────
+export const aiAgentAPI = {
+  getAll: () => api.get("/ai/agents"),
+  getOne: (id) => api.get(`/ai/agents/${id}`),
+  create: (data) => api.post("/ai/agents", data),
+  update: (id, data) => api.put(`/ai/agents/${id}`, data),
+  delete: (id) => api.delete(`/ai/agents/${id}`),
+  testChat: (id, data) => api.post(`/ai/agents/${id}/test-chat`, data),
+  getRouting: (id) => api.get(`/ai/agents/${id}/routing`),
+  saveRouting: (id, data) => api.put(`/ai/agents/${id}/routing`, data),
+  getKnowledge: (id) => api.get(`/ai/agents/${id}/knowledge`),
+  addTextKnowledge: (id, data) => api.post(`/ai/agents/${id}/knowledge/text`, data),
+  addUrlKnowledge: (id, data) => api.post(`/ai/agents/${id}/knowledge/url`, data),
+  addFileKnowledge: (id, formData) => api.post(`/ai/agents/${id}/knowledge/file`, formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  addImageKnowledge: (id, formData) => api.post(`/ai/agents/${id}/knowledge/image`, formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  addGoogleSheetKnowledge: (id, data) => api.post(`/ai/agents/${id}/knowledge/google-sheet`, data),
+  reindexKnowledge: (id, sourceId) => api.post(`/ai/agents/${id}/knowledge/${sourceId}/reindex`),
+  deleteKnowledge: (id, sourceId) => api.delete(`/ai/agents/${id}/knowledge/${sourceId}`),
+  getActions: (id) => api.get(`/ai/agents/${id}/actions`),
+  saveActions: (id, data) => api.put(`/ai/agents/${id}/actions`, data),
+};
+
+// ─── AI Reply Settings + Active Agents (per-bot) ──────────────────
+export const aiReplySettingsAPI = {
+  getForIntegration: (integrationId) => api.get(`/ai/reply-settings/${integrationId}`),
+  save: (integrationId, data) => api.put(`/ai/reply-settings/${integrationId}`, data),
+  activateAgent: (integrationId, agentId) => api.post(`/ai/reply-settings/${integrationId}/active-agents/${agentId}`),
+  deactivateAgent: (integrationId, agentId) => api.delete(`/ai/reply-settings/${integrationId}/active-agents/${agentId}`),
 };
 
 // ─── Admin ────────────────────────────────────────────────────────
@@ -89,14 +120,56 @@ export const adminAPI = {
   getStats: () => api.get("/admin/stats"),
   getAgencies: () => api.get("/admin/agencies"),
   createAgency: (data) => api.post("/admin/agencies", data),
+  updateAgency: (id, data) => api.patch(`/admin/agencies/${id}`, data),
   toggleAgency: (id) => api.patch(`/admin/agencies/${id}/toggle`),
   deleteAgency: (id) => api.delete(`/admin/agencies/${id}`),
-  getUsers: () => api.get("/admin/users"),
+  getAgencyCustomers: (id) => api.get(`/admin/agencies/${id}/customers`),
+  getUsers: (params) => api.get("/admin/users", { params }),
   toggleUser: (id) => api.patch(`/admin/users/${id}/toggle`),
   createUser: (data) => api.post("/admin/users", data),
   updateUser: (id, data) => api.put(`/admin/users/${id}`, data),
   deleteUser: (id) => api.delete(`/admin/users/${id}`),
   getAnalytics: (days = 14) => api.get(`/admin/analytics?days=${days}`),
+  // Super Admin's own internal team (Support/Sales/Finance/Technical Admin)
+  getTeam: () => api.get("/admin/team"),
+  createTeamMember: (data) => api.post("/admin/team", data),
+  removeTeamMember: (membershipId) => api.delete(`/admin/team/${membershipId}`),
+};
+
+// ─── Roles & Permissions (shared across PLATFORM / AGENCY / RESELLER scopes) ─
+export const roleAPI = {
+  getPermissions: () => api.get("/permissions"),
+  getAll: () => api.get("/roles"),
+  getOne: (id) => api.get(`/roles/${id}`),
+  create: (data) => api.post("/roles", data),
+  update: (id, data) => api.put(`/roles/${id}`, data),
+  delete: (id) => api.delete(`/roles/${id}`),
+};
+
+// Super Admin's Reseller management merged into adminAPI (getAgencies now
+// returns Direct Customers + Resellers together, "Reseller" is just an
+// isReseller flag on an agency now — see routes/admin.js).
+
+// ─── Reseller's own customer management (acting as a reseller) ────
+export const resellerCustomerAPI = {
+  getAll: () => api.get("/reseller/customers"),
+  create: (data) => api.post("/reseller/customers", data),
+  assignPackage: (id, agencyPackageId) => api.patch(`/reseller/customers/${id}/package`, { agencyPackageId }),
+  toggle: (id) => api.patch(`/reseller/customers/${id}/toggle`),
+};
+
+// ─── Reseller's own plans for its customers ────────────────────────
+export const agencyPackageAPI = {
+  getAll: () => api.get("/reseller/packages"),
+  create: (data) => api.post("/reseller/packages", data),
+  update: (id, data) => api.put(`/reseller/packages/${id}`, data),
+  delete: (id) => api.delete(`/reseller/packages/${id}`),
+};
+
+// ─── Platform-wide settings (Super Admin only) ─────────────────────
+export const platformSettingsAPI = {
+  getAll: () => api.get("/admin/platform-settings"),
+  update: (key, value) => api.put(`/admin/platform-settings/${key}`, { value }),
 };
 
 // ─── Agency ───────────────────────────────────────────────────────
@@ -117,6 +190,9 @@ export const teamAPI = {
   update: (id, data) => api.put(`/team-members/${id}`, data),
   toggle: (id) => api.patch(`/team-members/${id}/toggle`),
   delete: (id) => api.delete(`/team-members/${id}`),
+  // My own human-agent signature (Live Inbox "Join Chat" modal)
+  getMySignature: () => api.get("/team-members/me"),
+  updateMySignature: (signature) => api.put("/team-members/me", { signature }),
 };
 
 
@@ -132,9 +208,15 @@ export const integrationAPI = {
 export const conversationAPI = {
   getAll: (params) => api.get("/conversations", { params }),
   getOne: (id) => api.get(`/conversations/${id}`),
+  getMessages: (id, params) => api.get(`/conversations/${id}/messages`, { params }),
   assign: (id, agentProfileId) => api.patch(`/conversations/${id}/assign`, { agentProfileId }),
   updateStatus: (id, status) => api.patch(`/conversations/${id}/status`, { status }),
-  toggleBot: (id) => api.patch(`/conversations/${id}/toggle-bot`),
+  toggleBot: (id, reason) => api.patch(`/conversations/${id}/toggle-bot`, reason ? { reason } : undefined),
+  join: (id) => api.post(`/conversations/${id}/join`),
+  leave: (id) => api.post(`/conversations/${id}/leave`),
+  resetFlow: (id) => api.post(`/conversations/${id}/reset-flow`),
+  unsubscribe: (id) => api.post(`/conversations/${id}/unsubscribe`),
+  clearHistory: (id) => api.delete(`/conversations/${id}/messages`),
   triggerFlow: (id, flowId) => api.post(`/conversations/${id}/trigger-flow`, { flowId }),
   sendMessage: (id, data) => api.post(`/conversations/${id}/messages`, data),
   bulkAssign: (conversationIds, agentProfileId) => api.patch('/conversations/bulk-assign', { conversationIds, agentProfileId }),
@@ -184,6 +266,7 @@ export const channelAPI = {
   deleteTikTok: (id) => api.delete(`/channels/tiktok/${id}`),
   // Webchat
   getWebchat: () => api.get('/channels/webchat'),
+  getWebchatByFlow: (flowId) => api.get(`/channels/webchat/by-flow/${flowId}`),
   addWebchat: (data) => api.post('/channels/webchat', data),
   updateWebchat: (id, data) => api.put(`/channels/webchat/${id}`, data),
   deleteWebchat: (id) => api.delete(`/channels/webchat/${id}`),
@@ -262,6 +345,15 @@ export const userInputFlowAPI = {
 };
 
 // ─── Sequence Messages (scheduled drip messages) ──
+// ─── Follow-ups (per-subscriber/conversation reminders) ───────────
+export const followupAPI = {
+  getAll: (params) => api.get("/follow-ups", { params }),
+  create: (data) => api.post("/follow-ups", data),
+  update: (id, data) => api.put(`/follow-ups/${id}`, data),
+  setStatus: (id, status) => api.patch(`/follow-ups/${id}/status`, { status }),
+  delete: (id) => api.delete(`/follow-ups/${id}`),
+};
+
 export const sequenceAPI = {
   getAll: () => api.get('/sequences'),
   getOne: (id) => api.get(`/sequences/${id}`),
@@ -294,6 +386,7 @@ export const flowAPI = {
 // ─── Contacts ───────────────────────────────────────────────────────
 export const contactAPI = {
   getAll: (params) => api.get('/contacts', { params }),
+  search: (q, limit) => api.get('/contacts/search', { params: { q, limit } }),
   getOne: (id) => api.get(`/contacts/${id}`),
   create: (data) => api.post('/contacts', data),
   update: (id, data) => api.put(`/contacts/${id}`, data),
@@ -345,6 +438,13 @@ export const templateAPI = {
   createWATemplate: (data) => api.post('/templates/whatsapp', data),
   syncWATemplates: (data) => api.post('/templates/whatsapp/sync', data),
   deleteWATemplate: (id) => api.delete(`/templates/whatsapp/${id}`),
+};
+
+// ─── WhatsApp Flow references (Send Menu) ──────────────────────────
+export const whatsappFlowRefAPI = {
+  getAll: (params) => api.get('/whatsapp-flow-refs', { params }),
+  create: (data) => api.post('/whatsapp-flow-refs', data),
+  delete: (id) => api.delete(`/whatsapp-flow-refs/${id}`),
 };
 
 // ─── Canned Responses ──────────────────────────────────────────────────

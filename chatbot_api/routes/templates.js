@@ -6,7 +6,7 @@ import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { getMetaSampleHandle } from "../utils/metaMediaHandle.js";
 
 const router = express.Router();
-router.use(authMiddleware, roleMiddleware("AGENCY", "ADMIN", "AGENT"));
+router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
 
 const META_API_VERSION = process.env.META_API_VERSION || "v21.0";
 

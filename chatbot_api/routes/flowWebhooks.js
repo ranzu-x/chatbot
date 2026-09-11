@@ -1,10 +1,18 @@
 import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
+import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { executeOutboundWebhook } from "../services/webhookExecutor.js";
 import { webhookQueue } from "../services/webhookQueue.js";
 
 const router = express.Router();
+
+// These are workspace-configuration/diagnostic tools ("Webhooks & Zapier" —
+// an "app related" menu, owner-level), not day-to-day agent work — were
+// only gated by authMiddleware (any logged-in user, any role). /webhooks/inbound/:flowId
+// below stays public on purpose (it's the actual inbound receiver external
+// services call).
+router.use(["/queue/stats", "/queue/enqueue-test", "/webhooks/test-dispatch", "/webhooks/logs"], authMiddleware, roleMiddleware("RESELLER", "ADMIN"));
 
 // ─── GET WEBHOOK QUEUE & BACKGROUND WORKER STATS ────────────────────────────
 router.get("/queue/stats", authMiddleware, async (req, res) => {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { commentAPI, integrationAPI } from '../../services/api';
+import { commentAPI, integrationAPI, aiAgentAPI, flowAPI, uploadAPI } from '../../services/api';
 import {
   MessageSquare,
   Sparkles,
@@ -27,6 +27,9 @@ import {
   ChevronRight,
   ArrowRight,
   Info,
+  Image as ImageIcon,
+  GitBranch,
+  Upload,
 } from 'lucide-react';
 
 export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' }) {
@@ -75,13 +78,48 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' 
     excludeKeywords: '',
     autoReplyComment: '',
     commentVariations: ['Hi {{name}}, thanks for reaching out! Check your inbox for the details 📩', 'Hey {{first_name}}, sent you a direct message! ✨'],
+    autoReplyMediaUrl: '', // optional image attached to the public comment reply
+    replyMode: 'STATIC', // 'STATIC' | 'AI' — governs the public comment reply
+    aiPromptInstruction: '',
+    aiAgentId: '',
     enableLikeComment: true,
     autoReplyPrivateMessage: 'Hi {{first_name}}! Thanks for commenting on our post. Here is the link you requested: https://example.com/special-offer',
+    privateReplyMode: 'TEXT', // 'TEXT' | 'FLOW'
+    flowId: '',
     offensiveKeywords: 'scam, fake, hate, refund, cheat, fraud, spam',
     offensiveAction: 'HIDE', // 'NONE' | 'HIDE' | 'DELETE'
     offensiveReplyMessage: 'Hi {{first_name}}, please message our support team directly so we can resolve any issues for you.',
     replyMultipleTimes: false,
   });
+
+  // AI Agents (for "AI-Powered" public reply) & Bot Flows (for "Bot Flow" private reply)
+  const [aiAgents, setAiAgents] = useState([]);
+  const [flows, setFlows] = useState([]);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+
+  useEffect(() => {
+    aiAgentAPI.getAll().then((res) => setAiAgents(res.data?.agents || [])).catch(() => setAiAgents([]));
+    flowAPI.getAll().then((res) => setFlows(res.data?.flows || [])).catch(() => setFlows([]));
+  }, []);
+
+  const handleMediaUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingMedia(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await uploadAPI.uploadFile(formData);
+      const url = res.data?.url;
+      if (url) setForm((f) => ({ ...f, autoReplyMediaUrl: url }));
+    } catch (err) {
+      console.error('Media upload failed', err);
+      showToast('Failed to upload image', 'error');
+    } finally {
+      setUploadingMedia(false);
+      e.target.value = '';
+    }
+  };
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -150,8 +188,14 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' 
         'Hi {{name}}, thanks for checking this out! Check your direct messages 📩',
         'Hey {{first_name}}, I just sent the details to your inbox! ✨',
       ],
+      autoReplyMediaUrl: '',
+      replyMode: 'STATIC',
+      aiPromptInstruction: '',
+      aiAgentId: '',
       enableLikeComment: true,
       autoReplyPrivateMessage: 'Hi {{first_name}}! Thanks for leaving a comment. Here is what you need:\n\n👉 Learn more here: https://example.com',
+      privateReplyMode: 'TEXT',
+      flowId: '',
       offensiveKeywords: 'scam, fake, fraud, hate, refund, cheat, bad',
       offensiveAction: 'HIDE',
       offensiveReplyMessage: 'Hi {{first_name}}, please send us a direct message so our team can assist you directly.',
@@ -185,8 +229,14 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' 
       excludeKeywords: campaign.exclude_keywords || '',
       autoReplyComment: campaign.auto_reply_comment || '',
       commentVariations: variations.length ? variations : ['Hi {{name}}, thanks for your comment!'],
+      autoReplyMediaUrl: campaign.auto_reply_media_url || '',
+      replyMode: campaign.reply_mode || 'STATIC',
+      aiPromptInstruction: campaign.ai_prompt_instruction || '',
+      aiAgentId: campaign.ai_agent_id || '',
       enableLikeComment: Boolean(campaign.enable_like_comment),
       autoReplyPrivateMessage: campaign.auto_reply_private_message || '',
+      privateReplyMode: campaign.private_reply_mode || 'TEXT',
+      flowId: campaign.flow_id || '',
       offensiveKeywords: campaign.offensive_keywords || '',
       offensiveAction: campaign.offensive_action || 'NONE',
       offensiveReplyMessage: campaign.offensive_reply_message || '',
@@ -976,47 +1026,124 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' 
                   </div>
                 </div>
 
-                {/* 3. Public Comment Reply Variations */}
+                {/* 3. Public Comment Reply — Static Text or AI-Powered */}
                 <div style={{ background: '#f8fafc', padding: 14, borderRadius: 10, border: '1px solid #e2e8f0' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                     <label style={{ fontSize: '0.8rem', fontWeight: 700, color: '#334155', display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <MessageSquare size={14} color="#2563eb" /> Public Comment Auto-Reply (Rotating Variations)
+                      <MessageSquare size={14} color="#2563eb" /> Public Comment Auto-Reply
                     </label>
-                    <button
-                      type="button"
-                      onClick={handleAddVariation}
-                      style={{ padding: '3px 8px', borderRadius: 6, background: '#eff6ff', border: '1px solid #bfdbfe', color: '#2563eb', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
-                    >
-                      <Plus size={11} /> Add Variation
-                    </button>
+                    <div style={{ display: 'flex', gap: 4, background: '#e2e8f0', borderRadius: 8, padding: 2 }}>
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, replyMode: 'STATIC' })}
+                        style={{ padding: '4px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 700, background: form.replyMode !== 'AI' ? '#fff' : 'transparent', color: form.replyMode !== 'AI' ? '#1e293b' : '#64748b', boxShadow: form.replyMode !== 'AI' ? '0 1px 2px rgba(0,0,0,0.08)' : 'none' }}
+                      >
+                        Static Text
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, replyMode: 'AI' })}
+                        style={{ padding: '4px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4, background: form.replyMode === 'AI' ? '#fff' : 'transparent', color: form.replyMode === 'AI' ? '#7c3aed' : '#64748b', boxShadow: form.replyMode === 'AI' ? '0 1px 2px rgba(0,0,0,0.08)' : 'none' }}
+                      >
+                        <Sparkles size={11} /> AI-Powered
+                      </button>
+                    </div>
                   </div>
 
-                  <p style={{ fontSize: '0.72rem', color: '#64748b', margin: '0 0 10px 0' }}>
-                    Rotating multiple replies prevents spam penalties. Available tags: <code>{'{{name}}'}</code>, <code>{'{{first_name}}'}</code>.
-                  </p>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {form.commentVariations.map((variation, idx) => (
-                      <div key={idx} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                        <input
-                          type="text"
-                          className="form-input"
-                          placeholder={`Reply Variation ${idx + 1}...`}
-                          value={variation}
-                          onChange={(e) => handleVariationChange(idx, e.target.value)}
-                          style={{ flex: 1, fontSize: '0.8rem' }}
+                  {form.replyMode === 'AI' ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <p style={{ fontSize: '0.72rem', color: '#64748b', margin: 0 }}>
+                        The AI generates a short public reply for every matching comment based on your instruction below.
+                      </p>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#334155', marginBottom: 4 }}>Prompt / Instruction</label>
+                        <textarea
+                          rows={3}
+                          className="form-input w-full"
+                          placeholder="e.g. Thank the commenter warmly, mention we DM'd them the details, and keep it under 2 sentences."
+                          value={form.aiPromptInstruction}
+                          onChange={(e) => setForm({ ...form, aiPromptInstruction: e.target.value })}
+                          style={{ fontSize: '0.8rem' }}
                         />
-                        {form.commentVariations.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveVariation(idx)}
-                            style={{ padding: '6px 8px', borderRadius: 6, background: '#fee2e2', border: 'none', color: '#dc2626', cursor: 'pointer' }}
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        )}
                       </div>
-                    ))}
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#334155', marginBottom: 4 }}>AI Agent (optional)</label>
+                        <select
+                          className="form-input w-full"
+                          value={form.aiAgentId}
+                          onChange={(e) => setForm({ ...form, aiAgentId: e.target.value })}
+                          style={{ fontSize: '0.8rem' }}
+                        >
+                          <option value="">No specific agent (use default AI)</option>
+                          {aiAgents.map((a) => (
+                            <option key={a.id} value={a.id}>{a.name}</option>
+                          ))}
+                        </select>
+                        <p style={{ fontSize: '0.68rem', color: '#94a3b8', margin: '4px 0 0 0' }}>
+                          Reuses an existing AI Agent's persona/knowledge. Leave blank to use your workspace's default AI provider.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+                        <button
+                          type="button"
+                          onClick={handleAddVariation}
+                          style={{ padding: '3px 8px', borderRadius: 6, background: '#eff6ff', border: '1px solid #bfdbfe', color: '#2563eb', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                        >
+                          <Plus size={11} /> Add Variation
+                        </button>
+                      </div>
+
+                      <p style={{ fontSize: '0.72rem', color: '#64748b', margin: '0 0 10px 0' }}>
+                        Rotating multiple replies prevents spam penalties. Available tags: <code>{'{{name}}'}</code>, <code>{'{{first_name}}'}</code>.
+                      </p>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {form.commentVariations.map((variation, idx) => (
+                          <div key={idx} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                            <input
+                              type="text"
+                              className="form-input"
+                              placeholder={`Reply Variation ${idx + 1}...`}
+                              value={variation}
+                              onChange={(e) => handleVariationChange(idx, e.target.value)}
+                              style={{ flex: 1, fontSize: '0.8rem' }}
+                            />
+                            {form.commentVariations.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveVariation(idx)}
+                                style={{ padding: '6px 8px', borderRadius: 6, background: '#fee2e2', border: 'none', color: '#dc2626', cursor: 'pointer' }}
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  {/* Optional image attached to the public reply — works alongside either mode */}
+                  <div style={{ marginTop: 10 }}>
+                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#334155', marginBottom: 4 }}>
+                      <ImageIcon size={12} style={{ verticalAlign: -2 }} /> Attach an image (optional)
+                    </label>
+                    {form.autoReplyMediaUrl ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <img src={form.autoReplyMediaUrl} alt="Reply attachment" style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 6, border: '1px solid #e2e8f0' }} />
+                        <button type="button" onClick={() => setForm({ ...form, autoReplyMediaUrl: '' })} style={{ padding: '4px 8px', borderRadius: 6, background: '#fee2e2', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 700 }}>
+                          Remove
+                        </button>
+                      </div>
+                    ) : (
+                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, background: '#eff6ff', border: '1px solid #bfdbfe', color: '#2563eb', fontSize: '0.72rem', fontWeight: 700, cursor: uploadingMedia ? 'default' : 'pointer' }}>
+                        <Upload size={12} /> {uploadingMedia ? 'Uploading…' : 'Upload Image'}
+                        <input type="file" accept="image/*" onChange={handleMediaUpload} disabled={uploadingMedia} style={{ display: 'none' }} />
+                      </label>
+                    )}
                   </div>
 
                   <div style={{ marginTop: 10 }}>
@@ -1031,22 +1158,64 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' 
                   </div>
                 </div>
 
-                {/* 4. Private DM Auto-Reply */}
+                {/* 4. Private DM Auto-Reply — Text or Bot Flow */}
                 <div style={{ background: '#f8fafc', padding: 14, borderRadius: 10, border: '1px solid #e2e8f0' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', fontWeight: 700, color: '#334155', marginBottom: 4 }}>
-                    <Send size={14} color="#059669" /> Private DM Reply (Direct to Messenger / IG Inbox)
-                  </label>
-                  <p style={{ fontSize: '0.72rem', color: '#64748b', margin: '0 0 8px 0' }}>
-                    Sent automatically into the commenter's inbox as soon as they leave a comment.
-                  </p>
-                  <textarea
-                    rows={3}
-                    className="form-input w-full"
-                    placeholder="Hi {{first_name}}! Thanks for leaving a comment. Here is the link: https://example.com"
-                    value={form.autoReplyPrivateMessage}
-                    onChange={(e) => setForm({ ...form, autoReplyPrivateMessage: e.target.value })}
-                    style={{ fontSize: '0.8rem' }}
-                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', fontWeight: 700, color: '#334155' }}>
+                      <Send size={14} color="#059669" /> Private DM Reply (Direct to Messenger / IG Inbox)
+                    </label>
+                    <div style={{ display: 'flex', gap: 4, background: '#e2e8f0', borderRadius: 8, padding: 2 }}>
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, privateReplyMode: 'TEXT' })}
+                        style={{ padding: '4px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 700, background: form.privateReplyMode !== 'FLOW' ? '#fff' : 'transparent', color: form.privateReplyMode !== 'FLOW' ? '#1e293b' : '#64748b', boxShadow: form.privateReplyMode !== 'FLOW' ? '0 1px 2px rgba(0,0,0,0.08)' : 'none' }}
+                      >
+                        Text
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, privateReplyMode: 'FLOW' })}
+                        style={{ padding: '4px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4, background: form.privateReplyMode === 'FLOW' ? '#fff' : 'transparent', color: form.privateReplyMode === 'FLOW' ? '#059669' : '#64748b', boxShadow: form.privateReplyMode === 'FLOW' ? '0 1px 2px rgba(0,0,0,0.08)' : 'none' }}
+                      >
+                        <GitBranch size={11} /> Bot Flow
+                      </button>
+                    </div>
+                  </div>
+
+                  {form.privateReplyMode === 'FLOW' ? (
+                    <>
+                      <p style={{ fontSize: '0.72rem', color: '#64748b', margin: '0 0 8px 0' }}>
+                        Only the first 2 messages of the selected flow will be sent, to keep replies short.
+                      </p>
+                      <select
+                        className="form-input w-full"
+                        value={form.flowId}
+                        onChange={(e) => setForm({ ...form, flowId: e.target.value })}
+                        style={{ fontSize: '0.8rem' }}
+                      >
+                        <option value="">Select a Bot Flow…</option>
+                        {flows
+                          .filter((f) => !f.platform || f.platform === platform)
+                          .map((f) => (
+                            <option key={f.id} value={f.id}>{f.name}</option>
+                          ))}
+                      </select>
+                    </>
+                  ) : (
+                    <>
+                      <p style={{ fontSize: '0.72rem', color: '#64748b', margin: '0 0 8px 0' }}>
+                        Sent automatically into the commenter's inbox as soon as they leave a comment.
+                      </p>
+                      <textarea
+                        rows={3}
+                        className="form-input w-full"
+                        placeholder="Hi {{first_name}}! Thanks for leaving a comment. Here is the link: https://example.com"
+                        value={form.autoReplyPrivateMessage}
+                        onChange={(e) => setForm({ ...form, autoReplyPrivateMessage: e.target.value })}
+                        style={{ fontSize: '0.8rem' }}
+                      />
+                    </>
+                  )}
                 </div>
 
                 {/* 5. Offensive Comments Moderation */}
@@ -1106,7 +1275,11 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' 
                   </div>
                   {/* Bot Auto-Reply */}
                   <div style={{ background: '#eff6ff', padding: 8, borderRadius: 8, fontSize: '0.74rem', borderLeft: '3px solid #2563eb' }}>
-                    <strong>Your Brand:</strong> {form.commentVariations[0]?.replace('{{name}}', 'Alice').replace('{{first_name}}', 'Alice') || 'Hi Alice, check your inbox!'}
+                    <strong>Your Brand:</strong>{' '}
+                    {form.replyMode === 'AI'
+                      ? (form.aiPromptInstruction ? `🤖 AI reply based on: "${form.aiPromptInstruction}"` : '🤖 AI will generate a reply for each comment')
+                      : (form.commentVariations[0]?.replace('{{name}}', 'Alice').replace('{{first_name}}', 'Alice') || 'Hi Alice, check your inbox!')}
+                    {form.autoReplyMediaUrl && <div style={{ marginTop: 6 }}><img src={form.autoReplyMediaUrl} alt="" style={{ maxWidth: 100, borderRadius: 6 }} /></div>}
                   </div>
                 </div>
 
@@ -1116,7 +1289,9 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' 
                     <Send size={12} /> Private DM (Direct Message)
                   </div>
                   <div style={{ background: '#ecfdf5', padding: 10, borderRadius: 8, fontSize: '0.74rem', color: '#065f46', whiteSpace: 'pre-line', border: '1px solid #a7f3d0' }}>
-                    {form.autoReplyPrivateMessage?.replace('{{name}}', 'Alice').replace('{{first_name}}', 'Alice') || 'Hi Alice! Here is your link...'}
+                    {form.privateReplyMode === 'FLOW'
+                      ? (flows.find((f) => String(f.id) === String(form.flowId))?.name ? `🔀 Sends the first 2 messages of "${flows.find((f) => String(f.id) === String(form.flowId)).name}"` : 'Select a Bot Flow above')
+                      : (form.autoReplyPrivateMessage?.replace('{{name}}', 'Alice').replace('{{first_name}}', 'Alice') || 'Hi Alice! Here is your link...')}
                   </div>
                 </div>
               </div>

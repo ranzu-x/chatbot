@@ -4,12 +4,10 @@ import AppLayout from '../../Layout/AppLayout';
 import MetaAppPage from './MetaAppPage';
 import TikTokAppPage from './TikTokAppPage';
 import { metaAppAPI, tiktokAppAPI } from '../../services/api';
-import api from '../../services/api';
 import { notify } from '../../utils/alerts';
 import {
   Radio,
   Video,
-  Sparkles,
   Globe,
   ShoppingBag,
   RefreshCw,
@@ -45,15 +43,6 @@ const APP_NAV_ITEMS = [
     border: 'rgba(15, 23, 42, 0.15)',
   },
   {
-    id: 'ai',
-    label: 'AI APIs Setup',
-    subtitle: 'OpenAI, Claude, Gemini',
-    IconComponent: Sparkles,
-    color: '#7c3aed',
-    bg: 'rgba(124, 58, 237, 0.08)',
-    border: 'rgba(124, 58, 237, 0.18)',
-  },
-  {
     id: 'google',
     label: 'Google App',
     subtitle: 'OAuth, Sheets & Gmail',
@@ -82,18 +71,6 @@ export default function AppSettingsHubPage() {
   const [metaConfigured, setMetaConfigured] = useState(false);
   const [tiktokConfigured, setTiktokConfigured] = useState(false);
 
-  // AI Settings State
-  const [aiForm, setAiForm] = useState({
-    provider: 'OPENAI',
-    modelName: 'gpt-4o-mini',
-    apiKey: '',
-    temperature: 0.7,
-    systemPrompt: 'You are a helpful AI customer support assistant. Answer accurately based on our knowledge base.',
-    isActive: true,
-  });
-  const [aiSaving, setAiSaving] = useState(false);
-  const [aiShowKey, setAiShowKey] = useState(false);
-
   // Google Settings State
   const [googleForm, setGoogleForm] = useState({
     clientId: '',
@@ -117,7 +94,6 @@ export default function AppSettingsHubPage() {
 
   useEffect(() => {
     fetchStatuses();
-    fetchAISettings();
   }, []);
 
   const fetchStatuses = async () => {
@@ -140,43 +116,11 @@ export default function AppSettingsHubPage() {
     }
   };
 
-  const fetchAISettings = async () => {
-    try {
-      const res = await api.get('/ai/agent');
-      if (res.data?.agent) {
-        const ag = res.data.agent;
-        setAiForm({
-          provider: ag.provider || 'OPENAI',
-          modelName: ag.model_name || 'gpt-4o-mini',
-          apiKey: ag.api_key || '',
-          temperature: Number(ag.temperature || 0.7),
-          systemPrompt: ag.system_prompt || '',
-          isActive: Boolean(ag.isActive ?? ag.is_active),
-        });
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
   const handleCopy = (text, key) => {
     navigator.clipboard.writeText(text);
     setCopiedKey(key);
     notify.success('Copied to clipboard!');
     setTimeout(() => setCopiedKey(''), 2000);
-  };
-
-  const handleSaveAI = async (e) => {
-    e.preventDefault();
-    setAiSaving(true);
-    try {
-      await api.put('/ai/agent', aiForm);
-      notify.success('AI API settings saved successfully!');
-    } catch (err) {
-      notify.error(err.response?.data?.message || 'Failed to save AI settings');
-    } finally {
-      setAiSaving(false);
-    }
   };
 
   const handleSaveGoogle = (e) => {
@@ -219,7 +163,7 @@ export default function AppSettingsHubPage() {
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <button
-              onClick={() => { fetchStatuses(); fetchAISettings(); }}
+              onClick={() => fetchStatuses()}
               className="btn btn-secondary btn-sm"
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 600 }}
             >
@@ -253,7 +197,7 @@ export default function AppSettingsHubPage() {
 
             {APP_NAV_ITEMS.map((item) => {
               const isSelected = activeTab === item.id;
-              const isConfigured = (item.id === 'meta' && metaConfigured) || (item.id === 'tiktok' && tiktokConfigured) || (item.id === 'ai' && aiForm.apiKey);
+              const isConfigured = (item.id === 'meta' && metaConfigured) || (item.id === 'tiktok' && tiktokConfigured);
               const Icon = item.IconComponent;
 
               return (
@@ -333,129 +277,9 @@ export default function AppSettingsHubPage() {
             )}
 
             {/* 3. AI APIs Setup */}
-            {activeTab === 'ai' && (
-              <div className="card" style={{ padding: 22, borderRadius: 12, border: '1px solid #e2e8f0', background: '#ffffff' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div style={{ width: 38, height: 38, borderRadius: 10, background: 'rgba(124, 58, 237, 0.08)', border: '1px solid rgba(124, 58, 237, 0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#7c3aed' }}>
-                      <Sparkles size={20} />
-                    </div>
-                    <div>
-                      <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700, color: '#0f172a' }}>AI Model APIs & LLM Providers</h2>
-                      <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>Configure OpenAI, Claude, Gemini, or custom LLM API keys for autonomous bots</p>
-                    </div>
-                  </div>
-                  <span
-                    style={{
-                      fontSize: '0.72rem',
-                      padding: '3px 8px',
-                      borderRadius: 6,
-                      background: aiForm.apiKey ? '#f0fdf4' : '#f8fafc',
-                      color: aiForm.apiKey ? '#166534' : '#64748b',
-                      border: `1px solid ${aiForm.apiKey ? '#bbf7d0' : '#e2e8f0'}`,
-                      fontWeight: 600,
-                    }}
-                  >
-                    {aiForm.apiKey ? '● API Key Configured' : '○ Default / Open Keys'}
-                  </span>
-                </div>
-
-                <form onSubmit={handleSaveAI} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                    <div>
-                      <label className="form-label" style={{ fontWeight: 600, fontSize: '0.8rem' }}>AI Provider *</label>
-                      <select
-                        className="form-input w-full"
-                        value={aiForm.provider}
-                        onChange={(e) => {
-                          const p = e.target.value;
-                          let defModel = 'gpt-4o-mini';
-                          if (p === 'ANTHROPIC') defModel = 'claude-3-5-sonnet-latest';
-                          if (p === 'GEMINI') defModel = 'gemini-2.0-flash';
-                          if (p === 'DEEPSEEK') defModel = 'deepseek-chat';
-                          setAiForm({ ...aiForm, provider: p, modelName: defModel });
-                        }}
-                      >
-                        <option value="OPENAI">OpenAI (GPT-4o, GPT-4o-mini)</option>
-                        <option value="ANTHROPIC">Anthropic (Claude 3.5 Sonnet, Haiku)</option>
-                        <option value="GEMINI">Google Gemini (Gemini 2.0 Flash / Pro)</option>
-                        <option value="DEEPSEEK">DeepSeek (DeepSeek-V3, DeepSeek-R1)</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="form-label" style={{ fontWeight: 600, fontSize: '0.8rem' }}>Default Model *</label>
-                      <input
-                        type="text"
-                        required
-                        className="form-input w-full font-mono text-sm"
-                        placeholder="e.g. gpt-4o-mini, gemini-2.0-flash"
-                        value={aiForm.modelName}
-                        onChange={(e) => setAiForm({ ...aiForm, modelName: e.target.value })}
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                      <label className="form-label" style={{ fontWeight: 600, fontSize: '0.8rem', margin: 0 }}>API Key *</label>
-                      <button
-                        type="button"
-                        onClick={() => setAiShowKey(!aiShowKey)}
-                        style={{ background: 'none', border: 'none', color: '#2563eb', fontSize: '0.74rem', fontWeight: 600, cursor: 'pointer' }}
-                      >
-                        {aiShowKey ? 'Hide Key' : 'Show Key'}
-                      </button>
-                    </div>
-                    <input
-                      type={aiShowKey ? 'text' : 'password'}
-                      className="form-input w-full font-mono text-sm"
-                      placeholder="sk-proj-xxxxxxxxxxxxxxxxxxxxxxxx"
-                      value={aiForm.apiKey}
-                      onChange={(e) => setAiForm({ ...aiForm, apiKey: e.target.value })}
-                    />
-                    <span style={{ fontSize: '0.72rem', color: '#64748b' }}>If left empty, system environment keys will be utilized.</span>
-                  </div>
-
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                      <label className="form-label" style={{ fontWeight: 600, fontSize: '0.8rem', margin: 0 }}>
-                        Temperature / Creativity: {aiForm.temperature}
-                      </label>
-                      <span style={{ fontSize: '0.72rem', color: '#64748b' }}>0.0 = Deterministic, 1.0 = Creative</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.05"
-                      value={aiForm.temperature}
-                      onChange={(e) => setAiForm({ ...aiForm, temperature: parseFloat(e.target.value) })}
-                      style={{ width: '100%', accentColor: '#7c3aed' }}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="form-label" style={{ fontWeight: 600, fontSize: '0.8rem' }}>Master System Prompt</label>
-                    <textarea
-                      rows={3}
-                      className="form-input w-full text-sm"
-                      value={aiForm.systemPrompt}
-                      onChange={(e) => setAiForm({ ...aiForm, systemPrompt: e.target.value })}
-                    />
-                  </div>
-
-                  <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
-                    <button type="submit" disabled={aiSaving} className="btn btn-primary" style={{ fontWeight: 600 }}>
-                      {aiSaving ? 'Saving...' : 'Save AI Settings'}
-                    </button>
-                    <a href="/ai-agent" className="btn btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.8rem', fontWeight: 600 }}>
-                      <ExternalLink size={13} /> Open AI Knowledge Base
-                    </a>
-                  </div>
-                </form>
-              </div>
-            )}
+            {/* AI provider setup now lives at Settings → AI Providers (a dedicated
+                page — see Pages/Settings/AIProvidersPage.jsx), and Agents are
+                managed inside Bot Manager → AI. */}
 
             {/* 4. Google App Configuration */}
             {activeTab === 'google' && (

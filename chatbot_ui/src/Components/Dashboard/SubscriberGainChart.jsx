@@ -1,39 +1,27 @@
-import React, { useState, useMemo } from 'react';
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  Cell,
-} from 'recharts';
-import {
-  Users,
-  TrendingUp,
-  Sparkles,
-  ArrowUpRight,
-  Layers,
-  BarChart2,
-  Calendar,
-  MessageCircle,
-  Facebook,
-  Instagram,
-  Send,
-  Globe,
-} from 'lucide-react';
+import React, { useMemo } from 'react';
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from 'recharts';
 
-const CHANNEL_COLORS = {
-  whatsapp:  { label: 'WhatsApp',  color: '#25d366', fill: 'url(#whatsappGrad)' },
-  facebook:  { label: 'Facebook',  color: '#1877f2', fill: 'url(#facebookGrad)' },
-  instagram: { label: 'Instagram', color: '#e1306c', fill: 'url(#instagramGrad)' },
-  telegram:  { label: 'Telegram',  color: '#229ed9', fill: 'url(#telegramGrad)' },
-  webchat:   { label: 'Webchat',   color: '#2563eb', fill: 'url(#webchatGrad)' },
-};
+// "Subscriber Bloom" — a soft, light-toned redesign of the old stacked bar
+// chart, approved by the user from a set of mockups. The line sweeps
+// through a "dawn" gradient (cool lavender at the oldest day, warm
+// coral-gold at today) — light visually warming toward the present as a
+// stand-in for growth — with a soft glow on the most recent point, a serif
+// (Fraunces) headline number, and an airy per-channel breakdown row instead
+// of boxed stat tiles. Deliberately keeps the exact prop contract the old
+// component had (rawData / timeRange / onTimeRangeChange) so nothing else
+// in AgencyDashboard.jsx needs to change.
 
-// Generate attractive fallback sample timeline if fresh database has no history
+const CHANNELS = [
+  { key: 'whatsapp',  name: 'WhatsApp',  hue: '#25d366', tint: 'rgba(37,211,102,.14)' },
+  { key: 'facebook',  name: 'Facebook',  hue: '#4c8bf0', tint: 'rgba(76,139,240,.14)' },
+  { key: 'instagram', name: 'Instagram', hue: '#e0558a', tint: 'rgba(224,85,138,.14)' },
+  { key: 'telegram',  name: 'Telegram',  hue: '#41a8d8', tint: 'rgba(65,168,216,.14)' },
+  { key: 'webchat',   name: 'Webchat',   hue: '#7a7ce0', tint: 'rgba(122,124,224,.14)' },
+];
+
+// Attractive fallback sample timeline if the workspace has no history yet —
+// carried over from the previous chart so a brand-new account still sees a
+// populated-looking preview rather than an empty axis.
 function generateSampleDays(days = 14) {
   const result = [];
   const now = new Date();
@@ -46,10 +34,9 @@ function generateSampleDays(days = 14) {
     const ig = Math.floor(Math.random() * 6) + 1;
     const tg = Math.floor(Math.random() * 3);
     const web = Math.floor(Math.random() * 4) + 1;
-    const total = wa + fb + ig + tg + web;
     result.push({
       date: dateStr,
-      new_subscribers: total,
+      new_subscribers: wa + fb + ig + tg + web,
       whatsapp: wa,
       facebook: fb,
       instagram: ig,
@@ -60,81 +47,57 @@ function generateSampleDays(days = 14) {
   return result;
 }
 
-// Custom Glassmorphism Tooltip
-function CustomSubscriberTooltip({ active, payload, label, mode }) {
+function sparkPath(data, w, h, pad = 2) {
+  const max = Math.max(...data);
+  const min = Math.min(...data);
+  const range = max - min || 1;
+  const step = (w - pad * 2) / (data.length - 1 || 1);
+  return data
+    .map((v, i) => {
+      const x = pad + i * step;
+      const y = pad + (h - pad * 2) * (1 - (v - min) / range);
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+}
+
+function CustomDot(props) {
+  const { cx, cy, index, dataLength } = props;
+  if (index !== dataLength - 1 || cx == null || cy == null) return null;
+  return (
+    <g>
+      <circle cx={cx} cy={cy} r={20} fill="url(#bloomGlow)" />
+      <circle cx={cx} cy={cy} r={5.5} fill="#ff9d6c" stroke="#fffefc" strokeWidth={2.5} />
+    </g>
+  );
+}
+
+function BloomTooltip({ active, payload, label }) {
   if (!active || !payload || !payload.length) return null;
-
-  const data = payload[0]?.payload || {};
-  const total = data.new_subscribers || payload.reduce((acc, p) => acc + (Number(p.value) || 0), 0);
-
+  const total = payload[0]?.payload?.new_subscribers ?? 0;
   return (
     <div
       style={{
-        background: '#ffffff',
-        border: '1px solid #e2e8f0',
-        borderRadius: 10,
-        padding: '12px 14px',
-        boxShadow: '0 8px 24px rgba(15, 23, 42, 0.12)',
-        minWidth: 180,
+        background: '#fffefc',
+        border: '1px solid #f0eeee',
+        borderRadius: 14,
+        padding: '11px 14px',
+        boxShadow: '0 18px 40px -14px rgba(90, 60, 90, 0.28)',
+        minWidth: 150,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, borderBottom: '1px solid #f1f5f9', paddingBottom: 6 }}>
-        <span style={{ fontSize: '0.76rem', fontWeight: 700, color: '#0f172a' }}>{label}</span>
-        <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#2563eb', background: 'rgba(37, 99, 235, 0.08)', padding: '2px 6px', borderRadius: 6 }}>
-          +{total} Gained
-        </span>
+      <div style={{ fontFamily: "'Fraunces', serif", fontStyle: 'italic', fontWeight: 440, fontSize: '0.86rem', color: '#5c5566', marginBottom: 5 }}>
+        {label}
       </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-        {data.whatsapp > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.74rem' }}>
-            <span style={{ color: '#64748b', display: 'flex', alignItems: 'center', gap: 5 }}>
-              <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#25d366' }} /> WhatsApp:
-            </span>
-            <strong style={{ color: '#0f172a' }}>+{data.whatsapp}</strong>
-          </div>
-        )}
-        {data.facebook > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.74rem' }}>
-            <span style={{ color: '#64748b', display: 'flex', alignItems: 'center', gap: 5 }}>
-              <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#1877f2' }} /> Facebook:
-            </span>
-            <strong style={{ color: '#0f172a' }}>+{data.facebook}</strong>
-          </div>
-        )}
-        {data.instagram > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.74rem' }}>
-            <span style={{ color: '#64748b', display: 'flex', alignItems: 'center', gap: 5 }}>
-              <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#e1306c' }} /> Instagram:
-            </span>
-            <strong style={{ color: '#0f172a' }}>+{data.instagram}</strong>
-          </div>
-        )}
-        {data.telegram > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.74rem' }}>
-            <span style={{ color: '#64748b', display: 'flex', alignItems: 'center', gap: 5 }}>
-              <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#229ed9' }} /> Telegram:
-            </span>
-            <strong style={{ color: '#0f172a' }}>+{data.telegram}</strong>
-          </div>
-        )}
-        {data.webchat > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.74rem' }}>
-            <span style={{ color: '#64748b', display: 'flex', alignItems: 'center', gap: 5 }}>
-              <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#2563eb' }} /> Webchat:
-            </span>
-            <strong style={{ color: '#0f172a' }}>+{data.webchat}</strong>
-          </div>
-        )}
+      <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 560, fontSize: '1.3rem', color: '#20222c', fontVariantNumeric: 'tabular-nums' }}>
+        +{total}
       </div>
+      <div style={{ fontSize: '0.68rem', color: '#a39cae', marginTop: 1 }}>new subscribers that day</div>
     </div>
   );
 }
 
 export default function SubscriberGainChart({ rawData = [], timeRange = 14, onTimeRangeChange }) {
-  const [viewMode, setViewMode] = useState('stacked'); // 'stacked' | 'total'
-
-  // Prepare chart data
   const chartData = useMemo(() => {
     if (rawData && rawData.length > 0) {
       return rawData.map((d) => ({
@@ -147,255 +110,234 @@ export default function SubscriberGainChart({ rawData = [], timeRange = 14, onTi
         webchat: Number(d.webchat || 0),
       }));
     }
-    // Fallback if empty database
     return generateSampleDays(timeRange);
   }, [rawData, timeRange]);
 
-  // Aggregate Metrics
-  const totalGained = useMemo(() => {
-    return chartData.reduce((acc, curr) => acc + (curr.new_subscribers || 0), 0);
+  const totalGained = useMemo(
+    () => chartData.reduce((acc, curr) => acc + (curr.new_subscribers || 0), 0),
+    [chartData]
+  );
+  const dailyAvg = useMemo(
+    () => (chartData.length ? totalGained / chartData.length : 0),
+    [chartData, totalGained]
+  );
+  const deltaPct = useMemo(() => {
+    if (chartData.length < 2) return 0;
+    const mid = Math.floor(chartData.length / 2);
+    const firstHalf = chartData.slice(0, mid).reduce((a, c) => a + c.new_subscribers, 0);
+    const secondHalf = chartData.slice(mid).reduce((a, c) => a + c.new_subscribers, 0);
+    if (!firstHalf) return secondHalf > 0 ? 100 : 0;
+    return Math.round(((secondHalf - firstHalf) / firstHalf) * 100);
   }, [chartData]);
 
-  const dailyAvg = useMemo(() => {
-    if (chartData.length === 0) return 0;
-    return (totalGained / chartData.length).toFixed(1);
-  }, [chartData, totalGained]);
-
-  const peakDay = useMemo(() => {
-    if (chartData.length === 0) return { date: '—', val: 0 };
-    let max = chartData[0];
-    for (const item of chartData) {
-      if (item.new_subscribers > max.new_subscribers) max = item;
-    }
-    return { date: max.date, val: max.new_subscribers };
-  }, [chartData]);
+  const channelTotals = useMemo(
+    () =>
+      CHANNELS.map((ch) => ({
+        ...ch,
+        total: chartData.reduce((a, c) => a + (c[ch.key] || 0), 0),
+        series: chartData.map((c) => c[ch.key] || 0),
+      })),
+    [chartData]
+  );
 
   return (
     <div
-      className="card"
       style={{
-        background: '#ffffff',
-        border: '1px solid #e2e8f0',
-        borderRadius: 12,
-        padding: '18px 20px',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 16,
+        position: 'relative',
+        background: '#fffefc',
+        border: '1px solid #efeeee',
+        borderRadius: 28,
+        boxShadow:
+          '0 1px 1px rgba(35,39,51,0.03), 0 30px 60px -30px rgba(90,60,90,0.18), 0 14px 28px -20px rgba(90,60,90,0.10)',
+        padding: '40px 40px 36px',
+        overflow: 'hidden',
       }}
     >
-      {/* ── Header ── */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 8,
-                background: 'rgba(37, 99, 235, 0.08)',
-                color: '#2563eb',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <TrendingUp size={17} />
-            </div>
-            <div>
-              <h3 style={{ fontSize: '0.98rem', fontWeight: 800, color: '#0f172a', margin: 0, letterSpacing: '-0.2px' }}>
-                Subscriber Acquisition & Growth
-              </h3>
-              <p style={{ fontSize: '0.78rem', color: '#64748b', margin: '2px 0 0 0' }}>
-                Daily new subscribers gained across WhatsApp, Facebook, Instagram & Telegram channels
-              </p>
-            </div>
-          </div>
-        </div>
+      {/* one soft bokeh glow tucked in the corner — the card's single flourish */}
+      <div
+        style={{
+          position: 'absolute',
+          width: 340,
+          height: 340,
+          borderRadius: '50%',
+          top: -160,
+          right: -140,
+          background: 'radial-gradient(circle at 50% 50%, rgba(255,157,108,0.20), rgba(255,157,108,0) 70%)',
+          pointerEvents: 'none',
+        }}
+      />
 
-        {/* Action Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          {/* Mode Switcher */}
-          <div
+      {/* ── Header row: headline + timeframe control ── */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+        <div style={{ position: 'relative', maxWidth: '30ch' }}>
+          <div style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#b9a8c9', marginBottom: 10 }}>
+            Subscriber Growth
+          </div>
+          <span
             style={{
-              display: 'flex',
-              background: '#f8fafc',
-              border: '1px solid #e2e8f0',
-              borderRadius: 8,
-              padding: 2,
+              fontFamily: "'Fraunces', serif",
+              fontWeight: 560,
+              fontSize: '2.6rem',
+              letterSpacing: '-0.02em',
+              lineHeight: 1.02,
+              color: '#20222c',
+              fontVariantNumeric: 'tabular-nums',
+              backgroundImage: 'linear-gradient(100deg, #3a2f45 0%, #6a4a3f 60%, #b35b2e 100%)',
+              WebkitBackgroundClip: 'text',
+              backgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
             }}
           >
-            <button
-              onClick={() => setViewMode('stacked')}
-              style={{
-                padding: '4px 10px',
-                borderRadius: 6,
-                fontSize: '0.75rem',
-                fontWeight: viewMode === 'stacked' ? 700 : 500,
-                border: 'none',
-                background: viewMode === 'stacked' ? '#ffffff' : 'transparent',
-                color: viewMode === 'stacked' ? '#2563eb' : '#64748b',
-                boxShadow: viewMode === 'stacked' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 5,
-              }}
-            >
-              <Layers size={13} /> Channels
-            </button>
-            <button
-              onClick={() => setViewMode('total')}
-              style={{
-                padding: '4px 10px',
-                borderRadius: 6,
-                fontSize: '0.75rem',
-                fontWeight: viewMode === 'total' ? 700 : 500,
-                border: 'none',
-                background: viewMode === 'total' ? '#ffffff' : 'transparent',
-                color: viewMode === 'total' ? '#2563eb' : '#64748b',
-                boxShadow: viewMode === 'total' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 5,
-              }}
-            >
-              <BarChart2 size={13} /> Total
-            </button>
+            {totalGained.toLocaleString('en-US')}
+          </span>
+          <span style={{ fontFamily: "'Fraunces', serif", fontWeight: 440, fontStyle: 'italic', fontSize: '1.15rem', color: '#5c5566', marginLeft: 6 }}>
+            new subscribers
+          </span>
+          <div style={{ fontSize: '0.88rem', color: '#8a8695', marginTop: 6, lineHeight: 1.55, maxWidth: '44ch' }}>
+            Across WhatsApp, Facebook, Instagram, Telegram and Webchat.
           </div>
-
-          {/* Timeframe Dropdown (if callback provided) */}
-          {onTimeRangeChange && (
-            <select
-              value={timeRange}
-              onChange={(e) => onTimeRangeChange(Number(e.target.value))}
-              style={{
-                padding: '5px 10px',
-                borderRadius: 8,
-                border: '1px solid #e2e8f0',
-                background: '#ffffff',
-                color: '#0f172a',
-                fontSize: '0.78rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                outline: 'none',
-              }}
-            >
-              <option value={7}>Last 7 Days</option>
-              <option value={14}>Last 14 Days</option>
-              <option value={30}>Last 30 Days</option>
-            </select>
-          )}
         </div>
+
+        {onTimeRangeChange && (
+          <select
+            value={timeRange}
+            onChange={(e) => onTimeRangeChange(Number(e.target.value))}
+            style={{
+              padding: '6px 12px',
+              borderRadius: 999,
+              border: '1px solid #efeeee',
+              background: '#fffefc',
+              color: '#5c5566',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              outline: 'none',
+            }}
+          >
+            <option value={7}>Last 7 Days</option>
+            <option value={14}>Last 14 Days</option>
+            <option value={30}>Last 30 Days</option>
+          </select>
+        )}
       </div>
 
-      {/* ── Summary Metric Highlights Bar ── */}
+      {/* ── Meta row ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 5,
+            fontSize: '0.78rem',
+            fontWeight: 600,
+            color: '#a2440f',
+            background: 'linear-gradient(120deg, rgba(255,157,108,0.16), rgba(255,215,153,0.16))',
+            border: '1px solid rgba(255,157,108,0.28)',
+            padding: '5px 11px 5px 9px',
+            borderRadius: 999,
+          }}
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" style={{ transform: deltaPct < 0 ? 'rotate(180deg)' : 'none' }}>
+            <path d="M18 15l-6-6-6 6" />
+          </svg>
+          {deltaPct >= 0 ? '+' : ''}
+          {deltaPct}% vs the {timeRange === 7 ? '3.5' : Math.round(timeRange / 2)} days before
+        </span>
+        <span style={{ fontSize: '0.78rem', color: '#8a8695', fontVariantNumeric: 'tabular-nums' }}>
+          {dailyAvg.toFixed(1)} a day, on average
+        </span>
+      </div>
+
+      {/* ── Chart ── */}
+      <div style={{ height: 280, width: '100%', marginTop: 26 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={chartData} margin={{ top: 14, right: 6, left: 0, bottom: 0 }}>
+            <defs>
+              <linearGradient id="bloomLine" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stopColor="#b9a8dc" />
+                <stop offset="55%" stopColor="#e8a690" />
+                <stop offset="100%" stopColor="#ff9d6c" />
+              </linearGradient>
+              <linearGradient id="bloomFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="rgba(255,157,108,0.30)" />
+                <stop offset="100%" stopColor="rgba(255,157,108,0)" />
+              </linearGradient>
+              <radialGradient id="bloomGlow">
+                <stop offset="0%" stopColor="rgba(255,157,108,0.55)" />
+                <stop offset="100%" stopColor="rgba(255,157,108,0)" />
+              </radialGradient>
+            </defs>
+            <XAxis
+              dataKey="date"
+              stroke="#b3aebd"
+              fontSize={11}
+              tickLine={false}
+              axisLine={false}
+              tickMargin={10}
+              interval="preserveStartEnd"
+              minTickGap={24}
+            />
+            <YAxis hide domain={[0, 'dataMax + 2']} />
+            <Tooltip content={<BloomTooltip />} cursor={{ stroke: '#f0eeee', strokeWidth: 1 }} />
+            <Area
+              type="monotone"
+              dataKey="new_subscribers"
+              stroke="url(#bloomLine)"
+              strokeWidth={2.25}
+              fill="url(#bloomFill)"
+              dot={(dotProps) => <CustomDot key={dotProps.index} {...dotProps} dataLength={chartData.length} />}
+              activeDot={{ r: 6, fill: '#ff9d6c', stroke: '#fffefc', strokeWidth: 2.5 }}
+              animationDuration={700}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* ── Channel bloom row ── */}
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
-          gap: 10,
-          background: '#f8fafc',
-          border: '1px solid #e2e8f0',
-          borderRadius: 10,
-          padding: '10px 14px',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
+          gap: 18,
+          marginTop: 34,
+          paddingTop: 28,
+          borderTop: '1px solid #f1efef',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 6, background: 'rgba(37,99,235,0.1)', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Users size={14} />
-          </div>
-          <div>
-            <div style={{ fontSize: '0.68rem', color: '#64748b', fontWeight: 700, textTransform: 'uppercase' }}>Period Gain</div>
-            <div style={{ fontSize: '0.96rem', fontWeight: 800, color: '#0f172a' }}>+{totalGained} Subscribers</div>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 6, background: 'rgba(16,185,129,0.1)', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <TrendingUp size={14} />
-          </div>
-          <div>
-            <div style={{ fontSize: '0.68rem', color: '#64748b', fontWeight: 700, textTransform: 'uppercase' }}>Daily Velocity</div>
-            <div style={{ fontSize: '0.96rem', fontWeight: 800, color: '#10b981' }}>+{dailyAvg} / day</div>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 6, background: 'rgba(245,158,11,0.1)', color: '#f59e0b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Sparkles size={14} />
-          </div>
-          <div>
-            <div style={{ fontSize: '0.68rem', color: '#64748b', fontWeight: 700, textTransform: 'uppercase' }}>Peak Day</div>
-            <div style={{ fontSize: '0.96rem', fontWeight: 800, color: '#0f172a' }}>{peakDay.date} (+{peakDay.val})</div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Responsive Bar Chart ── */}
-      <div style={{ height: 270, width: '100%' }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-            <defs>
-              {/* Vibrant Gradients */}
-              <linearGradient id="totalBarGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#2563eb" stopOpacity={0.95} />
-                <stop offset="100%" stopColor="#1d4ed8" stopOpacity={0.7} />
-              </linearGradient>
-              <linearGradient id="whatsappGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#25d366" stopOpacity={0.95} />
-                <stop offset="100%" stopColor="#1ebd5b" stopOpacity={0.8} />
-              </linearGradient>
-              <linearGradient id="facebookGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#1877f2" stopOpacity={0.95} />
-                <stop offset="100%" stopColor="#0d62cc" stopOpacity={0.8} />
-              </linearGradient>
-              <linearGradient id="instagramGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#e1306c" stopOpacity={0.95} />
-                <stop offset="100%" stopColor="#c1275b" stopOpacity={0.8} />
-              </linearGradient>
-              <linearGradient id="telegramGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#229ed9" stopOpacity={0.95} />
-                <stop offset="100%" stopColor="#1b85b8" stopOpacity={0.8} />
-              </linearGradient>
-              <linearGradient id="webchatGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.95} />
-                <stop offset="100%" stopColor="#2563eb" stopOpacity={0.8} />
-              </linearGradient>
-            </defs>
-
-            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-            <XAxis dataKey="date" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={{ stroke: '#e2e8f0' }} />
-            <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
-            <Tooltip content={<CustomSubscriberTooltip mode={viewMode} />} cursor={{ fill: 'rgba(37, 99, 235, 0.04)' }} />
-
-            {viewMode === 'total' ? (
-              <Bar
-                dataKey="new_subscribers"
-                name="New Subscribers"
-                fill="url(#totalBarGrad)"
-                radius={[6, 6, 0, 0]}
-                maxBarSize={38}
-                animationDuration={700}
-              />
-            ) : (
-              <>
-                <Legend
-                  verticalAlign="top"
-                  align="right"
-                  wrapperStyle={{ fontSize: '0.74rem', paddingBottom: 8 }}
-                  formatter={(val) => <span style={{ color: '#475569', fontWeight: 600 }}>{val}</span>}
-                />
-                <Bar dataKey="whatsapp" name="WhatsApp" stackId="gain" fill="url(#whatsappGrad)" maxBarSize={36} />
-                <Bar dataKey="facebook" name="Facebook" stackId="gain" fill="url(#facebookGrad)" maxBarSize={36} />
-                <Bar dataKey="instagram" name="Instagram" stackId="gain" fill="url(#instagramGrad)" maxBarSize={36} />
-                <Bar dataKey="telegram" name="Telegram" stackId="gain" fill="url(#telegramGrad)" maxBarSize={36} />
-                <Bar dataKey="webchat" name="Webchat" stackId="gain" fill="url(#webchatGrad)" radius={[6, 6, 0, 0]} maxBarSize={36} />
-              </>
-            )}
-          </BarChart>
-        </ResponsiveContainer>
+        {channelTotals.map((ch) => {
+          const path = sparkPath(ch.series.length > 1 ? ch.series : [0, ...ch.series], 100, 18, 2);
+          return (
+            <div key={ch.key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 9 }}>
+              <div
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: '50%',
+                  background: ch.tint,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.03)',
+                }}
+              >
+                <svg width={8} height={8} viewBox="0 0 8 8">
+                  <circle cx="4" cy="4" r="4" fill={ch.hue} />
+                </svg>
+              </div>
+              <div style={{ fontSize: '0.72rem', fontWeight: 600, color: '#9a95a3', letterSpacing: '0.02em', textTransform: 'uppercase' }}>
+                {ch.name}
+              </div>
+              <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 560, fontSize: '1.28rem', color: '#232733', fontVariantNumeric: 'tabular-nums' }}>
+                +{ch.total}
+              </div>
+              <div style={{ width: '100%', height: 18 }}>
+                <svg viewBox="0 0 100 18" preserveAspectRatio="none" style={{ display: 'block', width: '100%', height: '100%' }}>
+                  <path d={path} fill="none" stroke={ch.hue} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" opacity="0.75" />
+                </svg>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -5,8 +5,11 @@ import { flowAPI, integrationAPI, channelAPI, botAPI, templateAPI } from '../../
 import WhatsAppTemplateManager from '../../Components/Templates/WhatsAppTemplateManager';
 import FacebookUtilityTemplateManager from '../../Components/Templates/FacebookUtilityTemplateManager';
 import CommentAutomationManager from '../../Components/Comments/CommentAutomationManager';
+import ChatWidgetManager from '../../Components/Engagement/ChatWidgetManager';
 import SequenceMessageReport from '../../Components/Sequences/SequenceMessageReport';
 import UserInputFlowManagerList from '../../Components/UserInputFlows/UserInputFlowManagerList';
+import AIAgentManagerList from '../../Components/AIAgents/AIAgentManagerList';
+import AIReplySettingsPanel from '../../Components/AIAgents/AIReplySettingsPanel';
 import Swal from 'sweetalert2';
 import {
   Bot,
@@ -105,16 +108,16 @@ const SUB_TABS = {
     { id: 'segments',       label: 'Subscriber Segments' },
   ],
   ai: [
-    { id: 'aiPrompts',   label: 'AI Prompts & Training' },
-    { id: 'aiBotRules',  label: 'AI Bot Rules' },
-    { id: 'aiModels',    label: 'ChatGPT / Gemini Models' },
-    { id: 'knowledgeBase', label: 'Knowledge Base / Files' },
+    { id: 'aiReplySettings', label: 'AI Reply Settings' },
+    { id: 'activeAgents',    label: 'Active Agents' },
+    { id: 'agents',          label: 'Agents' },
   ],
   engagement: [
     { id: 'commentAutomation', label: 'Comment Automation' },
     { id: 'iceBreakers',       label: 'Ice Breakers & Welcome' },
     { id: 'storyMentions',     label: 'Story Mentions Reply' },
     { id: 'actionMenus',       label: 'Action Buttons & Menus' },
+    { id: 'chatWidget',        label: 'Chat Widget' },
   ],
   commerce: [
     { id: 'catalogSync',      label: 'Product Catalog Sync' },
@@ -326,9 +329,6 @@ export default function BotManagerPage() {
   const [expandedErrorId, setExpandedErrorId] = useState(null);
   const [copiedLogId, setCopiedLogId] = useState(null);
 
-  // AI settings mock state
-  const [aiPrompt, setAiPrompt] = useState('You are a helpful and polite customer support AI assistant for our brand.');
-  const [aiModel, setAiModel] = useState('gpt-4o');
 
   // Toast
   const [toast, setToast] = useState(null);
@@ -1722,57 +1722,70 @@ export default function BotManagerPage() {
               VIEW 2: COMMENT AUTOMATION (ENGAGEMENT)
               ═════════════════════════════════════════════════════════════════ */}
           {activeCategory === 'engagement' && activeSubTab === 'commentAutomation' && (
-            <CommentAutomationManager defaultPlatform={selectedAccount?.platform || 'FACEBOOK'} />
+            // Unlike every other view here, CommentAutomationManager isn't wrapped in
+            // `.bm-content-card` (flex:1 + overflow:hidden, which is what keeps the
+            // category/sub-tab bars above it from scrolling away) — its own root div
+            // has no bounded height, so `.bm-main-content`'s overflow-y:auto scrolled
+            // the WHOLE page (tabs included) once its content grew tall, which is
+            // exactly what made the sub-tab row disappear on Facebook/Instagram
+            // accounts. `minHeight: 0` is the actual fix — required for a flex:1 child
+            // to be allowed to scroll internally instead of growing to fit its content.
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+              <CommentAutomationManager defaultPlatform={selectedAccount?.platform || 'FACEBOOK'} />
+            </div>
           )}
 
           {/* ═════════════════════════════════════════════════════════════════
-              VIEW 3: AI PROMPTS & BOT RULES (AI)
+              VIEW 2b: CHAT WIDGET (ENGAGEMENT) — per-channel chat entry point,
+              or the full Webchat widget manager when a Webchat account is selected
               ═════════════════════════════════════════════════════════════════ */}
-          {activeCategory === 'ai' && (
+          {activeCategory === 'engagement' && activeSubTab === 'chatWidget' && (
             <div className="bm-content-card">
               <div className="bm-card-header">
-                <h3 className="bm-card-title">AI Knowledge Base & Training Prompt</h3>
+                <h3 className="bm-card-title">Chat Widget</h3>
                 <p className="bm-card-sub">
-                  Configure smart generative replies powered by OpenAI ChatGPT, Google Gemini & Claude.
+                  A ready-to-share chat entry point for the selected channel — or the full embeddable widget for Webchat.
                 </p>
               </div>
+              <div style={{ padding: 20 }}>
+                <ChatWidgetManager selectedAccount={selectedAccount} />
+              </div>
+            </div>
+          )}
 
-              <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 6 }}>
-                    AI Model Engine
-                  </label>
-                  <select
-                    value={aiModel}
-                    onChange={(e) => setAiModel(e.target.value)}
-                    style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #e4e4f0', width: 280, fontSize: '0.85rem' }}
-                  >
-                    <option value="gpt-4o">OpenAI GPT-4o (Recommended)</option>
-                    <option value="gemini-1.5-pro">Google Gemini 1.5 Pro</option>
-                    <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
-                  </select>
-                </div>
+          {/* ═════════════════════════════════════════════════════════════════
+              VIEW 3: AI REPLIES — Agents (live), Reply Settings / Active
+              Agents (Phase 4 of the AI Reply rollout — placeholders for now)
+              ═════════════════════════════════════════════════════════════════ */}
+          {activeCategory === 'ai' && activeSubTab === 'agents' && (
+            <div className="bm-content-card">
+              <div className="bm-card-header">
+                <h3 className="bm-card-title">Agents</h3>
+                <p className="bm-card-sub">
+                  Reusable AI personalities — build one once, use it on any bot, any channel.
+                </p>
+              </div>
+              <div style={{ padding: 20 }}>
+                <AIAgentManagerList />
+              </div>
+            </div>
+          )}
 
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 6 }}>
-                    System Instructions & Brand Knowledge
-                  </label>
-                  <textarea
-                    rows={6}
-                    value={aiPrompt}
-                    onChange={(e) => setAiPrompt(e.target.value)}
-                    style={{ width: '100%', padding: '10px 14px', borderRadius: 8, border: '1px solid #e4e4f0', fontSize: '0.85rem', outline: 'none' }}
-                  />
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                  <button
-                    onClick={() => showToast('AI instructions saved!')}
-                    style={{ padding: '8px 20px', borderRadius: 8, background: '#6366f1', color: '#fff', border: 'none', fontWeight: 700, cursor: 'pointer' }}
-                  >
-                    Save AI Settings
-                  </button>
-                </div>
+          {activeCategory === 'ai' && (activeSubTab === 'aiReplySettings' || activeSubTab === 'activeAgents') && (
+            <div className="bm-content-card">
+              <div className="bm-card-header">
+                <h3 className="bm-card-title">{activeSubTab === 'aiReplySettings' ? 'AI Reply Settings' : 'Active Agents'}</h3>
+                <p className="bm-card-sub">
+                  {activeSubTab === 'aiReplySettings'
+                    ? 'On/off, trigger mode, default Agent and routing confidence for this bot.'
+                    : 'Which Agents are live on this specific bot.'}
+                </p>
+              </div>
+              <div style={{ padding: 20 }}>
+                <AIReplySettingsPanel
+                  integrationId={selectedAccount?.id ?? null}
+                  view={activeSubTab === 'aiReplySettings' ? 'settings' : 'activeAgents'}
+                />
               </div>
             </div>
           )}
@@ -1852,7 +1865,7 @@ export default function BotManagerPage() {
             </div>
           )}
 
-          {!['keywordReplies', 'messageTemplates'].includes(activeSubTab) && !(activeCategory === 'automation' && activeSubTab === 'userInputFlows') && !(activeCategory === 'automation' && activeSubTab === 'followUpSequences') && (activeCategory !== 'engagement' || activeSubTab !== 'commentAutomation') && activeCategory !== 'ai' && (
+          {!['keywordReplies', 'messageTemplates'].includes(activeSubTab) && !(activeCategory === 'automation' && activeSubTab === 'userInputFlows') && !(activeCategory === 'automation' && activeSubTab === 'followUpSequences') && (activeCategory !== 'engagement' || activeSubTab !== 'commentAutomation') && !(activeCategory === 'engagement' && activeSubTab === 'chatWidget') && activeCategory !== 'ai' && (
             <div className="bm-content-card">
               <div className="bm-card-header">
                 <h3 className="bm-card-title">{activeSubTab.replace(/([A-Z])/g, ' $1').trim()}</h3>

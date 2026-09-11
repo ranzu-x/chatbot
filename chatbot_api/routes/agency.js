@@ -7,8 +7,18 @@ import { assertLimit } from "../utils/entitlements.js";
 
 const router = express.Router();
 
-// All agency routes require AGENCY or ADMIN role
-router.use(authMiddleware, roleMiddleware("AGENCY", "ADMIN"));
+// All agency routes require AGENCY or ADMIN role — AGENT is included here
+// too NOT because AGENT should reach any route in *this* file (none of them
+// match an AGENT's use case), but because every route file in this app is
+// mounted at the same flat "/api/v1" prefix (see index.js), so Express
+// tries each router in registration order for every request. A blanket
+// `router.use(role gate)` here — this file is mounted early — was rejecting
+// AGENT-role requests bound for LATER-mounted routers (conversations,
+// contacts, team-members, ...) before they ever got there. Confirmed live:
+// an AGENT token hitting GET /conversations was rejected by *this* file's
+// gate, never reaching routes/conversations.js's own (correctly AGENT-
+// inclusive) roleMiddleware at all.
+router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
 
 // ─── GET AGENCY DETAILS ───────────────────────────────────────────────────────
 router.get("/agency/profile", async (req, res) => {
@@ -140,7 +150,7 @@ router.get("/agency/agents", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
     const [agents] = await pool.query(`
-      SELECT u.id, u.name, u.email, u.is_active, ap.id as profileId, ap.is_online, u.created_at
+      SELECT u.id, u.name, u.email, u.is_active, ap.id as profileId, ap.id as agent_profile_id, ap.is_online, u.created_at
       FROM agent_profiles ap
       JOIN users u ON u.id = ap.user_id
       WHERE ap.agency_id = ?
@@ -176,7 +186,7 @@ router.post("/agency/agents", async (req, res) => {
     }
     const hashed = await bcrypt.hash(password, 10);
     const [userResult] = await conn.query(
-      "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, 'AGENT')",
+      "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, 'USER')",
       [name, email, hashed]
     );
     await conn.query(

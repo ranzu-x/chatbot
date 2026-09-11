@@ -16,11 +16,12 @@ import {
   User, Settings2, CornerDownRight, Image, Upload,
   Video, Music, FileText, Globe, ExternalLink,
   Smartphone, RotateCcw, Undo2, Redo2, ThumbsUp, Sparkles, MoreVertical,
-  Copy, ChevronDown, ShoppingBag, HelpCircle, Flag, ClipboardList
+  Copy, ShoppingBag, HelpCircle, Flag, ClipboardList, Workflow, Tag, Timer, Palette
 } from 'lucide-react';
 import FlowPhonePreview from './FlowPhonePreview';
 import PlatformIcon, { getPlatformMeta } from '../../Components/Common/PlatformIcon';
-import { flowAPI, uploadAPI, integrationAPI, customFieldAPI, userInputFlowAPI, sequenceAPI, labelAPI, googleSheetsAPI } from '../../services/api';
+import { flowAPI, uploadAPI, integrationAPI, customFieldAPI, userInputFlowAPI, sequenceAPI, labelAPI, googleSheetsAPI, channelAPI } from '../../services/api';
+import WidgetAppearancePanel from '../../Components/Engagement/WidgetAppearancePanel';
 import Swal from 'sweetalert2';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -495,6 +496,19 @@ const DEFAULT_NODE_DATA = {
   question:     { label: 'Question', message: '', answerType: 'keyboard', inputType: 'name', options: [], saveToFieldId: null },
   finalAnswer:  { label: 'Final Answer', message: 'Thanks — that\'s everything I needed!' },
 };
+
+// Every node type can optionally hold `data.delay: {hours,minutes,seconds}`
+// (scheduled — see flowDelayScheduler.js on the backend, never a blocking
+// sleep) EXCEPT `start` (a trigger definition, not a runtime step) and `wait`
+// (a Sequence's own dedicated delay node — same idea, would be redundant).
+const DELAY_EXCLUDED_NODE_TYPES = new Set(['start', 'wait']);
+
+// A "typing…" indicator before sending only makes sense for node types that
+// actually send a message to the contact.
+const TYPING_ELIGIBLE_NODE_TYPES = new Set([
+  'text', 'interactive', 'image', 'video', 'audio', 'file',
+  'buttons', 'quickReplies', 'listMenu', 'carousel', 'card',
+]);
 
 /* ═══════════════════════════════════════════════════════════════════
    STYLES
@@ -1068,6 +1082,20 @@ const builderStyles = `
      needed there. */
   .react-flow__handle-right { right: 10px !important; }
   .react-flow__handle-left { left: -5px !important; }
+  /* A per-button/per-item dot lives inside its own small chip, not the card's
+     padded content edge the rule above assumes — so "10px inward from the
+     chip" landed 14-24px inward from the CARD's true edge (the chip's own
+     padding on top), well short of where every other connector (Next Step,
+     Then, Yes/No…) sits. That's what made them look misaligned/out of line.
+     Pushing these two chip flavors further right (poking just past their own
+     chip's border, not stretching the chip itself) lands the dot on the same
+     vertical line as every other connector on the canvas — this depends on
+     each card family's actual right padding, so the two chip shapes get
+     different offsets: the "Send Message card" family (Text/Interactive/
+     Image/Video/Audio/File/Buttons) pads 14px, ListMenu's NodeWrapper-based
+     card pads 12px (see .fb-node-btn-list). */
+  .btn-handle.react-flow__handle-right { right: -4px !important; }
+  .fb-node-btn-chip .btn-handle.react-flow__handle-right { right: -2px !important; }
 
   /* Every outgoing (source) connector circle — Next Step, per-button/
      per-item, Start's own "Then"/"Sequence" branches, Condition's Yes/No —
@@ -1635,6 +1663,27 @@ const builderStyles = `
     0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
     30% { transform: translateY(-4px); opacity: 1; }
   }
+  /* Compact "typing indicator is on" badge shown in a node card's own header
+     (NodeWrapper) — reuses the same three-dot animation/keyframe as the phone
+     preview's typing bubble above, just smaller. */
+  .fb-node-typing-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    background: rgba(14, 165, 233, 0.12);
+  }
+  .fb-node-typing-badge .dot {
+    width: 3.5px;
+    height: 3.5px;
+    border-radius: 50%;
+    background: #0ea5e9;
+    animation: flow-typing 1.4s infinite ease-in-out;
+  }
+  .fb-node-typing-badge .dot:nth-child(1) { animation-delay: 0s; }
+  .fb-node-typing-badge .dot:nth-child(2) { animation-delay: 0.2s; }
+  .fb-node-typing-badge .dot:nth-child(3) { animation-delay: 0.4s; }
   .flow-phone-input-bar {
     padding: 8px 10px;
     background: #1e293b;
@@ -1721,18 +1770,47 @@ function getNodeItemCap(nodeType, platform) {
   return typeof rule === 'number' ? rule : null;
 }
 
+// A list item used to be a plain string. It's now an object carrying the same
+// action shape a button has (plus `description`, which WhatsApp rows support
+// natively) — this coerces either shape into the current one, defaulting a
+// bare string (or an object with no `.action` at all) to 'flow' so an old
+// item, wired only by its canvas edge, keeps behaving exactly as before.
+function normalizeListItem(item) {
+  if (typeof item === 'string') return { title: item, action: 'flow' };
+  return { action: 'flow', ...item };
+}
+
 // Upgrades a listMenu node's data to the current `lists: [{title, buttonText,
-// items}]` shape. Flows saved before multi-list support only have a flat
-// `items` array at the top level — that becomes a single-list `lists` entry
-// here so old data keeps working with zero migration. flowEngine.js keeps its
-// own copy of this (frontend/backend can't share a module in this codebase),
-// hand-kept in sync — see the note there.
+// sections: [{title, items}]}]` shape — `sections` is WhatsApp's own native
+// grouping (up to 10 sections, 10 rows total, all within ONE message), which
+// is a different axis from `lists` itself (each *list* is a separate
+// sequential MESSAGE, used to go past that 10-row cap). A list saved before
+// section support only has a flat `items` array — that becomes one untitled
+// section here, and a flat top-level `items` (pre-multi-list data) becomes a
+// single list with one section — so old data keeps working with zero
+// migration. flowEngine.js keeps its own copy of this (frontend/backend can't
+// share a module in this codebase), hand-kept in sync — see the note there.
 function normalizeListMenuData(data) {
-  if (Array.isArray(data?.lists) && data.lists.length > 0) return data.lists;
-  if (Array.isArray(data?.items)) {
-    return [{ title: data.title || 'Menu Options', buttonText: data.buttonText || 'Options', items: data.items }];
+  let lists;
+  if (Array.isArray(data?.lists) && data.lists.length > 0) {
+    lists = data.lists;
+  } else if (Array.isArray(data?.items)) {
+    lists = [{ title: data.title || 'Menu Options', buttonText: data.buttonText || 'Options', items: data.items }];
+  } else {
+    lists = [{ title: 'Menu Options', buttonText: 'Options', items: [] }];
   }
-  return [{ title: 'Menu Options', buttonText: 'Options', items: [] }];
+
+  return lists.map((list) => {
+    const rawSections = Array.isArray(list.sections) && list.sections.length > 0
+      ? list.sections
+      : [{ title: '', items: list.items || [] }];
+    const sections = rawSections.map((s) => ({ ...s, items: (s.items || []).map(normalizeListItem) }));
+    // `items` kept as a flattened convenience view alongside `sections` — the
+    // source of truth is `sections`, but a handful of call sites still read
+    // the flat list (cap counts, dimension estimates) and this keeps them
+    // correct without having to touch every one of them.
+    return { ...list, sections, items: sections.flatMap((s) => s.items) };
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1752,6 +1830,39 @@ function generateNodeId(type) {
 function validateNodeData(node) {
   if (!node) return null;
   const data = node.data || {};
+
+  // A button (or list item, which shares the same action shape) whose "when
+  // pressed" action needs a destination but doesn't have one — e.g. left on
+  // "Open Website" with no URL typed in — used to save silently and just do
+  // nothing when tapped. Surfaced here so it blocks save instead.
+  const validateActionTarget = (btn) => {
+    if (typeof btn === 'string') return null; // legacy plain item, always 'flow'
+    const action = btn?.action || 'flow';
+    const label = (btn?.title || 'Untitled').trim() || 'Untitled';
+    if (action === 'url' && !(btn.url || '').trim()) {
+      return `"${label}" is set to open a website but has no URL — add one or change what it does`;
+    }
+    if (action === 'phone' && !(btn.phone || '').trim()) {
+      return `"${label}" is set to call a number but has no phone number — add one or change what it does`;
+    }
+    if (action === 'goToFlow' && !btn.flowId) {
+      return `"${label}" is set to go to another flow but none is selected — pick one or change what it does`;
+    }
+    return null;
+  };
+
+  // Per-node optional Delay — sanity-checked regardless of node type (except
+  // the two types that don't offer it at all — see DELAY_EXCLUDED_NODE_TYPES).
+  if (!DELAY_EXCLUDED_NODE_TYPES.has(node.type) && data.delay && typeof data.delay === 'object') {
+    const { hours = 0, minutes = 0, seconds = 0 } = data.delay;
+    if ([hours, minutes, seconds].some((n) => !Number.isFinite(n) || n < 0)) {
+      return 'Delay values must be zero or a positive number';
+    }
+    if (hours * 3600 + minutes * 60 + seconds > 48 * 3600) {
+      return 'Delay cannot be longer than 48 hours';
+    }
+  }
+
   switch (node.type) {
     case 'start': {
       // A User Input Flow's / Sequence's Start node has no trigger of its own —
@@ -1777,13 +1888,18 @@ function validateNodeData(node) {
       return null;
     }
 
-    case 'text':
+    case 'text': {
       if (!data.message || !data.message.trim()) {
         return 'Text Message cannot be empty';
       }
+      for (const btn of data.buttons || []) {
+        const err = validateActionTarget(btn);
+        if (err) return err;
+      }
       return null;
+    }
 
-    case 'interactive':
+    case 'interactive': {
       if (!data.message || !data.message.trim()) {
         return 'Message body cannot be empty for Interactive Message';
       }
@@ -1793,13 +1909,23 @@ function validateNodeData(node) {
       if (data.headerType && ['image', 'video', 'document'].includes(data.headerType) && !(data.headerMediaUrl || '').trim()) {
         return 'Header media attachment or URL is required';
       }
+      for (const btn of data.buttons || []) {
+        const err = validateActionTarget(btn);
+        if (err) return err;
+      }
       return null;
+    }
 
-    case 'image':
+    case 'image': {
       if (!(data.imageUrl || data.mediaUrl || '').trim()) {
         return 'Image URL or uploaded image is required';
       }
+      for (const btn of data.buttons || []) {
+        const err = validateActionTarget(btn);
+        if (err) return err;
+      }
       return null;
+    }
 
     case 'video':
       if (!(data.mediaUrl || '').trim()) {
@@ -1819,11 +1945,16 @@ function validateNodeData(node) {
       }
       return null;
 
-    case 'buttons':
+    case 'buttons': {
       if (!data.message || !data.message.trim()) {
         return 'Text Message cannot be empty';
       }
+      for (const btn of data.buttons || []) {
+        const err = validateActionTarget(btn);
+        if (err) return err;
+      }
       return null;
+    }
 
     case 'quickReplies':
       if (!data.message || !data.message.trim()) {
@@ -1844,12 +1975,28 @@ function validateNodeData(node) {
         if (!list.title || !list.title.trim()) {
           return 'Every list needs a title';
         }
-        const validItems = (list.items || []).filter((it) => (typeof it === 'string' ? it : it?.title || '').trim());
+        // WhatsApp's own native caps for a single list MESSAGE — up to 10
+        // sections, 10 rows total across all of them combined (not per
+        // section) — see normalizeListMenuData's note on `lists` vs
+        // `sections`. Add another list (a separate message) for real overflow.
+        if (list.sections.length > 10) {
+          return `"${list.title}" has more than 10 sections — split the rest into another list instead`;
+        }
+        const validItems = list.items.filter((it) => (it?.title || '').trim());
         if (validItems.length === 0) {
-          return 'Every list needs at least one item';
+          return `"${list.title}" needs at least one item`;
         }
         if (validItems.length > 10) {
-          return 'A single list cannot have more than 10 items — add another list instead';
+          return `"${list.title}" has more than 10 items total — add another list instead`;
+        }
+        for (const section of list.sections) {
+          if (section.items.length > 0 && !(section.title || '').trim() && list.sections.length > 1) {
+            return `"${list.title}" has an untitled section — give every section a name, or merge it into one`;
+          }
+          for (const item of section.items) {
+            const err = validateActionTarget(item);
+            if (err) return err;
+          }
         }
       }
       return null;
@@ -1917,7 +2064,11 @@ function validateNodeData(node) {
       return null;
 
     case 'condition':
-      if (!data.variable || !data.variable.trim()) {
+      if (data.compareSource === 'customField') {
+        if (!data.customFieldId) {
+          return 'Select a Custom Field to compare';
+        }
+      } else if (!data.variable || !data.variable.trim()) {
         return 'Variable to evaluate is required';
       }
       if (data.value === undefined || String(data.value).trim() === '') {
@@ -1925,11 +2076,18 @@ function validateNodeData(node) {
       }
       return null;
 
-    case 'delay':
-      if (!data.seconds || Number(data.seconds) <= 0) {
-        return 'Delay seconds must be greater than 0';
-      }
+    case 'delay': {
+      // A Delay node's own wait now comes from the same generic "Delay
+      // before this step" field every node type has (see DelaySettings) —
+      // data.seconds is only read here as a fallback for older saved flows
+      // that set it before that field existed.
+      const d = data.delay;
+      const total = d && typeof d === 'object'
+        ? (Number(d.hours) || 0) * 3600 + (Number(d.minutes) || 0) * 60 + (Number(d.seconds) || 0)
+        : (Number(data.seconds) || 0);
+      if (total <= 0) return 'Set how long this Delay node should wait';
       return null;
+    }
 
     case 'webhook':
       if (!data.url || !data.url.trim()) {
@@ -1987,9 +2145,16 @@ function getNodeDimensions(node) {
     }
     case 'listMenu': {
       const lists = normalizeListMenuData(node.data);
-      const count = lists.reduce((sum, l) => sum + (l.items || []).length, 0);
+      const count = lists.reduce((sum, l) => sum + l.items.length, 0);
+      // Every section beyond the first (per list) gets its own little title
+      // row above its items — the section itself, not just its rows, needs
+      // height reserved for it.
+      const namedSections = lists.reduce((sum, l) => sum + l.sections.filter((s) => (s.title || '').trim()).length, 0);
+      // Each list under the section/item cap renders a dashed "Add Section"
+      // drag-affordance row of its own — reserve height for it too.
+      const addSectionRows = lists.filter((l) => l.sections.length < 10 && l.items.length < 10).length;
       // + a little extra per list beyond the first, for each list's own title row.
-      return { width, height: 90 + Math.max(1, count) * 34 + Math.max(0, lists.length - 1) * 26 };
+      return { width, height: 90 + Math.max(1, count) * 34 + Math.max(0, lists.length - 1) * 26 + namedSections * 20 + addSectionRows * 26 };
     }
     case 'card':
       return { width, height: 185 };
@@ -2017,9 +2182,10 @@ function getNodeDimensions(node) {
 function getAutoLayoutedNodes(nodes, edges) {
   if (!nodes || nodes.length === 0) return [];
 
-  const H_GAP = 70; // Ample, clean horizontal gap between stages
-  const V_GAP = 36; // Generous vertical gap between adjacent cards to prevent any cramping
-  const OVERLAP_BUFFER = 2; // Tight nudge used only to resolve a collision — not a second V_GAP
+  const H_GAP = 46; // Compact horizontal gap between stages (still enough to see the wire/arrow)
+  const V_GAP = 22; // Compact vertical gap between adjacent cards — the collision sweep below
+                     // still guarantees no overlap no matter how tight this is, so it's safe to shrink.
+  const OVERLAP_BUFFER = 1; // Tight nudge used only to resolve a collision — not a second V_GAP
 
   // Calculate actual dimensions for each node. Prefer the size the card
   // actually measured on canvas — the estimates below can't account for
@@ -2376,7 +2542,24 @@ function NodeWrapper({ children, color, label, icon: Icon, selected, data, type,
         >
           {Icon && <Icon size={13} style={{ color: validationError ? '#ef4444' : color }} />}
         </div>
-        <span style={{ fontWeight: 600, fontSize: '11.5px', color: validationError ? '#b91c1c' : '#1e293b' }}>{label}</span>
+        <span style={{ fontWeight: 600, fontSize: '11.5px', color: validationError ? '#b91c1c' : '#1e293b', flex: 1 }}>{label}</span>
+        {formatDelayBadge(data?.delay) && (
+          <span
+            title={`Delayed ${formatDelayBadge(data.delay)} before this step runs`}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 2, fontSize: 9, fontWeight: 700,
+              color: '#c2410c', background: '#fff7ed', border: '1px solid #fed7aa',
+              borderRadius: 4, padding: '1px 4px', flexShrink: 0,
+            }}
+          >
+            <Timer size={9} /> {formatDelayBadge(data.delay)}
+          </span>
+        )}
+        {data?.showTyping && (
+          <span className="fb-node-typing-badge" title="Shows a typing indicator right before this sends">
+            <span className="dot" /><span className="dot" /><span className="dot" />
+          </span>
+        )}
       </div>
       {children}
       {!hideNextStep && type !== 'end' && (
@@ -2799,6 +2982,7 @@ function TextNode({ id, data, selected }) {
           const btnAction = typeof btn === 'object' ? btn?.action : 'flow';
           const isPhone = btnAction === 'phone';
           const isUrl = btnAction === 'url';
+          const isGoToFlow = btnAction === 'goToFlow';
 
           return (
             <div
@@ -2850,7 +3034,17 @@ function TextNode({ id, data, selected }) {
                   }}
                 />
               )}
-              {!isPhone && !isUrl && (
+              {isGoToFlow && (
+                <Workflow
+                  size={14}
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    color: '#0084ff',
+                  }}
+                />
+              )}
+              {!isPhone && !isUrl && !isGoToFlow && (
                 <Handle
                   type="source"
                   position={Position.Right}
@@ -2928,7 +3122,7 @@ function TextNode({ id, data, selected }) {
             }}
           >
             <Plus size={13} />
-            <span>+ Add Button</span>
+            <span>Add Button</span>
           </button>
         )}
       </div>
@@ -3119,6 +3313,7 @@ function InteractiveNode({ id, data, selected }) {
           const btnAction = typeof btn === 'object' ? btn?.action : 'flow';
           const isPhone = btnAction === 'phone';
           const isUrl = btnAction === 'url';
+          const isGoToFlow = btnAction === 'goToFlow';
 
           return (
             <div
@@ -3170,7 +3365,17 @@ function InteractiveNode({ id, data, selected }) {
                   }}
                 />
               )}
-              {!isPhone && !isUrl && (
+              {isGoToFlow && (
+                <Workflow
+                  size={14}
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    color: '#25d366',
+                  }}
+                />
+              )}
+              {!isPhone && !isUrl && !isGoToFlow && (
                 <Handle
                   type="source"
                   position={Position.Right}
@@ -3419,6 +3624,7 @@ function ImageNode({ id, data, selected }) {
           const btnAction = typeof btn === 'object' ? btn?.action : 'flow';
           const isPhone = btnAction === 'phone';
           const isUrl = btnAction === 'url';
+          const isGoToFlow = btnAction === 'goToFlow';
 
           return (
             <div
@@ -3470,7 +3676,17 @@ function ImageNode({ id, data, selected }) {
                   }}
                 />
               )}
-              {!isPhone && !isUrl && (
+              {isGoToFlow && (
+                <Workflow
+                  size={14}
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    color: '#0084ff',
+                  }}
+                />
+              )}
+              {!isPhone && !isUrl && !isGoToFlow && (
                 <Handle
                   type="source"
                   position={Position.Right}
@@ -3548,7 +3764,7 @@ function ImageNode({ id, data, selected }) {
             }}
           >
             <Plus size={13} />
-            <span>+ Add Button</span>
+            <span>Add Button</span>
           </button>
         )}
       </div>
@@ -3639,6 +3855,7 @@ function VideoNode({ id, data, selected }) {
             const btnAction = typeof btn === 'object' ? btn?.action : 'flow';
             const isPhone = btnAction === 'phone';
             const isUrl = btnAction === 'url';
+            const isGoToFlow = btnAction === 'goToFlow';
             return (
               <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '9px 14px', borderRadius: 12, background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.03)', position: 'relative' }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: '#0084ff', textAlign: 'center', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -3646,7 +3863,8 @@ function VideoNode({ id, data, selected }) {
                 </span>
                 {isPhone && <Phone size={14} style={{ position: 'absolute', right: 12, color: '#0084ff' }} />}
                 {isUrl && <ExternalLink size={14} style={{ position: 'absolute', right: 12, color: '#0084ff' }} />}
-                {!isPhone && !isUrl && (
+                {isGoToFlow && <Workflow size={14} style={{ position: 'absolute', right: 12, color: '#0084ff' }} />}
+                {!isPhone && !isUrl && !isGoToFlow && (
                   <Handle type="source" position={Position.Right} id={`btn-${i}`} className={`btn-handle${connectedHandles.has(`btn-${i}`) ? ' connected' : ''}`} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)' }} />
                 )}
               </div>
@@ -3870,6 +4088,7 @@ function ButtonsNode({ id, data, selected }) {
           const btnAction = typeof btn === 'object' ? btn?.action : 'flow';
           const isPhone = btnAction === 'phone';
           const isUrl = btnAction === 'url';
+          const isGoToFlow = btnAction === 'goToFlow';
 
           return (
             <div
@@ -3921,7 +4140,17 @@ function ButtonsNode({ id, data, selected }) {
                   }}
                 />
               )}
-              {!isPhone && !isUrl && (
+              {isGoToFlow && (
+                <Workflow
+                  size={14}
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    color: '#0084ff',
+                  }}
+                />
+              )}
+              {!isPhone && !isUrl && !isGoToFlow && (
                 <Handle
                   type="source"
                   position={Position.Right}
@@ -3999,7 +4228,7 @@ function ButtonsNode({ id, data, selected }) {
             }}
           >
             <Plus size={13} />
-            <span>+ Add Button</span>
+            <span>Add Button</span>
           </button>
         )}
       </div>
@@ -4028,7 +4257,7 @@ function QuickRepliesNode({ id, data, selected }) {
   const connectedHandles = useConnectedHandles(id);
   return (
     <NodeWrapper id={id} color={NODE_COLORS.quickReplies} label="Quick Replies" icon={Keyboard} selected={selected} data={data} type="quickReplies">
-      <Handle type="target" position={Position.Left} />
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
       {data.message && (
         <div className="fb-node-body" style={{ paddingBottom: replies.length ? 6 : 10 }}>
           <div className="fb-node-body-preview">{data.message}</div>
@@ -4056,19 +4285,20 @@ function QuickRepliesNode({ id, data, selected }) {
 
 /* ── List Menu Node (WhatsApp Interactive List) ──────────────── */
 function ListMenuNode({ id, data, selected }) {
-  // Multiple lists send as separate sequential messages, but every item across
-  // all of them shares one flat "which option was picked" index space — both
-  // for the per-item outgoing edge below (item-{globalIndex}) and for the
-  // routing token flowEngine.js encodes into each option (see normalizeListMenuData
-  // + the listMenu send-side case there). Keeping the index global (not reset
-  // per list) is what lets an item in list 2 still resolve correctly even
-  // though it's the 11th item overall.
+  // Multiple lists send as separate sequential messages; sections group items
+  // WITHIN one message (WhatsApp's own native "sections" concept — a
+  // different axis, see normalizeListMenuData). Every item across every
+  // section of every list still shares one flat "which option was picked"
+  // index space — both for the per-item outgoing edge below (item-{gi}) and
+  // for the routing token flowEngine.js encodes into each option — so an
+  // item in list 2's 2nd section still resolves even though it's the 11th
+  // item overall.
   const lists = normalizeListMenuData(data);
   const connectedHandles = useConnectedHandles(id);
   let globalIndex = -1;
   return (
     <NodeWrapper id={id} color={NODE_COLORS.listMenu} label="List Menu" icon={ListOrdered} selected={selected} data={data} type="listMenu">
-      <Handle type="target" position={Position.Left} />
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
       {lists.map((list, li) => (
         <div key={li}>
           <div className="fb-node-body" style={{ paddingBottom: 4, paddingTop: li > 0 ? 6 : 0 }}>
@@ -4076,25 +4306,63 @@ function ListMenuNode({ id, data, selected }) {
               {list.title || `Menu ${li + 1}`}
             </div>
           </div>
-          <div className="fb-node-btn-list" style={{ marginTop: 2 }}>
-            {(list.items || []).map((item, i) => {
-              globalIndex += 1;
-              const gi = globalIndex;
-              return (
-                <div key={i} className="fb-node-btn-chip" style={{ background: 'rgba(124, 58, 237, 0.08)', borderColor: 'rgba(124, 58, 237, 0.2)', color: '#6d28d9' }}>
-                  <span style={{ fontSize: '11px', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item || `Option ${i + 1}`}</span>
-                  <ChevronRight size={12} style={{ opacity: 0.6, flexShrink: 0 }} />
-                  <Handle
-                    type="source"
-                    position={Position.Right}
-                    id={`item-${gi}`}
-                    className={`btn-handle${connectedHandles.has(`item-${gi}`) ? ' connected' : ''}`}
-                    style={{ top: '50%', right: -7, transform: 'translateY(-50%)', position: 'absolute' }}
-                  />
+          {list.sections.map((section, si) => (
+            <div key={si}>
+              {(section.title || '').trim() && (
+                <div style={{ padding: '3px 12px 2px', fontSize: 10, fontWeight: 700, color: '#8b5cf6', textTransform: 'uppercase', letterSpacing: 0.3 }}>
+                  {section.title}
                 </div>
-              );
-            })}
-          </div>
+              )}
+              <div className="fb-node-btn-list" style={{ marginTop: 2 }}>
+                {section.items.map((item, ii) => {
+                  globalIndex += 1;
+                  const gi = globalIndex;
+                  // Same idea as a button: an action that jumps elsewhere on
+                  // its own (Go to Flow) doesn't route through a canvas wire,
+                  // so it gets a small indicator instead of a connector dot.
+                  const isGoToFlow = item.action === 'goToFlow';
+                  return (
+                    <div key={ii} className="fb-node-btn-chip" style={{ background: 'rgba(124, 58, 237, 0.08)', borderColor: 'rgba(124, 58, 237, 0.2)', color: '#6d28d9' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.title || `Option ${ii + 1}`}</span>
+                      {isGoToFlow ? (
+                        <Workflow size={12} style={{ opacity: 0.8, flexShrink: 0, color: '#6d28d9' }} />
+                      ) : (
+                        <>
+                          <ChevronRight size={12} style={{ opacity: 0.6, flexShrink: 0 }} />
+                          <Handle
+                            type="source"
+                            position={Position.Right}
+                            id={`item-${gi}`}
+                            className={`btn-handle${connectedHandles.has(`item-${gi}`) ? ' connected' : ''}`}
+                            style={{ top: '50%', right: -7, transform: 'translateY(-50%)', position: 'absolute' }}
+                          />
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          {(list.sections.length < 10 && list.items.length < 10) && (
+            <div className="fb-node-btn-list" style={{ marginTop: 2 }}>
+              <div
+                className="fb-node-btn-chip"
+                style={{ background: 'transparent', borderStyle: 'dashed', borderColor: '#c4b5fd', color: '#8b5cf6' }}
+                title="Drag from here to add a section"
+              >
+                <Plus size={12} style={{ opacity: 0.8, flexShrink: 0 }} />
+                <span style={{ fontSize: '10.5px', fontWeight: 600, flex: 1 }}>Add Section</span>
+                <Handle
+                  type="source"
+                  position={Position.Right}
+                  id={`add-section-${li}`}
+                  className="btn-handle"
+                  style={{ top: '50%', right: -7, transform: 'translateY(-50%)', position: 'absolute' }}
+                />
+              </div>
+            </div>
+          )}
         </div>
       ))}
     </NodeWrapper>
@@ -4106,7 +4374,7 @@ function ListMenuNode({ id, data, selected }) {
 function CardNode({ id, data, selected }) {
   return (
     <NodeWrapper id={id} color={NODE_COLORS.card} label="Card" icon={CreditCard} selected={selected} data={data} type="card">
-      <Handle type="target" position={Position.Left} />
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
       <div className="fb-node-body">
         {data.imageUrl && (
           <div style={{
@@ -4400,7 +4668,15 @@ function ConditionNode({ id, data, selected }) {
         <span style={{ fontWeight: 700, fontSize: '11.5px', color: validationError ? '#b91c1c' : '#1e293b' }}>Condition</span>
       </div>
       <div className="fb-node-body">
-        {data.variable ? (
+        {data.compareSource === 'customField' ? (
+          data.customFieldName ? (
+            <span style={{ fontSize: 11, fontWeight: 600, color: '#1e293b' }}>
+              <span style={{ color: '#6366f1' }}>{data.customFieldName}</span> {data.operator || '=='} {data.value || '?'}
+            </span>
+          ) : (
+            <span style={{ opacity: 0.5, fontStyle: 'italic', fontSize: 11, color: '#64748b' }}>No field selected</span>
+          )
+        ) : data.variable ? (
           <span style={{ fontSize: 11, fontWeight: 600, color: '#1e293b' }}>
             {data.variable} {data.operator || '=='} {data.value || '?'}
           </span>
@@ -4871,6 +5147,14 @@ function StartNodeProperties({ data = {}, onUpdateNode, sequences = [], onSequen
 
   const [triggers, setTriggers] = useState(rawTriggers);
   const [keywordInputs, setKeywordInputs] = useState({});
+  const availableLabels = useAvailableLabels();
+  const selectedLabelIds = Array.isArray(data.labelIds) ? data.labelIds : [];
+  const toggleStartLabel = (labelId) => {
+    const next = selectedLabelIds.includes(labelId)
+      ? selectedLabelIds.filter((l) => l !== labelId)
+      : [...selectedLabelIds, labelId];
+    onUpdateNode({ ...data, labelIds: next });
+  };
 
   useEffect(() => {
     if (data.triggers && Array.isArray(data.triggers) && data.triggers.length > 0) {
@@ -5201,6 +5485,16 @@ function StartNodeProperties({ data = {}, onUpdateNode, sequences = [], onSequen
         <Plus size={14} /> + Add Trigger Rule
       </button>
 
+      <div className="fb-field" style={{ margin: 0 }}>
+        <label>Tag with Label (optional)</label>
+        <LabelTagPicker
+          labels={availableLabels}
+          selectedIds={selectedLabelIds}
+          onToggle={toggleStartLabel}
+          hint="Applied to the contact the moment this Flow's trigger fires."
+        />
+      </div>
+
       <StartNodeSequenceAttach
         sequences={sequences}
         onSequenceCreated={onSequenceCreated}
@@ -5324,10 +5618,25 @@ function StartNodeSequenceAttach({ sequences, onSequenceCreated, platform, onAtt
   );
 }
 
-/* ── Button Action Editor (Submenu for Action Type per Channel) ─── */
-function ButtonActionEditor({ btn, index, onChange, onRemove, platform }) {
+/* ── Button Action Editor: a collapsed row + a focused "Edit Button"
+   submenu (modeled on ManyChat's own button editor) that opens over the
+   canvas when the row is clicked. Action type is a plain vertical list of
+   rows — not tabs, not a native <select> — per how this was asked for. ── */
+function ButtonActionEditor({
+  btn, index, onChange, onRemove, platform,
+  flows = [], currentFlowId = null,
+  sequences = [], onSequenceCreated,
+  variant = 'button', // 'button' | 'item' — a list item shares this whole editor,
+                       // just with a Description field and (on WhatsApp) a
+                       // narrower action set — see the isWA exclusion below.
+}) {
   const p = (platform || 'WEBCHAT').toUpperCase();
-  const [expanded, setExpanded] = useState(false);
+  const isItem = variant === 'item';
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [creatingSeq, setCreatingSeq] = useState(false);
+  const [newSeqName, setNewSeqName] = useState('');
+  const [savingSeq, setSavingSeq] = useState(false);
+  const availableLabels = useAvailableLabels();
 
   const btnObj = typeof btn === 'string'
     ? { title: btn, action: 'flow', url: '', phone: '', reply_text: '' }
@@ -5338,11 +5647,27 @@ function ButtonActionEditor({ btn, index, onChange, onRemove, platform }) {
   const isTG = p === 'TELEGRAM';
   const isIG = p === 'INSTAGRAM';
 
-  // Allowed action types based on developer documentation
+  // Same-platform flows only — jumping into a flow built for a different
+  // channel would just fail to send there. Excludes the flow being edited:
+  // that's what "Continue Flow (Next Step)" already is.
+  const availableFlows = flows.filter(
+    (f) => (f.platform || '').toUpperCase() === p && f.id !== currentFlowId
+  );
+
+  // Allowed action types, per Meta's own WhatsApp Cloud API docs: a reply
+  // button AND a list row are BOTH fundamentally postback-only — tapping
+  // either just sends a reply, full stop. A button's "Open Website" only
+  // really works as a genuine link when it's the single button on the
+  // message (Meta's separate cta_url message type — see platformSender.js);
+  // a list ROW has no such exception at all, there's no per-row URL/call
+  // capability on WhatsApp under any configuration — so a list item on
+  // WhatsApp doesn't get offered options it structurally cannot do.
+  const skipUrlPhoneOnWA = isWA && isItem;
   const actionOptions = [
-    { value: 'flow', label: 'Continue Flow (Next Step)', icon: '➡️' },
-    { value: 'url', label: 'Open Website / URL', icon: '🌐' },
-    ...(isFB || p === 'WEBCHAT' ? [{ value: 'phone', label: 'Call Phone Number', icon: '📞' }] : []),
+    { value: 'flow', label: 'Continue Flow (Next Step)', description: 'Follows the wire connected to this button on the canvas.', Icon: CornerDownRight },
+    { value: 'goToFlow', label: 'Go to Existing Flow', description: "Jumps straight to another flow's start — no wire needed.", Icon: Workflow },
+    ...(skipUrlPhoneOnWA ? [] : [{ value: 'url', label: 'Open Website / URL', description: 'Opens a link — never replies back to the bot.', Icon: ExternalLink }]),
+    ...(!skipUrlPhoneOnWA && (isFB || p === 'WEBCHAT') ? [{ value: 'phone', label: 'Call Phone Number', description: 'Dials a number — never replies back to the bot.', Icon: Phone }] : []),
   ];
 
   const updateProp = (field, val) => {
@@ -5353,52 +5678,68 @@ function ButtonActionEditor({ btn, index, onChange, onRemove, platform }) {
     switch (btnObj.action) {
       case 'url': return { label: 'URL', bg: '#f1f5f9', color: '#334155' };
       case 'phone': return { label: 'Call', bg: '#f1f5f9', color: '#334155' };
+      case 'goToFlow': return { label: 'Go to Flow', bg: '#eef2ff', color: '#4338ca' };
       default: return { label: 'Flow', bg: '#f1f5f9', color: '#334155' };
     }
   };
 
   const badge = getActionBadge();
 
+  const handleCreateSequence = async () => {
+    if (!newSeqName.trim() || savingSeq) return;
+    setSavingSeq(true);
+    try {
+      const res = await sequenceAPI.create({ name: newSeqName.trim(), platform: p });
+      const seq = res.data?.sequence;
+      if (seq) {
+        onSequenceCreated?.(seq);
+        onChange({ ...btnObj, sequenceId: seq.id, sequenceName: seq.name });
+      }
+      setCreatingSeq(false);
+      setNewSeqName('');
+    } catch {
+      // Swallowed — the picker just stays open so the user can retry, same
+      // as the other inline "create new" pickers in this file.
+    } finally {
+      setSavingSeq(false);
+    }
+  };
+
   return (
-    <div
-      style={{
-        border: '1px solid #e2e8f0',
-        borderRadius: 8,
-        background: '#ffffff',
-        marginBottom: 8,
-        overflow: 'hidden',
-        boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
-      }}
-    >
-      {/* Top Header Row */}
+    <>
+      {/* Collapsed row — click anywhere on it (not just a tiny toggle) to
+          reopen the submenu and change what's already set. */}
       <div
+        onClick={() => setMenuOpen(true)}
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: 6,
           padding: '7px 10px',
-          background: '#f8fafc',
-          borderBottom: expanded ? '1px solid #e2e8f0' : 'none',
+          border: '1px solid #e2e8f0',
+          borderRadius: 8,
+          background: '#ffffff',
+          marginBottom: 8,
+          boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+          cursor: 'pointer',
         }}
       >
-        <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', width: 16 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', width: 16, flexShrink: 0 }}>
           {index + 1}.
         </span>
-        <input
-          value={btnObj.title || ''}
-          onChange={(e) => updateProp('title', e.target.value)}
-          placeholder={`Button ${index + 1} text...`}
-          maxLength={20}
+        <span
           style={{
             flex: 1,
             fontSize: 12,
             fontWeight: 600,
-            padding: '4px 8px',
-            border: '1px solid #cbd5e1',
-            borderRadius: 6,
-            background: '#ffffff',
+            color: '#0f172a',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
           }}
-        />
+        >
+          {btnObj.title || (isItem ? `Option ${index + 1}` : `Button ${index + 1}`)}
+        </span>
         <span
           style={{
             fontSize: 10,
@@ -5413,32 +5754,39 @@ function ButtonActionEditor({ btn, index, onChange, onRemove, platform }) {
         >
           {badge.label}
         </span>
-        <button
-          type="button"
-          onClick={() => setExpanded(!expanded)}
-          style={{
-            background: 'transparent',
-            border: 'none',
-            color: '#64748b',
-            cursor: 'pointer',
-            padding: 4,
-            display: 'flex',
-            alignItems: 'center',
-            borderRadius: 4,
-          }}
-          title={expanded ? 'Collapse action submenu' : 'Expand action submenu'}
-        >
-          <ChevronDown
-            size={14}
+        {btnObj.sequenceId && (
+          <span
+            title={`Also enrolls in "${btnObj.sequenceName || 'a Sequence'}"`}
             style={{
-              transform: expanded ? 'rotate(180deg)' : 'none',
-              transition: 'transform 0.15s ease',
+              fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+              background: '#ecfeff', color: '#0e7490', border: '1px solid #e2e8f0', flexShrink: 0,
+              display: 'flex', alignItems: 'center', gap: 3,
             }}
-          />
-        </button>
+          >
+            <Play size={9} /> Seq
+          </span>
+        )}
+        {Array.isArray(btnObj.labelIds) && btnObj.labelIds.length > 0 && (
+          <span
+            title={`Tags contact with ${btnObj.labelIds.length} label${btnObj.labelIds.length > 1 ? 's' : ''} on tap`}
+            style={{
+              fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+              background: '#fdf4ff', color: '#a21caf', border: '1px solid #e2e8f0', flexShrink: 0,
+              display: 'flex', alignItems: 'center', gap: 3,
+            }}
+          >
+            <Tag size={9} /> {btnObj.labelIds.length}
+          </span>
+        )}
+        <span
+          title={`Edit ${isItem ? 'item' : 'button'}`}
+          style={{ color: '#64748b', display: 'flex', alignItems: 'center', padding: 4, flexShrink: 0 }}
+        >
+          <Settings2 size={13} />
+        </span>
         <button
           type="button"
-          onClick={onRemove}
+          onClick={(e) => { e.stopPropagation(); onRemove(); }}
           style={{
             background: 'transparent',
             border: 'none',
@@ -5447,93 +5795,345 @@ function ButtonActionEditor({ btn, index, onChange, onRemove, platform }) {
             padding: 4,
             display: 'flex',
             alignItems: 'center',
+            flexShrink: 0,
           }}
-          title="Remove button"
+          title={isItem ? 'Remove item' : 'Remove button'}
         >
           <Trash2 size={13} />
         </button>
       </div>
 
-      {/* Expandable Action Submenu */}
-      {expanded && (
-        <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8, background: '#fafbfc' }}>
-          <div className="fb-field" style={{ margin: 0 }}>
-            <label style={{ fontSize: 10, fontWeight: 700, color: '#475569' }}>
-              When this button is clicked
-            </label>
-            <select
-              value={btnObj.action || 'flow'}
-              onChange={(e) => updateProp('action', e.target.value)}
-              style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, background: '#ffffff' }}
-            >
-              {actionOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.icon} {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Action: Open Website */}
-          {btnObj.action === 'url' && (
-            <div className="fb-field" style={{ margin: 0 }}>
-              <label style={{ fontSize: 10, fontWeight: 700, color: '#475569' }}>
-                Website URL (https://)
-              </label>
-              <input
-                type="url"
-                value={btnObj.url || ''}
-                onChange={(e) => updateProp('url', e.target.value)}
-                placeholder="https://example.com"
-                style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, background: '#ffffff' }}
-              />
-              {isWA && (
-                <span style={{ fontSize: 9.5, color: '#64748b', fontStyle: 'italic', marginTop: 2 }}>
-                  ℹ️ WhatsApp CTA URL button: opens browser directly upon tap.
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* Action: Call Phone Number */}
-          {btnObj.action === 'phone' && (
-            <div className="fb-field" style={{ margin: 0 }}>
-              <label style={{ fontSize: 10, fontWeight: 700, color: '#475569' }}>
-                Phone Number (E.164 with country code)
-              </label>
-              <input
-                type="tel"
-                value={btnObj.phone || ''}
-                onChange={(e) => updateProp('phone', e.target.value)}
-                placeholder="+1234567890"
-                style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, background: '#ffffff' }}
-              />
-              <span style={{ fontSize: 9.5, color: '#64748b', fontStyle: 'italic', marginTop: 2 }}>
-                Format: +[Country Code][Number] without spaces or dashes.
-              </span>
-            </div>
-          )}
-
-
-          {/* Action: Continue Flow */}
-          {(btnObj.action === 'flow' || !btnObj.action) && (
+      {/* "Edit Button" submenu */}
+      {menuOpen && (
+        <div
+          onClick={() => setMenuOpen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.35)',
+            zIndex: 2000,
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'flex-end',
+            padding: '64px 340px 24px 24px',
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 320,
+              maxHeight: '80vh',
+              display: 'flex',
+              flexDirection: 'column',
+              background: '#ffffff',
+              borderRadius: 14,
+              boxShadow: '0 20px 50px rgba(0,0,0,0.25)',
+              overflow: 'hidden',
+              border: '1px solid #e2e8f0',
+            }}
+          >
+            {/* Header */}
             <div
               style={{
-                fontSize: 10.5,
-                color: '#475569',
-                background: '#f8fafc',
-                border: '1px dashed #cbd5e1',
-                padding: '6px 8px',
-                borderRadius: 6,
-                lineHeight: 1.35,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '14px 16px',
+                borderBottom: '1px solid #e2e8f0',
+                flexShrink: 0,
               }}
             >
-              👉 Connect this button to the next message or automation card on the canvas using its handle dot.
+              <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>{isItem ? 'Edit List Item' : 'Edit Button'}</span>
+              <button
+                type="button"
+                onClick={() => setMenuOpen(false)}
+                style={{
+                  background: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 8,
+                  width: 26,
+                  height: 26,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#64748b',
+                  cursor: 'pointer',
+                }}
+              >
+                <X size={14} />
+              </button>
             </div>
-          )}
+
+            {/* Body */}
+            <div style={{ padding: 16, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                {isItem ? 'Set up this item' : 'Set up this button'}
+              </div>
+
+              <div className="fb-field" style={{ margin: 0 }}>
+                <label style={{ fontSize: 11, fontWeight: 700, color: '#475569' }}>{isItem ? 'Item title' : 'Button title'}</label>
+                <input
+                  autoFocus
+                  value={btnObj.title || ''}
+                  onChange={(e) => updateProp('title', e.target.value)}
+                  placeholder={isItem ? `Option ${index + 1} text...` : `Button ${index + 1} text...`}
+                  maxLength={isItem ? 24 : 20}
+                  style={{ fontSize: 13, padding: '7px 9px', borderRadius: 7, border: '1px solid #cbd5e1', background: '#ffffff' }}
+                />
+              </div>
+
+              {isItem && (
+                <div className="fb-field" style={{ margin: 0 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: '#475569' }}>Description (optional)</label>
+                  <input
+                    value={btnObj.description || ''}
+                    onChange={(e) => updateProp('description', e.target.value)}
+                    placeholder="A short line shown under the title..."
+                    maxLength={72}
+                    style={{ fontSize: 13, padding: '7px 9px', borderRadius: 7, border: '1px solid #cbd5e1', background: '#ffffff' }}
+                  />
+                </div>
+              )}
+
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: '#475569', display: 'block', marginBottom: 6 }}>
+                  When this button is pressed
+                </label>
+                {/* Plain vertical list of rows — not tabs, not a dropdown. */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {actionOptions.map((opt) => {
+                    const active = (btnObj.action || 'flow') === opt.value;
+                    const OptIcon = opt.Icon;
+                    return (
+                      <div
+                        key={opt.value}
+                        onClick={() => updateProp('action', opt.value)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: '9px 10px',
+                          borderRadius: 8,
+                          border: active ? '1.5px solid #4f46e5' : '1px solid #e2e8f0',
+                          background: active ? '#eef2ff' : '#ffffff',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: 26,
+                            height: 26,
+                            borderRadius: 7,
+                            background: active ? '#4f46e5' : '#f1f5f9',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0,
+                          }}
+                        >
+                          <OptIcon size={13} color={active ? '#ffffff' : '#64748b'} />
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 600, color: '#0f172a' }}>{opt.label}</div>
+                          <div style={{ fontSize: 10.5, color: '#94a3b8', marginTop: 1 }}>{opt.description}</div>
+                        </div>
+                        {active && <Check size={15} color="#4f46e5" style={{ flexShrink: 0 }} />}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Action: Go to Existing Flow */}
+              {btnObj.action === 'goToFlow' && (
+                <div className="fb-field" style={{ margin: 0 }}>
+                  <label style={{ fontSize: 10, fontWeight: 700, color: '#475569' }}>
+                    Flow to open
+                  </label>
+                  <select
+                    value={btnObj.flowId || ''}
+                    onChange={(e) => {
+                      const fid = e.target.value ? Number(e.target.value) : null;
+                      const target = availableFlows.find((f) => f.id === fid);
+                      onChange({ ...btnObj, flowId: fid, flowName: target?.name || '' });
+                    }}
+                    style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, background: '#ffffff' }}
+                  >
+                    <option value="">Select a flow…</option>
+                    {availableFlows.map((f) => (
+                      <option key={f.id} value={f.id}>{f.name}</option>
+                    ))}
+                  </select>
+                  {availableFlows.length === 0 && (
+                    <span style={{ fontSize: 9.5, color: '#94a3b8', fontStyle: 'italic', marginTop: 2 }}>
+                      No other {p} flows yet — create one first, then come back and pick it here.
+                    </span>
+                  )}
+                  <span style={{ fontSize: 9.5, color: '#64748b', fontStyle: 'italic', marginTop: 2 }}>
+                    Jumps the subscriber straight to the start of this flow — no wire needed on the canvas.
+                  </span>
+                </div>
+              )}
+
+              {/* Action: Open Website */}
+              {btnObj.action === 'url' && (
+                <div className="fb-field" style={{ margin: 0 }}>
+                  <label style={{ fontSize: 10, fontWeight: 700, color: '#475569' }}>
+                    Website URL (https://)
+                  </label>
+                  <input
+                    type="url"
+                    value={btnObj.url || ''}
+                    onChange={(e) => updateProp('url', e.target.value)}
+                    placeholder="https://example.com"
+                    style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, background: '#ffffff' }}
+                  />
+                  {isWA && (
+                    <span style={{ fontSize: 9.5, color: '#64748b', fontStyle: 'italic', marginTop: 2 }}>
+                      ℹ️ WhatsApp CTA URL button: opens browser directly upon tap.
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Action: Call Phone Number */}
+              {btnObj.action === 'phone' && (
+                <div className="fb-field" style={{ margin: 0 }}>
+                  <label style={{ fontSize: 10, fontWeight: 700, color: '#475569' }}>
+                    Phone Number (E.164 with country code)
+                  </label>
+                  <input
+                    type="tel"
+                    value={btnObj.phone || ''}
+                    onChange={(e) => updateProp('phone', e.target.value)}
+                    placeholder="+1234567890"
+                    style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, background: '#ffffff' }}
+                  />
+                  <span style={{ fontSize: 9.5, color: '#64748b', fontStyle: 'italic', marginTop: 2 }}>
+                    Format: +[Country Code][Number] without spaces or dashes.
+                  </span>
+                </div>
+              )}
+
+              {/* Attach a Sequence — independent of the action above (enrolls
+                  the subscriber in the background; whatever the tap DOES —
+                  continue, jump to a flow, open a link — still happens too).
+                  Same additive relationship the Start node's own "Attach
+                  Sequence" branch already has to the rest of that flow. */}
+              <div style={{ borderTop: '1px dashed #e2e8f0', paddingTop: 12 }}>
+                <label style={{ fontSize: 11, fontWeight: 700, color: '#475569', display: 'block', marginBottom: 6 }}>
+                  Also enroll in a Sequence (optional)
+                </label>
+                {creatingSeq ? (
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input
+                      autoFocus
+                      value={newSeqName}
+                      onChange={(e) => setNewSeqName(e.target.value)}
+                      placeholder="e.g. Welcome Series"
+                      onKeyDown={(e) => e.key === 'Enter' && handleCreateSequence()}
+                      style={{ flex: 1, fontSize: 12, padding: '5px 8px', borderRadius: 6, border: '1px solid #cbd5e1' }}
+                    />
+                    <button type="button" className="fb-add-btn" disabled={savingSeq || !newSeqName.trim()} onClick={handleCreateSequence}>
+                      {savingSeq ? 'Creating...' : 'Create'}
+                    </button>
+                    <button type="button" className="fb-add-btn" style={{ background: 'transparent' }} onClick={() => setCreatingSeq(false)}>
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <select
+                    value={btnObj.sequenceId || ''}
+                    onChange={(e) => {
+                      if (e.target.value === 'CREATE_NEW') { setCreatingSeq(true); return; }
+                      const sid = e.target.value ? Number(e.target.value) : null;
+                      const seq = sequences.find((s) => s.id === sid);
+                      onChange({ ...btnObj, sequenceId: sid, sequenceName: seq?.name || '' });
+                    }}
+                    style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, background: '#ffffff' }}
+                  >
+                    <option value="">None</option>
+                    {sequences.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                    <option value="CREATE_NEW">+ Create new Sequence...</option>
+                  </select>
+                )}
+                <span style={{ fontSize: 9.5, color: '#64748b', fontStyle: 'italic', marginTop: 4, display: 'block' }}>
+                  Enrolls the subscriber the moment this {isItem ? 'item' : 'button'} is tapped — the Sequence sends
+                  on its own schedule, separate from whatever else this {isItem ? 'item' : 'button'} does.
+                </span>
+              </div>
+
+              {/* Tag with Label — same additive, independent-of-the-action
+                  relationship as the Sequence block above. */}
+              <div style={{ borderTop: '1px dashed #e2e8f0', paddingTop: 12 }}>
+                <label style={{ fontSize: 11, fontWeight: 700, color: '#475569', display: 'block', marginBottom: 6 }}>
+                  Tag with Label (optional)
+                </label>
+                <LabelTagPicker
+                  labels={availableLabels}
+                  selectedIds={Array.isArray(btnObj.labelIds) ? btnObj.labelIds : []}
+                  onToggle={(labelId) => {
+                    const current = Array.isArray(btnObj.labelIds) ? btnObj.labelIds : [];
+                    updateProp('labelIds', current.includes(labelId) ? current.filter((l) => l !== labelId) : [...current, labelId]);
+                  }}
+                  hint={`Tags the contact the moment this ${isItem ? 'item' : 'button'} is tapped.`}
+                />
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '12px 16px',
+                borderTop: '1px solid #e2e8f0',
+                background: '#f8fafc',
+                flexShrink: 0,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => { onRemove(); setMenuOpen(false); }}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#ef4444',
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  padding: '6px 4px',
+                }}
+              >
+                <Trash2 size={13} /> {isItem ? 'Delete item' : 'Delete button'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setMenuOpen(false)}
+                style={{
+                  background: '#4f46e5',
+                  border: 'none',
+                  color: '#ffffff',
+                  fontSize: 12.5,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  padding: '7px 18px',
+                  borderRadius: 8,
+                }}
+              >
+                Done
+              </button>
+            </div>
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -5807,6 +6407,100 @@ function SequenceActionFields({ data, updateFields, sequences, onCreated, platfo
   );
 }
 
+/* ── Shared: contact-label tag picker ("Tag with Label") ──────────────
+   Same pill-toggle pattern UserInputFlowStartProperties already uses for its
+   "Tag Subscriber With Label" field, pulled out so ButtonActionEditor
+   (buttons/list items) and StartNodeProperties (a normal Flow's Start node)
+   can reuse it too instead of re-fetching/re-rendering their own copy. */
+function useAvailableLabels() {
+  const [labels, setLabels] = useState([]);
+  useEffect(() => {
+    labelAPI.getAll().then((r) => setLabels(r.data?.labels || [])).catch(() => {});
+  }, []);
+  return labels;
+}
+
+function LabelTagPicker({ labels, selectedIds, onToggle, hint }) {
+  if (labels.length === 0) {
+    return <span className="fb-hint">No labels created yet — add them from the Inbox or Contacts page.</span>;
+  }
+  return (
+    <>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {labels.map((l) => {
+          const on = selectedIds.includes(l.id);
+          return (
+            <button
+              key={l.id}
+              type="button"
+              onClick={() => onToggle(l.id)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '4px 10px', borderRadius: 999, cursor: 'pointer',
+                fontSize: 11, fontWeight: 700,
+                border: `1.5px solid ${on ? (l.color || '#4f46e5') : '#e2e8f0'}`,
+                background: on ? `${l.color || '#4f46e5'}18` : '#fff',
+                color: on ? (l.color || '#4f46e5') : '#64748b',
+              }}
+            >
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: l.color || '#4f46e5' }} />
+              {l.name}
+            </button>
+          );
+        })}
+      </div>
+      {hint && <span className="fb-hint">{hint}</span>}
+    </>
+  );
+}
+
+/* ── Shared: per-node "Delay before this step" (hours/minutes/seconds) ──
+   Every node type can optionally hold off before it runs. Scheduled (via
+   flow_sessions.delay_next_run_at + utils/flowDelayScheduler.js on the
+   backend), never a blocking sleep — see flowEngine.js. */
+function DelaySettings({ value, onChange }) {
+  const v = value && typeof value === 'object' ? value : { hours: 0, minutes: 0, seconds: 0 };
+  const set = (unit, raw) => {
+    const n = Math.max(0, parseInt(raw, 10) || 0);
+    onChange({ ...v, [unit]: n });
+  };
+  return (
+    <div className="fb-field">
+      <label style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+        <Timer size={12} /> Delay before this step (optional)
+      </label>
+      <div style={{ display: 'flex', gap: 6 }}>
+        {[['hours', 'Hrs'], ['minutes', 'Min'], ['seconds', 'Sec']].map(([unit, label]) => (
+          <div key={unit} style={{ flex: 1 }}>
+            <input
+              type="number"
+              min={0}
+              value={v[unit] || 0}
+              onChange={(e) => set(unit, e.target.value)}
+              style={{ width: '100%', fontSize: 12, padding: '5px 8px', borderRadius: 6, textAlign: 'center' }}
+            />
+            <span style={{ fontSize: 9, color: '#94a3b8', display: 'block', textAlign: 'center', marginTop: 2 }}>{label}</span>
+          </div>
+        ))}
+      </div>
+      <span className="fb-hint">Holds this step back for the given time before it runs — the contact sees nothing until then. Works for waits up to 48 hours.</span>
+    </div>
+  );
+}
+
+// Formats a {hours,minutes,seconds} delay as a short badge string, e.g. "1h 30m" —
+// omits zero units, returns null when there's nothing to show (used by every
+// node card that carries an optional delay).
+function formatDelayBadge(delay) {
+  if (!delay || typeof delay !== 'object') return null;
+  const { hours = 0, minutes = 0, seconds = 0 } = delay;
+  const parts = [];
+  if (hours) parts.push(`${hours}h`);
+  if (minutes) parts.push(`${minutes}m`);
+  if (seconds) parts.push(`${seconds}s`);
+  return parts.length ? parts.join(' ') : null;
+}
+
 /* ── User Input Flow: Start node settings ───────────────────────────
    A User Input Flow's Start node has no trigger (a bot Flow's "Run User Input
    Flow" node invokes it). Instead it carries the settings that apply to the
@@ -6003,7 +6697,7 @@ function UserInputFlowStartProperties({ data, updateField, platform, flowName, o
   );
 }
 
-function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFields = [], onCustomFieldCreated, userInputFlows = [], onUserInputFlowCreated, isUserInputFlow = false, sequences = [], onSequenceCreated, isSequence = false, flowName, onFlowNameChange, onDrillIn, onAttachSequence, attachedSequenceNode, onSelectSequenceNode }) {
+function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFields = [], onCustomFieldCreated, userInputFlows = [], onUserInputFlowCreated, isUserInputFlow = false, sequences = [], onSequenceCreated, isSequence = false, flows = [], currentFlowId = null, flowName, onFlowNameChange, onDrillIn, onAttachSequence, attachedSequenceNode, onSelectSequenceNode }) {
   if (!node) return null;
 
   const { data, type } = node;
@@ -6111,6 +6805,10 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
                   btn={btn}
                   index={i}
                   platform={platform}
+                  flows={flows}
+                  currentFlowId={currentFlowId}
+                  sequences={sequences}
+                  onSequenceCreated={onSequenceCreated}
                   onChange={(val) => handleUpdateTextButton(i, val)}
                   onRemove={() => handleRemoveTextButton(i)}
                 />
@@ -6146,7 +6844,7 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
                     e.currentTarget.style.background = '#ffffff';
                   }}
                 >
-                  <Plus size={14} /> + Add Button
+                  <Plus size={14} /> Add Button
                 </button>
               )}
             </div>
@@ -6275,6 +6973,10 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
                   btn={btn}
                   index={i}
                   platform="WHATSAPP"
+                  flows={flows}
+                  currentFlowId={currentFlowId}
+                  sequences={sequences}
+                  onSequenceCreated={onSequenceCreated}
                   onChange={(val) => handleUpdateInteractiveButton(i, val)}
                   onRemove={() => handleRemoveInteractiveButton(i)}
                 />
@@ -6380,6 +7082,10 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
                   btn={btn}
                   index={i}
                   platform={platform}
+                  flows={flows}
+                  currentFlowId={currentFlowId}
+                  sequences={sequences}
+                  onSequenceCreated={onSequenceCreated}
                   onChange={(val) => handleUpdateImageButton(i, val)}
                   onRemove={() => handleRemoveImageButton(i)}
                 />
@@ -6415,7 +7121,7 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
                     e.currentTarget.style.background = '#ffffff';
                   }}
                 >
-                  <Plus size={14} /> + Add Button
+                  <Plus size={14} /> Add Button
                 </button>
               )}
             </div>
@@ -6521,6 +7227,10 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
                   btn={btn}
                   index={i}
                   platform={platform}
+                  flows={flows}
+                  currentFlowId={currentFlowId}
+                  sequences={sequences}
+                  onSequenceCreated={onSequenceCreated}
                   onChange={(val) => handleUpdateButton(i, val)}
                   onRemove={() => handleRemoveButton(i)}
                 />
@@ -6556,7 +7266,7 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
                     e.currentTarget.style.background = '#ffffff';
                   }}
                 >
-                  <Plus size={14} /> + Add Button
+                  <Plus size={14} /> Add Button
                 </button>
               )}
             </div>
@@ -6631,70 +7341,124 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
           const next = lists.map((l, idx) => (idx === li ? { ...l, ...patch } : l));
           updateLists(next);
         };
+        const updateSection = (li, si, patch) => {
+          const list = lists[li];
+          const nextSections = list.sections.map((s, idx) => (idx === si ? { ...s, ...patch } : s));
+          updateList(li, { sections: nextSections });
+        };
         return (
           <>
-            {lists.map((list, li) => (
-              <div key={li} className="fb-field" style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: 10, marginBottom: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                  <label style={{ margin: 0 }}>List {li + 1} Title</label>
-                  {lists.length > 1 && (
-                    <button className="fb-list-item-del" onClick={() => updateLists(lists.filter((_, idx) => idx !== li))}>
-                      <Trash2 size={14} />
+            {lists.map((list, li) => {
+              const totalItems = list.items.length;
+              return (
+                <div key={li} className="fb-field" style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: 10, marginBottom: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <label style={{ margin: 0 }}>List {li + 1} Title</label>
+                    {lists.length > 1 && (
+                      <button className="fb-list-item-del" onClick={() => updateLists(lists.filter((_, idx) => idx !== li))}>
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    value={list.title || ''}
+                    onChange={(e) => updateList(li, { title: e.target.value })}
+                    placeholder="Menu title..."
+                    style={{ marginBottom: 8 }}
+                  />
+                  <label>Button Text</label>
+                  <input
+                    value={list.buttonText || ''}
+                    onChange={(e) => updateList(li, { buttonText: e.target.value })}
+                    placeholder="e.g. Options"
+                    style={{ marginBottom: 8 }}
+                  />
+
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <label style={{ margin: 0 }}>Items</label>
+                    <span style={{ fontSize: 10, color: '#475569', fontWeight: 600 }}>{totalItems}/{listCap} total</span>
+                  </div>
+
+                  {/* Sections group items under their own heading, all still
+                      within this ONE message — WhatsApp's own native grouping.
+                      A list with just one (untitled) section renders exactly
+                      like a plain flat list, so nothing changes for anyone who
+                      doesn't need this. */}
+                  {list.sections.map((section, si) => (
+                    <div key={si} style={{ border: '1px dashed #cbd5e1', borderRadius: 8, padding: 8, marginBottom: 8, background: '#fafbfc' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                        <input
+                          value={section.title || ''}
+                          onChange={(e) => updateSection(li, si, { title: e.target.value })}
+                          placeholder={list.sections.length > 1 ? `Section ${si + 1} name (e.g. "Popular")` : 'Section name (optional)'}
+                          maxLength={24}
+                          style={{ flex: 1, fontSize: 12, padding: '5px 8px', borderRadius: 6, border: '1px solid #cbd5e1' }}
+                        />
+                        {list.sections.length > 1 && (
+                          <button
+                            className="fb-list-item-del"
+                            onClick={() => updateList(li, { sections: list.sections.filter((_, idx) => idx !== si) })}
+                            title="Remove section"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
+
+                      {section.items.map((item, ii) => (
+                        <ButtonActionEditor
+                          key={ii}
+                          btn={item}
+                          index={ii}
+                          variant="item"
+                          platform={platform}
+                          flows={flows}
+                          currentFlowId={currentFlowId}
+                          sequences={sequences}
+                          onSequenceCreated={onSequenceCreated}
+                          onChange={(val) => {
+                            const updatedItems = section.items.map((it, idx) => (idx === ii ? val : it));
+                            updateSection(li, si, { items: updatedItems });
+                          }}
+                          onRemove={() => updateSection(li, si, { items: section.items.filter((_, idx) => idx !== ii) })}
+                        />
+                      ))}
+
+                      {totalItems >= listCap ? (
+                        <span className="fb-hint">Maximum {listCap} items total for this list on {(platform || 'WEBCHAT')} — add another list below for more.</span>
+                      ) : (
+                        <button
+                          className="fb-add-btn"
+                          onClick={() => updateSection(li, si, { items: [...section.items, { title: '', action: 'flow' }] })}
+                        >
+                          <Plus size={14} /> Add Item
+                        </button>
+                      )}
+                    </div>
+                  ))}
+
+                  {list.sections.length < 10 && totalItems < listCap && (
+                    <button
+                      className="fb-add-btn"
+                      style={{ background: 'transparent', border: '1.5px dashed #cbd5e1' }}
+                      onClick={() => updateList(li, { sections: [...list.sections, { title: '', items: [] }] })}
+                    >
+                      <Plus size={14} /> Add Section
                     </button>
                   )}
                 </div>
-                <input
-                  value={list.title || ''}
-                  onChange={(e) => updateList(li, { title: e.target.value })}
-                  placeholder="Menu title..."
-                  style={{ marginBottom: 8 }}
-                />
-                <label>Button Text</label>
-                <input
-                  value={list.buttonText || ''}
-                  onChange={(e) => updateList(li, { buttonText: e.target.value })}
-                  placeholder="e.g. Options"
-                  style={{ marginBottom: 8 }}
-                />
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <label style={{ margin: 0 }}>Items</label>
-                  <span style={{ fontSize: 10, color: '#475569', fontWeight: 600 }}>{(list.items || []).length}/{listCap}</span>
-                </div>
-                {(list.items || []).map((item, i) => (
-                  <div key={i} className="fb-list-item">
-                    <input
-                      value={item}
-                      onChange={(e) => {
-                        const updated = [...(list.items || [])];
-                        updated[i] = e.target.value;
-                        updateList(li, { items: updated });
-                      }}
-                      placeholder={`Item ${i + 1}`}
-                    />
-                    <button
-                      className="fb-list-item-del"
-                      onClick={() => updateList(li, { items: (list.items || []).filter((_, idx) => idx !== i) })}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))}
-                {(list.items || []).length >= listCap ? (
-                  <span className="fb-hint">Maximum {listCap} items per list on {(platform || 'WEBCHAT')} — add another list below for more.</span>
-                ) : (
-                  <button className="fb-add-btn" onClick={() => updateList(li, { items: [...(list.items || []), ''] })}>
-                    <Plus size={14} /> Add Item
-                  </button>
-                )}
-              </div>
-            ))}
+              );
+            })}
             <button
               className="fb-add-btn"
-              onClick={() => updateLists([...lists, { title: `Menu ${lists.length + 1}`, buttonText: 'Options', items: [] }])}
+              onClick={() => updateLists([...lists, { title: `Menu ${lists.length + 1}`, buttonText: 'Options', sections: [{ title: '', items: [] }] }])}
             >
               <Plus size={14} /> Add Another List
             </button>
-            <span className="fb-hint">Each list sends as its own message, one after another — the subscriber can tap an option from any of them and the flow continues the same way.</span>
+            <span className="fb-hint">
+              Each list sends as its own message, one after another. Sections group items under their own heading
+              within the same message — up to 10 items total per list either way, so add another list for more.
+            </span>
           </>
         );
       }
@@ -7094,17 +7858,58 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
         );
       }
 
-      case 'condition':
+      case 'condition': {
+        const compareSource = data.compareSource || 'variable';
         return (
           <>
             <div className="fb-field">
-              <label>Variable</label>
-              <input
-                value={data.variable || ''}
-                onChange={(e) => updateField('variable', e.target.value)}
-                placeholder="e.g. user_input"
-              />
+              <label>Compare</label>
+              <select
+                value={compareSource}
+                onChange={(e) => updateField('compareSource', e.target.value)}
+              >
+                <option value="variable">A session variable (typed by name)</option>
+                <option value="customField">A Custom Field</option>
+              </select>
             </div>
+
+            {compareSource === 'customField' ? (
+              <div className="fb-field">
+                <label>Custom Field</label>
+                <select
+                  value={data.customFieldId || ''}
+                  onChange={(e) => {
+                    const id = e.target.value ? Number(e.target.value) : null;
+                    const field = customFields.find((f) => f.id === id);
+                    updateFields({ customFieldId: id, customFieldKey: field?.field_key || '', customFieldName: field?.name || '' });
+                  }}
+                >
+                  <option value="">Select a field...</option>
+                  {customFields.map((f) => (
+                    <option key={f.id} value={f.id}>{f.name}</option>
+                  ))}
+                </select>
+                {customFields.length === 0 && (
+                  <span className="fb-hint">
+                    No Custom Fields yet — create one from a Question node's Custom Field picker first, then come back and pick it here.
+                  </span>
+                )}
+                <span className="fb-hint">
+                  Reads the contact's current value for this field — whether it was set earlier in this same
+                  conversation or captured previously through any other flow.
+                </span>
+              </div>
+            ) : (
+              <div className="fb-field">
+                <label>Variable</label>
+                <input
+                  value={data.variable || ''}
+                  onChange={(e) => updateField('variable', e.target.value)}
+                  placeholder="e.g. user_input"
+                />
+              </div>
+            )}
+
             <div className="fb-field">
               <label>Operator</label>
               <select value={data.operator || 'equals'} onChange={(e) => updateField('operator', e.target.value)}>
@@ -7123,19 +7928,14 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
             </div>
           </>
         );
+      }
 
       case 'delay':
+        // This node's own wait is set via the "Delay before this step"
+        // control every node type shares, shown right below — nothing
+        // node-type-specific to configure here anymore.
         return (
-          <div className="fb-field">
-            <label>Delay (seconds)</label>
-            <input
-              type="number"
-              min={0}
-              max={300}
-              value={data.seconds || 0}
-              onChange={(e) => updateField('seconds', parseInt(e.target.value) || 0)}
-            />
-          </div>
+          <span className="fb-hint">Set how long to wait in "Delay before this step" below.</span>
         );
 
       case 'webhook':
@@ -7401,6 +8201,25 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
       </div>
       <div className="fb-props-body">
         {renderFields()}
+        {!DELAY_EXCLUDED_NODE_TYPES.has(type) && (
+          <DelaySettings
+            value={data.delay || (type === 'delay' && data.seconds ? { hours: 0, minutes: 0, seconds: Number(data.seconds) || 0 } : undefined)}
+            onChange={(d) => updateField('delay', d)}
+          />
+        )}
+        {TYPING_ELIGIBLE_NODE_TYPES.has(type) && (
+          <div className="fb-field">
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span className="fb-node-typing-badge"><span className="dot" /><span className="dot" /><span className="dot" /></span>
+              Show "typing…" before sending
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input type="checkbox" checked={!!data.showTyping} onChange={(e) => updateField('showTyping', e.target.checked)} />
+              <span style={{ fontSize: 12, color: '#475569' }}>{data.showTyping ? 'On' : 'Off'}</span>
+            </label>
+            <span className="fb-hint">Briefly shows the channel's native typing indicator right before this message sends.</span>
+          </div>
+        )}
         <button className="fb-done-btn" onClick={onClose}>
           <Check size={14} /> Done
         </button>
@@ -8073,9 +8892,29 @@ function FlowBuilderInner() {
     if (isUserInputFlow || isSequence) return;
     sequenceAPI.getAll().then((res) => setSequencesList(res.data?.sequences || [])).catch(() => {});
   }, [isUserInputFlow, isSequence]);
+
+  // Other bot Flows — offered on a button's "Go to Existing Flow" action so a
+  // tap can jump the subscriber straight into a different flow, independent
+  // of any canvas wire. Same reasoning as sequencesList above: not meaningful
+  // from inside a User Input Flow or a Sequence canvas.
+  const [flowsList, setFlowsList] = useState([]);
+  useEffect(() => {
+    if (isUserInputFlow || isSequence) return;
+    flowAPI.getAll().then((res) => setFlowsList(res.data?.flows || [])).catch(() => {});
+  }, [isUserInputFlow, isSequence]);
   const [autoSaveStatus, setAutoSaveStatus] = useState('');
   const [previewOpen, setPreviewOpen] = useState(false);
   const [isLive, setIsLive] = useState(false);
+
+  // Chat Widget appearance — only meaningful for a WEBCHAT flow that's the
+  // reply logic of a Bot Manager → Engagement → Chat Widget entry (see
+  // ChatWidgetManager.jsx, which creates the two together). `linkedWidget`
+  // is fetched alongside the flow below (GET /channels/webchat/by-flow/:id)
+  // and stays null for every ordinary flow, which is what gates the new
+  // toolbar button/panel — see WidgetAppearancePanel.jsx.
+  const [linkedWidget, setLinkedWidget] = useState(null);
+  const [widgetAppearanceOpen, setWidgetAppearanceOpen] = useState(false);
+  const [widgetAppearanceForm, setWidgetAppearanceForm] = useState(null);
 
   // Undo / Redo history tracking
   const historyRef = useRef([]);
@@ -8236,6 +9075,39 @@ function FlowBuilderInner() {
         }
         setPlatform(resolvedPlatform);
         setIntegrationId(flow.integration_id || null);
+
+        // If this flow is a Webchat Chat Widget's reply logic (created
+        // together by ChatWidgetManager.jsx), load its appearance fields so
+        // the new Widget Appearance panel/button can appear — ordinary
+        // flows (and Sequences/User Input Flows) simply never match here.
+        if (!isSequence && !isUserInputFlow && resolvedPlatform === 'WEBCHAT') {
+          channelAPI.getWebchatByFlow(id).then((res) => {
+            const widget = res.data?.widget;
+            if (widget) {
+              setLinkedWidget(widget);
+              setWidgetAppearanceForm({
+                name: widget.name,
+                logoUrl: widget.logo_url || '',
+                displayName: widget.display_name || widget.name || '',
+                headerBgColor: widget.header_bg_color || widget.primary_color || '#6366f1',
+                headerTextColor: widget.header_text_color || '#ffffff',
+                greetingMessage: widget.greeting_message || '',
+                placeholderText: widget.placeholder_text || '',
+                prefillMessage: widget.prefill_message || '',
+                position: widget.position || 'BOTTOM_RIGHT',
+                openOnStartup: Boolean(widget.open_on_startup),
+                buttonText: widget.button_text || '',
+                buttonBgColor: widget.button_bg_color || widget.primary_color || '#6366f1',
+                buttonTextColor: widget.button_text_color || '#ffffff',
+                buttonSize: widget.button_size || 'MEDIUM',
+              });
+            }
+          }).catch(() => {
+            // No widget linked to this flow (an ordinary WEBCHAT flow, or a
+            // widget-link that's been removed) — leave linkedWidget null,
+            // which keeps the new panel/button hidden entirely.
+          });
+        }
 
         let loadedNodes = [];
         let loadedEdges = [];
@@ -8405,12 +9277,15 @@ function FlowBuilderInner() {
             nodes_json: serializedNodes,
             edges_json: JSON.stringify(edgesRef.current),
           });
+          if (linkedWidget && widgetAppearanceForm) {
+            await channelAPI.updateWebchat(linkedWidget.id, widgetAppearanceForm).catch(() => {});
+          }
         }
       } catch (err) {
         console.error('Save before exit error:', err);
       }
     }
-  }, [id, flowName, platform, integrationId, flowData]);
+  }, [id, flowName, platform, integrationId, flowData, linkedWidget, widgetAppearanceForm]);
 
   /* ── Go back to origin page ───────────────────────────────── */
   const handleGoBack = useCallback(async () => {
@@ -8572,6 +9447,9 @@ function FlowBuilderInner() {
           nodes_json: serializedNodes,
           edges_json: JSON.stringify(edges),
         });
+        if (linkedWidget && widgetAppearanceForm) {
+          await channelAPI.updateWebchat(linkedWidget.id, widgetAppearanceForm).catch(() => {});
+        }
       }
       setAutoSaveStatus('saved');
       setTimeout(() => setAutoSaveStatus(''), 2500);
@@ -8641,7 +9519,7 @@ function FlowBuilderInner() {
     }
   }, [
     id, isSequence, isUserInputFlow, edges, flowName, flowData,
-    platform, integrationId, drilledIn, setNodes,
+    platform, integrationId, drilledIn, setNodes, linkedWidget, widgetAppearanceForm,
   ]);
 
   // Fresh Start + Question pair for a brand-new User Input Flow — matches what a
@@ -8775,7 +9653,11 @@ function FlowBuilderInner() {
 
   /* ── Edge connection ────────────────────────────────────── */
   const onConnect = useCallback(
-    (params) =>
+    (params) => {
+      // The "Add Section" handle on a List Menu node isn't a real wire — it's
+      // a drag-triggered UI action (see onConnectEnd below), so never let it
+      // create an edge even if the drag happens to land on a valid target.
+      if (typeof params.sourceHandle === 'string' && params.sourceHandle.startsWith('add-section-')) return;
       setEdges((eds) => {
         const filtered = eds.filter(
           (edge) => !(edge.source === params.source && (edge.sourceHandle || null) === (params.sourceHandle || null))
@@ -8792,9 +9674,24 @@ function FlowBuilderInner() {
             color: '#64748b',
           },
         }, filtered);
-      }),
+      });
+    },
     [setEdges]
   );
+
+  // Appends a new (empty-titled) section + one empty item to a List Menu
+  // node's Nth list — the drag-triggered equivalent of the panel's own
+  // "Add Section" button, respecting the same 10-section / 10-item-total caps.
+  const addSectionToListNode = useCallback((nodeId, listIndex) => {
+    setNodes((nds) => nds.map((n) => {
+      if (n.id !== nodeId) return n;
+      const lists = normalizeListMenuData(n.data);
+      const list = lists[listIndex];
+      if (!list || list.sections.length >= 10 || list.items.length >= 10) return n;
+      const newLists = lists.map((l, li) => (li !== listIndex ? l : { ...l, sections: [...l.sections, { title: '', items: [{ title: '', action: 'flow' }] }] }));
+      return { ...n, data: { ...n.data, lists: newLists } };
+    }));
+  }, [setNodes]);
 
   /* ── Drag to Connect: onConnectStart & onConnectEnd ──────── */
   const onConnectStart = useCallback((_, { nodeId, handleId, handleType }) => {
@@ -8804,6 +9701,18 @@ function FlowBuilderInner() {
   const onConnectEnd = useCallback(
     (event) => {
       if (!connectingNodeRef.current) return;
+
+      // "Add Section" handle: dragging from it — wherever the drag ends,
+      // empty canvas or right on top of another node — just adds a section
+      // to this same list. It never opens the quick-add menu and never
+      // creates an edge, so this is checked before the pane/node distinction
+      // below even applies.
+      const { nodeId: dragNodeId, handleId: dragHandleId } = connectingNodeRef.current;
+      if (typeof dragHandleId === 'string' && dragHandleId.startsWith('add-section-')) {
+        addSectionToListNode(dragNodeId, Number(dragHandleId.slice('add-section-'.length)));
+        connectingNodeRef.current = null;
+        return;
+      }
 
       // Only truly empty canvas counts as "open the quick-add list" — every
       // node/handle on the canvas is a DOM descendant of .react-flow__pane,
@@ -8829,7 +9738,7 @@ function FlowBuilderInner() {
       }
       connectingNodeRef.current = null;
     },
-    [screenToFlowPosition]
+    [screenToFlowPosition, addSectionToListNode]
   );
 
   const handleSelectQuickPicker = useCallback(
@@ -9453,11 +10362,27 @@ function FlowBuilderInner() {
             )}
           </div>
 
+          {/* Widget Appearance — only for a WEBCHAT flow linked to a Chat
+              Widget (see ChatWidgetManager.jsx, which creates the two
+              together). Styled identically to the Preview toggle beside it. */}
+          {linkedWidget && (
+            <button
+              type="button"
+              className={`flow-preview-toggle-btn ${widgetAppearanceOpen ? 'active' : ''}`}
+              onClick={() => setWidgetAppearanceOpen((prev) => { if (!prev) setPreviewOpen(false); return !prev; })}
+              title="Chat widget logo, colors, and behavior"
+            >
+              <Palette size={14} />
+              <span>Widget Appearance</span>
+              <span style={{ fontSize: 9, opacity: 0.7 }}>▾</span>
+            </button>
+          )}
+
           {/* Interactive Device Preview Toggle */}
           <button
             type="button"
             className={`flow-preview-toggle-btn ${previewOpen ? 'active' : ''}`}
-            onClick={() => setPreviewOpen((prev) => !prev)}
+            onClick={() => setPreviewOpen((prev) => { if (!prev) setWidgetAppearanceOpen(false); return !prev; })}
             title="Toggle interactive device simulation preview"
           >
             <Smartphone size={14} />
@@ -9603,6 +10528,8 @@ function FlowBuilderInner() {
             sequences={sequencesList}
             onSequenceCreated={(seq) => setSequencesList((prev) => [...prev, seq])}
             isSequence={isSequence}
+            flows={flowsList}
+            currentFlowId={(!isUserInputFlow && !isSequence) ? Number(id) : null}
             flowName={flowName}
             onFlowNameChange={setFlowName}
             onDrillIn={drillIntoUif}
@@ -9621,6 +10548,17 @@ function FlowBuilderInner() {
           platform={platform}
           businessName={currentAccountName}
         />
+
+        {/* Chat Widget appearance — logo/colors/position/behavior for the
+            Webchat widget this flow replies for. See WidgetAppearancePanel.jsx. */}
+        {linkedWidget && widgetAppearanceForm && (
+          <WidgetAppearancePanel
+            open={widgetAppearanceOpen}
+            onClose={() => setWidgetAppearanceOpen(false)}
+            form={widgetAppearanceForm}
+            onChange={setWidgetAppearanceForm}
+          />
+        )}
       </div>
     </div>
     </FlowNodeActionsContext.Provider>

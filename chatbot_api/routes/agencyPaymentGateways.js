@@ -26,7 +26,7 @@ const router = express.Router();
 // this one (custom fields, user input flows, google sheets), even though those
 // allow those roles. All four routes below live under this prefix, so the
 // protection is unchanged.
-router.use("/agency/payment-gateways", authMiddleware, roleMiddleware("AGENCY"));
+router.use("/agency/payment-gateways", authMiddleware, roleMiddleware("RESELLER"));
 
 // Per-provider shape of the credentials JSON blob before encryption, and
 // which fields are safe to echo back in full vs must stay masked.

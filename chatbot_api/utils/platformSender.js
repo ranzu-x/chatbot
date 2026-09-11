@@ -13,6 +13,19 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * A listMenu payload carries `sections: [{title, rows}]` (flowEngine.js's own
+ * listMenu node case, which already groups by section) OR the older flat
+ * `items: [{id, title, description}]` (the Multiple-Choice-as-list fallback,
+ * and any other caller that hasn't been updated) — this normalizes either
+ * into `[{title, rows}]` so every platform branch below has one shape to
+ * read regardless of which the caller sent.
+ */
+function getListMenuSections(listMenu) {
+  if (Array.isArray(listMenu?.sections) && listMenu.sections.length > 0) return listMenu.sections;
+  return [{ title: listMenu?.title || "Options", rows: listMenu?.items || [] }];
+}
+
 function convertAudioToWhatsAppVoice(inputPath, outputPath) {
   return new Promise((resolve, reject) => {
     ffmpeg(inputPath)
@@ -181,6 +194,7 @@ export async function sendPlatformMessage(platform, integration, contactExternal
     headerMediaUrl,
     footerText,
     whatsappTemplate,
+    whatsappFlow,
   } = messageData;
   const accessToken = integration.access_token;
   const backendUrl = process.env.BACKEND_URL || "http://localhost:5000";
@@ -202,15 +216,48 @@ export async function sendPlatformMessage(platform, integration, contactExternal
       // Outside the 24h customer-service window, WhatsApp only accepts a
       // pre-approved Template message — used by Sequence Messages
       // (utils/messagingWindow.js) when a scheduled step falls outside the
-      // window and the step has a linked approved template. No dynamic
-      // component values yet (name + language only) — a template that
-      // requires variables isn't supported here; the caller is expected to
-      // only pass templates that don't need any.
+      // window and the step has a linked approved template, and now also by
+      // the Live Inbox Send Menu's Message Template option (routes/conversations.js's
+      // POST /conversations/:id/messages, which builds `components` from the
+      // template's variables_json + the agent-filled values before calling
+      // this). `components` is optional — omitted, this behaves exactly as
+      // before (name + language only, for templates that need no variables).
       if (whatsappTemplate?.name) {
         payload.type = "template";
         payload.template = {
           name: whatsappTemplate.name,
           language: { code: whatsappTemplate.language || "en_US" },
+          ...(Array.isArray(whatsappTemplate.components) && whatsappTemplate.components.length
+            ? { components: whatsappTemplate.components }
+            : {}),
+        };
+        const response = await axios.post(url, payload, {
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        });
+        return response.data?.messages?.[0]?.id || null;
+      }
+
+      // Send Menu's "WhatsApp Flow" option — references an already-published
+      // Meta Flow by flow_id (see whatsapp_flow_refs / routes/whatsappFlowRefs.js);
+      // this app does not author/publish Flow JSON itself. Meta's real-time
+      // interactive Flow message, only usable within the 24h customer-service
+      // window (unlike a Flow referenced from an approved Template's button).
+      if (whatsappFlow?.flowId) {
+        payload.type = "interactive";
+        payload.interactive = {
+          type: "flow",
+          body: { text: (body && body.trim()) || "Please complete this form:" },
+          action: {
+            name: "flow",
+            parameters: {
+              flow_message_version: "3",
+              flow_token: `inbox_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              flow_id: whatsappFlow.flowId,
+              flow_cta: (whatsappFlow.cta || "Open").slice(0, 20),
+              flow_action: "navigate",
+              flow_action_payload: { screen: whatsappFlow.screen || "START" },
+            },
+          },
         };
         const response = await axios.post(url, payload, {
           headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
@@ -415,23 +462,30 @@ export async function sendPlatformMessage(platform, integration, contactExternal
             : { link: fullMediaUrl, caption: mediaCaption, filename };
         }
       } else if (listMenu) {
-        // WhatsApp interactive list
+        // WhatsApp interactive list — real native sections (Meta's own
+        // `action.sections[]`), up to 10 sections and 10 rows TOTAL across
+        // all of them combined in this one message (flowEngine.js's listMenu
+        // node case already enforces the "split into another list" cap on
+        // the author side; this just carries whatever it sends through).
+        const rawSections = getListMenuSections(listMenu).filter((s) => (s.rows || []).length > 0).slice(0, 10);
+        let rowsBudget = 10;
+        const sections = rawSections.map((s) => {
+          const rows = (s.rows || []).slice(0, rowsBudget).map((item, index) => ({
+            id: item.id || `item_${index}`,
+            title: (item.title || "").slice(0, 24),
+            description: item.description ? item.description.slice(0, 72) : "",
+          }));
+          rowsBudget -= rows.length;
+          return { title: (s.title || "Options").slice(0, 24), rows };
+        }).filter((s) => s.rows.length > 0);
+
         payload.type = "interactive";
         payload.interactive = {
           type: "list",
           body: { text: body || "Please select an option:" },
           action: {
             button: listMenu.buttonText || "Select",
-            sections: [
-              {
-                title: listMenu.title || "Options",
-                rows: listMenu.items.slice(0, 10).map((item, index) => ({
-                  id: item.id || `item_${index}`,
-                  title: item.title.slice(0, 24),
-                  description: item.description ? item.description.slice(0, 72) : "",
-                })),
-              },
-            ],
+            sections,
           },
         };
       } else {
@@ -652,23 +706,29 @@ export async function sendPlatformMessage(platform, integration, contactExternal
             },
           },
         };
-      } else if (listMenu && listMenu.items && listMenu.items.length > 0) {
+      } else if (listMenu && getListMenuSections(listMenu).some((s) => (s.rows || []).length > 0)) {
         // Messenger/Instagram have no native "list message" type — the closest
         // real equivalent is a Generic Template carousel, one element per list
         // row (title from the row, a single postback button carrying the row's
         // own routing id so a tap resolves exactly like a WhatsApp/Telegram list
-        // tap does). flowEngine.js already caps each call here to 10 items (its
-        // own configured-list cap) and sends multiple lists as separate calls,
-        // so the `.slice(0, 10)` here is defensive, matching the `carousel`
-        // node type's own cap just above rather than a new limit.
+        // tap does). There's also no native "section" grouping here, so every
+        // section's rows are flattened into one run of elements — a named
+        // section's title rides along in the element's subtitle instead of a
+        // real group heading. flowEngine.js already caps each call here to 10
+        // items (its own configured-list cap) and sends multiple lists as
+        // separate calls, so the `.slice(0, 10)` here is defensive, matching
+        // the `carousel` node type's own cap just above rather than a new limit.
+        const flatRows = getListMenuSections(listMenu).flatMap((s) =>
+          (s.rows || []).map((row) => ({ ...row, sectionTitle: s.title || "" }))
+        );
         payload.message = {
           attachment: {
             type: "template",
             payload: {
               template_type: "generic",
-              elements: listMenu.items.slice(0, 10).map((item) => ({
+              elements: flatRows.slice(0, 10).map((item) => ({
                 title: (item.title || "Option").slice(0, 80),
-                subtitle: item.description ? item.description.slice(0, 80) : undefined,
+                subtitle: item.description ? item.description.slice(0, 80) : (item.sectionTitle || undefined),
                 buttons: [
                   {
                     type: "postback",
@@ -804,11 +864,20 @@ export async function sendPlatformMessage(platform, integration, contactExternal
           resize_keyboard: true,
         };
       } else if (listMenu) {
+        // Telegram has no native "section" grouping either — every section's
+        // rows are flattened into one run of inline-keyboard rows, in order,
+        // same as the Messenger/Instagram branch above. `item.id` (not
+        // `.payload`, which a list row never actually carries) is the row's
+        // real routing token — using the wrong field here silently fell back
+        // to a bare `item_N` string that never matches decodeButtonRoute, so
+        // a tap could only ever resolve through the weaker typed-text-match
+        // fallback rather than this engine's primary button-routing path.
+        const flatRows = getListMenuSections(listMenu).flatMap((s) => s.rows || []);
         payload.reply_markup = {
-          inline_keyboard: listMenu.items.map((item, index) => [
+          inline_keyboard: flatRows.map((item, index) => [
             {
               text: item.title,
-              callback_data: String(item.payload || `item_${index}`).slice(0, 64),
+              callback_data: String(item.id || `item_${index}`).slice(0, 64),
             },
           ]),
         };
@@ -880,5 +949,57 @@ export async function sendPlatformMessage(platform, integration, contactExternal
   } catch (err) {
     console.error(`Error sending message to ${platform}:`, err.response?.data || err.message);
     throw err;
+  }
+}
+
+/**
+ * Triggers each platform's own native "typing…" indicator right before a
+ * flow node's real message goes out (the "Show typing before sending" node
+ * setting — FlowBuilderPage.jsx). Best-effort: any failure here is caught by
+ * the caller and never blocks the real send. WEBCHAT has no native typing
+ * bubble in the current widget, so it's simply not handled here.
+ *
+ * @param {string} platform
+ * @param {object} integration
+ * @param {string} contactExternalId
+ * @param {{ lastInboundExternalMsgId?: string|null }} [meta] - WhatsApp's
+ *   typing indicator is anchored to a specific inbound message id (Meta has
+ *   no "just type at this number" call) — pass the contact's most recent
+ *   inbound message's external_msg_id; when there isn't one yet (e.g. a
+ *   bot-initiated Sequence message with no prior inbound message), WhatsApp
+ *   is silently skipped since there's nothing to anchor it to.
+ */
+export async function sendTypingIndicator(platform, integration, contactExternalId, meta = {}) {
+  const accessToken = integration?.access_token;
+  if (!accessToken || !contactExternalId) return;
+
+  try {
+    if (platform === "WHATSAPP") {
+      if (!meta.lastInboundExternalMsgId) return;
+      const phoneNumberId = integration.wa_phone_number_id;
+      await axios.post(
+        `https://graph.facebook.com/${META_API_VERSION}/${phoneNumberId}/messages`,
+        {
+          messaging_product: "whatsapp",
+          status: "read",
+          message_id: meta.lastInboundExternalMsgId,
+          typing_indicator: { type: "text" },
+        },
+        { headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" } }
+      );
+    } else if (platform === "FACEBOOK" || platform === "INSTAGRAM") {
+      await axios.post(
+        `https://graph.facebook.com/${META_API_VERSION}/me/messages?access_token=${accessToken}`,
+        { recipient: { id: contactExternalId }, sender_action: "typing_on" }
+      );
+    } else if (platform === "TELEGRAM") {
+      await axios.post(`https://api.telegram.org/bot${accessToken}/sendChatAction`, {
+        chat_id: contactExternalId,
+        action: "typing",
+      });
+    }
+    // WEBCHAT / TIKTOK: no native typing action available — no-op.
+  } catch (err) {
+    console.warn(`[Typing Indicator] ${platform} notice:`, err.response?.data || err.message);
   }
 }

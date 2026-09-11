@@ -5,9 +5,9 @@ import { tenantAPI } from '../../services/api';
 import { Sparkles, ArrowRight } from 'lucide-react';
 
 const ROLE_HOME = {
-  ADMIN:  '/admin',
-  AGENCY: '/agency',
-  AGENT:  '/inbox',
+  ADMIN:    '/admin',
+  RESELLER: '/agency',
+  USER:     '/agency',
 };
 
 export default function Login() {

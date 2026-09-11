@@ -2,15 +2,88 @@ import express from "express";
 import bcrypt from "bcrypt";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
+import { requirePermission } from "../middleware/permissionMiddleware.js";
 import { assertLimit, getAgencyEntitlements } from "../utils/entitlements.js";
+import { getAccessibleIntegrationIds, setIntegrationAccess } from "../utils/teamAccess.js";
 
 const router = express.Router();
 
 // All team routes require authentication
 router.use(authMiddleware);
 
+// Was missing entirely below — every /team-members mutation (create/edit/
+// toggle/delete) had no permission check beyond "is logged in," so any
+// authenticated user (including a plain Agent) could call them directly and
+// e.g. reassign their own role. "team.view"/"team.manage" already existed
+// as permission keys (seeded correctly — only Owner gets team.manage by
+// default) but were never actually required by these routes until now.
+const requireTeamView = requirePermission("team.view", "team.manage");
+const requireTeamManage = requirePermission("team.manage");
+
+// ─── MY OWN HUMAN-AGENT SIGNATURE (Live Inbox "Join Chat" modal) ─────────────
+// Self-only, registered before the generic /team-members/:id routes below
+// (otherwise :id would greedily match "me"). Any authenticated user —
+// including an agency owner, who may not have an agent_profiles row yet —
+// can read/set their own signature; upserted so an owner's first save
+// creates their row rather than failing.
+router.get("/team-members/me", async (req, res) => {
+  try {
+    const [[row]] = await pool.query("SELECT signature FROM agent_profiles WHERE user_id = ?", [req.user.id]);
+    return res.json({ success: true, signature: row?.signature || "" });
+  } catch (err) {
+    console.error("GET /team-members/me error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+router.put("/team-members/me", async (req, res) => {
+  try {
+    const { signature } = req.body;
+    const trimmed = typeof signature === "string" ? signature.trim().slice(0, 500) : "";
+    const [[existing]] = await pool.query("SELECT id FROM agent_profiles WHERE user_id = ?", [req.user.id]);
+    if (existing) {
+      await pool.query("UPDATE agent_profiles SET signature = ? WHERE user_id = ?", [trimmed || null, req.user.id]);
+    } else {
+      // No agent_profiles row yet (e.g. an agency owner who has never been
+      // through the team-member creation flow) — create a minimal one so
+      // their signature has somewhere to live. Deliberately leaves
+      // agency_id NULL: utils/entitlements.js's usedTeamMembers count is
+      // `WHERE agency_id = ?`, and an owner must never count against their
+      // own max_team_members limit just for saving a signature.
+      await pool.query(
+        "INSERT INTO agent_profiles (user_id, owner_user_id, user_type, team_role, signature) VALUES (?, ?, 'OWNER_USER', 'OWNER', ?)",
+        [req.user.id, req.user.id, trimmed || null]
+      );
+    }
+    return res.json({ success: true, signature: trimmed });
+  } catch (err) {
+    console.error("PUT /team-members/me error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Legacy free-text team_role -> new system role slug (for callers still on
+// the old create/edit shape); new UI passes roleId directly.
+const LEGACY_TEAM_ROLE_MAP = {
+  MANAGER: "manager",
+  AGENT: "agent",
+  BOT_BUILDER: "bot_builder",
+  MARKETING: "marketing",
+  VIEWER: "viewer",
+};
+
+async function resolveRoleId({ roleId, teamRole }) {
+  if (roleId) {
+    const [[row]] = await pool.query("SELECT id FROM roles WHERE id = ? AND scope_type = 'AGENCY'", [roleId]);
+    if (row) return row.id;
+  }
+  const slug = LEGACY_TEAM_ROLE_MAP[String(teamRole || "").toUpperCase()] || "agent";
+  const [[row]] = await pool.query("SELECT id FROM roles WHERE scope_type='AGENCY' AND agency_id IS NULL AND slug=?", [slug]);
+  return row?.id || null;
+}
+
 // ─── GET TEAM MEMBERS (WITH ROLES, STATS & PACKAGE LIMITS) ───────────────────
-router.get("/team-members", async (req, res) => {
+router.get("/team-members", requireTeamView, async (req, res) => {
   try {
     const userId = req.user.id;
     const role = req.user.role;
@@ -76,10 +149,10 @@ router.get("/team-members", async (req, res) => {
       queryParams.push(q, q, q);
     }
 
-    // Team Role filter
+    // Team Role filter (matches either the legacy free-text team_role or the new role slug)
     if (roleFilter && roleFilter !== "ALL") {
-      whereClauses.push("ap.team_role = ?");
-      queryParams.push(roleFilter);
+      whereClauses.push("(ap.team_role = ? OR r.slug = ?)");
+      queryParams.push(roleFilter, roleFilter);
     }
 
     // Status filter
@@ -98,12 +171,14 @@ router.get("/team-members", async (req, res) => {
       SELECT COUNT(*) as total
       FROM agent_profiles ap
       JOIN users u ON u.id = ap.user_id
+      LEFT JOIN organization_members om ON om.user_id = ap.user_id AND om.agency_id = ap.agency_id
+      LEFT JOIN roles r ON r.id = om.role_id
       ${whereSql}
     `, queryParams);
 
     // Main Query
     const [rows] = await pool.query(`
-      SELECT 
+      SELECT
         u.id,
         u.name,
         u.email,
@@ -116,15 +191,27 @@ router.get("/team-members", async (req, res) => {
         ap.agency_id,
         ap.owner_user_id,
         a.name as agency_name,
-        owner.name as owner_name
+        owner.name as owner_name,
+        om.id as org_member_id,
+        om.chat_access as chat_access,
+        r.id as role_id,
+        r.slug as role_slug,
+        r.name as role_name
       FROM agent_profiles ap
       JOIN users u ON u.id = ap.user_id
       LEFT JOIN agencies a ON a.id = ap.agency_id
       LEFT JOIN users owner ON owner.id = ap.owner_user_id
+      LEFT JOIN organization_members om ON om.user_id = ap.user_id AND om.agency_id = ap.agency_id
+      LEFT JOIN roles r ON r.id = om.role_id
       ${whereSql}
       ORDER BY u.created_at DESC
       LIMIT ? OFFSET ?
     `, [...queryParams, limit, offset]);
+
+    // Attach channel access (null = unrestricted) without an N+1 query
+    for (const member of rows) {
+      member.integrationAccess = member.org_member_id ? await getAccessibleIntegrationIds(member.org_member_id) : null;
+    }
 
     return res.json({
       success: true,
@@ -144,17 +231,19 @@ router.get("/team-members", async (req, res) => {
 });
 
 // ─── CREATE TEAM MEMBER ───────────────────────────────────────────────────────
-router.post("/team-members", async (req, res) => {
-  const { name, email, phone, password, teamRole = "AGENT" } = req.body;
+router.post("/team-members", requireTeamManage, async (req, res) => {
+  const { name, email, phone, password, teamRole = "AGENT", roleId, integrationIds, chatAccess } = req.body;
   if (!name || !email || !password) {
     return res.status(400).json({ success: false, message: "Name, email, and password are required" });
   }
+  const resolvedChatAccess = chatAccess === "ASSIGNED_ONLY" ? "ASSIGNED_ONLY" : "ALL";
 
   const callerId = req.user.id;
   const callerRole = req.user.role;
   const callerAgencyId = req.user.agencyId;
 
-  // 1. Enforce package limit for Agency and End User accounts
+  // 1. Enforce package limit for Agency and End User accounts (reseller-pool
+  // aware as of utils/entitlements.js's assertLimit — see the approved plan §7)
   if (callerRole !== "ADMIN") {
     try {
       await assertLimit(callerAgencyId, "max_team_members", 1, callerId);
@@ -182,12 +271,13 @@ router.post("/team-members", async (req, res) => {
     const hashed = await bcrypt.hash(password, 10);
     const [userResult] = await conn.query(
       `INSERT INTO users (name, email, phone, password, role, is_active, created_at)
-       VALUES (?, ?, ?, ?, 'AGENT', 1, NOW())`,
+       VALUES (?, ?, ?, ?, 'USER', 1, NOW())`,
       [name.trim(), email.toLowerCase().trim(), phone ? phone.trim() : null, hashed]
     );
     const newUserId = userResult.insertId;
 
-    // 4. Create agent/team member profile
+    // 4. Create agent/team member profile (kept — still holds bot-presence
+    //    is_online state unrelated to permissions)
     await conn.query(
       `INSERT INTO agent_profiles (user_id, owner_user_id, agency_id, user_type, team_role, phone, is_online, created_at)
        VALUES (?, ?, ?, 'AGENCY_USER', ?, ?, 0, NOW())`,
@@ -200,7 +290,26 @@ router.post("/team-members", async (req, res) => {
       ]
     );
 
+    // 5. Real role + org membership (permissions, chat access)
+    const finalRoleId = await resolveRoleId({ roleId, teamRole });
+    let orgMemberId = null;
+    if (finalRoleId && callerAgencyId) {
+      const [omResult] = await conn.query(
+        `INSERT INTO organization_members (user_id, agency_id, role_id, member_kind, chat_access)
+         VALUES (?, ?, ?, 'TEAM_MEMBER', ?)`,
+        [newUserId, callerAgencyId, finalRoleId, resolvedChatAccess]
+      );
+      orgMemberId = omResult.insertId;
+    }
+
     await conn.commit();
+
+    // 6. Channel/bot access checklist (outside the transaction — its own
+    //    table, non-critical if it fails partway, and setIntegrationAccess
+    //    already does its own delete+insert atomically enough for this use)
+    if (orgMemberId && Array.isArray(integrationIds)) {
+      await setIntegrationAccess(orgMemberId, integrationIds);
+    }
 
     return res.status(201).json({
       success: true,
@@ -211,6 +320,8 @@ router.post("/team-members", async (req, res) => {
         email: email.toLowerCase().trim(),
         phone: phone ? phone.trim() : null,
         team_role: teamRole,
+        role_id: finalRoleId,
+        chat_access: resolvedChatAccess,
         is_active: 1,
         created_at: new Date().toISOString(),
       },
@@ -225,7 +336,7 @@ router.post("/team-members", async (req, res) => {
 });
 
 // ─── GET SINGLE TEAM MEMBER PROFILE ──────────────────────────────────────────
-router.get("/team-members/:id", async (req, res) => {
+router.get("/team-members/:id", requireTeamView, async (req, res) => {
   try {
     const targetUserId = req.params.id;
     const callerId = req.user.id;
@@ -233,7 +344,7 @@ router.get("/team-members/:id", async (req, res) => {
     const callerAgencyId = req.user.agencyId;
 
     const [rows] = await pool.query(`
-      SELECT 
+      SELECT
         u.id,
         u.name,
         u.email,
@@ -248,11 +359,18 @@ router.get("/team-members/:id", async (req, res) => {
         ap.agency_id,
         ap.owner_user_id,
         a.name as agency_name,
-        owner.name as owner_name
+        owner.name as owner_name,
+        om.id as org_member_id,
+        om.chat_access as chat_access,
+        r.id as role_id,
+        r.slug as role_slug,
+        r.name as role_name
       FROM agent_profiles ap
       JOIN users u ON u.id = ap.user_id
       LEFT JOIN agencies a ON a.id = ap.agency_id
       LEFT JOIN users owner ON owner.id = ap.owner_user_id
+      LEFT JOIN organization_members om ON om.user_id = ap.user_id AND om.agency_id = ap.agency_id
+      LEFT JOIN roles r ON r.id = om.role_id
       WHERE u.id = ?
       LIMIT 1
     `, [targetUserId]);
@@ -284,6 +402,8 @@ router.get("/team-members/:id", async (req, res) => {
       // ignore
     }
 
+    member.integrationAccess = member.org_member_id ? await getAccessibleIntegrationIds(member.org_member_id) : null;
+
     return res.json({
       success: true,
       teamMember: {
@@ -298,9 +418,9 @@ router.get("/team-members/:id", async (req, res) => {
 });
 
 // ─── UPDATE TEAM MEMBER ───────────────────────────────────────────────────────
-router.put("/team-members/:id", async (req, res) => {
+router.put("/team-members/:id", requireTeamManage, async (req, res) => {
   const targetUserId = req.params.id;
-  const { name, email, phone, teamRole, password, is_active } = req.body;
+  const { name, email, phone, teamRole, password, is_active, roleId, integrationIds, chatAccess } = req.body;
   const callerId = req.user.id;
   const callerRole = req.user.role;
   const callerAgencyId = req.user.agencyId;
@@ -390,7 +510,43 @@ router.put("/team-members/:id", async (req, res) => {
       await conn.query(`UPDATE agent_profiles SET ${apUpdates.join(", ")} WHERE user_id = ?`, apParams);
     }
 
+    // 5. Update / create the real role + org membership row
+    const [[existingMember]] = await conn.query(
+      "SELECT id FROM organization_members WHERE user_id = ? AND agency_id = ?",
+      [targetUserId, check[0].agency_id]
+    );
+    let orgMemberId = existingMember?.id || null;
+    const omUpdates = [];
+    const omParams = [];
+    if (roleId || teamRole) {
+      const finalRoleId = await resolveRoleId({ roleId, teamRole });
+      if (finalRoleId) { omUpdates.push("role_id = ?"); omParams.push(finalRoleId); }
+    }
+    if (chatAccess === "ALL" || chatAccess === "ASSIGNED_ONLY") {
+      omUpdates.push("chat_access = ?");
+      omParams.push(chatAccess);
+    }
+    if (orgMemberId && omUpdates.length) {
+      omParams.push(orgMemberId);
+      await conn.query(`UPDATE organization_members SET ${omUpdates.join(", ")} WHERE id = ?`, omParams);
+    } else if (!orgMemberId && check[0].agency_id) {
+      // Backfill a missing membership row (e.g. a pre-migration member never touched since)
+      const finalRoleId = await resolveRoleId({ roleId, teamRole });
+      if (finalRoleId) {
+        const [ins] = await conn.query(
+          "INSERT INTO organization_members (user_id, agency_id, role_id, member_kind, chat_access) VALUES (?,?,?, 'TEAM_MEMBER', ?)",
+          [targetUserId, check[0].agency_id, finalRoleId, chatAccess === "ASSIGNED_ONLY" ? "ASSIGNED_ONLY" : "ALL"]
+        );
+        orgMemberId = ins.insertId;
+      }
+    }
+
     await conn.commit();
+
+    if (orgMemberId && Array.isArray(integrationIds)) {
+      await setIntegrationAccess(orgMemberId, integrationIds);
+    }
+
     return res.json({ success: true, message: "Team member updated successfully" });
   } catch (err) {
     await conn.rollback();
@@ -402,7 +558,7 @@ router.put("/team-members/:id", async (req, res) => {
 });
 
 // ─── TOGGLE TEAM MEMBER ACTIVE STATUS ─────────────────────────────────────────
-router.patch("/team-members/:id/toggle", async (req, res) => {
+router.patch("/team-members/:id/toggle", requireTeamManage, async (req, res) => {
   const targetUserId = req.params.id;
   const callerId = req.user.id;
   const callerRole = req.user.role;
@@ -438,7 +594,7 @@ router.patch("/team-members/:id/toggle", async (req, res) => {
 });
 
 // ─── DELETE TEAM MEMBER ───────────────────────────────────────────────────────
-router.delete("/team-members/:id", async (req, res) => {
+router.delete("/team-members/:id", requireTeamManage, async (req, res) => {
   const targetUserId = req.params.id;
   const callerId = req.user.id;
   const callerRole = req.user.role;
@@ -462,7 +618,7 @@ router.delete("/team-members/:id", async (req, res) => {
       }
     }
 
-    // Deleting from users cascades to agent_profiles
+    // Deleting from users cascades to agent_profiles + organization_members
     await pool.query("DELETE FROM users WHERE id = ?", [targetUserId]);
 
     return res.json({ success: true, message: "Team member removed successfully" });

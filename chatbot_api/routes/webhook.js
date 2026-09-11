@@ -2,6 +2,7 @@ import express from "express";
 import axios from "axios";
 import pool from "../db.js";
 import { processFlow } from "../utils/flowEngine.js";
+import { runAIReply } from "../utils/aiReplyEngine.js";
 import {
   findOrCreateContact,
   findOrCreateConversation,
@@ -10,8 +11,9 @@ import {
   matchBotRules,
 } from "../utils/messageProcessor.js";
 import { emitToAgency, emitToConversation } from "../utils/socket.js";
-import { fetchTelegramUserProfilePhoto } from "../utils/avatarFetcher.js";
+import { fetchTelegramUserProfilePhoto, fetchMetaUserProfile } from "../utils/avatarFetcher.js";
 import { logBotError, extractErrorMessage } from "../utils/botLogger.js";
+import { runPrivateReplyFlow, generateCommentReply } from "../utils/commentPrivateReplyFlow.js";
 
 const router = express.Router();
 
@@ -135,51 +137,8 @@ router.get("/webhook/:agencyId/:integrationId", async (req, res) => {
   }
 });
 
-// ─── HELPER: FETCH META USER PROFILE (FACEBOOK / INSTAGRAM) ─────────────────
-// Field lists per Meta's own docs — Messenger's User Profile API
-// (https://developers.facebook.com/docs/messenger-platform/identity/user-profile)
-// and Instagram's User Profile API
-// (https://developers.facebook.com/docs/messenger-platform/instagram/features/user-profile/).
-// `name`/`avatar` are used immediately (contact display); the rest is stored as
-// read-only "System Fields" (see contacts.platform_profile) — not all of it may
-// actually come back depending on what permissions/consent are granted.
-async function fetchMetaUserProfile(platform, externalId, accessToken) {
-  if (!accessToken || !externalId) return { name: null, avatar: null, systemFields: null };
-  try {
-    if (platform === "FACEBOOK") {
-      const res = await axios.get(
-        `https://graph.facebook.com/v21.0/${externalId}?fields=first_name,last_name,name,profile_pic,locale,timezone,gender&access_token=${accessToken}`,
-        { timeout: 6000 }
-      );
-      const name = res.data?.name || `${res.data?.first_name || ""} ${res.data?.last_name || ""}`.trim() || null;
-      const avatar = res.data?.profile_pic || null;
-      const systemFields = {
-        first_name: res.data?.first_name || null,
-        last_name: res.data?.last_name || null,
-        locale: res.data?.locale || null,
-        timezone: res.data?.timezone ?? null,
-        gender: res.data?.gender || null,
-      };
-      return { name, avatar, systemFields };
-    } else if (platform === "INSTAGRAM") {
-      const res = await axios.get(
-        `https://graph.facebook.com/v21.0/${externalId}?fields=name,username,profile_pic,is_verified_user,follower_count&access_token=${accessToken}`,
-        { timeout: 6000 }
-      );
-      const name = res.data?.name || res.data?.username || null;
-      const avatar = res.data?.profile_pic || null;
-      const systemFields = {
-        username: res.data?.username || null,
-        is_verified_user: res.data?.is_verified_user ?? null,
-        follower_count: res.data?.follower_count ?? null,
-      };
-      return { name, avatar, systemFields };
-    }
-  } catch (err) {
-    console.warn(`[Profile Fetch] Could not fetch profile for ${platform} user ${externalId}:`, err.response?.data?.error?.message || err.message);
-  }
-  return { name: null, avatar: null, systemFields: null };
-}
+// fetchMetaUserProfile and fetchTelegramUserProfilePhoto imported from ../utils/avatarFetcher.js
+
 
 // ─── RECEIVE META INCOMING MESSAGES VIA AGENCY WEBHOOK (POST) ────────────────
 router.post("/webhook/:agencyId", async (req, res) => {
@@ -570,7 +529,9 @@ async function processCommentAutomation({ commentId, postId, senderId, senderNam
       }
     }
 
-    // 5. Public Comment Reply (with rotating variations, tries Page token, falls back to Page Owner token)
+    // 5. Public Comment Reply (STATIC: rotating variations; AI: generated from a
+    // prompt instruction + optional AI Agent — tries Page token, falls back to
+    // Page Owner token either way)
     let replyText = rule.auto_reply_comment || "";
     let variations = [];
     try {
@@ -582,20 +543,35 @@ async function processCommentAutomation({ commentId, postId, senderId, senderNam
       if (randomVar) replyText = randomVar;
     }
 
-    if (replyText) {
-      const formattedReply = replyText
+    if ((rule.reply_mode || "STATIC").toUpperCase() === "AI") {
+      replyText = await generateCommentReply({
+        agencyId,
+        promptInstruction: rule.ai_prompt_instruction,
+        agentId: rule.ai_agent_id,
+        commentText,
+        senderName,
+        fallbackText: replyText,
+      });
+    }
+
+    if (replyText || rule.auto_reply_media_url) {
+      const formattedReply = (replyText || "")
         .replace(/\{\{name\}\}/gi, senderName || "there")
         .replace(/\{\{first_name\}\}/gi, (senderName || "").split(" ")[0] || "there");
 
       const tokensToTry = [integration.access_token, integration.user_access_token].filter(Boolean);
       let replySuccess = false;
+      // Meta's /comments edge accepts message + attachment_url together — an
+      // image can accompany (or stand in for) the text reply.
+      const baseBody = { message: formattedReply };
+      if (rule.auto_reply_media_url) baseBody.attachment_url = rule.auto_reply_media_url;
 
       for (const tok of tokensToTry) {
         if (replySuccess) break;
         try {
           await axios.post(
             `https://graph.facebook.com/v21.0/${commentId}/comments`,
-            { message: formattedReply },
+            baseBody,
             {
               headers: {
                 Authorization: `Bearer ${tok}`,
@@ -613,7 +589,7 @@ async function processCommentAutomation({ commentId, postId, senderId, senderNam
               null,
               {
                 params: {
-                  message: formattedReply,
+                  ...baseBody,
                   access_token: tok,
                 },
               }
@@ -631,8 +607,21 @@ async function processCommentAutomation({ commentId, postId, senderId, senderNam
       }
     }
 
-    // 6. Private DM Reply
-    if (rule.auto_reply_private_message) {
+    // 6. Private DM Reply — TEXT (today's exact behavior) or FLOW (Bot Flow,
+    // capped at 2 messages, see utils/commentPrivateReplyFlow.js)
+    if ((rule.private_reply_mode || "TEXT").toUpperCase() === "FLOW" && rule.flow_id) {
+      const { sent } = await runPrivateReplyFlow({
+        agencyId,
+        flowId: rule.flow_id,
+        commentId,
+        senderId,
+        senderName,
+        integration,
+      });
+      if (sent > 0) {
+        await pool.query("UPDATE comment_automation_rules SET total_private_replies = total_private_replies + 1 WHERE id = ?", [rule.id]);
+      }
+    } else if (rule.auto_reply_private_message) {
       const formattedPrivate = rule.auto_reply_private_message
         .replace(/\{\{name\}\}/gi, senderName || "there")
         .replace(/\{\{first_name\}\}/gi, (senderName || "").split(" ")[0] || "there");
@@ -1029,7 +1018,7 @@ async function handleIncomingPayload({
     );
 
     // 3. Find or create conversation
-    const { conversation, isNew } = await findOrCreateConversation(agencyId, contact.id, integrationId, platform);
+    const { conversation, isNew } = await findOrCreateConversation(agencyId, contact.id, integrationId, platform, contact._overLimit);
 
     // 4. Save incoming message with mediaUrl
     const message = await saveMessage(conversation.id, "INBOUND", msgType, msgBody, externalMsgId, mediaUrl);
@@ -1059,8 +1048,19 @@ async function handleIncomingPayload({
     const flowRan = await processFlow(agencyId, platform, conversation, contact, msgBody, integration, msgType, buttonRoute);
     if (flowRan) return;
 
-    // 6. Fallback: Run standard bot rules
-    await matchBotRules(agencyId, platform, conversation, contact, msgBody, integration, msgType);
+    // 6. AI Reply in "Always trigger" mode gets first refusal, ahead of
+    // simple keyword Bot Rules (a no-op unless this bot's AI Reply trigger
+    // mode is actually set to ALWAYS — see utils/aiReplyEngine.js).
+    const aiRanEarly = await runAIReply(agencyId, platform, conversation, contact, msgBody, integration, msgType, "always");
+    if (aiRanEarly) return;
+
+    // 7. Fallback: Run standard bot rules
+    const ruleRan = await matchBotRules(agencyId, platform, conversation, contact, msgBody, integration, msgType);
+    if (ruleRan) return;
+
+    // 8. AI Reply in "Only when nothing else matches" mode (the default) —
+    // also a no-op if AI Replies aren't enabled on this bot at all.
+    await runAIReply(agencyId, platform, conversation, contact, msgBody, integration, msgType, "fallback");
   } catch (err) {
     console.error("[Webhook Incoming Payload Error]:", err);
     await logBotError({

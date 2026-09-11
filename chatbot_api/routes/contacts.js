@@ -2,9 +2,10 @@ import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
+import { assertLimit } from "../utils/entitlements.js";
 
 const router = express.Router();
-router.use(authMiddleware, roleMiddleware("AGENCY", "ADMIN", "AGENT"));
+router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
 
 // ─── LIST CONTACTS ────────────────────────────────────────────────────────────
 router.get("/contacts", async (req, res) => {
@@ -84,6 +85,68 @@ router.get("/contacts", async (req, res) => {
     });
   } catch (err) {
     console.error("List contacts error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── FAST SUBSCRIBER SEARCH (name / phone) ───────────────────────────────────
+// Designed for very large per-agency subscriber counts — see
+// migrate_inbox_extensions.js's FULLTEXT(name) + (agency_id, phone) indexes.
+// Deliberately NOT the same as the Live Inbox conversation list's client-side
+// text filter: this searches EVERY subscriber the agency has, including ones
+// with no open conversation yet, and returns only the minimal fields a
+// search-result row needs (never the full contact record).
+router.get("/contacts/search", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const q = (req.query.q || "").trim();
+    const limit = Math.min(20, Math.max(1, parseInt(req.query.limit) || 10));
+    if (!q) return res.json({ success: true, contacts: [] });
+
+    // Phone search: prefix/substring match on the indexed (agency_id, phone)
+    // column — cheap even at scale since it's a plain equality-prefixed range
+    // scan, not a leading-wildcard LIKE across the whole table.
+    const isPhoneLike = /^[+\d][\d\s-]*$/.test(q);
+
+    // Most-recent conversation id per matched contact (if any) so a search
+    // result can jump straight into the Live Inbox thread — a cheap
+    // correlated subquery since it only ever runs over the already-limited
+    // result set (<=20 rows), never over the whole contacts table.
+    const convSubquery = `(SELECT cv.id FROM conversations cv WHERE cv.contact_id = c.id ORDER BY cv.last_message_at DESC LIMIT 1) AS conversationId`;
+
+    let rows;
+    if (isPhoneLike) {
+      [rows] = await pool.query(
+        `SELECT c.id, c.name, c.phone, c.avatar, c.platform, ${convSubquery} FROM contacts c
+         WHERE c.agency_id = ? AND c.phone LIKE ?
+         ORDER BY c.name ASC LIMIT ?`,
+        [agencyId, `${q}%`, limit]
+      );
+    } else {
+      // Natural-language FULLTEXT match on name, falling back to a prefix
+      // LIKE for very short queries (MySQL's FULLTEXT ignores words shorter
+      // than its minimum word length, typically 3-4 chars, by default).
+      if (q.length >= 3) {
+        [rows] = await pool.query(
+          `SELECT c.id, c.name, c.phone, c.avatar, c.platform, ${convSubquery} FROM contacts c
+           WHERE c.agency_id = ? AND MATCH(c.name) AGAINST (? IN NATURAL LANGUAGE MODE)
+           LIMIT ?`,
+          [agencyId, q, limit]
+        );
+      }
+      if (!rows || rows.length === 0) {
+        [rows] = await pool.query(
+          `SELECT c.id, c.name, c.phone, c.avatar, c.platform, ${convSubquery} FROM contacts c
+           WHERE c.agency_id = ? AND c.name LIKE ?
+           ORDER BY c.name ASC LIMIT ?`,
+          [agencyId, `${q}%`, limit]
+        );
+      }
+    }
+
+    return res.json({ success: true, contacts: rows });
+  } catch (err) {
+    console.error("GET /contacts/search error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
@@ -246,6 +309,17 @@ router.post("/contacts", async (req, res) => {
 
     if (existing.length) {
       return res.status(400).json({ success: false, message: "Contact with this platform ID already exists" });
+    }
+
+    // max_subscribers was previously defined in every package but never
+    // actually enforced anywhere — closing that gap here (also covers the
+    // reseller shared-usage-pool tier via utils/entitlements.js's assertLimit).
+    if (req.user.role !== "ADMIN") {
+      try {
+        await assertLimit(agencyId, "max_subscribers", 1, req.user.id);
+      } catch (limitErr) {
+        return res.status(limitErr.status || 403).json({ success: false, message: limitErr.message || "Subscriber limit reached for your current plan.", code: limitErr.code || "LIMIT_EXCEEDED" });
+      }
     }
 
     const [result] = await pool.query(

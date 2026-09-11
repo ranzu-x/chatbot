@@ -75,7 +75,7 @@ export default function DomainSettingsPage() {
         },
       });
       setDomainVerified(Boolean(data.domainVerified));
-      setAgencyName(data.agencyName || 'Your Agency');
+      setAgencyName(data.agencyName || 'Your Workspace');
     } catch (err) {
       console.error(err);
       showToast('Failed to load custom domain configuration', 'error');
@@ -401,7 +401,7 @@ export default function DomainSettingsPage() {
                 <UserPlus size={17} color="#2563eb" /> 3. Dedicated User Signup Link
               </h3>
               <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '0 0 12px 0' }}>
-                Share this signup link with your users or agents. Anyone who creates an account via this link will automatically be created under <strong>{form.branding.brandName || agencyName}</strong>.
+                Share this signup link with your users. Anyone who creates an account via this link will automatically be created under <strong>{form.branding.brandName || agencyName}</strong>.
               </p>
 
               <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>

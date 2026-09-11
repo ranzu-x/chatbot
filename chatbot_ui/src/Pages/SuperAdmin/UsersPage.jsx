@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import AppLayout from '../../Layout/AppLayout';
-import { adminAPI } from '../../services/api';
+import { adminAPI, packageAPI } from '../../services/api';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -50,7 +50,7 @@ function getPseudoIP(id) {
 
 function getPackageForRole(role, id) {
   if (role === 'ADMIN') return 'Enterprise';
-  if (role === 'AGENCY') return 'Agency Pro';
+  if (role === 'RESELLER') return 'Reseller Pro';
   if ((Number(id) || 0) % 7 === 0) return 'Premium 1K';
   return 'Basic';
 }
@@ -66,6 +66,8 @@ export default function UsersPage() {
   const [packageFilter, setPackageFilter] = useState('');
   const [userTypeFilter, setUserTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [accountTypeFilter, setAccountTypeFilter] = useState('');
+  const [packages, setPackages] = useState([]);
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -87,8 +89,14 @@ export default function UsersPage() {
     name: '',
     email: '',
     password: '',
-    role: 'AGENT',
+    role: 'USER',
+    phone: '',
+    address: '',
+    packageId: '',
+    isActive: true,
+    newPassword: '',
   });
+  const [packageChangeNote, setPackageChangeNote] = useState('');
 
   // Toast notification
   const [toast, setToast] = useState(null);
@@ -112,6 +120,7 @@ export default function UsersPage() {
 
   useEffect(() => {
     fetchUsers();
+    packageAPI.getAll().then((res) => setPackages(res.data?.packages || res.data || [])).catch(() => {});
   }, []);
 
   // ── Toggle User Active Status ──
@@ -138,13 +147,23 @@ export default function UsersPage() {
     try {
       if (editingUser) {
         if (adminAPI.updateUser) {
-          await adminAPI.updateUser(editingUser.id, {
+          const res = await adminAPI.updateUser(editingUser.id, {
             name: form.name,
             email: form.email,
             role: form.role,
+            phone: form.phone,
+            address: form.address,
+            packageId: form.packageId || undefined,
+            isActive: form.isActive,
+            ...(form.newPassword && { newPassword: form.newPassword }),
           });
+          if (res.data?.packageChange) {
+            setPackageChangeNote(res.data.packageChange.note);
+            showToast(`User updated — plan changed to ${res.data.packageChange.toPackage}`);
+          } else {
+            showToast('User updated successfully');
+          }
         }
-        showToast('User updated successfully');
       } else {
         if (adminAPI.createUser) {
           await adminAPI.createUser(form);
@@ -153,7 +172,7 @@ export default function UsersPage() {
       }
       setShowCreateModal(false);
       setEditingUser(null);
-      setForm({ name: '', email: '', password: '', role: 'AGENT' });
+      setForm({ name: '', email: '', password: '', role: 'USER', phone: '', address: '', packageId: '', isActive: true, newPassword: '' });
       fetchUsers();
     } catch (err) {
       showToast(err.response?.data?.message || 'Action failed', 'error');
@@ -193,8 +212,8 @@ export default function UsersPage() {
 
       const matchesType =
         !userTypeFilter ||
-        (userTypeFilter === 'MEMBER' && u.role === 'AGENT') ||
-        (userTypeFilter === 'AGENCY' && u.role === 'AGENCY') ||
+        (userTypeFilter === 'MEMBER' && u.role === 'USER') ||
+        (userTypeFilter === 'RESELLER' && u.role === 'RESELLER') ||
         (userTypeFilter === 'ADMIN' && u.role === 'ADMIN');
 
       const matchesStatus =
@@ -202,9 +221,16 @@ export default function UsersPage() {
         (statusFilter === 'active' && Boolean(u.is_active)) ||
         (statusFilter === 'inactive' && !u.is_active);
 
-      return matchesSearch && matchesPkg && matchesType && matchesStatus;
+      // Reseller customers never show in the plain (blank-filter) view —
+      // they belong in the "Reseller Customers" filter instead. See
+      // routes/admin.js's GET /admin/users, which now joins account_type.
+      const matchesAccountType = accountTypeFilter
+        ? accountTypeFilter === 'ALL' || u.accountType === accountTypeFilter
+        : u.accountType !== 'RESELLER_CUSTOMER';
+
+      return matchesSearch && matchesPkg && matchesType && matchesStatus && matchesAccountType;
     });
-  }, [users, search, packageFilter, userTypeFilter, statusFilter]);
+  }, [users, search, packageFilter, userTypeFilter, statusFilter, accountTypeFilter]);
 
   const totalUsers = filteredUsers.length;
   const totalPages = Math.ceil(totalUsers / pageSize) || 1;
@@ -360,7 +386,8 @@ export default function UsersPage() {
           <button
             onClick={() => {
               setEditingUser(null);
-              setForm({ name: '', email: '', password: '', role: 'AGENT' });
+              setForm({ name: '', email: '', password: '', role: 'USER', phone: '', address: '', packageId: '', isActive: true, newPassword: '' });
+              setPackageChangeNote('');
               setShowCreateModal(true);
             }}
             style={{
@@ -471,9 +498,43 @@ export default function UsersPage() {
             }}
           >
             <option value="">Any User Type</option>
-            <option value="MEMBER">Member / Agent</option>
-            <option value="AGENCY">Agency Owner</option>
+            <option value="MEMBER">User</option>
+            <option value="RESELLER">Reseller</option>
             <option value="ADMIN">Super Admin</option>
+          </select>
+          <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--text-muted)', fontSize: '0.7rem' }}>
+            ▼
+          </span>
+        </div>
+
+        {/* Dropdown 2b: Account Type — Direct Customers / Reseller Customers / Resellers.
+            Blank defaults to excluding Reseller Customers (they never show in the plain
+            Direct Customer view — see filteredUsers below), per the approved plan. */}
+        <div style={{ position: 'relative', minWidth: 170, flex: '1 1 160px' }}>
+          <select
+            value={accountTypeFilter}
+            onChange={(e) => {
+              setAccountTypeFilter(e.target.value);
+              setCurrentPage(1);
+            }}
+            style={{
+              width: '100%',
+              padding: '9px 32px 9px 14px',
+              borderRadius: 8,
+              border: '1px solid var(--border)',
+              background: 'var(--bg-input)',
+              color: 'var(--text-primary)',
+              fontSize: '0.84rem',
+              appearance: 'none',
+              cursor: 'pointer',
+              outline: 'none',
+            }}
+          >
+            <option value="">Direct Customers (default)</option>
+            <option value="RESELLER_CUSTOMER">Reseller Customers</option>
+            <option value="RESELLER">Resellers</option>
+            <option value="PLATFORM">Platform Team</option>
+            <option value="ALL">All Accounts</option>
           </select>
           <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--text-muted)', fontSize: '0.7rem' }}>
             ▼
@@ -749,7 +810,7 @@ export default function UsersPage() {
 
                       {/* ROLE */}
                       <td style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
-                        {u.role === 'ADMIN' ? 'Admin' : u.role === 'AGENCY' ? 'Agency' : 'Member'}
+                        {u.role === 'ADMIN' ? 'Admin' : u.role === 'RESELLER' ? 'Reseller' : 'User'}
                       </td>
 
                       {/* ACTIONS */}
@@ -796,7 +857,12 @@ export default function UsersPage() {
                             title="Edit User"
                             onClick={() => {
                               setEditingUser(u);
-                              setForm({ name: u.name || '', email: u.email || '', password: '', role: u.role || 'AGENT' });
+                              setForm({
+                                name: u.name || '', email: u.email || '', password: '', role: u.role || 'USER',
+                                phone: u.phone || '', address: u.address || '', packageId: u.package_id || '',
+                                isActive: Boolean(u.is_active), newPassword: '',
+                              });
+                              setPackageChangeNote('');
                               setShowCreateModal(true);
                             }}
                           >
@@ -1040,11 +1106,51 @@ export default function UsersPage() {
                   value={form.role}
                   onChange={(e) => setForm({ ...form, role: e.target.value })}
                 >
-                  <option value="AGENT">Member / Agent</option>
-                  <option value="AGENCY">Agency Owner</option>
+                  <option value="USER">User</option>
+                  <option value="RESELLER">Reseller</option>
                   <option value="ADMIN">Super Admin</option>
                 </select>
               </div>
+
+              {editingUser && (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>Phone</label>
+                      <input className="form-input w-full" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>Reset Password</label>
+                      <input type="password" className="form-input w-full" placeholder="Leave blank to keep current" value={form.newPassword} onChange={(e) => setForm({ ...form, newPassword: e.target.value })} />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>Address</label>
+                    <input className="form-input w-full" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, alignItems: 'end' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>Package</label>
+                      <select className="form-input w-full" value={form.packageId} onChange={(e) => setForm({ ...form, packageId: e.target.value })}>
+                        <option value="">— No change —</option>
+                        {packages.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.84rem', fontWeight: 600, paddingBottom: 9 }}>
+                      <input type="checkbox" checked={form.isActive} onChange={(e) => setForm({ ...form, isActive: e.target.checked })} />
+                      Account active
+                    </label>
+                  </div>
+
+                  {packageChangeNote && (
+                    <div style={{ background: 'rgba(37,99,235,0.08)', color: 'var(--primary)', padding: '10px 12px', borderRadius: 8, fontSize: '0.78rem', lineHeight: 1.5 }}>
+                      {packageChangeNote}
+                    </div>
+                  )}
+                </>
+              )}
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
                 <button
@@ -1208,8 +1314,14 @@ export default function UsersPage() {
                     name: viewingUser.name || '',
                     email: viewingUser.email || '',
                     password: '',
-                    role: viewingUser.role || 'AGENT',
+                    role: viewingUser.role || 'USER',
+                    phone: viewingUser.phone || '',
+                    address: viewingUser.address || '',
+                    packageId: viewingUser.package_id || '',
+                    isActive: Boolean(viewingUser.is_active),
+                    newPassword: '',
                   });
+                  setPackageChangeNote('');
                   setViewingUser(null);
                   setShowCreateModal(true);
                 }}

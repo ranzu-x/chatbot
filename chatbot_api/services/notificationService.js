@@ -7,7 +7,7 @@ export async function broadcastAgentAlert({
   title,
   body,
   conversationId = null,
-  eventType = "NEW_MESSAGE", // 'NEW_MESSAGE' | 'HANDOVER_REQUEST' | 'ORDER_PAID'
+  eventType = "NEW_MESSAGE", // 'NEW_MESSAGE' | 'HANDOVER_REQUEST' | 'ORDER_PAID' | 'SUBSCRIBER_LIMIT_REACHED'
   channel = "WHATSAPP",
 }) {
   try {

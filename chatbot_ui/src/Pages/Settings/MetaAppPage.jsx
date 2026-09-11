@@ -198,7 +198,7 @@ export default function MetaAppPage({ embedded = false }) {
         {loading ? (
           <div className="loading-overlay"><div className="loading-spinner" /></div>
         ) : (
-          <form onSubmit={handleSave}>
+          <form onSubmit={handleSave} autoComplete="off">
             
             {/* ── Domain / HTTPS Notice Banner ── */}
             {isLocalhost && (
@@ -224,6 +224,9 @@ export default function MetaAppPage({ embedded = false }) {
                       placeholder="e.g. https://your-tunnel.ngrok-free.app or https://yourdomain.com"
                       value={publicDomain}
                       onChange={e => setPublicDomain(e.target.value)}
+                      autoComplete="off"
+                      autoCorrect="off"
+                      spellCheck="false"
                     />
                   </div>
                 </div>
@@ -364,6 +367,9 @@ export default function MetaAppPage({ embedded = false }) {
                   placeholder="e.g. Nexa Chatbot SaaS App"
                   value={form.appName}
                   onChange={e => setForm(f => ({ ...f, appName: e.target.value }))}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  spellCheck="false"
                 />
               </div>
 
@@ -377,6 +383,9 @@ export default function MetaAppPage({ embedded = false }) {
                     value={form.appId}
                     onChange={e => setForm(f => ({ ...f, appId: e.target.value }))}
                     required
+                    autoComplete="off"
+                    autoCorrect="off"
+                    spellCheck="false"
                   />
                 </div>
                 <div>
@@ -390,6 +399,11 @@ export default function MetaAppPage({ embedded = false }) {
                       onChange={e => setForm(f => ({ ...f, appSecret: e.target.value }))}
                       required
                       style={{ paddingRight: 44 }}
+                      autoComplete="new-password"
+                      autoCorrect="off"
+                      spellCheck="false"
+                      data-lpignore="true"
+                      data-1p-ignore="true"
                     />
                     <button
                       type="button"
@@ -421,6 +435,11 @@ export default function MetaAppPage({ embedded = false }) {
                     value={form.systemUserToken}
                     onChange={e => setForm(f => ({ ...f, systemUserToken: e.target.value }))}
                     style={{ paddingRight: 44, fontFamily: 'monospace', fontSize: '0.82rem' }}
+                    autoComplete="new-password"
+                    autoCorrect="off"
+                    spellCheck="false"
+                    data-lpignore="true"
+                    data-1p-ignore="true"
                   />
                   <button
                     type="button"
@@ -460,6 +479,9 @@ export default function MetaAppPage({ embedded = false }) {
                   value={form.whatsappConfigId}
                   onChange={e => setForm(f => ({ ...f, whatsappConfigId: e.target.value }))}
                   style={{ borderColor: !form.whatsappConfigId ? 'rgba(220,38,38,0.4)' : undefined }}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  spellCheck="false"
                 />
                 <p style={{ marginTop: 5, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                   Meta App Dashboard → WhatsApp → Quickstart or Configuration → Embedded Signup → copy <strong>Configuration ID</strong>
@@ -484,6 +506,9 @@ export default function MetaAppPage({ embedded = false }) {
                   value={form.verifyToken}
                   onChange={e => setForm(f => ({ ...f, verifyToken: e.target.value }))}
                   required
+                  autoComplete="off"
+                  autoCorrect="off"
+                  spellCheck="false"
                 />
               </div>
 

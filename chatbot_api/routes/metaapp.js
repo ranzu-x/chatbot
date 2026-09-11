@@ -3,9 +3,25 @@ import crypto from "crypto";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
+import { resolveMetaAppSettings } from "../utils/appCredentials.js";
 
 const router = express.Router();
-router.use(authMiddleware, roleMiddleware("AGENCY", "ADMIN"));
+// Scoped per-prefix — an unscoped router.use(mw) would run for every
+// /api/v1/* request reaching this router, silently blocking every
+// later-mounted router for non-AGENCY/ADMIN roles. See the identical fix +
+// full explanation in routes/channels.js.
+//
+// These two prefixes get DIFFERENT role gates: /settings/meta-app is the
+// Reseller's own Meta developer-app credentials (client_id/client_secret) —
+// owner-only, same as App Integrations elsewhere. /channels/instagram/
+// import-accounts is part of the "Connect Account" flow (picking which of
+// the user's own Instagram accounts to connect) — USER is included here to
+// match the rest of the Connect Account hub (routes/channels.js,
+// routes/integrations.js); it returns transient Graph API page tokens
+// needed to complete the connect POST, the same pattern already used by
+// routes/channels.js's Facebook "Import Pages" flow.
+router.use("/settings/meta-app", authMiddleware, roleMiddleware("RESELLER", "ADMIN"));
+router.use("/channels/instagram/import-accounts", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
 
 // Helper to resolve agencyId cleanly for both AGENCY owners and ADMIN users.
 // SECURITY: Only looks up agency owned by the current user — never picks up
@@ -126,15 +142,17 @@ router.post("/settings/meta-app/test", async (req, res) => {
 });
 
 // ─── GET PUBLIC APP ID (safe to expose — no secret) ──────────────
+// Drives useFacebookSDK.js's FB.init/FB.login for Embedded Signup — this is
+// the one place that HAS to resolve the inherited app correctly, since a
+// Reseller's own customer connecting WhatsApp must see the Reseller's app
+// (or the Platform's, if neither has configured one), not a 404.
 router.get("/settings/meta-app/app-id", async (req, res) => {
   try {
     const agencyId = await resolveAgencyId(req);
-    const [rows] = await pool.query(
-      "SELECT app_id, whatsapp_config_id FROM meta_app_settings WHERE agency_id=?", [agencyId]
-    );
-    if (!rows.length || !rows[0].app_id)
+    const appSettings = await resolveMetaAppSettings(agencyId);
+    if (!appSettings?.app_id)
       return res.status(404).json({ success: false, message: "Meta App not configured. Go to Settings → Meta App Setup first." });
-    return res.json({ success: true, appId: rows[0].app_id, configId: rows[0].whatsapp_config_id || null });
+    return res.json({ success: true, appId: appSettings.app_id, configId: appSettings.whatsapp_config_id || null });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: "Server error" });

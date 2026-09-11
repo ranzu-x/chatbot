@@ -1,5 +1,5 @@
 import pool from "../db.js";
-import { sendPlatformMessage } from "./platformSender.js";
+import { sendPlatformMessage, sendTypingIndicator } from "./platformSender.js";
 import { emitToAgency, emitToConversation } from "./socket.js";
 import { logBotError, extractErrorMessage } from "./botLogger.js";
 import { applyLabelToContact } from "../routes/labels.js";
@@ -7,6 +7,14 @@ import { sendWebhook } from "./outboundWebhook.js";
 import * as googleSheetsUtil from "./googleSheets.js";
 import { resolveNextNodeId, resolveNextStepNodeId } from "./flowGraph.js";
 import { enrollContactsInSequence, unsubscribeContactFromSequence } from "../routes/sequences.js";
+
+// Mirrors FlowBuilderPage.jsx's TYPING_ELIGIBLE_NODE_TYPES — only node types
+// that actually send a message to the contact offer "Show typing before
+// sending", so this is the same list on the engine side.
+const TYPING_ELIGIBLE_TYPES = new Set([
+  "text", "interactive", "image", "video", "audio", "file",
+  "buttons", "quickReplies", "listMenu", "carousel", "card",
+]);
 
 /**
  * Helper to find matching flow based on triggers
@@ -147,7 +155,18 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
  * Main Flow Engine Processor
  * Returns true if a flow was processed/executed (so the webhook knows NOT to run standard bot rules).
  */
-export async function processFlow(agencyId, platform, conversation, contact, incomingMsgBody, integration, msgType = "TEXT", buttonRoute = null) {
+// `resumeContext` (only ever set by utils/flowDelayScheduler.js) resumes a
+// session that a per-node Delay paused — there is no fresh inbound message to
+// interpret, the flow just continues exactly where the paused node left off.
+// Shaped as `{ session, skipDelayForNodeId }`: `session` slots into the
+// existing `forcedSession` mechanism (so the session-lookup query and the 24h
+// staleness check are skipped exactly like a decoded-button-route session
+// already skips them — a session legitimately paused for up to 48h must not
+// be mistaken for one merely gone quiet), and `skipDelayForNodeId` tells the
+// Main Execution Loop below not to re-pause on the very node whose delay just
+// expired (every other node's own Delay, reached later in this same pass,
+// still applies normally).
+export async function processFlow(agencyId, platform, conversation, contact, incomingMsgBody, integration, msgType = "TEXT", buttonRoute = null, resumeContext = null) {
   const conversationId = conversation.id;
 
   try {
@@ -167,8 +186,10 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
     // directly by flow+node+button-index and start fresh execution there,
     // superseding whatever session currently exists — independent of whether
     // that session already moved on, completed, or belongs to a different flow.
-    let forcedSession = null;
-    const decodedRoute = decodeButtonRoute(buttonRoute) || decodeButtonRoute(incomingMsgBody);
+    let forcedSession = resumeContext ? resumeContext.session : null;
+    // A Delay resume has no inbound message/button tap to decode — skip
+    // straight past all of step 0 below.
+    const decodedRoute = resumeContext ? null : (decodeButtonRoute(buttonRoute) || decodeButtonRoute(incomingMsgBody));
     if (decodedRoute) {
       const [[routedFlow]] = await pool.query(
         "SELECT * FROM flows WHERE id = ? AND agency_id = ? AND is_active = 1",
@@ -187,47 +208,118 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             ? sourceNode.data.lists.reduce((sum, l) => sum + (l.items?.length || 0), 0)
             : 0;
           const optionCount = (sourceNode.data?.buttons || sourceNode.data?.replies || sourceNode.data?.quickReplies || sourceNode.data?.items || []).length || flatListCount;
-          let targetId = routedEdges.find((e) => e.source === decodedRoute.nodeId &&
-            (e.sourceHandle === `btn-${decodedRoute.idx}` || e.sourceHandle === `btn_${decodedRoute.idx}` ||
-             e.sourceHandle === `qr-${decodedRoute.idx}` || e.sourceHandle === `qr_${decodedRoute.idx}` ||
-             e.sourceHandle === `item_${decodedRoute.idx}` || e.sourceHandle === `item-${decodedRoute.idx}`)
-          )?.target;
-          // Single-option nodes may only have a plain unlabeled edge (see the
-          // strict-routing notes below) — unambiguous, safe to use here too.
-          if (!targetId && optionCount === 1) {
-            targetId = routedEdges.find((e) => e.source === decodedRoute.nodeId)?.target;
+
+          // The tapped option's object — a button (data.buttons[idx]) or, for
+          // a listMenu node, the item at the same flat index across all its
+          // sections (see flattenListMenuItems) — used below for the two
+          // capabilities that don't route through a canvas wire at all: "Go
+          // to Existing Flow" and "Also enroll in a Sequence".
+          let tappedButton = (sourceNode.data?.buttons || [])[decodedRoute.idx];
+          if (!tappedButton && sourceNode.type === "listMenu") {
+            const flatItems = flattenListMenuItems(normalizeListMenuData(sourceNode.data));
+            tappedButton = flatItems.find((f) => f.globalIndex === decodedRoute.idx)?.item;
           }
 
-          if (targetId) {
-            await pool.query(
-              "UPDATE flow_sessions SET status = 'COMPLETED' WHERE conversation_id = ? AND status = 'ACTIVE'",
-              [conversationId]
-            );
-            const [newSessRes] = await pool.query(
-              "INSERT INTO flow_sessions (agency_id, conversation_id, flow_id, current_node_id, variables, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')",
-              [agencyId, conversationId, routedFlow.id, targetId, JSON.stringify({})]
-            );
-            forcedSession = {
-              id: newSessRes.insertId,
-              agency_id: agencyId,
-              conversation_id: conversationId,
-              flow_id: routedFlow.id,
-              current_node_id: targetId,
-              variables: {},
-              status: "ACTIVE",
-              // created_at/updated_at deliberately omitted (same as any other
-              // freshly-created session below) so the "was this already
-              // executed and now waiting for input" resume check further down
-              // (created_at !== updated_at) naturally reads as false here.
-              // flow/nodes/edges aren't attached here — the existing "load flow
-              // details" step right below re-derives them from flow_id exactly
-              // the same way it does for any other session.
-            };
+          // "Also enroll in a Sequence": independent of whatever the tap's
+          // primary action does (continue the flow, jump elsewhere, open a
+          // link) — fires first, same additive relationship the Start node's
+          // own Attach Sequence branch already has to the rest of that flow.
+          if (tappedButton?.sequenceId) {
+            try {
+              await enrollContactsInSequence(tappedButton.sequenceId, agencyId, { contactId: contact?.id, enrolledVia: "button-tap" });
+            } catch (err) {
+              console.error(`[Flow Engine] Attach-Sequence ${tappedButton.sequenceId} on button tap failed:`, err.message);
+            }
           }
-          // Else: this specific button has nothing wired for it — a legitimate
-          // no-op click (dead end by design). Fall through to normal handling;
-          // it's very unlikely incomingMsgBody/buttonRoute also happens to match
-          // a real keyword trigger, so this typically just quietly does nothing.
+
+          // "Tag with Label": same additive, independent-of-the-action
+          // relationship as the Sequence enrollment above — applyLabelToContact
+          // already catches/logs its own errors, so no extra try/catch needed.
+          if (Array.isArray(tappedButton?.labelIds) && contact?.id) {
+            for (const labelId of tappedButton.labelIds) {
+              await applyLabelToContact(agencyId, contact.id, labelId);
+            }
+          }
+
+          // "Go to Existing Flow" button: jumps straight into another flow's
+          // start node, independent of any canvas wire on THIS flow — that's
+          // the whole point of the action, so it's resolved before (and takes
+          // priority over) the same-flow edge lookup below.
+          if (tappedButton?.action === "goToFlow" && tappedButton?.flowId) {
+            const [[targetFlow]] = await pool.query(
+              "SELECT * FROM flows WHERE id = ? AND agency_id = ? AND is_active = 1",
+              [tappedButton.flowId, agencyId]
+            );
+            const targetStart = targetFlow
+              ? JSON.parse(targetFlow.nodes_json || "[]").find((n) => n.type === "start")
+              : null;
+            if (targetStart) {
+              await pool.query(
+                "UPDATE flow_sessions SET status = 'COMPLETED' WHERE conversation_id = ? AND status = 'ACTIVE'",
+                [conversationId]
+              );
+              const [newSessRes] = await pool.query(
+                "INSERT INTO flow_sessions (agency_id, conversation_id, flow_id, current_node_id, variables, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')",
+                [agencyId, conversationId, targetFlow.id, targetStart.id, JSON.stringify({})]
+              );
+              forcedSession = {
+                id: newSessRes.insertId,
+                agency_id: agencyId,
+                conversation_id: conversationId,
+                flow_id: targetFlow.id,
+                current_node_id: targetStart.id,
+                variables: {},
+                status: "ACTIVE",
+              };
+            }
+            // Else: target flow was deleted/deactivated, or has no start node,
+            // since the button was sent — falls through to normal handling
+            // below exactly like a same-flow dead-end click does.
+          }
+
+          if (!forcedSession) {
+            let targetId = routedEdges.find((e) => e.source === decodedRoute.nodeId &&
+              (e.sourceHandle === `btn-${decodedRoute.idx}` || e.sourceHandle === `btn_${decodedRoute.idx}` ||
+               e.sourceHandle === `qr-${decodedRoute.idx}` || e.sourceHandle === `qr_${decodedRoute.idx}` ||
+               e.sourceHandle === `item_${decodedRoute.idx}` || e.sourceHandle === `item-${decodedRoute.idx}`)
+            )?.target;
+            // Single-option nodes may only have a plain unlabeled edge (see the
+            // strict-routing notes below) — unambiguous, safe to use here too.
+            if (!targetId && optionCount === 1) {
+              targetId = routedEdges.find((e) => e.source === decodedRoute.nodeId)?.target;
+            }
+
+            if (targetId) {
+              await pool.query(
+                "UPDATE flow_sessions SET status = 'COMPLETED' WHERE conversation_id = ? AND status = 'ACTIVE'",
+                [conversationId]
+              );
+              const [newSessRes] = await pool.query(
+                "INSERT INTO flow_sessions (agency_id, conversation_id, flow_id, current_node_id, variables, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')",
+                [agencyId, conversationId, routedFlow.id, targetId, JSON.stringify({})]
+              );
+              forcedSession = {
+                id: newSessRes.insertId,
+                agency_id: agencyId,
+                conversation_id: conversationId,
+                flow_id: routedFlow.id,
+                current_node_id: targetId,
+                variables: {},
+                status: "ACTIVE",
+                // created_at/updated_at deliberately omitted (same as any other
+                // freshly-created session below) so the "was this already
+                // executed and now waiting for input" resume check further down
+                // (created_at !== updated_at) naturally reads as false here.
+                // flow/nodes/edges aren't attached here — the existing "load flow
+                // details" step right below re-derives them from flow_id exactly
+                // the same way it does for any other session.
+              };
+            }
+            // Else: this specific button has nothing wired for it — a legitimate
+            // no-op click (dead end by design). Fall through to normal handling;
+            // it's very unlikely incomingMsgBody/buttonRoute also happens to match
+            // a real keyword trigger, so this typically just quietly does nothing.
+          }
         }
       }
       // Flow deleted/deactivated since the button was sent — falls through to
@@ -293,6 +385,16 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           variables: {},
           status: "ACTIVE"
         };
+
+        // Start node's own optional "Tag with Label" — applied once, right
+        // when the flow's trigger actually fires (same idea as the User
+        // Input Flow Start node's labelIds, applied further below).
+        const startLabelIds = Array.isArray(match.startNode.data?.labelIds) ? match.startNode.data.labelIds : [];
+        if (startLabelIds.length > 0 && contact?.id) {
+          for (const labelId of startLabelIds) {
+            await applyLabelToContact(agencyId, contact.id, labelId);
+          }
+        }
       }
     }
 
@@ -387,7 +489,9 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
       } else {
         return false;
       }
-    } else if (session.created_at !== session.updated_at) {
+    } else if (!resumeContext && session.created_at !== session.updated_at) {
+      // (A Delay resume never reaches here — there's no fresh input to
+      // interpret, it's simply continuing the paused node below.)
       // We had already executed this node in a previous step and were waiting for input.
       // Now process the user's input.
       if (currentNode.type === "collectInput" || currentNode.type === "question") {
@@ -788,6 +892,21 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
       }
     }
 
+    // Lazily fetched (and cached for the rest of this run) only if some node
+    // actually has "Show typing" on — most runs never need it. WhatsApp's
+    // typing indicator has to anchor to a specific inbound message id (see
+    // sendTypingIndicator), so this is that anchor.
+    let lastInboundExternalMsgId;
+    const getLastInboundExternalMsgId = async () => {
+      if (lastInboundExternalMsgId !== undefined) return lastInboundExternalMsgId;
+      const [[row]] = await pool.query(
+        "SELECT external_msg_id FROM messages WHERE conversation_id = ? AND direction = 'INBOUND' ORDER BY id DESC LIMIT 1",
+        [conversationId]
+      );
+      lastInboundExternalMsgId = row?.external_msg_id || null;
+      return lastInboundExternalMsgId;
+    };
+
     // Main Execution Loop
     while (currentNodeId && !stopFlow) {
       const node = nodes.find(n => n.id === currentNodeId);
@@ -797,6 +916,57 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
       }
 
       console.log(`🤖 [Flow Engine] Executing Flow Node: ${node.type} (${node.id})`);
+
+      // Per-node "Delay before this step" — scheduled, never a blocking
+      // sleep (utils/flowDelayScheduler.js resumes exactly this session, at
+      // exactly this node, once due). Every node type can carry one except
+      // `start` (a trigger, not a runtime step) and `wait` (a Sequence's own
+      // dedicated delay node already IS this). `resumeContext.skipDelayForNodeId`
+      // is set to this exact node id when the scheduler itself is the one
+      // resuming it — without that check, resuming would just immediately
+      // re-pause on the same node forever.
+      if (node.type !== "start" && node.type !== "wait" && node.id !== resumeContext?.skipDelayForNodeId) {
+        const delayCfg = node.data?.delay;
+        const delaySeconds = delayCfg && typeof delayCfg === "object"
+          ? (Number(delayCfg.hours) || 0) * 3600 + (Number(delayCfg.minutes) || 0) * 60 + (Number(delayCfg.seconds) || 0)
+          // Legacy standalone Delay nodes saved before this field existed only
+          // have a flat `data.seconds` — still honored here.
+          : (node.type === "delay" ? (Number(node.data?.seconds) || 0) : 0);
+        if (delaySeconds > 0) {
+          if (inUIF) {
+            await pool.query(
+              `UPDATE flow_sessions
+               SET active_context = 'USER_INPUT_FLOW', user_input_flow_id = ?, uif_current_node_id = ?,
+                   return_node_id = ?, current_node_id = ?, variables = ?, delay_next_run_at = DATE_ADD(NOW(), INTERVAL ? SECOND)
+               WHERE id = ?`,
+              [activeUifId, node.id, returnNodeId, mainParkedNodeId, JSON.stringify(variables), delaySeconds, session.id]
+            );
+          } else {
+            await pool.query(
+              `UPDATE flow_sessions
+               SET active_context = 'MAIN', user_input_flow_id = NULL, uif_current_node_id = NULL, return_node_id = NULL,
+                   current_node_id = ?, variables = ?, delay_next_run_at = DATE_ADD(NOW(), INTERVAL ? SECOND)
+               WHERE id = ?`,
+              [node.id, JSON.stringify(variables), delaySeconds, session.id]
+            );
+          }
+          console.log(`⏱️ [Flow Engine] Node ${node.id} delayed ${delaySeconds}s — session ${session.id} paused.`);
+          return true;
+        }
+      }
+
+      // "Show typing before sending" — a short, real per-platform typing
+      // action right before this node's message goes out. Never blocks the
+      // real send below if it fails.
+      if (node.data?.showTyping && TYPING_ELIGIBLE_TYPES.has(node.type) && contact?.external_id) {
+        try {
+          await sendTypingIndicator(platform, integration, contact.external_id, {
+            lastInboundExternalMsgId: await getLastInboundExternalMsgId(),
+          });
+        } catch (err) {
+          console.error(`[Flow Engine] Typing indicator failed for node ${node.id}:`, err.message);
+        }
+      }
 
       switch (node.type) {
         case "start": {
@@ -1095,31 +1265,36 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
 
           // Each configured list sends as its OWN sequential message (WhatsApp:
           // a separate interactive list message per list, since Meta caps rows
-          // at 10 total per message; Facebook/Instagram: a separate Generic
-          // Template carousel each, see platformSender.js; Telegram: a separate
-          // inline-keyboard message each) — this is what lets an author offer
-          // more options than any single channel's native list supports. Every
-          // item across ALL lists shares one flat index space (globalIdx) so a
-          // tap on item 11 (the 1st item of the 2nd list) still resolves to the
-          // right outgoing edge — see ListMenuNode's matching `item-{gi}`
-          // handle ids in FlowBuilderPage.jsx and the resume-side match below.
-          let globalIdx = -1;
+          // at 10 total per message even across sections; Facebook/Instagram: a
+          // separate Generic Template carousel each, see platformSender.js;
+          // Telegram: a separate inline-keyboard message each) — this is what
+          // lets an author offer more options than any single channel's native
+          // list supports. Sections group items WITHIN one list's message
+          // (WhatsApp's own native "sections" concept — a different axis from
+          // `lists`). Every item across every section of every list shares ONE
+          // flat index space (flattenListMenuItems) — the SAME order
+          // ListMenuNode's canvas handle ids (item-{gi}) use, so a tap always
+          // resolves to the right outgoing edge regardless of section grouping.
+          const flatEntries = flattenListMenuItems(lists);
           let totalItems = 0;
           for (let li = 0; li < lists.length; li++) {
             const list = lists[li];
-            const listItems = (list.items || [])
-              .filter((item) => (typeof item === "string" ? item : item?.title || "").trim())
-              .map((item) => {
-                globalIdx += 1;
-                const gi = globalIdx;
-                return {
-                  id: encodeButtonRoute(flow.id, node.id, gi),
-                  title: typeof item === "string" ? item : (item.title || `Item ${gi + 1}`),
-                  description: typeof item === "object" ? (item.description || "") : "",
-                };
+            const entriesForList = flatEntries.filter((f) => f.listIndex === li && (f.item?.title || "").trim());
+            if (entriesForList.length === 0) continue;
+
+            const sectionsMap = new Map();
+            entriesForList.forEach((f) => {
+              if (!sectionsMap.has(f.sectionIndex)) {
+                sectionsMap.set(f.sectionIndex, { title: list.sections[f.sectionIndex]?.title || "", rows: [] });
+              }
+              sectionsMap.get(f.sectionIndex).rows.push({
+                id: encodeButtonRoute(flow.id, node.id, f.globalIndex),
+                title: f.item.title,
+                description: f.item.description || "",
               });
-            if (listItems.length === 0) continue;
-            totalItems += listItems.length;
+            });
+            const sections = Array.from(sectionsMap.values());
+            totalItems += entriesForList.length;
 
             await sendMsg(
               agencyId, conversation,
@@ -1131,7 +1306,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
                 flowId: flow?.id || session?.flow_id || null,
                 nodeId: node.id,
                 contactIdentifier: contact?.external_id || contact?.phone || null,
-                listMenu: { buttonText: list.buttonText || "Options", title: list.title || "Menu", items: listItems },
+                listMenu: { buttonText: list.buttonText || "Options", title: list.title || "Menu", sections },
               }
             );
           }
@@ -1337,10 +1512,35 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         }
 
         case "condition": {
-          const varName = node.data?.variable;
           const operator = node.data?.operator || "equals";
           const matchValue = (node.data?.value || "").toLowerCase().trim();
-          const userValue = String(variables[varName] || "").toLowerCase().trim();
+
+          let rawCompareValue;
+          if (node.data?.compareSource === "customField" && node.data?.customFieldId) {
+            // Prefer whatever's already in this session's variables — if a
+            // Question node earlier in THIS exact flow just saved this same
+            // field, that's the freshest value and matches what the visible
+            // conversation actually just did. Otherwise fall back to the
+            // contact's persisted value, so a condition can branch on a field
+            // captured at any point in the past, not just earlier in this run.
+            const [[fieldRow]] = await pool.query(
+              "SELECT field_key FROM custom_field_definitions WHERE id = ? AND agency_id = ?",
+              [node.data.customFieldId, agencyId]
+            );
+            const fieldKey = fieldRow?.field_key;
+            if (fieldKey && variables[fieldKey] !== undefined) {
+              rawCompareValue = variables[fieldKey];
+            } else if (contact?.id) {
+              const [[valueRow]] = await pool.query(
+                "SELECT value FROM contact_custom_field_values WHERE contact_id = ? AND field_id = ?",
+                [contact.id, node.data.customFieldId]
+              );
+              rawCompareValue = valueRow?.value;
+            }
+          } else {
+            rawCompareValue = variables[node.data?.variable];
+          }
+          const userValue = String(rawCompareValue || "").toLowerCase().trim();
 
           let conditionMet = false;
           if (operator === "equals") {
@@ -1357,12 +1557,11 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         }
 
         case "delay": {
-          const delaySecs = parseInt(node.data?.seconds || "2");
-          // Simple delay execution for up to 5 seconds.
-          if (delaySecs > 0 && delaySecs <= 5) {
-            await new Promise(resolve => setTimeout(resolve, delaySecs * 1000));
-          }
-          
+          // The actual wait already happened above (the generic per-node
+          // Delay pause/resume, which a Delay node's own `data.delay` — or
+          // legacy `data.seconds` — feeds into just like any other node
+          // type) — reaching this case at all means that wait is already
+          // over, so it's just a pass-through to whatever comes next.
           currentNodeId = getNextNodeId(node.id);
           break;
         }
@@ -1527,18 +1726,67 @@ function decodeButtonRoute(value) {
 }
 
 /**
+ * A list item used to be a plain string; it's now an object with the same
+ * action shape a button has (plus `description`) — coerces either into the
+ * current shape, defaulting to 'flow' so an old item (wired only by its
+ * canvas edge) keeps behaving exactly as before.
+ */
+function normalizeListItem(item) {
+  if (typeof item === "string") return { title: item, action: "flow" };
+  return { action: "flow", ...item };
+}
+
+/**
  * Mirrors normalizeListMenuData() in FlowBuilderPage.jsx (frontend/backend can't
  * share a module in this codebase — hand-kept in sync). Upgrades a listMenu
- * node's data to the current `lists: [{title, buttonText, items}]` shape;
- * flows saved before multi-list support only have a flat top-level `items`
- * array, which becomes a single-list `lists` entry so old data keeps working.
+ * node's data to the current `lists: [{title, buttonText, sections:
+ * [{title, items}]}]` shape — `sections` is WhatsApp's own native grouping
+ * (up to 10 sections, 10 rows total, all in ONE message), a different axis
+ * from `lists` itself (each *list* is a separate sequential MESSAGE, used to
+ * go past that 10-row cap). A list saved before section support only has a
+ * flat `items` array, which becomes one untitled section; a flat top-level
+ * `items` (pre-multi-list data) becomes a single list with one section — so
+ * old data keeps working with zero migration.
  */
 export function normalizeListMenuData(data) {
-  if (Array.isArray(data?.lists) && data.lists.length > 0) return data.lists;
-  if (Array.isArray(data?.items)) {
-    return [{ title: data?.title || "Menu Options", buttonText: data?.buttonText || "Options", items: data.items }];
+  let lists;
+  if (Array.isArray(data?.lists) && data.lists.length > 0) {
+    lists = data.lists;
+  } else if (Array.isArray(data?.items)) {
+    lists = [{ title: data?.title || "Menu Options", buttonText: data?.buttonText || "Options", items: data.items }];
+  } else {
+    lists = [];
   }
-  return [];
+
+  return lists.map((list) => {
+    const rawSections = Array.isArray(list.sections) && list.sections.length > 0
+      ? list.sections
+      : [{ title: "", items: list.items || [] }];
+    const sections = rawSections.map((s) => ({ ...s, items: (s.items || []).map(normalizeListItem) }));
+    return { ...list, sections, items: sections.flatMap((s) => s.items) };
+  });
+}
+
+/**
+ * Flat [{ item, listIndex, sectionIndex, itemIndex, globalIndex }] view across
+ * every section of every list — globalIndex is the same flat index space the
+ * canvas handle ids (`item-{gi}`) and the routing token encoded into each
+ * option both use, so a tap on item 11 (the 1st item of the 2nd list) still
+ * resolves to the right outgoing edge regardless of which section it's
+ * grouped under.
+ */
+function flattenListMenuItems(lists) {
+  const flat = [];
+  let globalIndex = -1;
+  lists.forEach((list, listIndex) => {
+    (list.sections || []).forEach((section, sectionIndex) => {
+      (section.items || []).forEach((item, itemIndex) => {
+        globalIndex += 1;
+        flat.push({ item, listIndex, sectionIndex, itemIndex, globalIndex });
+      });
+    });
+  });
+  return flat;
 }
 
 /**

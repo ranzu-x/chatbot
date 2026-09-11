@@ -4,7 +4,7 @@ import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 
 const router = express.Router();
-router.use(authMiddleware, roleMiddleware("AGENCY", "ADMIN", "AGENT"));
+router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
 
 // ─── LIST CANNED RESPONSES ───────────────────────────────────────────────────
 router.get("/canned-responses", async (req, res) => {
@@ -25,15 +25,20 @@ router.get("/canned-responses", async (req, res) => {
 router.post("/canned-responses", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    const { title, body } = req.body;
+    const { title, body, shortcut } = req.body;
 
     if (!title || !body) {
       return res.status(400).json({ success: false, message: "Title and body are required" });
     }
 
+    // Shortcut is optional (e.g. "greeting" for a "/greeting" match in the
+    // composer) — strip a leading slash if the agent typed one, normalize
+    // to lowercase so matching is case-insensitive.
+    const normalizedShortcut = shortcut ? shortcut.trim().replace(/^\//, "").toLowerCase() || null : null;
+
     const [result] = await pool.query(
-      "INSERT INTO quick_replies (agency_id, title, body, created_at) VALUES (?, ?, ?, NOW())",
-      [agencyId, title, body]
+      "INSERT INTO quick_replies (agency_id, title, shortcut, body, created_at) VALUES (?, ?, ?, ?, NOW())",
+      [agencyId, title, normalizedShortcut, body]
     );
 
     const [saved] = await pool.query("SELECT * FROM quick_replies WHERE id = ?", [result.insertId]);
@@ -48,7 +53,7 @@ router.post("/canned-responses", async (req, res) => {
 router.put("/canned-responses/:id", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    const { title, body } = req.body;
+    const { title, body, shortcut } = req.body;
 
     const [existing] = await pool.query(
       "SELECT id FROM quick_replies WHERE id = ? AND agency_id = ?",
@@ -59,9 +64,11 @@ router.put("/canned-responses/:id", async (req, res) => {
       return res.status(404).json({ success: false, message: "Canned response not found" });
     }
 
+    const normalizedShortcut = shortcut ? shortcut.trim().replace(/^\//, "").toLowerCase() || null : null;
+
     await pool.query(
-      "UPDATE quick_replies SET title = ?, body = ? WHERE id = ? AND agency_id = ?",
-      [title, body, req.params.id, agencyId]
+      "UPDATE quick_replies SET title = ?, shortcut = ?, body = ? WHERE id = ? AND agency_id = ?",
+      [title, normalizedShortcut, body, req.params.id, agencyId]
     );
 
     const [updated] = await pool.query("SELECT * FROM quick_replies WHERE id = ?", [req.params.id]);

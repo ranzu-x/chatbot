@@ -19,12 +19,16 @@ import AgencyDashboard  from './Pages/Dashboard/AgencyDashboard';
 import AgenciesPage     from './Pages/SuperAdmin/AgenciesPage';
 import UsersPage        from './Pages/SuperAdmin/UsersPage';
 import TeamMembersPage  from './Pages/Team/TeamMembersPage';
+import AdminTeamPage    from './Pages/SuperAdmin/AdminTeamPage';
+import PlatformSettingsPage from './Pages/SuperAdmin/PlatformSettingsPage';
+import RolesPage        from './Pages/Roles/RolesPage';
+import ResellerCustomersPage from './Pages/Agency/ResellerCustomersPage';
+import AgencyPackagesPage    from './Pages/Agency/AgencyPackagesPage';
 import IntegrationsPage from './Pages/Agency/IntegrationsPage';
 import PackagesPage     from './Pages/SuperAdmin/PackagesPage';
 import DomainSettingsPage from './Pages/Agency/DomainSettingsPage';
-import MyPlanPage       from './Pages/Agency/MyPlanPage';
+import MyAccountPage    from './Pages/Account/MyAccountPage';
 import BillingSuccessPage from './Pages/Billing/BillingSuccessPage';
-import AIAgentPage      from './Pages/AI/AIAgentPage';
 import WebhooksManagerPage from './Pages/Integrations/WebhooksManagerPage';
 import OrdersPage       from './Pages/Payments/OrdersPage';
 import InChatPaymentCheckoutPage from './Pages/Payments/InChatPaymentCheckoutPage';
@@ -44,6 +48,9 @@ import BotManagerPage        from './Pages/Bots/BotManagerPage';
 import AppSettingsHubPage    from './Pages/Settings/AppSettingsHubPage';
 import MetaAppPage           from './Pages/Settings/MetaAppPage';
 import TikTokAppPage         from './Pages/Settings/TikTokAppPage';
+import AIProvidersPage       from './Pages/Settings/AIProvidersPage';
+import WhatsAppFlowRefsPage  from './Pages/Settings/WhatsAppFlowRefsPage';
+import CannedResponsesPage   from './Pages/Settings/CannedResponsesPage';
 
 // Flow Builder
 import FlowListPage     from './Pages/Flows/FlowListPage';
@@ -64,8 +71,8 @@ import SlotManager           from './Pages/Appointment/SlotManager';
 
 import { Toaster } from 'react-hot-toast';
 
-const ADMIN_AGENCY = ['ADMIN', 'AGENCY'];
-const ALL_ROLES    = ['ADMIN', 'AGENCY', 'AGENT'];
+const ADMIN_AGENCY = ['ADMIN', 'RESELLER'];
+const ALL_ROLES    = ['ADMIN', 'RESELLER', 'USER'];
 
 export default function App() {
   return (
@@ -85,34 +92,50 @@ export default function App() {
               <Route path="/admin/packages" element={<ProtectedRoute roles={['ADMIN']}><PackagesPage /></ProtectedRoute>} />
               <Route path="/packages" element={<ProtectedRoute roles={['ADMIN']}><PackagesPage /></ProtectedRoute>} />
               <Route path="/admin/agencies" element={<ProtectedRoute roles={['ADMIN']}><AgenciesPage /></ProtectedRoute>} />
-              <Route path="/admin/users" element={<ProtectedRoute roles={ADMIN_AGENCY}><UsersPage /></ProtectedRoute>} />
-              <Route path="/users" element={<ProtectedRoute roles={ADMIN_AGENCY}><UsersPage /></ProtectedRoute>} />
+              <Route path="/admin/users" element={<ProtectedRoute roles={['ADMIN']}><UsersPage /></ProtectedRoute>} />
+              <Route path="/users" element={<ProtectedRoute roles={['ADMIN']}><UsersPage /></ProtectedRoute>} />
               <Route path="/admin/agents" element={<ProtectedRoute roles={['ADMIN']}><TeamMembersPage /></ProtectedRoute>} />
-              <Route path="/admin/team" element={<ProtectedRoute roles={['ADMIN']}><TeamMembersPage /></ProtectedRoute>} />
+              <Route path="/admin/team" element={<ProtectedRoute roles={['ADMIN']}><AdminTeamPage /></ProtectedRoute>} />
               <Route path="/admin/integrations" element={<ProtectedRoute roles={['ADMIN']}><IntegrationsPage /></ProtectedRoute>} />
+              {/* Resellers merged into Agencies (see routes/admin.js) — "Reseller" is
+                  now just a capability flag on an agency, not a separate page. */}
+              <Route path="/admin/resellers" element={<Navigate to="/admin/agencies" replace />} />
+              <Route path="/admin/platform-settings" element={<ProtectedRoute roles={['ADMIN']}><PlatformSettingsPage /></ProtectedRoute>} />
+              <Route path="/roles" element={<ProtectedRoute roles={ADMIN_AGENCY}><RolesPage /></ProtectedRoute>} />
+              <Route path="/reseller/customers" element={<ProtectedRoute roles={['RESELLER']}><ResellerCustomersPage /></ProtectedRoute>} />
+              {/* "Packages & Modules" for an agency is now package-creation for ITS
+                  OWN customers (used to be reseller-only) — /reseller/packages kept
+                  as a working alias, /agency/packages is the primary path now. */}
+              <Route path="/reseller/packages" element={<ProtectedRoute roles={['RESELLER']}><AgencyPackagesPage /></ProtectedRoute>} />
+              <Route path="/agency/packages" element={<ProtectedRoute roles={['RESELLER']}><AgencyPackagesPage /></ProtectedRoute>} />
 
             {/* ── Agency ── */}
-            <Route path="/agency" element={<ProtectedRoute roles={['AGENCY']}><AgencyDashboard /></ProtectedRoute>} />
-            <Route path="/agency/plan" element={<ProtectedRoute roles={ADMIN_AGENCY}><MyPlanPage /></ProtectedRoute>} />
-            <Route path="/plan" element={<ProtectedRoute roles={ADMIN_AGENCY}><MyPlanPage /></ProtectedRoute>} />
+            <Route path="/agency" element={<ProtectedRoute roles={['RESELLER', 'USER']}><AgencyDashboard /></ProtectedRoute>} />
+            {/* The agency's OWN assigned plan moved to My Account → Billing. */}
+            <Route path="/agency/plan" element={<Navigate to="/my-account?tab=billing" replace />} />
+            <Route path="/plan" element={<Navigate to="/my-account?tab=billing" replace />} />
+            <Route path="/my-account" element={<ProtectedRoute roles={ALL_ROLES}><MyAccountPage /></ProtectedRoute>} />
             <Route path="/billing/success" element={<ProtectedRoute roles={ADMIN_AGENCY}><BillingSuccessPage /></ProtectedRoute>} />
-            <Route path="/agency/agents" element={<ProtectedRoute roles={['AGENCY']}><TeamMembersPage /></ProtectedRoute>} />
-            <Route path="/agency/team" element={<ProtectedRoute roles={['AGENCY']}><TeamMembersPage /></ProtectedRoute>} />
+            <Route path="/agency/agents" element={<ProtectedRoute roles={['RESELLER']}><TeamMembersPage /></ProtectedRoute>} />
+            <Route path="/agency/team" element={<ProtectedRoute roles={['RESELLER']}><TeamMembersPage /></ProtectedRoute>} />
             <Route path="/team" element={<ProtectedRoute roles={ALL_ROLES}><TeamMembersPage /></ProtectedRoute>} />
             <Route path="/team-members" element={<ProtectedRoute roles={ALL_ROLES}><TeamMembersPage /></ProtectedRoute>} />
             <Route path="/agency/domain-settings" element={<ProtectedRoute roles={ADMIN_AGENCY}><DomainSettingsPage /></ProtectedRoute>} />
             <Route path="/domain-settings" element={<ProtectedRoute roles={ADMIN_AGENCY}><DomainSettingsPage /></ProtectedRoute>} />
 
 
-            {/* ── Connect Account Central Hub (Admin + Agency) ── */}
-            <Route path="/connect-accounts"   element={<ProtectedRoute roles={ADMIN_AGENCY}><ConnectAccountsPage /></ProtectedRoute>} />
-            <Route path="/channels"           element={<ProtectedRoute roles={ADMIN_AGENCY}><ConnectAccountsPage /></ProtectedRoute>} />
-            <Route path="/channels/whatsapp"  element={<ProtectedRoute roles={ADMIN_AGENCY}><WhatsAppPage /></ProtectedRoute>} />
-            <Route path="/channels/facebook"  element={<ProtectedRoute roles={ADMIN_AGENCY}><FacebookPage /></ProtectedRoute>} />
-            <Route path="/channels/instagram" element={<ProtectedRoute roles={ADMIN_AGENCY}><InstagramPage /></ProtectedRoute>} />
-            <Route path="/channels/telegram"  element={<ProtectedRoute roles={ADMIN_AGENCY}><TelegramPage /></ProtectedRoute>} />
-            <Route path="/channels/tiktok"    element={<ProtectedRoute roles={ADMIN_AGENCY}><TikTokPage /></ProtectedRoute>} />
-            <Route path="/channels/webchat"   element={<ProtectedRoute roles={ADMIN_AGENCY}><WebchatPage /></ProtectedRoute>} />
+            {/* ── Connect Account Central Hub (Admin + Reseller + User) ──
+                Team members (USER) can connect/manage channel accounts here
+                too — see routes/channels.js's stripSecrets() for how raw
+                access tokens are kept from reaching a USER-role response. */}
+            <Route path="/connect-accounts"   element={<ProtectedRoute roles={ALL_ROLES}><ConnectAccountsPage /></ProtectedRoute>} />
+            <Route path="/channels"           element={<ProtectedRoute roles={ALL_ROLES}><ConnectAccountsPage /></ProtectedRoute>} />
+            <Route path="/channels/whatsapp"  element={<ProtectedRoute roles={ALL_ROLES}><WhatsAppPage /></ProtectedRoute>} />
+            <Route path="/channels/facebook"  element={<ProtectedRoute roles={ALL_ROLES}><FacebookPage /></ProtectedRoute>} />
+            <Route path="/channels/instagram" element={<ProtectedRoute roles={ALL_ROLES}><InstagramPage /></ProtectedRoute>} />
+            <Route path="/channels/telegram"  element={<ProtectedRoute roles={ALL_ROLES}><TelegramPage /></ProtectedRoute>} />
+            <Route path="/channels/tiktok"    element={<ProtectedRoute roles={ALL_ROLES}><TikTokPage /></ProtectedRoute>} />
+            <Route path="/channels/webchat"   element={<ProtectedRoute roles={ALL_ROLES}><WebchatPage /></ProtectedRoute>} />
 
             {/* ── Bot Manager (Visual Flow Bots) ── */}
             <Route path="/bots" element={<ProtectedRoute roles={ALL_ROLES}><BotManagerPage /></ProtectedRoute>} />
@@ -140,15 +163,16 @@ export default function App() {
             <Route path="/sequences/:id" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
             <Route path="/sequences/:id/edit" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
 
-            <Route path="/campaigns" element={<ProtectedRoute roles={ADMIN_AGENCY}><CampaignListPage /></ProtectedRoute>} />
-            <Route path="/social-posting" element={<ProtectedRoute roles={ADMIN_AGENCY}><SocialPostingPage /></ProtectedRoute>} />
-            <Route path="/publishing" element={<ProtectedRoute roles={ADMIN_AGENCY}><SocialPostingPage /></ProtectedRoute>} />
-            <Route path="/ai-agent" element={<ProtectedRoute roles={ADMIN_AGENCY}><AIAgentPage /></ProtectedRoute>} />
-            <Route path="/ai" element={<ProtectedRoute roles={ADMIN_AGENCY}><AIAgentPage /></ProtectedRoute>} />
+            {/* Campaigns/Post Publishing/Orders are now part of an Agent's day-to-day
+                nav too (see Sidebar.jsx) — opened to ALL_ROLES to match; Webhooks &
+                Zapier stays Agency/Admin-only (app-configuration, not day-to-day work). */}
+            <Route path="/campaigns" element={<ProtectedRoute roles={ALL_ROLES}><CampaignListPage /></ProtectedRoute>} />
+            <Route path="/social-posting" element={<ProtectedRoute roles={ALL_ROLES}><SocialPostingPage /></ProtectedRoute>} />
+            <Route path="/publishing" element={<ProtectedRoute roles={ALL_ROLES}><SocialPostingPage /></ProtectedRoute>} />
             <Route path="/webhooks" element={<ProtectedRoute roles={ADMIN_AGENCY}><WebhooksManagerPage /></ProtectedRoute>} />
             <Route path="/integrations/webhooks" element={<ProtectedRoute roles={ADMIN_AGENCY}><WebhooksManagerPage /></ProtectedRoute>} />
-            <Route path="/orders" element={<ProtectedRoute roles={ADMIN_AGENCY}><OrdersPage /></ProtectedRoute>} />
-            <Route path="/payments/orders" element={<ProtectedRoute roles={ADMIN_AGENCY}><OrdersPage /></ProtectedRoute>} />
+            <Route path="/orders" element={<ProtectedRoute roles={ALL_ROLES}><OrdersPage /></ProtectedRoute>} />
+            <Route path="/payments/orders" element={<ProtectedRoute roles={ALL_ROLES}><OrdersPage /></ProtectedRoute>} />
             <Route path="/appointments" element={<ProtectedRoute roles={ALL_ROLES}><AppointmentList /></ProtectedRoute>} />
             <Route path="/appointments/slots" element={<ProtectedRoute roles={ADMIN_AGENCY}><SlotManager /></ProtectedRoute>} />
             <Route path="/slots" element={<ProtectedRoute roles={ADMIN_AGENCY}><SlotManager /></ProtectedRoute>} />
@@ -159,6 +183,9 @@ export default function App() {
             <Route path="/agency/integrations" element={<ProtectedRoute roles={ADMIN_AGENCY}><AppSettingsHubPage /></ProtectedRoute>} />
             <Route path="/settings/meta-app" element={<ProtectedRoute roles={ADMIN_AGENCY}><MetaAppPage /></ProtectedRoute>} />
             <Route path="/settings/tiktok-app" element={<ProtectedRoute roles={ADMIN_AGENCY}><TikTokAppPage /></ProtectedRoute>} />
+            <Route path="/settings/ai-providers" element={<ProtectedRoute roles={ADMIN_AGENCY}><AIProvidersPage /></ProtectedRoute>} />
+            <Route path="/settings/whatsapp-flows" element={<ProtectedRoute roles={ADMIN_AGENCY}><WhatsAppFlowRefsPage /></ProtectedRoute>} />
+            <Route path="/settings/canned-responses" element={<ProtectedRoute roles={ALL_ROLES}><CannedResponsesPage /></ProtectedRoute>} />
 
             {/* ── Live Chat Inbox & Contacts ── */}
             <Route path="/inbox" element={<ProtectedRoute roles={ALL_ROLES}><InboxPage /></ProtectedRoute>} />

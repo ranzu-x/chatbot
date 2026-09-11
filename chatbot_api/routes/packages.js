@@ -33,7 +33,7 @@ router.get("/packages/registry", authMiddleware, async (req, res) => {
 });
 
 // ─── ADMIN: GET ALL PACKAGES ─────────────────────────────────────────────────
-router.get("/packages", authMiddleware, roleMiddleware("ADMIN", "AGENCY"), async (req, res) => {
+router.get("/packages", authMiddleware, roleMiddleware("ADMIN", "RESELLER"), async (req, res) => {
   try {
     const [packages] = await pool.query(`
       SELECT p.*,

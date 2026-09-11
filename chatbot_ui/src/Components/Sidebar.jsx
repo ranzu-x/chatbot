@@ -25,83 +25,123 @@ import {
   X,
   Video,
   Blocks,
+  KeyRound,
+  Workflow,
 } from 'lucide-react';
 
 const NAV_CONFIG = {
   ADMIN: [
     { section: 'Main', items: [
       { label: 'Dashboard',        icon: LayoutDashboard, path: '/admin' },
-      { label: 'Live Chat',        icon: MessageSquare,   path: '/inbox',              moduleKey: 'feature_live_chat' },
-      { label: 'Subscribers',      icon: Users,           path: '/contacts',           moduleKey: 'feature_subscribers' },
-      { label: 'Bot Manager',      icon: Bot,             path: '/bots',               moduleKey: 'feature_bot_manager' },
+      { label: 'Conversations',    icon: MessageSquare,   path: '/inbox',        moduleKey: 'feature_live_chat' },
+      { label: 'Subscribers',      icon: Users,           path: '/contacts',     moduleKey: 'feature_subscribers' },
+      { label: 'Bot Manager',      icon: Bot,             path: '/bots',         moduleKey: 'feature_bot_manager' },
       { label: 'Post Publishing',  icon: FileText,        path: '/social-posting' },
       { label: 'Connect Account',  icon: Radio,           path: '/connect-accounts' },
-      { label: 'Broadcasts',       icon: Send,            path: '/campaigns',          moduleKey: 'feature_broadcasts' },
-      { label: 'AI Agent & KB',    icon: Sparkles,        path: '/ai-agent',          moduleKey: 'feature_ai_agent' },
+      { label: 'Broadcasts',       icon: Send,            path: '/campaigns',    moduleKey: 'feature_broadcasts' },
       { label: 'In-Chat Orders',   icon: ShoppingBag,     path: '/orders' },
-      { label: 'Appointments',     icon: Calendar,        path: '/appointments',      moduleKey: 'feature_appointments' },
+      { label: 'Appointments',     icon: Calendar,        path: '/appointments', moduleKey: 'feature_appointments' },
     ]},
     { section: 'Control Panel', items: [
-      { label: 'App Integrations', icon: Blocks,          path: '/settings/apps' },
-      { label: 'Packages & Modules', icon: Package,       path: '/admin/packages' },
-      { label: 'Webhooks & Zapier',  icon: Globe,         path: '/webhooks' },
-      { label: 'Custom Domain',    icon: Globe,           path: '/agency/domain-settings', moduleKey: 'feature_custom_domain' },
-      { label: 'Agencies',         icon: Building2,       path: '/admin/agencies' },
-      { label: 'User Manager',     icon: Users,           path: '/admin/users' },
-      { label: 'Team Members',     icon: Users,           path: '/admin/team' },
+      { label: 'App Integrations',    icon: Blocks,    path: '/settings/apps' },
+      { label: 'AI Providers',        icon: KeyRound,  path: '/settings/ai-providers', moduleKey: 'feature_ai_agent' },
+      { label: 'WhatsApp Flows',      icon: Workflow,  path: '/settings/whatsapp-flows' },
+      { label: 'Canned Responses',    icon: FileText,  path: '/settings/canned-responses' },
+      { label: 'Packages & Modules',  icon: Package,   path: '/admin/packages' },
+      { label: 'Webhooks & Zapier',   icon: Globe,     path: '/webhooks' },
+      { label: 'Custom Domain',       icon: Globe,     path: '/agency/domain-settings', moduleKey: 'feature_custom_domain' },
+      { label: 'Resellers',           icon: Building2, path: '/admin/agencies' },
+      { label: 'User Manager',        icon: Users,     path: '/admin/users' },
+      { label: 'Team Members',        icon: Users,     path: '/team' },
+      { label: 'Roles & Permissions', icon: KeyRound,  path: '/roles' },
+      { label: 'Platform Settings',   icon: Settings,  path: '/admin/platform-settings' },
     ]},
   ],
-  AGENCY: [
+  RESELLER: [
     { section: 'Main', items: [
       { label: 'Dashboard',        icon: LayoutDashboard, path: '/agency' },
-      { label: 'Live Chat',        icon: MessageSquare,   path: '/inbox',              moduleKey: 'feature_live_chat' },
-      { label: 'Subscribers',      icon: Users,           path: '/contacts',           moduleKey: 'feature_subscribers' },
-      { label: 'Bot Manager',      icon: Bot,             path: '/bots',               moduleKey: 'feature_bot_manager' },
+      { label: 'Conversations',    icon: MessageSquare,   path: '/inbox',        moduleKey: 'feature_live_chat' },
+      { label: 'Subscribers',      icon: Users,           path: '/contacts',     moduleKey: 'feature_subscribers' },
+      { label: 'Bot Manager',      icon: Bot,             path: '/bots',         moduleKey: 'feature_bot_manager' },
       { label: 'Post Publishing',  icon: FileText,        path: '/social-posting' },
       { label: 'Connect Account',  icon: Radio,           path: '/connect-accounts' },
-      { label: 'Broadcasts',       icon: Send,            path: '/campaigns',          moduleKey: 'feature_broadcasts' },
-      { label: 'AI Agent & KB',    icon: Sparkles,        path: '/ai-agent',          moduleKey: 'feature_ai_agent' },
+      { label: 'Broadcasts',       icon: Send,            path: '/campaigns',    moduleKey: 'feature_broadcasts' },
       { label: 'In-Chat Orders',   icon: ShoppingBag,     path: '/orders' },
-      { label: 'Appointments',     icon: Calendar,        path: '/appointments',      moduleKey: 'feature_appointments' },
+      { label: 'Appointments',     icon: Calendar,        path: '/appointments', moduleKey: 'feature_appointments' },
     ]},
     { section: 'Control Panel', items: [
-      { label: 'App Integrations', icon: Blocks,          path: '/settings/apps' },
-      { label: 'My Plan & Usage',  icon: Zap,             path: '/agency/plan' },
-      { label: 'Webhooks & Zapier', icon: Globe,          path: '/webhooks' },
-      { label: 'Custom Domain',    icon: Globe,           path: '/agency/domain-settings', moduleKey: 'feature_custom_domain' },
-      { label: 'User Manager',     icon: Users,           path: '/admin/users' },
-      { label: 'Team Members',     icon: Users,           path: '/agency/team' },
+      { label: 'App Integrations',    icon: Blocks,   path: '/settings/apps' },
+      { label: 'AI Providers',        icon: KeyRound, path: '/settings/ai-providers', moduleKey: 'feature_ai_agent' },
+      { label: 'WhatsApp Flows',      icon: Workflow, path: '/settings/whatsapp-flows' },
+      { label: 'Canned Responses',    icon: FileText, path: '/settings/canned-responses' },
+      { label: 'Packages & Modules',  icon: Package,  path: '/agency/packages' },
+      { label: 'Webhooks & Zapier',   icon: Globe,    path: '/webhooks' },
+      { label: 'Custom Domain',       icon: Globe,    path: '/agency/domain-settings', moduleKey: 'feature_custom_domain' },
+      { label: 'User Manager',        icon: Users,    path: '/agency/team' },
+      { label: 'Team Roles & Permissions', icon: KeyRound, path: '/roles' },
     ]},
   ],
-  AGENT: [
+  // User (a Reseller's team member) gets every day-to-day operational menu
+  // Reseller has — everything about actually running the business (talking
+  // to customers, building bot content, publishing/broadcasting, orders,
+  // appointments, and connecting channel accounts). Deliberately excluded
+  // (owner/reseller-only, matches the backend permission/role gates — see
+  // routes/team.js, routes/aiProviders.js, routes/whatsappFlowRefs.js,
+  // routes/domains.js, routes/flowWebhooks.js, routes/agencyPackages.js,
+  // routes/roles.js): App Integrations/AI Providers/WhatsApp Flows/
+  // Webhooks & Zapier/Custom Domain (credential/app-configuration),
+  // Packages & Modules (billing/plan creation), Team Roles & Permissions
+  // (privilege-escalation risk), and Reseller Customers/Packages (not even
+  // in Reseller's own nav).
+  USER: [
     { section: 'Main', items: [
-      { label: 'Live Chat',    icon: MessageSquare, path: '/inbox',      moduleKey: 'feature_live_chat' },
-      { label: 'Subscribers',  icon: Users,         path: '/contacts',   moduleKey: 'feature_subscribers' },
-      { label: 'Appointments', icon: Calendar,      path: '/appointments', moduleKey: 'feature_appointments' },
-      { label: 'Team Members', icon: Users,         path: '/team' },
+      { label: 'Dashboard',        icon: LayoutDashboard, path: '/agency' },
+      { label: 'Conversations',    icon: MessageSquare, path: '/inbox',          moduleKey: 'feature_live_chat' },
+      { label: 'Subscribers',      icon: Users,         path: '/contacts',       moduleKey: 'feature_subscribers' },
+      { label: 'Bot Manager',      icon: Bot,           path: '/bots',           moduleKey: 'feature_bot_manager' },
+      { label: 'Post Publishing',  icon: FileText,      path: '/social-posting' },
+      { label: 'Connect Account',  icon: Radio,         path: '/connect-accounts' },
+      { label: 'Broadcasts',       icon: Send,          path: '/campaigns',      moduleKey: 'feature_broadcasts' },
+      { label: 'In-Chat Orders',   icon: ShoppingBag,   path: '/orders' },
+      { label: 'Appointments',     icon: Calendar,      path: '/appointments',   moduleKey: 'feature_appointments' },
+    ]},
+    { section: 'Control Panel', items: [
+      { label: 'Canned Responses', icon: FileText, path: '/settings/canned-responses' },
+      { label: 'Team Members',     icon: Users,    path: '/team' },
     ]},
   ],
 };
 
-const ROLE_SUBTITLES = { ADMIN: 'Super Admin', AGENCY: 'Agency Portal', AGENT: 'Agent Portal' };
+
+// Internal role identifiers (ADMIN/RESELLER/USER — DB values, JWT payloads,
+// every roleMiddleware() call) now match the human-facing label: a
+// "RESELLER"-role account is a Reseller (whether or not it has sub-clients
+// of its own — see routes/admin.js's isReseller capability flag), and a
+// "USER"-role account is a User (a team member).
+const ROLE_SUBTITLES = { ADMIN: 'Super Admin', RESELLER: 'Reseller Portal', USER: 'User Portal' };
 
 export default function Sidebar() {
   const { user, hasModule } = useAuth();
   const { collapsed, toggleSidebar, popupNavOpen, closePopupNav, isInbox } = useLayout();
   const location  = useLocation();
 
-  const role        = user?.role || 'AGENT';
+  const role        = user?.role || 'USER';
   const rawSections = NAV_CONFIG[role] || [];
   const subtitle    = ROLE_SUBTITLES[role] || '';
 
+  const accountType = user?.accountType;
+  const passesAccountType = (accountTypeIn) => !accountTypeIn || accountTypeIn.includes(accountType);
+
   const sections = useMemo(() => {
     return rawSections
+      .filter((sec) => passesAccountType(sec.accountTypeIn))
       .map((sec) => ({
         ...sec,
-        items: sec.items.filter((item) => !item.moduleKey || hasModule(item.moduleKey)),
+        items: sec.items.filter((item) => (!item.moduleKey || hasModule(item.moduleKey)) && passesAccountType(item.accountTypeIn)),
       }))
       .filter((sec) => sec.items.length > 0);
-  }, [rawSections, hasModule]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawSections, hasModule, accountType]);
 
   const isActive = (path) => {
     if (path === '/admin' || path === '/agency') return location.pathname === path;

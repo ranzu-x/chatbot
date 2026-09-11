@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import AppLayout from '../../Layout/AppLayout';
-import { teamAPI } from '../../services/api';
+import { teamAPI, roleAPI, integrationAPI } from '../../services/api';
 import { useAuth } from '../../Provider/AuthContext';
 import {
   Users,
@@ -35,7 +35,7 @@ export const TEAM_ROLES = [
   },
   {
     id: 'AGENT',
-    label: 'Live Chat Agent',
+    label: 'Live Chat User',
     badgeClass: 'bg-emerald-100 text-emerald-700 border-emerald-200',
     icon: MessageSquare,
     color: '#10b981',
@@ -124,6 +124,45 @@ export default function TeamMembersPage() {
     teamRole: 'AGENT',
   });
 
+  // Real roles (backing the same 5 cosmetic labels above with a real
+  // permission set), channel access + chat access — see the approved SaaS
+  // hierarchy plan §8/§9. `agencyRoles` maps TEAM_ROLES ids -> real role_id.
+  const [agencyRoles, setAgencyRoles] = useState([]);
+  const [integrations, setIntegrations] = useState([]);
+  const [channelAccessIds, setChannelAccessIds] = useState(new Set()); // empty = unrestricted
+  const [chatAccess, setChatAccess] = useState('ALL');
+  const [editChannelAccessIds, setEditChannelAccessIds] = useState(new Set());
+  const [editChatAccess, setEditChatAccess] = useState('ALL');
+
+  useEffect(() => {
+    roleAPI.getAll().then((res) => setAgencyRoles(res.data?.roles || [])).catch(() => {});
+    integrationAPI.getAll().then((res) => setIntegrations(res.data?.integrations || res.data?.data || [])).catch(() => {});
+  }, []);
+
+  const roleIdForSlug = (teamRoleId) => {
+    const slug = String(teamRoleId || 'AGENT').toLowerCase();
+    return agencyRoles.find((r) => r.slug === slug)?.id || agencyRoles.find((r) => r.slug === 'agent')?.id || null;
+  };
+
+  const integrationLabel = (i) => i.wa_display_phone || i.wa_phone_number_id || i.fb_page_name || i.ig_username || (i.tiktok_username ? `@${i.tiktok_username}` : i.tiktok_open_id) || i.name || `Integration #${i.id}`;
+  const integrationsByPlatform = useMemo(() => {
+    const map = {};
+    for (const i of integrations) {
+      const key = i.platform || 'OTHER';
+      if (!map[key]) map[key] = [];
+      map[key].push(i);
+    }
+    return map;
+  }, [integrations]);
+
+  const toggleChannelAccess = (id, setter) => {
+    setter((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
   // Toast
   const [toast, setToast] = useState(null);
   const showToast = (message, type = 'success') => {
@@ -193,6 +232,8 @@ export default function TeamMembersPage() {
       password: '',
       teamRole: 'AGENT',
     });
+    setChannelAccessIds(new Set());
+    setChatAccess('ALL');
     setFormError('');
     setShowCreateModal(true);
   };
@@ -207,7 +248,12 @@ export default function TeamMembersPage() {
     }
     setSubmitting(true);
     try {
-      const res = await teamAPI.create(form);
+      const res = await teamAPI.create({
+        ...form,
+        roleId: roleIdForSlug(form.teamRole),
+        integrationIds: Array.from(channelAccessIds),
+        chatAccess,
+      });
       if (res.data.success) {
         showToast(res.data.message || 'Team member added successfully!');
         setShowCreateModal(false);
@@ -226,6 +272,8 @@ export default function TeamMembersPage() {
       ...member,
       newPassword: '',
     });
+    setEditChannelAccessIds(new Set(member.integrationAccess || []));
+    setEditChatAccess(member.chat_access === 'ASSIGNED_ONLY' ? 'ASSIGNED_ONLY' : 'ALL');
     setFormError('');
   };
 
@@ -240,7 +288,10 @@ export default function TeamMembersPage() {
         email: editingMember.email,
         phone: editingMember.phone,
         teamRole: editingMember.team_role,
+        roleId: roleIdForSlug(editingMember.team_role),
         is_active: editingMember.is_active,
+        integrationIds: Array.from(editChannelAccessIds),
+        chatAccess: editChatAccess,
         ...(editingMember.newPassword && { password: editingMember.newPassword }),
       };
       const res = await teamAPI.update(editingMember.id, payload);
@@ -595,7 +646,7 @@ export default function TeamMembersPage() {
                 {metrics.builders + metrics.agents}
               </div>
               <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>
-                Agents & Flow Builders
+                Users & Flow Builders
               </div>
             </div>
           </div>
@@ -1234,6 +1285,69 @@ export default function TeamMembersPage() {
                 </div>
               </div>
 
+              {/* Bot/Channel Access — grouped checklist, empty = unrestricted */}
+              <div style={{ marginBottom: 18 }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: 4 }}>
+                  Bot / Channel Access
+                </label>
+                <p style={{ fontSize: '0.72rem', color: '#64748b', margin: '0 0 8px' }}>
+                  Leave everything unchecked to give access to every connected account. Check specific accounts to restrict this member to only those.
+                </p>
+                {Object.keys(integrationsByPlatform).length === 0 ? (
+                  <div style={{ fontSize: '0.78rem', color: '#94a3b8' }}>No connected accounts yet.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {Object.entries(integrationsByPlatform).map(([platform, accs]) => (
+                      <div key={platform}>
+                        <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>
+                          {platform}
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          {accs.map((acc) => {
+                            const checked = channelAccessIds.has(acc.id);
+                            return (
+                              <label key={acc.id} style={{
+                                display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', padding: '5px 10px',
+                                borderRadius: 999, border: `1px solid ${checked ? '#6366f1' : '#e2e8f0'}`,
+                                background: checked ? '#f5f7ff' : '#fff', cursor: 'pointer',
+                              }}>
+                                <input type="checkbox" checked={checked} onChange={() => toggleChannelAccess(acc.id, setChannelAccessIds)} />
+                                {integrationLabel(acc)}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Chat Access */}
+              <div style={{ marginBottom: 18 }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: 8 }}>
+                  Chat Access
+                </label>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  {[
+                    { id: 'ALL', label: 'All Chats', desc: 'Sees every conversation on accessible channels' },
+                    { id: 'ASSIGNED_ONLY', label: 'Assigned Chats Only', desc: 'Only sees chats assigned to them, plus unassigned ones' },
+                  ].map((opt) => (
+                    <label key={opt.id} style={{
+                      flex: 1, padding: '9px 12px', borderRadius: 10, cursor: 'pointer',
+                      border: `1.5px solid ${chatAccess === opt.id ? '#6366f1' : '#e2e8f0'}`,
+                      background: chatAccess === opt.id ? '#f5f7ff' : '#fff',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                        <input type="radio" name="chatAccess" checked={chatAccess === opt.id} onChange={() => setChatAccess(opt.id)} />
+                        <span style={{ fontWeight: 700, fontSize: '0.8rem', color: '#0f172a' }}>{opt.label}</span>
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: '#64748b', marginLeft: 20 }}>{opt.desc}</div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
                 <button
                   type="button"
@@ -1465,6 +1579,69 @@ export default function TeamMembersPage() {
                       </div>
                     );
                   })}
+                </div>
+              </div>
+
+              {/* Bot/Channel Access */}
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: 4 }}>
+                  Bot / Channel Access
+                </label>
+                <p style={{ fontSize: '0.72rem', color: '#64748b', margin: '0 0 8px' }}>
+                  Leave everything unchecked for access to every connected account.
+                </p>
+                {Object.keys(integrationsByPlatform).length === 0 ? (
+                  <div style={{ fontSize: '0.78rem', color: '#94a3b8' }}>No connected accounts yet.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {Object.entries(integrationsByPlatform).map(([platform, accs]) => (
+                      <div key={platform}>
+                        <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>
+                          {platform}
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          {accs.map((acc) => {
+                            const checked = editChannelAccessIds.has(acc.id);
+                            return (
+                              <label key={acc.id} style={{
+                                display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', padding: '5px 10px',
+                                borderRadius: 999, border: `1px solid ${checked ? '#6366f1' : '#e2e8f0'}`,
+                                background: checked ? '#f5f7ff' : '#fff', cursor: 'pointer',
+                              }}>
+                                <input type="checkbox" checked={checked} onChange={() => toggleChannelAccess(acc.id, setEditChannelAccessIds)} />
+                                {integrationLabel(acc)}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Chat Access */}
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: 8 }}>
+                  Chat Access
+                </label>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  {[
+                    { id: 'ALL', label: 'All Chats', desc: 'Sees every conversation on accessible channels' },
+                    { id: 'ASSIGNED_ONLY', label: 'Assigned Chats Only', desc: 'Only assigned + unassigned chats' },
+                  ].map((opt) => (
+                    <label key={opt.id} style={{
+                      flex: 1, padding: '9px 12px', borderRadius: 10, cursor: 'pointer',
+                      border: `1.5px solid ${editChatAccess === opt.id ? '#6366f1' : '#e2e8f0'}`,
+                      background: editChatAccess === opt.id ? '#f5f7ff' : '#fff',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                        <input type="radio" name="editChatAccess" checked={editChatAccess === opt.id} onChange={() => setEditChatAccess(opt.id)} />
+                        <span style={{ fontWeight: 700, fontSize: '0.8rem', color: '#0f172a' }}>{opt.label}</span>
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: '#64748b', marginLeft: 20 }}>{opt.desc}</div>
+                    </label>
+                  ))}
                 </div>
               </div>
 
