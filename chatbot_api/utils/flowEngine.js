@@ -1710,7 +1710,7 @@ const BUTTON_ROUTE_PREFIX = "FBTN";
  * ids are our own (Flow Builder-generated) and don't contain the `:` separator,
  * so this is safe to split on.
  */
-function encodeButtonRoute(flowId, nodeId, idx) {
+export function encodeButtonRoute(flowId, nodeId, idx) {
   return `${BUTTON_ROUTE_PREFIX}:${flowId}:${nodeId}:${idx}`;
 }
 
@@ -1811,7 +1811,7 @@ function getButtonTapCap(platform) {
  * not `.type` — normalizes either into the "URL" / "PHONE" / "POSTBACK" values the
  * rest of the engine (and platformSender.js) expects.
  */
-function normalizeButtonType(btn) {
+export function normalizeButtonType(btn) {
   if (typeof btn !== "object" || !btn) return "POSTBACK";
   const action = (btn.action || btn.type || "").toString().toLowerCase();
   if (action === "url") return "URL";
@@ -1882,7 +1882,7 @@ export function inputTypeToFieldType(inputType) {
  * Replace template variables with actual values
  * Syntax: {{variable}} or {{contact.name}}
  */
-function replaceVariables(text, variables, contact) {
+export function replaceVariables(text, variables, contact) {
   if (!text) return "";
   let result = text;
   

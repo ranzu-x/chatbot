@@ -8,11 +8,13 @@ import { Video, Key, Lock, Copy, Check, ExternalLink, ShieldCheck, Sparkles, Ref
 function generateRandomToken() {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
   let random = '';
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < 32; i++) {
     random += chars.charAt(Math.floor(Math.random() * chars.length));
   }
-  return `nexa_tiktok_${random}`;
+  return random;
 }
+
+const EmbeddedWrapper = ({ children }) => <div>{children}</div>;
 
 export default function TikTokAppPage({ embedded = false }) {
   const { user } = useAuth();
@@ -122,7 +124,7 @@ export default function TikTokAppPage({ embedded = false }) {
     }
   };
 
-  const LayoutWrapper = embedded ? ({ children }) => <div>{children}</div> : AppLayout;
+  const LayoutWrapper = embedded ? EmbeddedWrapper : AppLayout;
 
   return (
     <LayoutWrapper>

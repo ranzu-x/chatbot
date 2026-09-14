@@ -1,0 +1,19 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 1560, "h": 960, "title": "A — Icon Rail" },
+    { "file": "OptionB.dc.html", "x": 1660, "y": 0, "w": 1560, "h": 960, "title": "B — Sidebar Category Nav" },
+    { "file": "OptionC.dc.html", "x": 3320, "y": 0, "w": 1560, "h": 960, "title": "C — Card Gallery Home" },
+    { "file": "OptionD.dc.html", "x": 0, "y": 1160, "w": 1560, "h": 960, "title": "D — Split Workspace + Insights" },
+    { "file": "OptionE.dc.html", "x": 1660, "y": 1160, "w": 1560, "h": 960, "title": "E — Command Bar Minimal" },
+    { "file": "OptionF.dc.html", "x": 3320, "y": 1160, "w": 1560, "h": 960, "title": "F — Accordion Overview" }
+  ],
+  "annotations": [
+    { "id": "note-a", "x": 0, "y": -110, "w": 480, "text": "A — Icon Rail\nSlim vertical avatar rail replaces the wide account list; category + sub-tab collapse into one toolbar row; flows as cards.\nBest if: you want to reclaim width for content." },
+    { "id": "note-b", "x": 1660, "y": -110, "w": 480, "text": "B — Sidebar Category Nav\nCategories move into a vertical nav (like Settings pages); sub-tabs nest underneath the active one; flows as a dense data table.\nBest if: users mainly scan/manage many flows at once." },
+    { "id": "note-c", "x": 3320, "y": -110, "w": 480, "text": "C — Card Gallery Home\nNo tab maze — every feature is a searchable card with live counts; a Recent strip for fast re-entry.\nBest if: this page has grown too many tabs to browse." },
+    { "id": "note-d", "x": 0, "y": 1050, "w": 480, "text": "D — Split Workspace + Insights\nSlim top tabs plus a persistent right panel with real numbers (flow counts, weekly volume) and quick actions.\nBest if: you want the page to also report, not just configure." },
+    { "id": "note-e", "x": 1660, "y": 1050, "w": 480, "text": "E — Command Bar Minimal\nSearch-first header, underline tabs, borderless list rows, generous whitespace.\nBest if: you want the lightest, calmest version of this page." },
+    { "id": "note-f", "x": 3320, "y": 1050, "w": 480, "text": "F — Accordion Overview\nOne scrolling page — every category is an expandable section with a jump-to mini-nav, no click-through required.\nBest if: users want to see everything without navigating." }
+  ],
+  "launch": { "view": "canvas" }
+}

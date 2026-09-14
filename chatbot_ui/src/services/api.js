@@ -320,8 +320,31 @@ export const botAPI = {
 export const metaAppAPI = {
   get: () => api.get('/settings/meta-app'),
   save: (data) => api.post('/settings/meta-app', data),
-  test: () => api.post('/settings/meta-app/test'),
+  test: (data) => api.post('/settings/meta-app/test', data),
   getAppId: () => api.get('/settings/meta-app/app-id'),
+  // Persists only the verify token immediately (no App ID/Secret needed).
+  // Called silently whenever a token is generated or regenerated so that
+  // Meta's webhook challenge passes before the full form is submitted.
+  saveVerifyToken: (verifyToken) => api.patch('/settings/meta-app/verify-token', { verifyToken }),
+};
+
+// ─── Blog ──────────────────────────────────────────────────────────
+export const blogAPI = {
+  // Public (no auth)
+  list:       (params) => api.get('/blog', { params }),
+  getBySlug:  (slug)   => api.get(`/blog/${slug}`),
+  categories: ()       => api.get('/blog/categories'),
+
+  // Admin (ADMIN role)
+  adminList:    (params) => api.get('/admin/blog/posts', { params }),
+  adminGet:     (id)     => api.get(`/admin/blog/posts/${id}`),
+  create:       (data)   => api.post('/admin/blog/posts', data),
+  update:       (id, data) => api.put(`/admin/blog/posts/${id}`, data),
+  remove:       (id)     => api.delete(`/admin/blog/posts/${id}`),
+  togglePublish:(id)     => api.post(`/admin/blog/posts/${id}/publish`),
+  uploadImage:  (formData) => api.post('/admin/blog/upload-image', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }),
 };
 
 // ─── TikTok App Settings ───────────────────────────────────────────
@@ -461,6 +484,40 @@ export const campaignAPI = {
   getOne: (id) => api.get(`/campaigns/${id}`),
   create: (data) => api.post('/campaigns', data),
   delete: (id) => api.delete(`/campaigns/${id}`),
+};
+
+// The Broadcasting module — WhatsApp/Messenger/Telegram/TikTok, tabbed on
+// one page. A WINDOW-mode campaign's message content is a Flow (start it,
+// then navigate to the Flow Builder); a TEMPLATE-mode one (WhatsApp Anytime)
+// is created directly against an approved template, no flow involved.
+export const broadcastAPI = {
+  getAll: (platform) => api.get('/broadcasts', { params: platform ? { platform } : {} }),
+  getOne: (id) => api.get(`/broadcasts/${id}`),
+  getByFlow: (flowId) => api.get(`/broadcasts/by-flow/${flowId}`),
+  getFormData: (platform) => api.get('/broadcasts/form-data', { params: platform ? { platform } : {} }),
+  audiencePreview: (data) => api.post('/broadcasts/audience-preview', data),
+  startWithFlow: (data) => api.post('/broadcasts/start-with-flow', data),
+  createTemplateCampaign: (data) => api.post('/broadcasts', data),
+  update: (id, data) => api.put(`/broadcasts/${id}`, data),
+  sendNow: (id) => api.post(`/broadcasts/${id}/send`),
+  schedule: (id, scheduledAt) => api.post(`/broadcasts/${id}/schedule`, { scheduledAt }),
+  cancelSchedule: (id) => api.post(`/broadcasts/${id}/cancel`),
+  delete: (id) => api.delete(`/broadcasts/${id}`),
+};
+
+// WhatsApp Business Calling — business-initiated calls from the Live Inbox.
+// See routes/whatsappCalls.js and src/hooks/useWhatsAppCall.js.
+export const whatsappCallAPI = {
+  // integrationId is always the open conversation's own WhatsApp account —
+  // never left to the backend to guess, since an agency can have more than
+  // one WhatsApp number connected.
+  getPermission: (contactId, integrationId, refresh) =>
+    api.get(`/calls/permission/${contactId}`, { params: { integrationId, ...(refresh ? { refresh: '1' } : {}) } }),
+  requestPermission: (contactId, integrationId, message) =>
+    api.post(`/calls/permission/${contactId}/request`, { integrationId, ...(message ? { message } : {}) }),
+  initiate: (data) => api.post('/calls/initiate', data),
+  terminate: (callDbId) => api.post(`/calls/${callDbId}/terminate`),
+  getCall: (callDbId) => api.get(`/calls/${callDbId}`),
 };
 
 // (sequenceAPI now defined once, above, alongside the other Sequence Messages exports)

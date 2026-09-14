@@ -35,7 +35,7 @@ const NAV_CONFIG = {
       { label: 'Dashboard',        icon: LayoutDashboard, path: '/admin' },
       { label: 'Conversations',    icon: MessageSquare,   path: '/inbox',        moduleKey: 'feature_live_chat' },
       { label: 'Subscribers',      icon: Users,           path: '/contacts',     moduleKey: 'feature_subscribers' },
-      { label: 'Bot Manager',      icon: Bot,             path: '/bots',         moduleKey: 'feature_bot_manager' },
+      { label: 'Automation',      icon: Bot,             path: '/bots',         moduleKey: 'feature_bot_manager' },
       { label: 'Post Publishing',  icon: FileText,        path: '/social-posting' },
       { label: 'Connect Account',  icon: Radio,           path: '/connect-accounts' },
       { label: 'Broadcasts',       icon: Send,            path: '/campaigns',    moduleKey: 'feature_broadcasts' },
@@ -62,7 +62,7 @@ const NAV_CONFIG = {
       { label: 'Dashboard',        icon: LayoutDashboard, path: '/agency' },
       { label: 'Conversations',    icon: MessageSquare,   path: '/inbox',        moduleKey: 'feature_live_chat' },
       { label: 'Subscribers',      icon: Users,           path: '/contacts',     moduleKey: 'feature_subscribers' },
-      { label: 'Bot Manager',      icon: Bot,             path: '/bots',         moduleKey: 'feature_bot_manager' },
+      { label: 'Automation',      icon: Bot,             path: '/bots',         moduleKey: 'feature_bot_manager' },
       { label: 'Post Publishing',  icon: FileText,        path: '/social-posting' },
       { label: 'Connect Account',  icon: Radio,           path: '/connect-accounts' },
       { label: 'Broadcasts',       icon: Send,            path: '/campaigns',    moduleKey: 'feature_broadcasts' },
@@ -98,7 +98,7 @@ const NAV_CONFIG = {
       { label: 'Dashboard',        icon: LayoutDashboard, path: '/agency' },
       { label: 'Conversations',    icon: MessageSquare, path: '/inbox',          moduleKey: 'feature_live_chat' },
       { label: 'Subscribers',      icon: Users,         path: '/contacts',       moduleKey: 'feature_subscribers' },
-      { label: 'Bot Manager',      icon: Bot,           path: '/bots',           moduleKey: 'feature_bot_manager' },
+      { label: 'Automation',      icon: Bot,           path: '/bots',           moduleKey: 'feature_bot_manager' },
       { label: 'Post Publishing',  icon: FileText,      path: '/social-posting' },
       { label: 'Connect Account',  icon: Radio,         path: '/connect-accounts' },
       { label: 'Broadcasts',       icon: Send,          path: '/campaigns',      moduleKey: 'feature_broadcasts' },
@@ -197,7 +197,19 @@ export default function Sidebar() {
               background: '#f8fafc',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Link
+              to="/landing"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                textDecoration: 'none',
+                color: 'inherit',
+                cursor: 'pointer',
+              }}
+              title="Visit Landing Page"
+              onClick={closePopupNav}
+            >
               <div
                 style={{
                   width: 34,
@@ -221,7 +233,7 @@ export default function Sidebar() {
                   {subtitle}
                 </div>
               </div>
-            </div>
+            </Link>
 
             <button
               onClick={closePopupNav}
@@ -322,18 +334,32 @@ export default function Sidebar() {
         borderRight: '1px solid #e2e8f0',
       }}
     >
-      {/* Brand Logo Header */}
+      {/* Brand Logo Header — fixed to 56px to match .top-bar's height so the
+          sidebar header and top bar form one continuous, aligned strip. */}
       <div
         className="sidebar-logo"
         style={{
-          padding: collapsed ? '16px 12px' : '18px 16px',
+          height: 56,
+          padding: collapsed ? '0 12px' : '0 16px',
           justifyContent: collapsed ? 'center' : 'space-between',
           borderBottom: '1px solid #e2e8f0',
+          flexShrink: 0,
+          boxSizing: 'border-box',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Link
-            to="/"
+        <Link
+          to="/landing"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            textDecoration: 'none',
+            color: 'inherit',
+            cursor: 'pointer',
+          }}
+          title="Visit Landing Page"
+        >
+          <div
             style={{
               width: 36,
               height: 36,
@@ -345,12 +371,10 @@ export default function Sidebar() {
               color: '#ffffff',
               boxShadow: '0 2px 8px rgba(37, 99, 235, 0.25)',
               flexShrink: 0,
-              textDecoration: 'none',
             }}
-            title="Nexa Chatbot"
           >
             <Sparkles size={18} />
-          </Link>
+          </div>
 
           {!collapsed && (
             <div>
@@ -362,7 +386,7 @@ export default function Sidebar() {
               </div>
             </div>
           )}
-        </div>
+        </Link>
 
         {!collapsed && (
           <button

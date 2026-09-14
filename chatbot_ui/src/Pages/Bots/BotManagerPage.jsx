@@ -82,7 +82,7 @@ function getPlatformInfo(p) {
 
 /* ─── Primary Categories & Sub-tabs ─── */
 const MAIN_CATEGORIES = [
-  { id: 'automation',     label: 'Automation',      icon: Zap },
+  { id: 'automation',     label: 'Bot Manager',     icon: Zap },
   { id: 'dataCollection', label: 'Data Collection', icon: Folder },
   { id: 'ai',             label: 'AI',              icon: Sparkles },
   { id: 'engagement',     label: 'Engagement',      icon: Radio },
@@ -804,9 +804,9 @@ export default function BotManagerPage() {
         .bm-add-bot-btn {
           font-size: 0.78rem;
           font-weight: 700;
-          color: #6366f1;
-          background: rgba(99, 102, 241, 0.08);
-          border: 1px solid rgba(99, 102, 241, 0.2);
+          color: var(--primary);
+          background: rgba(37, 99, 235, 0.08);
+          border: 1px solid rgba(37, 99, 235, 0.2);
           border-radius: 6px;
           padding: 5px 10px;
           cursor: pointer;
@@ -816,7 +816,7 @@ export default function BotManagerPage() {
           transition: all 0.15s;
         }
         .bm-add-bot-btn:hover {
-          background: #6366f1;
+          background: var(--primary);
           color: #ffffff;
         }
         .bm-search-wrap {
@@ -972,8 +972,8 @@ export default function BotManagerPage() {
           color: #1a1a2e;
         }
         .bm-cat-tab.active {
-          color: #6366f1;
-          border-bottom-color: #6366f1;
+          color: var(--primary);
+          border-bottom-color: var(--primary);
           font-weight: 700;
         }
 
@@ -1004,10 +1004,10 @@ export default function BotManagerPage() {
           color: #1a1a2e;
         }
         .bm-subtab-pill.active {
-          background: #6366f1;
+          background: var(--primary);
           color: #ffffff;
-          border-color: #6366f1;
-          box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+          border-color: var(--primary);
+          box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
         }
 
         /* ── Work Area Content Box ── */
@@ -1081,9 +1081,9 @@ export default function BotManagerPage() {
           transition: all 0.15s;
         }
         .bm-row-action:hover {
-          border-color: #6366f1;
-          color: #6366f1;
-          background: rgba(99, 102, 241, 0.08);
+          border-color: var(--primary);
+          color: var(--primary);
+          background: rgba(37, 99, 235, 0.08);
           transform: translateY(-1px);
         }
         .bm-row-action.delete:hover {
@@ -1145,31 +1145,31 @@ export default function BotManagerPage() {
               className={`bm-pill ${channelFilter === 'WHATSAPP' ? 'active' : ''}`}
               onClick={() => handleChannelFilterChange('WHATSAPP')}
             >
-              💬 {channelCounts.WHATSAPP}
+              <MessageCircle size={12} color="#25d366" /> {channelCounts.WHATSAPP}
             </button>
             <button
               className={`bm-pill ${channelFilter === 'TELEGRAM' ? 'active' : ''}`}
               onClick={() => handleChannelFilterChange('TELEGRAM')}
             >
-              ✈️ {channelCounts.TELEGRAM}
+              <Send size={12} color="#229ed9" /> {channelCounts.TELEGRAM}
             </button>
             <button
               className={`bm-pill ${channelFilter === 'FACEBOOK' ? 'active' : ''}`}
               onClick={() => handleChannelFilterChange('FACEBOOK')}
             >
-              📘 {channelCounts.FACEBOOK}
+              <Facebook size={12} color="#1877f2" /> {channelCounts.FACEBOOK}
             </button>
             <button
               className={`bm-pill ${channelFilter === 'INSTAGRAM' ? 'active' : ''}`}
               onClick={() => handleChannelFilterChange('INSTAGRAM')}
             >
-              📸 {channelCounts.INSTAGRAM}
+              <Instagram size={12} color="#e1306c" /> {channelCounts.INSTAGRAM}
             </button>
             <button
               className={`bm-pill ${channelFilter === 'WEBCHAT' ? 'active' : ''}`}
               onClick={() => handleChannelFilterChange('WEBCHAT')}
             >
-              🌐 {channelCounts.WEBCHAT}
+              <Globe size={12} color="#6366f1" /> {channelCounts.WEBCHAT}
             </button>
           </div>
 
@@ -1346,7 +1346,7 @@ export default function BotManagerPage() {
                       onMouseOver={(e) => e.currentTarget.style.background = '#f8f8fc'}
                       onMouseOut={(e) => e.currentTarget.style.background = '#ffffff'}
                     >
-                      <Plus size={13} color="#6366f1" /> Create Flow
+                      <Plus size={13} color="var(--primary)" /> Create Flow
                     </div>
                     <div
                       onClick={() => {
@@ -1490,13 +1490,13 @@ export default function BotManagerPage() {
                       gap: 6,
                       padding: '7px 16px',
                       borderRadius: 8,
-                      background: '#6366f1',
+                      background: 'var(--primary)',
                       color: '#ffffff',
                       border: 'none',
                       fontWeight: 700,
                       fontSize: '0.84rem',
                       cursor: 'pointer',
-                      boxShadow: '0 2px 6px rgba(99, 102, 241, 0.3)',
+                      boxShadow: '0 2px 6px rgba(37, 99, 235, 0.3)',
                     }}
                   >
                     <Plus size={15} /> Create
@@ -1528,7 +1528,7 @@ export default function BotManagerPage() {
                     ) : displayedFlows.length === 0 ? (
                       <tr>
                         <td colSpan={6} style={{ padding: 60, textAlign: 'center' }}>
-                          <div style={{ fontSize: '2rem', marginBottom: 6 }}>🤖</div>
+                          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6, color: '#94a3b8' }}><Bot size={32} strokeWidth={1.5} /></div>
                           <h4 style={{ fontSize: '0.94rem', fontWeight: 700, margin: '0 0 4px 0', color: '#1a1a2e' }}>
                             No keyword reply flows yet
                           </h4>
@@ -1540,7 +1540,7 @@ export default function BotManagerPage() {
                             style={{
                               padding: '7px 14px',
                               borderRadius: 8,
-                              background: '#6366f1',
+                              background: 'var(--primary)',
                               color: '#ffffff',
                               border: 'none',
                               fontWeight: 700,
@@ -1562,7 +1562,7 @@ export default function BotManagerPage() {
                           </td>
 
                           <td>
-                            <code style={{ fontSize: '0.8rem', color: '#6366f1', background: '#f0f2ff', padding: '3px 8px', borderRadius: 6, fontWeight: 600 }}>
+                            <code style={{ fontSize: '0.8rem', color: 'var(--primary)', background: '#f0f2ff', padding: '3px 8px', borderRadius: 6, fontWeight: 600 }}>
                               {formatUniqueId(flow.id)}
                             </code>
                           </td>
@@ -1707,7 +1707,7 @@ export default function BotManagerPage() {
                   <button style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #e4e4f0', background: '#ffffff', cursor: 'pointer' }}>
                     Previous
                   </button>
-                  <button style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #6366f1', background: '#6366f1', color: '#fff', fontWeight: 700 }}>
+                  <button style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--primary)', background: 'var(--primary)', color: '#fff', fontWeight: 700 }}>
                     1
                   </button>
                   <button style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #e4e4f0', background: '#ffffff', cursor: 'pointer' }}>
@@ -1815,7 +1815,7 @@ export default function BotManagerPage() {
               ═════════════════════════════════════════════════════════════════ */}
           {activeCategory === 'automation' && activeSubTab === 'messageTemplates' && !selectedAccount && (
             <div className="bm-content-card" style={{ padding: '60px 20px', textAlign: 'center' }}>
-              <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>📋</div>
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12, color: '#94a3b8' }}><FileText size={40} strokeWidth={1.5} /></div>
               <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#1a1a2e', marginBottom: 6 }}>
                 Select a Bot Account to View Templates
               </h3>
@@ -1875,7 +1875,7 @@ export default function BotManagerPage() {
               </div>
 
               <div style={{ textAlign: 'center', padding: '60px 20px', color: '#5c5c80' }}>
-                <div style={{ fontSize: '2.5rem', marginBottom: 10 }}>⚡</div>
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10, color: '#94a3b8' }}><Zap size={40} strokeWidth={1.5} /></div>
                 <h4 style={{ fontSize: '1.05rem', fontWeight: 800, margin: '0 0 6px 0', color: '#1a1a2e' }}>
                   {activeSubTab.replace(/([A-Z])/g, ' $1').trim()} Module
                 </h4>
@@ -1887,7 +1887,7 @@ export default function BotManagerPage() {
                   style={{
                     padding: '8px 18px',
                     borderRadius: 8,
-                    background: '#6366f1',
+                    background: 'var(--primary)',
                     color: '#fff',
                     border: 'none',
                     fontWeight: 700,
@@ -1929,7 +1929,7 @@ export default function BotManagerPage() {
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
               <h3 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: '#1a1a2e', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Sparkles size={20} color="#6366f1" /> Create Conversational Flow
+                <Sparkles size={20} color="var(--primary)" /> Create Conversational Flow
               </h3>
               <button
                 onClick={() => setShowCreateModal(false)}
@@ -1940,9 +1940,13 @@ export default function BotManagerPage() {
                   border: '1px solid #e4e4f0',
                   background: '#f8f8fc',
                   cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#5c5c80',
                 }}
               >
-                ✕
+                <X size={14} />
               </button>
             </div>
 
@@ -1975,7 +1979,7 @@ export default function BotManagerPage() {
                         style={{
                           padding: 12,
                           borderRadius: 10,
-                          border: `1.5px solid ${isSel ? '#6366f1' : '#e4e4f0'}`,
+                          border: `1.5px solid ${isSel ? 'var(--primary)' : '#e4e4f0'}`,
                           background: isSel ? '#f0f2ff' : '#ffffff',
                           cursor: 'pointer',
                         }}
@@ -2007,7 +2011,7 @@ export default function BotManagerPage() {
                   style={{
                     padding: '8px 22px',
                     borderRadius: 8,
-                    background: '#6366f1',
+                    background: 'var(--primary)',
                     color: '#ffffff',
                     border: 'none',
                     cursor: 'pointer',
@@ -2049,7 +2053,7 @@ export default function BotManagerPage() {
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
               <h3 style={{ fontSize: '1.15rem', fontWeight: 800, margin: 0, color: '#1a1a2e', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Settings size={18} color="#6366f1" /> Bot Configuration
+                <Settings size={18} color="var(--primary)" /> Bot Configuration
               </h3>
               <button
                 onClick={() => setShowSettingsModal(false)}
@@ -2060,9 +2064,13 @@ export default function BotManagerPage() {
                   border: '1px solid #e4e4f0',
                   background: '#f8f8fc',
                   cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#5c5c80',
                 }}
               >
-                ✕
+                <X size={14} />
               </button>
             </div>
 
@@ -2106,7 +2114,7 @@ export default function BotManagerPage() {
                   style={{
                     padding: '8px 20px',
                     borderRadius: 8,
-                    background: '#6366f1',
+                    background: 'var(--primary)',
                     color: '#ffffff',
                     border: 'none',
                     cursor: 'pointer',
@@ -2230,7 +2238,7 @@ export default function BotManagerPage() {
                   onMouseOver={(e) => { e.currentTarget.style.background = '#f1f5f9'; }}
                   onMouseOut={(e) => { e.currentTarget.style.background = '#f8fafc'; }}
                 >
-                  <Sparkles size={13} color="#6366f1" />
+                  <Sparkles size={13} color="var(--primary)" />
                   <span>Simulate Test Error</span>
                 </button>
 
@@ -2335,8 +2343,8 @@ export default function BotManagerPage() {
                         fontSize: '0.74rem',
                         fontWeight: 600,
                         cursor: 'pointer',
-                        border: isActive ? '1px solid #6366f1' : '1px solid #e2e8f0',
-                        background: isActive ? '#6366f1' : '#ffffff',
+                        border: isActive ? '1px solid var(--primary)' : '1px solid #e2e8f0',
+                        background: isActive ? 'var(--primary)' : '#ffffff',
                         color: isActive ? '#ffffff' : '#64748b',
                         transition: 'all 0.15s',
                         whiteSpace: 'nowrap',
@@ -2496,21 +2504,27 @@ export default function BotManagerPage() {
                               {errItem.flow_name && (
                                 <span
                                   style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 4,
                                     fontSize: '0.72rem',
                                     fontWeight: 600,
                                     padding: '2px 8px',
                                     borderRadius: 6,
-                                    background: 'rgba(99, 102, 241, 0.08)',
+                                    background: 'rgba(37, 99, 235, 0.08)',
                                     color: '#4f46e5',
                                   }}
                                 >
-                                  ⚡ Flow: {errItem.flow_name}
+                                  <Zap size={11} /> Flow: {errItem.flow_name}
                                 </span>
                               )}
 
                               {errItem.bot_name && (
                                 <span
                                   style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 4,
                                     fontSize: '0.72rem',
                                     fontWeight: 600,
                                     padding: '2px 8px',
@@ -2519,7 +2533,7 @@ export default function BotManagerPage() {
                                     color: '#059669',
                                   }}
                                 >
-                                  🤖 Bot: {errItem.bot_name}
+                                  <Bot size={11} /> Bot: {errItem.bot_name}
                                 </span>
                               )}
 

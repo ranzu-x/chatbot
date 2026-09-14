@@ -1,367 +1,793 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate, useLocation } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
-import { campaignAPI, templateAPI } from '../../services/api';
+import { broadcastAPI } from '../../services/api';
+import AudienceForm from '../../Components/Broadcast/AudienceForm';
+import {
+  Megaphone, MessageCircle, Facebook, Send, Video, BarChart3, Trash2, X, ArrowRight,
+  Plus, Clock, Tag, Workflow, FileText, CheckCircle2, AlertTriangle, Loader2,
+  Phone, CalendarClock, Ban, Search, Inbox, Eye, Zap, SlidersHorizontal,
+} from 'lucide-react';
+
+const CHANNELS = [
+  { id: 'WHATSAPP', label: 'WhatsApp',  Icon: MessageCircle, hint: '24-hour window + templates' },
+  { id: 'FACEBOOK', label: 'Messenger', Icon: Facebook,      hint: 'Inside the 24-hour window' },
+  { id: 'TELEGRAM', label: 'Telegram',  Icon: Send,          hint: 'No time limit' },
+  { id: 'TIKTOK',   label: 'TikTok',    Icon: Video,         hint: 'Reply-only, 48 hours' },
+];
+
+const WINDOW_NOTE = {
+  WHATSAPP: 'Free-form messages to anyone who messaged you in the last 24 hours.',
+  FACEBOOK: 'Messenger only allows automated sends to subscribers inside their 24-hour window — Meta retired the old outside-window broadcast tools in Feb 2026, and the replacement is not yet open to new integrations.',
+  TELEGRAM: 'No time window — reaches anyone who has ever started a chat with your bot.',
+  TIKTOK: "TikTok's Business Messaging API is reply-only: a business can never start a conversation, only reply within 48 hours of the subscriber's last message. This is a platform policy, not a limitation of this app.",
+};
+
+const STATUS_META = {
+  DRAFT:      { label: 'Draft',     badge: 'badge-muted',   Icon: FileText },
+  SCHEDULED:  { label: 'Scheduled', badge: 'badge-primary', Icon: CalendarClock },
+  PROCESSING: { label: 'Sending',   badge: 'badge-warning', Icon: Loader2 },
+  COMPLETED:  { label: 'Completed', badge: 'badge-success', Icon: CheckCircle2 },
+  FAILED:     { label: 'Failed',    badge: 'badge-danger',  Icon: AlertTriangle },
+  CANCELLED:  { label: 'Cancelled', badge: 'badge-muted',   Icon: Ban },
+};
+const STATUS_FILTERS = ['DRAFT', 'SCHEDULED', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED'];
+
+/* Three hues only — the workspace accent, success and danger — plus one
+   violet for "read" so it never collides with "sent". Accent-derived values
+   follow Settings → Appearance automatically. */
+const M = {
+  sent: 'var(--primary)',
+  delivered: 'var(--success)',
+  read: '#8b5cf6',
+  failed: 'var(--danger)',
+};
+
+const nf = (v) => (v || 0).toLocaleString();
+const pctOf = (v, total) => (total > 0 ? Math.round(((v || 0) / total) * 100) : 0);
+
+function formatWhen(value) {
+  if (!value) return '';
+  return new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+const PAGE_CSS = `
+.bc-tabs{display:inline-flex;gap:4px;padding:4px;background:var(--bg-hover);border-radius:calc(var(--radius) + 2px);flex-wrap:wrap}
+.bc-tab{display:inline-flex;align-items:center;gap:7px;padding:8px 15px;border-radius:var(--radius-sm);border:none;background:transparent;cursor:pointer;font-weight:600;font-size:.85rem;color:var(--text-secondary);transition:background .15s,color .15s,box-shadow .15s}
+.bc-tab:hover{color:var(--text-primary)}
+.bc-tab.active{background:var(--bg-card);color:var(--primary);box-shadow:var(--shadow-sm)}
+
+.bc-ctx{display:flex;justify-content:space-between;align-items:center;gap:18px;flex-wrap:wrap;padding:14px 16px;border:1px solid var(--border);border-left:3px solid var(--primary);border-radius:var(--radius);background:var(--bg-card)}
+.bc-seg{display:inline-flex;gap:3px;padding:3px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-base);flex-shrink:0}
+.bc-seg button{display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:5px;border:none;cursor:pointer;font-weight:600;font-size:.78rem;background:transparent;color:var(--text-secondary);transition:all .15s}
+.bc-seg button:hover{color:var(--text-primary)}
+.bc-seg button.active{background:var(--primary);color:#fff}
+
+.bc-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 16px;border:1px solid var(--border);border-bottom:none;border-radius:var(--radius) var(--radius) 0 0;background:var(--bg-card)}
+.bc-search{position:relative;flex:1;min-width:200px;max-width:340px}
+.bc-search svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none}
+.bc-search .form-input{padding-left:33px}
+.bc-table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:0 0 var(--radius) var(--radius);background:var(--bg-card)}
+.bc-table{width:100%;border-collapse:collapse}
+.bc-table th{padding:10px 16px;text-align:left;font-size:.7rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);white-space:nowrap;border-bottom:1px solid var(--border);background:var(--bg-base)}
+.bc-table td{padding:14px 16px;font-size:.85rem;border-top:1px solid var(--border);vertical-align:middle}
+.bc-table tbody tr{transition:background .12s}
+.bc-table tbody tr:hover{background:var(--bg-hover)}
+.bc-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:5px;font-size:.72rem;font-weight:500;color:var(--text-secondary);background:var(--bg-hover);white-space:nowrap}
+.bc-chip svg{flex-shrink:0;opacity:.75}
+.bc-chip.warn{background:rgba(239,68,68,.08);color:var(--danger)}
+.bc-iconbtn{width:30px;height:30px;border-radius:var(--radius-sm);display:grid;place-items:center;border:1px solid var(--border);background:var(--bg-surface);color:var(--text-secondary);cursor:pointer;transition:all .15s;flex-shrink:0}
+.bc-iconbtn:hover{background:var(--primary-soft);color:var(--primary);border-color:var(--primary-ring)}
+.bc-iconbtn.danger:hover{background:rgba(239,68,68,.1);color:var(--danger);border-color:rgba(239,68,68,.3)}
+.bc-mini{height:4px;border-radius:99px;background:var(--bg-hover);overflow:hidden;margin-top:5px;min-width:74px}
+.bc-empty{padding:66px 24px;text-align:center;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-card)}
+.bc-skel{height:62px;border-top:1px solid var(--border);background:linear-gradient(90deg,var(--bg-hover) 25%,var(--bg-card) 50%,var(--bg-hover) 75%);background-size:200% 100%;animation:bcShimmer 1.4s infinite}
+
+.bc-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);backdrop-filter:blur(3px);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;animation:bcFade .15s ease}
+.bc-modal{background:var(--bg-card);border:1px solid var(--border);border-radius:calc(var(--radius) + 4px);max-height:90vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.25);animation:bcPop .17s cubic-bezier(.2,.9,.3,1.1)}
+.bc-modal-head{display:flex;align-items:flex-start;gap:12px;padding:18px 20px;border-bottom:1px solid var(--border);flex-shrink:0}
+.bc-modal-body{padding:20px;overflow-y:auto}
+.bc-modal-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:14px 20px;border-top:1px solid var(--border);background:var(--bg-base);flex-shrink:0}
+.bc-slide{position:fixed;top:0;right:0;bottom:0;width:440px;max-width:94vw;background:var(--bg-card);border-left:1px solid var(--border);z-index:1001;display:flex;flex-direction:column;box-shadow:-12px 0 40px rgba(0,0,0,.16);animation:bcSlide .2s ease}
+.bc-toast{position:fixed;bottom:24px;right:24px;z-index:1100;display:flex;align-items:center;gap:9px;padding:12px 16px;border-radius:var(--radius);font-weight:600;font-size:.85rem;color:#fff;box-shadow:var(--shadow-md);animation:bcUp .18s ease}
+.bc-sq{border-radius:10px;display:grid;place-items:center;flex-shrink:0}
+.bc-spin{animation:bcSpin 1s linear infinite}
+@keyframes bcFade{from{opacity:0}to{opacity:1}}
+@keyframes bcPop{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes bcSlide{from{transform:translateX(100%)}to{transform:none}}
+@keyframes bcUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes bcSpin{to{transform:rotate(360deg)}}
+@keyframes bcShimmer{from{background-position:200% 0}to{background-position:-200% 0}}
+`;
+
+/* ── Pieces ──────────────────────────────────────────────────────── */
+
+function StatusBadge({ status }) {
+  const meta = STATUS_META[status] || STATUS_META.DRAFT;
+  return (
+    <span className={`badge ${meta.badge}`}>
+      <meta.Icon size={11} className={status === 'PROCESSING' ? 'bc-spin' : undefined} />
+      {meta.label}
+    </span>
+  );
+}
+
+function Chip({ icon, children, warn }) {
+  return <span className={`bc-chip${warn ? ' warn' : ''}`}>{icon}{children}</span>;
+}
+
+function StatCard({ icon, tint, value, label, sub }) {
+  return (
+    <div className="stat-card">
+      <div className="stat-icon" style={{ background: tint.bg, color: tint.fg }}>{icon}</div>
+      <div style={{ minWidth: 0 }}>
+        <div className="stat-value">{value}</div>
+        <div className="stat-label">
+          {label}{sub ? <span style={{ color: 'var(--text-muted)' }}> · {sub}</span> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** One metric column: count, share of the audience, and a hairline bar. */
+function MetricCell({ value, total, color }) {
+  const pct = pctOf(value, total);
+  return (
+    <div style={{ minWidth: 86 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+        <span style={{ fontWeight: 700 }}>{nf(value)}</span>
+        {total > 0 && <span style={{ fontSize: '.72rem', color: 'var(--text-muted)' }}>{pct}%</span>}
+      </div>
+      <div className="bc-mini">
+        <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 99, transition: 'width .3s' }} />
+      </div>
+    </div>
+  );
+}
+
+function ModalShell({ icon, title, subtitle, onClose, width = 540, children }) {
+  return (
+    <div className="bc-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bc-modal" style={{ width, maxWidth: '94vw' }} role="dialog" aria-modal="true">
+        <div className="bc-modal-head">
+          <div className="bc-sq" style={{ width: 38, height: 38, background: 'var(--primary-soft)', color: 'var(--primary)' }}>
+            {icon}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h3 style={{ fontSize: '1.02rem', fontWeight: 700, lineHeight: 1.3 }}>{title}</h3>
+            {subtitle && <p style={{ fontSize: '.8rem', color: 'var(--text-secondary)', marginTop: 2 }}>{subtitle}</p>}
+          </div>
+          <button type="button" className="bc-iconbtn" onClick={onClose} aria-label="Close"><X size={15} /></button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* ── Page ─────────────────────────────────────────────────────────── */
 
 export default function CampaignListPage() {
-  const [campaigns, setCampaigns] = useState([]);
-  const [waTemplates, setWaTemplates] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState(null);
+  const navigate = useNavigate();
+  const location = useLocation();
 
-  // Detail Drawer & Modal
+  const [activeTab, setActiveTab] = useState('WHATSAPP');
+  const [waMode, setWaMode] = useState('WINDOW'); // 'WINDOW' | 'TEMPLATE'
+  const [campaigns, setCampaigns] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [labels, setLabels] = useState([]);
+  const [templates, setTemplates] = useState([]);
+  const [integrations, setIntegrations] = useState([]);
+
+  const [statusFilter, setStatusFilter] = useState('');
+  const [accountFilter, setAccountFilter] = useState('');
+  const [search, setSearch] = useState('');
+
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createName, setCreateName] = useState('');
+  const [createTemplateId, setCreateTemplateId] = useState('');
+  const [createIntegrationId, setCreateIntegrationId] = useState('');
+
+  const [configuring, setConfiguring] = useState(null);
+  const [configIntegrationId, setConfigIntegrationId] = useState('');
+  const [audienceForm, setAudienceForm] = useState({ includeLabelIds: [], excludeLabelIds: [], includeContacts: [], excludeContacts: [], tagLabelId: null });
+  const [previewCount, setPreviewCount] = useState(null);
+  const [scheduleAt, setScheduleAt] = useState('');
+  const [savingConfig, setSavingConfig] = useState(false);
+
   const [selectedCampaign, setSelectedCampaign] = useState(null);
   const [campaignLogs, setCampaignLogs] = useState([]);
   const [logsLoading, setLogsLoading] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
 
-  // Form State
-  const [form, setForm] = useState({
-    name: '',
-    platform: 'WHATSAPP',
-    templateId: '',
-    messageBody: '',
-    targetPlatformFilter: 'ALL',
-    sendNow: true,
-  });
+  const [toast, setToast] = useState(null);
+  const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3500); };
 
-  const showToast = (msg, type = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
-  };
+  const channel = CHANNELS.find((c) => c.id === activeTab) || CHANNELS[0];
 
   const loadCampaigns = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await campaignAPI.getAll();
+      const res = await broadcastAPI.getAll(activeTab);
       setCampaigns(res.data.campaigns || []);
-    } catch (err) {
-      console.error(err);
+    } catch {
       showToast('Failed to load campaigns', 'error');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeTab]);
+
+  useEffect(() => { loadCampaigns(); }, [loadCampaigns]);
 
   useEffect(() => {
-    loadCampaigns();
-    templateAPI.getWATemplates()
-      .then(res => setWaTemplates(res.data.templates || []))
-      .catch(err => console.error(err));
-  }, [loadCampaigns]);
+    broadcastAPI.getFormData(activeTab).then((res) => {
+      setLabels(res.data.labels || []);
+      setTemplates(res.data.templates || []);
+      const integs = res.data.integrations || [];
+      setIntegrations(integs);
+      // Auto-pick when there is only one account for this platform — a
+      // picker with one greyed-out option is just friction.
+      setCreateIntegrationId(integs.length === 1 ? String(integs[0].id) : '');
+    }).catch(() => {});
+  }, [activeTab]);
 
-  // View Campaign Logs
+  function integrationLabel(i) {
+    return i.wa_display_phone || i.fb_page_name || i.name || `Account #${i.id}`;
+  }
+
+  const visible = useMemo(() => campaigns.filter((c) => {
+    if (statusFilter && c.status !== statusFilter) return false;
+    if (accountFilter && String(c.integration_id || '') !== accountFilter) return false;
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      const hay = `${c.name || ''} ${c.flow_name || ''} ${c.template_name || ''} ${c.integration_name || ''} ${c.wa_display_phone || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  }), [campaigns, statusFilter, accountFilter, search]);
+
+  // Roll-up across this channel's campaigns for the summary cards.
+  const totals = useMemo(() => campaigns.reduce((acc, c) => ({
+    targeted: acc.targeted + (c.total_targeted || 0),
+    sent: acc.sent + (c.sent_count || 0),
+    delivered: acc.delivered + (c.delivered_count || 0),
+    read: acc.read + (c.read_count || 0),
+    failed: acc.failed + (c.failed_count || 0),
+  }), { targeted: 0, sent: 0, delivered: 0, read: 0, failed: 0 }), [campaigns]);
+
+  // Live audience preview while configuring
+  useEffect(() => {
+    if (!configuring) return;
+    setPreviewCount(null);
+    const t = setTimeout(async () => {
+      try {
+        const res = await broadcastAPI.audiencePreview({
+          platform: configuring.platform,
+          includeLabelIds: audienceForm.includeLabelIds,
+          excludeLabelIds: audienceForm.excludeLabelIds,
+          includeContactIds: audienceForm.includeContacts.map((c) => c.id),
+          excludeContactIds: audienceForm.excludeContacts.map((c) => c.id),
+        });
+        setPreviewCount(res.data.count);
+      } catch { setPreviewCount(null); }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [configuring, audienceForm]);
+
+  const handleCreateClick = () => {
+    setCreateName('');
+    setCreateTemplateId('');
+    setCreateIntegrationId(integrations.length === 1 ? String(integrations[0].id) : '');
+    setShowCreateModal(true);
+  };
+
+  const openConfigure = (camp) => {
+    const parseIds = (v) => { try { return Array.isArray(v) ? v : JSON.parse(v || '[]'); } catch { return []; } };
+    setConfiguring(camp);
+    setConfigIntegrationId(camp.integration_id ? String(camp.integration_id) : (integrations.length === 1 ? String(integrations[0].id) : ''));
+    setAudienceForm({
+      includeLabelIds: parseIds(camp.include_label_ids),
+      excludeLabelIds: parseIds(camp.exclude_label_ids),
+      includeContacts: [],
+      excludeContacts: [],
+      tagLabelId: camp.tag_label_id || null,
+    });
+    setScheduleAt('');
+  };
+
+  const handleCreateSubmit = async (e) => {
+    e.preventDefault();
+    if (!createName.trim()) return;
+    if (!createIntegrationId) { showToast(`Choose which ${channel.label} account to send from`, 'error'); return; }
+    setCreating(true);
+    try {
+      if (activeTab === 'WHATSAPP' && waMode === 'TEMPLATE') {
+        if (!createTemplateId) { showToast('Pick an approved template', 'error'); setCreating(false); return; }
+        const res = await broadcastAPI.createTemplateCampaign({ name: createName, platform: 'WHATSAPP', templateId: createTemplateId, integrationId: createIntegrationId });
+        showToast('Campaign created — configure its audience next');
+        setShowCreateModal(false);
+        loadCampaigns();
+        openConfigure({ id: res.data.campaignId, name: createName, platform: 'WHATSAPP', mode: 'TEMPLATE', status: 'DRAFT', integration_id: createIntegrationId, include_label_ids: null, exclude_label_ids: null, include_contact_ids: null, exclude_contact_ids: null, tag_label_id: null });
+      } else {
+        const res = await broadcastAPI.startWithFlow({ name: createName, platform: activeTab, integrationId: createIntegrationId });
+        setShowCreateModal(false);
+        navigate(`/flows/${res.data.flowId}/edit`, {
+          state: { from: location.pathname, label: 'Broadcasting', broadcastCampaignId: res.data.campaignId },
+        });
+      }
+    } catch (err) {
+      showToast(err.response?.data?.message || 'Failed to create campaign', 'error');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const saveConfigure = async (sendMode) => {
+    if (!configIntegrationId) { showToast('Choose which account this campaign sends from', 'error'); return; }
+    setSavingConfig(true);
+    try {
+      await broadcastAPI.update(configuring.id, {
+        integrationId: configIntegrationId,
+        includeLabelIds: audienceForm.includeLabelIds,
+        excludeLabelIds: audienceForm.excludeLabelIds,
+        includeContactIds: audienceForm.includeContacts.map((c) => c.id),
+        excludeContactIds: audienceForm.excludeContacts.map((c) => c.id),
+        tagLabelId: audienceForm.tagLabelId,
+      });
+      if (sendMode === 'now') {
+        await broadcastAPI.sendNow(configuring.id);
+        showToast('Broadcast started!');
+      } else if (sendMode === 'schedule') {
+        if (!scheduleAt) { showToast('Pick a date/time to schedule', 'error'); setSavingConfig(false); return; }
+        await broadcastAPI.schedule(configuring.id, new Date(scheduleAt).toISOString());
+        showToast('Broadcast scheduled!');
+      } else {
+        showToast('Draft saved');
+      }
+      setConfiguring(null);
+      loadCampaigns();
+    } catch (err) {
+      showToast(err.response?.data?.message || 'Failed to save', 'error');
+    } finally {
+      setSavingConfig(false);
+    }
+  };
+
   const handleViewLogs = async (camp) => {
     setSelectedCampaign(camp);
     setLogsLoading(true);
     try {
-      const res = await campaignAPI.getOne(camp.id);
+      const res = await broadcastAPI.getOne(camp.id);
       setCampaignLogs(res.data.logs || []);
-    } catch (err) {
-      console.error(err);
+      setSelectedCampaign(res.data.campaign);
+    } catch {
       showToast('Failed to load recipient logs', 'error');
     } finally {
       setLogsLoading(false);
     }
   };
 
-  // Create & Launch Campaign
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      const res = await campaignAPI.create(form);
-      showToast(res.data.message || 'Campaign launched!');
-      setShowCreateModal(false);
-      setForm({
-        name: '',
-        platform: 'WHATSAPP',
-        templateId: '',
-        messageBody: '',
-        targetPlatformFilter: 'ALL',
-        sendNow: true,
-      });
-      loadCampaigns();
-    } catch (err) {
-      showToast(err.response?.data?.message || 'Creation failed', 'error');
-    } finally {
-      setSaving(false);
-    }
+  const handleCancelSchedule = async (camp) => {
+    try { await broadcastAPI.cancelSchedule(camp.id); showToast('Schedule cancelled'); loadCampaigns(); }
+    catch { showToast('Failed to cancel', 'error'); }
   };
 
-  // Delete Campaign
   const handleDelete = async (camp) => {
     if (!window.confirm(`Delete campaign "${camp.name}"?`)) return;
     try {
-      await campaignAPI.delete(camp.id);
+      await broadcastAPI.delete(camp.id);
       showToast('Campaign deleted');
       if (selectedCampaign?.id === camp.id) setSelectedCampaign(null);
       loadCampaigns();
-    } catch (err) {
-      showToast('Delete failed', 'error');
-    }
+    } catch { showToast('Delete failed', 'error'); }
   };
+
+  const isTemplateMode = activeTab === 'WHATSAPP' && waMode === 'TEMPLATE';
+  const contextNote = isTemplateMode
+    ? 'Sends a pre-approved WhatsApp Template — reaches subscribers regardless of the 24-hour window, exactly what Meta requires for outreach outside it.'
+    : WINDOW_NOTE[activeTab];
+  const filtersActive = Boolean(statusFilter || accountFilter || search.trim());
 
   return (
     <AppLayout>
-      <div className="page-header flex justify-between items-center" style={{ marginBottom: 24 }}>
+      <style>{PAGE_CSS}</style>
+
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h1 className="page-title" style={{ fontSize: '1.75rem', fontWeight: 700 }}>Broadcast Campaigns 📢</h1>
-          <p className="page-subtitle" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-            Send bulk outbound broadcasts across WhatsApp, Messenger, Instagram, and Telegram
+          <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+            <Megaphone size={20} style={{ color: 'var(--primary)' }} /> Broadcasting
+          </h1>
+          <p className="page-subtitle">
+            Create, schedule and track bulk campaigns across WhatsApp, Messenger, Telegram and TikTok.
           </p>
         </div>
-
-        <button className="btn btn-primary" onClick={() => setShowCreateModal(true)}>
-          + Create Broadcast Campaign
+        <button className="btn btn-primary" onClick={handleCreateClick}>
+          <Plus size={15} /> New Broadcast
         </button>
       </div>
 
-      {/* Toast */}
-      {toast && (
-        <div
-          style={{
-            position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
-            padding: '12px 20px', borderRadius: 8,
-            background: toast.type === 'error' ? 'var(--danger)' : 'var(--success)',
-            color: '#fff', fontWeight: 500, boxShadow: 'var(--shadow-md)'
-          }}
-        >
-          {toast.msg}
+      <div className="page-body" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+
+        {/* Channel switcher */}
+        <div className="bc-tabs">
+          {CHANNELS.map((c) => (
+            <button
+              key={c.id}
+              className={`bc-tab${activeTab === c.id ? ' active' : ''}`}
+              onClick={() => { setActiveTab(c.id); setSelectedCampaign(null); setStatusFilter(''); setAccountFilter(''); setSearch(''); }}
+            >
+              <c.Icon size={15} /> {c.label}
+            </button>
+          ))}
         </div>
-      )}
 
-      {/* Main Content Layout */}
-      <div style={{ display: 'grid', gridTemplateColumns: selectedCampaign ? '1fr 380px' : '1fr', gap: 24 }}>
-        {/* Campaign Cards List */}
-        <div>
-          {loading ? (
-            <div style={{ padding: 60, textAlign: 'center' }}>
-              <div className="loading-spinner" style={{ margin: '0 auto 12px' }} />
-              <p style={{ color: 'var(--text-secondary)' }}>Loading campaigns…</p>
+        {/* Sending rules + WhatsApp mode */}
+        <div className="bc-ctx">
+          <div style={{ flex: 1, minWidth: 260 }}>
+            <div style={{ fontSize: '.85rem', fontWeight: 700, marginBottom: 3 }}>
+              {activeTab === 'WHATSAPP'
+                ? (isTemplateMode ? 'Anytime — approved template' : 'Inside the 24-hour window')
+                : `${channel.label} · ${channel.hint}`}
             </div>
-          ) : campaigns.length === 0 ? (
-            <div className="card" style={{ padding: 60, textAlign: 'center' }}>
-              <div style={{ fontSize: '3rem', marginBottom: 12 }}>📢</div>
-              <h3 style={{ fontWeight: 600, marginBottom: 4 }}>No broadcast campaigns yet</h3>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: 16 }}>
-                Create your first bulk campaign to reach your subscribers on WhatsApp & Social Channels.
-              </p>
-              <button className="btn btn-primary" onClick={() => setShowCreateModal(true)}>
-                + Create Broadcast Campaign
+            <p style={{ fontSize: '.8rem', color: 'var(--text-secondary)', lineHeight: 1.55, maxWidth: 680 }}>{contextNote}</p>
+          </div>
+          {activeTab === 'WHATSAPP' && (
+            <div className="bc-seg">
+              <button className={waMode === 'WINDOW' ? 'active' : ''} onClick={() => setWaMode('WINDOW')}>
+                <Clock size={13} /> Inside 24 Hours
               </button>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {campaigns.map((camp) => {
-                const percent = camp.total_contacts > 0 ? Math.round((camp.sent_count / camp.total_contacts) * 100) : 0;
-                const statusColor = camp.status === 'COMPLETED' ? 'var(--success)' : camp.status === 'PROCESSING' ? 'var(--warning)' : camp.status === 'FAILED' ? 'var(--danger)' : '#64748b';
-
-                return (
-                  <div
-                    key={camp.id}
-                    className="card"
-                    style={{
-                      padding: 20, display: 'flex', flexDirection: 'column', gap: 14,
-                      border: selectedCampaign?.id === camp.id ? '2px solid var(--primary)' : '1px solid var(--border)',
-                      background: 'var(--bg-card)', borderRadius: 12
-                    }}
-                  >
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <div className="flex items-center gap-2" style={{ marginBottom: 4 }}>
-                          <span style={{ fontSize: '1.1rem', fontWeight: 700 }}>{camp.name}</span>
-                          <span
-                            style={{
-                              padding: '2px 8px', borderRadius: 10, fontSize: '0.75rem', fontWeight: 700,
-                              color: '#fff', background: statusColor
-                            }}
-                          >
-                            {camp.status}
-                          </span>
-                        </div>
-                        <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                          Channel: <strong>{camp.platform}</strong> • Created: {new Date(camp.created_at).toLocaleString()}
-                        </span>
-                      </div>
-
-                      <div className="flex gap-2">
-                        <button className="btn btn-sm btn-secondary" onClick={() => handleViewLogs(camp)}>
-                          📊 Recipient Logs
-                        </button>
-                        <button className="btn btn-sm btn-danger" onClick={() => handleDelete(camp)}>
-                          🗑️
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Progress Bar */}
-                    <div>
-                      <div className="flex justify-between text-xs" style={{ marginBottom: 4, color: 'var(--text-secondary)' }}>
-                        <span>Progress: {camp.sent_count} / {camp.total_contacts} sent</span>
-                        <span>{percent}%</span>
-                      </div>
-                      <div style={{ height: 8, background: 'var(--bg-surface)', borderRadius: 4, overflow: 'hidden' }}>
-                        <div style={{ width: `${percent}%`, height: '100%', background: statusColor, transition: 'width 0.3s' }} />
-                      </div>
-                    </div>
-
-                    {camp.message_body && (
-                      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', background: 'var(--bg-surface)', padding: 10, borderRadius: 8, fontStyle: 'italic' }}>
-                        "{camp.message_body}"
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+              <button className={waMode === 'TEMPLATE' ? 'active' : ''} onClick={() => setWaMode('TEMPLATE')}>
+                <Zap size={13} /> Anytime (Template)
+              </button>
             </div>
           )}
         </div>
 
-        {/* Recipient Logs Drawer */}
-        {selectedCampaign && (
-          <div className="card" style={{ padding: 20, height: 'fit-content', position: 'sticky', top: 20 }}>
-            <div className="flex justify-between items-center" style={{ marginBottom: 14 }}>
-              <h3 style={{ fontSize: '1.05rem', fontWeight: 700 }}>Recipient Logs #{selectedCampaign.id}</h3>
-              <button className="btn btn-xs btn-secondary" onClick={() => setSelectedCampaign(null)}>✕ Close</button>
+        {/* Summary */}
+        {!loading && campaigns.length > 0 && (
+          <div className="grid-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12 }}>
+            <StatCard
+              icon={<Megaphone size={20} />} tint={{ bg: 'var(--primary-soft)', fg: 'var(--primary)' }}
+              value={nf(campaigns.length)} label="Campaigns"
+            />
+            <StatCard
+              icon={<Send size={20} />} tint={{ bg: 'var(--primary-soft)', fg: 'var(--primary)' }}
+              value={nf(totals.sent)} label="Messages sent"
+            />
+            <StatCard
+              icon={<CheckCircle2 size={20} />} tint={{ bg: 'rgba(16,185,129,.1)', fg: 'var(--success)' }}
+              value={nf(totals.delivered)} label="Delivered" sub={totals.sent ? `${pctOf(totals.delivered, totals.sent)}%` : null}
+            />
+            <StatCard
+              icon={<Eye size={20} />} tint={{ bg: 'rgba(139,92,246,.1)', fg: '#8b5cf6' }}
+              value={nf(totals.read)} label="Read" sub={totals.delivered ? `${pctOf(totals.read, totals.delivered)}%` : null}
+            />
+            <StatCard
+              icon={<AlertTriangle size={20} />} tint={{ bg: 'rgba(239,68,68,.1)', fg: 'var(--danger)' }}
+              value={nf(totals.failed)} label="Failed" sub={totals.sent + totals.failed ? `${pctOf(totals.failed, totals.sent + totals.failed)}%` : null}
+            />
+          </div>
+        )}
+
+        {/* Toolbar + table */}
+        <div>
+          <div className="bc-toolbar">
+            <SlidersHorizontal size={15} style={{ color: 'var(--text-muted)' }} />
+            <select className="form-input" style={{ width: 'auto', minWidth: 150 }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option value="">All statuses</option>
+              {STATUS_FILTERS.map((s) => <option key={s} value={s}>{STATUS_META[s].label}</option>)}
+            </select>
+            {integrations.length > 1 && (
+              <select className="form-input" style={{ width: 'auto', minWidth: 170 }} value={accountFilter} onChange={(e) => setAccountFilter(e.target.value)}>
+                <option value="">All accounts</option>
+                {integrations.map((i) => <option key={i.id} value={i.id}>{integrationLabel(i)}</option>)}
+              </select>
+            )}
+            <div className="bc-search">
+              <Search size={14} />
+              <input className="form-input" placeholder="Search campaigns…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            </div>
+            <span style={{ marginLeft: 'auto', fontSize: '.78rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+              {loading ? 'Loading…' : `${visible.length} of ${campaigns.length} campaign${campaigns.length === 1 ? '' : 's'}`}
+            </span>
+          </div>
+
+          {loading ? (
+            <div className="bc-table-wrap">
+              <div className="bc-skel" /><div className="bc-skel" /><div className="bc-skel" />
+            </div>
+          ) : campaigns.length === 0 ? (
+            <div className="bc-empty" style={{ borderRadius: '0 0 var(--radius) var(--radius)' }}>
+              <div className="bc-sq" style={{ width: 58, height: 58, margin: '0 auto 16px', background: 'var(--primary-soft)', color: 'var(--primary)' }}>
+                <channel.Icon size={26} strokeWidth={1.6} />
+              </div>
+              <h3 style={{ fontWeight: 700, fontSize: '1rem', marginBottom: 6 }}>No {channel.label} broadcasts yet</h3>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '.85rem', maxWidth: 390, margin: '0 auto' }}>
+                {isTemplateMode
+                  ? 'Create one, pick an approved template, then choose who receives it.'
+                  : 'Create one, design the message in the Flow Builder, then choose who receives it.'}
+              </p>
+              <button className="btn btn-primary" onClick={handleCreateClick} style={{ marginTop: 18 }}>
+                <Plus size={15} /> New {channel.label} Broadcast
+              </button>
+            </div>
+          ) : visible.length === 0 ? (
+            <div className="bc-empty" style={{ borderRadius: '0 0 var(--radius) var(--radius)' }}>
+              <Inbox size={26} style={{ color: 'var(--text-muted)', marginBottom: 12 }} />
+              <h3 style={{ fontWeight: 700, fontSize: '.95rem', marginBottom: 5 }}>No campaigns match these filters</h3>
+              <button className="btn btn-secondary btn-sm" style={{ marginTop: 12 }} onClick={() => { setStatusFilter(''); setAccountFilter(''); setSearch(''); }}>
+                Clear filters
+              </button>
+            </div>
+          ) : (
+            <div className="bc-table-wrap">
+              <table className="bc-table">
+                <thead>
+                  <tr>
+                    <th style={{ minWidth: 260 }}>Campaign</th>
+                    <th>Status</th>
+                    <th>Sent</th>
+                    <th>Delivered</th>
+                    <th>Read</th>
+                    <th>Failed</th>
+                    <th>Schedule</th>
+                    <th style={{ textAlign: 'right' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.map((camp) => {
+                    const targeted = camp.total_targeted || 0;
+                    const denom = Math.max(targeted, (camp.sent_count || 0) + (camp.failed_count || 0));
+                    return (
+                      <tr key={camp.id}>
+                        <td>
+                          <div style={{ fontWeight: 600, marginBottom: 5 }}>{camp.name}</div>
+                          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                            {camp.integration_id
+                              ? <Chip icon={<Phone size={11} />}>{camp.wa_display_phone || camp.integration_name}</Chip>
+                              : <Chip icon={<AlertTriangle size={11} />} warn>No account chosen</Chip>}
+                            {camp.flow_name && <Chip icon={<Workflow size={11} />}>{camp.flow_name}</Chip>}
+                            {camp.template_name && <Chip icon={<FileText size={11} />}>{camp.template_name}</Chip>}
+                            {camp.tag_label_name && <Chip icon={<Tag size={11} />}>{camp.tag_label_name}</Chip>}
+                          </div>
+                        </td>
+                        <td><StatusBadge status={camp.status} /></td>
+                        <td><MetricCell value={camp.sent_count} total={denom} color={M.sent} /></td>
+                        <td><MetricCell value={camp.delivered_count} total={denom} color={M.delivered} /></td>
+                        <td><MetricCell value={camp.read_count} total={denom} color={M.read} /></td>
+                        <td><MetricCell value={camp.failed_count} total={denom} color={M.failed} /></td>
+                        <td style={{ whiteSpace: 'nowrap', fontSize: '.8rem', color: 'var(--text-secondary)' }}>
+                          {camp.status === 'SCHEDULED' && camp.scheduled_at
+                            ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: 'var(--primary)', fontWeight: 600 }}>
+                                <CalendarClock size={13} /> {formatWhen(camp.scheduled_at)}
+                              </span>
+                            : camp.status === 'DRAFT'
+                              ? <span style={{ color: 'var(--text-muted)' }}>Not scheduled</span>
+                              : formatWhen(camp.updated_at || camp.created_at)}
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end' }}>
+                            {camp.status === 'DRAFT' && (
+                              <button className="btn btn-primary btn-sm" onClick={() => openConfigure(camp)}>Configure &amp; Send</button>
+                            )}
+                            {camp.status === 'SCHEDULED' && (
+                              <button className="btn btn-secondary btn-sm" onClick={() => handleCancelSchedule(camp)}>Cancel</button>
+                            )}
+                            <button className="bc-iconbtn" title="Delivery report" onClick={() => handleViewLogs(camp)}>
+                              <BarChart3 size={14} />
+                            </button>
+                            <button className="bc-iconbtn danger" title="Delete campaign" onClick={() => handleDelete(camp)}>
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {filtersActive && visible.length > 0 && (
+            <div style={{ marginTop: 10, fontSize: '.78rem', color: 'var(--text-muted)' }}>
+              Filters applied ·{' '}
+              <button onClick={() => { setStatusFilter(''); setAccountFilter(''); setSearch(''); }} style={{ color: 'var(--primary)', fontWeight: 600, background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
+                clear
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Delivery report slide-over ── */}
+      {selectedCampaign && (
+        <>
+          <div className="bc-overlay" style={{ display: 'block', padding: 0 }} onMouseDown={() => setSelectedCampaign(null)} />
+          <aside className="bc-slide">
+            <div className="bc-modal-head">
+              <div className="bc-sq" style={{ width: 38, height: 38, background: 'var(--primary-soft)', color: 'var(--primary)' }}>
+                <BarChart3 size={18} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h3 style={{ fontSize: '1rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedCampaign.name}</h3>
+                <p style={{ fontSize: '.78rem', color: 'var(--text-secondary)' }}>Delivery report</p>
+              </div>
+              <button className="bc-iconbtn" onClick={() => setSelectedCampaign(null)} aria-label="Close"><X size={15} /></button>
             </div>
 
-            {logsLoading ? (
-              <div style={{ padding: 30, textAlign: 'center' }}>
-                <div className="loading-spinner" style={{ margin: '0 auto 8px' }} />
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Loading logs…</p>
-              </div>
-            ) : campaignLogs.length === 0 ? (
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: 20 }}>
-                No recipient logs found.
-              </div>
-            ) : (
-              <div style={{ maxHeight: 500, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {campaignLogs.map((log) => (
-                  <div
-                    key={log.id}
-                    style={{
-                      padding: 10, background: 'var(--bg-surface)', borderRadius: 8, border: '1px solid var(--border)',
-                      fontSize: '0.82rem'
-                    }}
-                  >
-                    <div className="flex justify-between items-center" style={{ fontWeight: 600 }}>
-                      <span>{log.contact_name || log.phone || 'Contact'}</span>
-                      <span style={{ color: log.status === 'SENT' ? 'var(--success)' : log.status === 'FAILED' ? 'var(--danger)' : 'var(--warning)' }}>
-                        {log.status}
-                      </span>
-                    </div>
-                    <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: 2 }}>
-                      {log.platform} {log.sent_at ? `• ${new Date(log.sent_at).toLocaleTimeString()}` : ''}
-                    </div>
-                    {log.error_message && (
-                      <div style={{ color: 'var(--danger)', fontSize: '0.75rem', marginTop: 4 }}>
-                        Error: {log.error_message}
-                      </div>
-                    )}
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+                {[
+                  ['Targeted', selectedCampaign.total_targeted, 'var(--text-primary)'],
+                  ['Sent', selectedCampaign.sent_count, M.sent],
+                  ['Delivered', selectedCampaign.delivered_count, M.delivered],
+                  ['Read', selectedCampaign.read_count, M.read],
+                  ['Failed', selectedCampaign.failed_count, M.failed],
+                ].map(([label, value, color]) => (
+                  <div key={label} style={{ padding: '10px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 800, color }}>{nf(value)}</div>
+                    <div style={{ fontSize: '.68rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</div>
                   </div>
                 ))}
               </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Create Broadcast Modal */}
-      {showCreateModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div className="card" style={{ width: 540, maxWidth: '92vw', padding: 24, maxHeight: '90vh', overflowY: 'auto' }}>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: 16 }}>Create & Launch Broadcast Campaign</h3>
-
-            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: 4 }}>Campaign Name</label>
-                <input
-                  className="form-input w-full"
-                  required
-                  placeholder="e.g. Summer Promo Broadcast 🚀"
-                  value={form.name}
-                  onChange={e => setForm({ ...form, name: e.target.value })}
-                />
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: 4 }}>Platform Channel</label>
-                  <select
-                    className="form-input w-full"
-                    value={form.platform}
-                    onChange={e => setForm({ ...form, platform: e.target.value })}
-                  >
-                    <option value="WHATSAPP">WhatsApp</option>
-                    <option value="FACEBOOK">Facebook Messenger</option>
-                    <option value="INSTAGRAM">Instagram DM</option>
-                    <option value="TELEGRAM">Telegram</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: 4 }}>Target Audience Filter</label>
-                  <select
-                    className="form-input w-full"
-                    value={form.targetPlatformFilter}
-                    onChange={e => setForm({ ...form, targetPlatformFilter: e.target.value })}
-                  >
-                    <option value="ALL">All Contacts</option>
-                    <option value="WHATSAPP">WhatsApp Contacts</option>
-                    <option value="FACEBOOK">Facebook Contacts</option>
-                    <option value="TELEGRAM">Telegram Contacts</option>
-                  </select>
-                </div>
-              </div>
-
-              {form.platform === 'WHATSAPP' && waTemplates.length > 0 && (
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: 4 }}>Use Approved WhatsApp Template (Optional)</label>
-                  <select
-                    className="form-input w-full"
-                    value={form.templateId}
-                    onChange={e => {
-                      const tplId = e.target.value;
-                      const selectedTpl = waTemplates.find(t => t.id === parseInt(tplId));
-                      setForm({
-                        ...form,
-                        templateId: tplId,
-                        messageBody: selectedTpl ? selectedTpl.body_text : form.messageBody
-                      });
-                    }}
-                  >
-                    <option value="">-- Custom Text Message --</option>
-                    {waTemplates.map(t => (
-                      <option key={t.id} value={t.id}>{t.template_name} ({t.language})</option>
-                    ))}
-                  </select>
+              {selectedCampaign.error_message && (
+                <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(239,68,68,.07)', border: '1px solid rgba(239,68,68,.2)', borderRadius: 'var(--radius-sm)', fontSize: '.78rem', color: 'var(--danger)' }}>
+                  {selectedCampaign.error_message}
                 </div>
               )}
+            </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: 4 }}>Message Content</label>
-                <textarea
-                  className="form-input w-full"
-                  required
-                  rows={4}
-                  placeholder="Hello {{name}}, check out our new special offers for this week!"
-                  value={form.messageBody}
-                  onChange={e => setForm({ ...form, messageBody: e.target.value })}
-                />
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Variables available: `{"{{name}}"}` and `{"{{phone}}"}`</span>
+            <div style={{ padding: '14px 20px 6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '.8rem', fontWeight: 700 }}>Recipients</span>
+              <span style={{ fontSize: '.74rem', color: 'var(--text-muted)' }}>{campaignLogs.length} record{campaignLogs.length === 1 ? '' : 's'}</span>
+            </div>
+
+            <div style={{ flex: 1, overflowY: 'auto', padding: '6px 20px 20px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {logsLoading ? (
+                <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-muted)' }}><Loader2 size={20} className="bc-spin" /></div>
+              ) : campaignLogs.length === 0 ? (
+                <div style={{ fontSize: '.84rem', color: 'var(--text-muted)', textAlign: 'center', padding: 24 }}>No recipient logs yet.</div>
+              ) : campaignLogs.map((log) => {
+                const c = log.status === 'DELIVERED' ? M.delivered
+                  : log.status === 'READ' ? M.read
+                  : log.status === 'FAILED' ? M.failed
+                  : log.status === 'SENT' ? M.sent : 'var(--text-secondary)';
+                return (
+                  <div key={log.id} style={{ padding: '10px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: '.82rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {log.contact_name || log.phone || 'Contact'}
+                      </span>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '.72rem', fontWeight: 700, color: c, flexShrink: 0 }}>
+                        <span style={{ width: 6, height: 6, borderRadius: 99, background: c }} />
+                        {log.status}
+                      </span>
+                    </div>
+                    {log.error_message && <div style={{ color: 'var(--danger)', fontSize: '.72rem', marginTop: 4 }}>{log.error_message}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          </aside>
+        </>
+      )}
+
+      {/* ── Create modal ── */}
+      {showCreateModal && (
+        <ModalShell
+          icon={<channel.Icon size={18} />}
+          title={`New ${channel.label} Broadcast`}
+          subtitle={isTemplateMode ? 'Pick an approved template — you will set the audience next.' : 'Name it, then design the message in the Flow Builder.'}
+          onClose={() => setShowCreateModal(false)}
+        >
+          <form onSubmit={handleCreateSubmit}>
+            <div className="bc-modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div className="form-group">
+                <label className="form-label">Campaign name</label>
+                <input className="form-input" required autoFocus placeholder="e.g. Weekend Sale Announcement" value={createName} onChange={(e) => setCreateName(e.target.value)} autoComplete="off" />
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setShowCreateModal(false)}>
-                  Cancel
+              <div className="form-group">
+                <label className="form-label">Send from</label>
+                {integrations.length === 0 ? (
+                  <div style={{ display: 'flex', gap: 8, padding: '10px 12px', borderRadius: 'var(--radius-sm)', background: 'rgba(239,68,68,.07)', border: '1px solid rgba(239,68,68,.2)', fontSize: '.79rem', color: 'var(--danger)' }}>
+                    <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+                    No active {channel.label} account connected — connect one under Connect Account first.
+                  </div>
+                ) : (
+                  <select className="form-input" required value={createIntegrationId} onChange={(e) => setCreateIntegrationId(e.target.value)}>
+                    <option value="">— Select an account —</option>
+                    {integrations.map((i) => <option key={i.id} value={i.id}>{integrationLabel(i)}</option>)}
+                  </select>
+                )}
+                {integrations.length > 1 && (
+                  <p style={{ fontSize: '.73rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                    This workspace has more than one {channel.label} account — the campaign only reaches subscribers relative to the one you pick here.
+                  </p>
+                )}
+              </div>
+
+              {isTemplateMode && (
+                <div className="form-group">
+                  <label className="form-label">Approved template</label>
+                  <select className="form-input" required value={createTemplateId} onChange={(e) => setCreateTemplateId(e.target.value)}>
+                    <option value="">— Select a template —</option>
+                    {templates.map((t) => <option key={t.id} value={t.id}>{t.template_name} ({t.language}, {t.category})</option>)}
+                  </select>
+                  {templates.length === 0 && (
+                    <p style={{ fontSize: '.74rem', color: 'var(--danger)' }}>
+                      No approved templates yet — create one under Settings → WhatsApp Templates first.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="bc-modal-foot" style={{ justifyContent: 'flex-end' }}>
+              <button type="button" className="btn btn-secondary" onClick={() => setShowCreateModal(false)}>Cancel</button>
+              <button type="submit" className="btn btn-primary" disabled={creating || integrations.length === 0}>
+                {creating ? <><Loader2 size={14} className="bc-spin" /> Creating…</> : isTemplateMode ? 'Create campaign' : <>Create &amp; open Flow Builder <ArrowRight size={14} /></>}
+              </button>
+            </div>
+          </form>
+        </ModalShell>
+      )}
+
+      {/* ── Configure audience & send ── */}
+      {configuring && (
+        <ModalShell icon={<Send size={18} />} title="Configure & Send" subtitle={configuring.name} width={580} onClose={() => setConfiguring(null)}>
+          <div className="bc-modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+            <div className="form-group">
+              <label className="form-label">Send from</label>
+              <select className="form-input" value={configIntegrationId} onChange={(e) => setConfigIntegrationId(e.target.value)}>
+                <option value="">— Select an account —</option>
+                {integrations.map((i) => <option key={i.id} value={i.id}>{integrationLabel(i)}</option>)}
+              </select>
+              {!configIntegrationId && (
+                <p style={{ fontSize: '.73rem', color: 'var(--danger)' }}>Required — a campaign with no account chosen cannot be sent.</p>
+              )}
+            </div>
+
+            <div style={{ height: 1, background: 'var(--border)' }} />
+
+            <AudienceForm platform={configuring.platform} labels={labels} value={audienceForm} onChange={setAudienceForm} previewCount={previewCount} />
+
+            <div style={{ height: 1, background: 'var(--border)' }} />
+
+            <div>
+              <label className="form-label" style={{ display: 'block', marginBottom: 8 }}>When to send</label>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button className="btn btn-primary" disabled={savingConfig || !previewCount || !configIntegrationId} onClick={() => saveConfigure('now')}>
+                  {savingConfig ? <><Loader2 size={14} className="bc-spin" /> Working…</> : <><Send size={14} /> Send now</>}
                 </button>
-                <button type="submit" className="btn btn-primary" disabled={saving}>
-                  {saving ? 'Broadcasting…' : '🚀 Launch Broadcast'}
+                <span style={{ fontSize: '.78rem', color: 'var(--text-muted)' }}>or</span>
+                <input type="datetime-local" className="form-input" style={{ flex: 1, minWidth: 190, width: 'auto' }} value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} />
+                <button className="btn btn-secondary" disabled={savingConfig || !previewCount || !configIntegrationId} onClick={() => saveConfigure('schedule')}>
+                  <CalendarClock size={14} /> Schedule
                 </button>
               </div>
-            </form>
+              {!previewCount && (
+                <p style={{ fontSize: '.76rem', color: 'var(--danger)', marginTop: 9 }}>
+                  No subscribers match this targeting yet — adjust the Include/Exclude rules above.
+                </p>
+              )}
+            </div>
           </div>
+
+          <div className="bc-modal-foot">
+            <button className="btn btn-secondary" onClick={() => saveConfigure('draft')} disabled={savingConfig}>Save as draft</button>
+            <button className="btn btn-secondary" onClick={() => setConfiguring(null)}>Close</button>
+          </div>
+        </ModalShell>
+      )}
+
+      {/* ── Toast ── */}
+      {toast && (
+        <div className="bc-toast" style={{ background: toast.type === 'error' ? 'var(--danger)' : 'var(--success)' }}>
+          {toast.type === 'error' ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
+          {toast.msg}
         </div>
       )}
     </AppLayout>

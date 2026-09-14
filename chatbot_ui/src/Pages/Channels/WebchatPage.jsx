@@ -4,6 +4,8 @@ import { channelAPI } from '../../services/api';
 
 const BACKEND_URL = import.meta.env.VITE_API_URL?.replace('/api/v1', '') || 'http://localhost:5000';
 
+const EmbeddedWrapper = ({ children }) => <div>{children}</div>;
+
 export default function WebchatPage({ embedded = false }) {
   const [widgets, setWidgets] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -50,7 +52,7 @@ export default function WebchatPage({ embedded = false }) {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const LayoutWrapper = embedded ? ({ children }) => <div>{children}</div> : AppLayout;
+  const LayoutWrapper = embedded ? EmbeddedWrapper : AppLayout;
 
   return (
     <LayoutWrapper>

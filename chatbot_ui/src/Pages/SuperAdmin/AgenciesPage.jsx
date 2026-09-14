@@ -223,6 +223,7 @@ export default function AgenciesPage() {
 
     return (
       <AppLayout>
+        <div className="page-content">
         <button className="btn btn-secondary btn-sm" onClick={() => setViewingCustomersOf(null)} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14 }}>
           <ArrowLeft size={13} /> Back to Resellers
         </button>
@@ -238,6 +239,7 @@ export default function AgenciesPage() {
           emptySubtitle="This reseller hasn't created any customers."
           idKey="id"
         />
+        </div>
       </AppLayout>
     );
   }
@@ -367,6 +369,7 @@ export default function AgenciesPage() {
 
   return (
     <AppLayout>
+      <div className="page-content">
       <DataTable
         title="Resellers"
         subtitle="All resellers — check the Reseller box on any of them to let it create and manage its own customers under a shared plan."
@@ -570,7 +573,7 @@ export default function AgenciesPage() {
             </form>
           </div>
         </div>
-      )}
+      )}</div>
     </AppLayout>
   );
 }

@@ -487,7 +487,25 @@ export default function ConnectAccountsPage() {
                             </span>
                           </td>
                           <td style={{ padding: '12px 14px', fontWeight: 700, color: '#0f172a' }}>
-                            {item.account_name || `${badge.label} Integration`}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              {item.profile_picture_url ? (
+                                <img
+                                  src={item.profile_picture_url}
+                                  alt=""
+                                  style={{ width: 34, height: 34, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1px solid #e2e8f0' }}
+                                  onError={e => { e.currentTarget.style.display = 'none'; }}
+                                />
+                              ) : (
+                                <div style={{ width: 34, height: 34, borderRadius: '50%', background: badge.bg, color: badge.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.78rem', flexShrink: 0 }}>
+                                  <BadgeIcon size={16} />
+                                </div>
+                              )}
+                              <div>
+                                <div>{item.account_name || `${badge.label} Integration`}</div>
+                                {item.ig_username && <div style={{ fontSize: '0.74rem', color: '#e1306c', fontWeight: 500 }}>@{item.ig_username}</div>}
+                                {item.fb_page_name && item.fb_page_name !== item.account_name && <div style={{ fontSize: '0.74rem', color: '#64748b', fontWeight: 500 }}>{item.fb_page_name}</div>}
+                              </div>
+                            </div>
                           </td>
                           <td style={{ padding: '12px 14px', color: '#64748b', fontSize: '0.8rem', fontFamily: 'monospace' }}>
                             {identifier}

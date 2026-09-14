@@ -3,11 +3,12 @@ import { useNavigate, Link } from 'react-router';
 import { useAuth } from '../Provider/AuthContext';
 import { useLayout } from '../Provider/LayoutContext';
 import { useNotification } from '../Provider/NotificationContext';
-import { Menu, PanelLeft, PanelLeftClose, Sun, Moon, Plug, LogOut, Bell, UserCircle } from 'lucide-react';
+import { Menu, PanelLeft, PanelLeftClose, Sun, Moon, Plug, LogOut, Bell, UserCircle, Palette, LifeBuoy, ShieldCheck, Building2 } from 'lucide-react';
 
 // Internal role identifiers (ADMIN/RESELLER/USER) now match the human-facing
 // label, consistent with Sidebar.jsx's ROLE_SUBTITLES.
 const ROLE_LABELS = { ADMIN: 'Super Admin', RESELLER: 'Reseller', USER: 'User' };
+const ROLE_ICONS = { ADMIN: ShieldCheck, RESELLER: Building2, USER: UserCircle };
 
 export default function TopBar() {
   const { user, logout } = useAuth();
@@ -55,6 +56,7 @@ export default function TopBar() {
   };
 
   const apiLink = getApiLink();
+  const RoleIcon = ROLE_ICONS[user?.role] || UserCircle;
 
   const handleMenuClick = () => {
     if (isInbox) {
@@ -90,10 +92,6 @@ export default function TopBar() {
         >
           <Menu size={17} />
         </button>
-
-        <span className="platform-tag" style={{ fontSize: '0.78rem', fontWeight: 600, padding: '3px 10px', borderRadius: 20, background: 'rgba(37, 99, 235, 0.08)', color: 'var(--primary)' }}>
-          ⚡ Nexa Workspace
-        </span>
       </div>
 
       <div className="top-bar-right" ref={menuRef} style={{ display: 'flex', alignItems: 'center', gap: 10, position: 'relative' }}>
@@ -131,10 +129,16 @@ export default function TopBar() {
 
         {menuOpen && (
           <div className="top-bar-dropdown">
-            <div className="dropdown-section dropdown-header">
-              <div className="dropdown-user-name">{user?.name || 'Account'}</div>
-              <div className="dropdown-user-email">{user?.email || ''}</div>
-              <span className="role-badge">{ROLE_LABELS[user?.role] || 'User'}</span>
+            <div className="dropdown-header">
+              <div className="avatar avatar-lg">{getInitials(user?.name)}</div>
+              <div className="dropdown-header-text">
+                <div className="dropdown-user-name" title={user?.name}>{user?.name || 'Account'}</div>
+                <div className="dropdown-user-email" title={user?.email}>{user?.email || ''}</div>
+                <span className="role-badge">
+                  <RoleIcon size={10} />
+                  {ROLE_LABELS[user?.role] || 'User'}
+                </span>
+              </div>
             </div>
 
             <div className="dropdown-section">
@@ -165,6 +169,41 @@ export default function TopBar() {
                   </div>
                 </Link>
               )}
+
+              {/* The Support Desk is a deliberately separate portal (own
+                  login, own session token — see SupportDeskApp) rather than
+                  a page inside this dashboard, so it opens in a new tab
+                  instead of navigating away from wherever the user is. */}
+              <a
+                href="/support"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="dropdown-item"
+                onClick={() => setMenuOpen(false)}
+                style={{ textDecoration: 'none', color: 'inherit' }}
+              >
+                <LifeBuoy size={15} style={{ marginRight: 8 }} />
+                <div className="dropdown-text">
+                  <div className="dropdown-label">Support</div>
+                  {/* The Platform account (Super Admin) answers tickets, it
+                      never files them — see routes/supportDesk.js's
+                      canRequest (false only for account_type='PLATFORM'). */}
+                  <div className="dropdown-desc">{user?.accountType === 'PLATFORM' ? 'Manage support tickets' : 'Get help or open a ticket'}</div>
+                </div>
+              </a>
+
+              <Link
+                to="/settings/appearance"
+                className="dropdown-item"
+                onClick={() => setMenuOpen(false)}
+                style={{ textDecoration: 'none', color: 'inherit' }}
+              >
+                <Palette size={15} style={{ marginRight: 8 }} />
+                <div className="dropdown-text">
+                  <div className="dropdown-label">Appearance</div>
+                  <div className="dropdown-desc">Font, accent colour &amp; density</div>
+                </div>
+              </Link>
 
               <div className="dropdown-item" onClick={toggleTheme}>
                 {theme === 'light' ? <Moon size={15} style={{ marginRight: 8 }} /> : <Sun size={15} style={{ marginRight: 8 }} />}

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router';
 import { useAuth } from '../../Provider/AuthContext';
 import { tenantAPI } from '../../services/api';
-import { Sparkles, ArrowRight } from 'lucide-react';
+import { Sparkles, ArrowRight, Eye, EyeOff } from 'lucide-react';
 
 const ROLE_HOME = {
   ADMIN:    '/admin',
@@ -15,10 +15,11 @@ export default function Login() {
   const navigate  = useNavigate();
   const [searchParams] = useSearchParams();
 
-  const [email,    setEmail]    = useState('');
-  const [password, setPassword] = useState('');
-  const [error,    setError]    = useState('');
-  const [loading,  setLoading]  = useState(false);
+  const [email,        setEmail]        = useState('');
+  const [password,     setPassword]     = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [error,        setError]        = useState('');
+  const [loading,      setLoading]      = useState(false);
 
   const [tenant, setTenant] = useState({
     brandName: 'Nexa Chatbot',
@@ -148,16 +149,45 @@ export default function Login() {
 
           <div className="form-group">
             <label className="form-label" htmlFor="login-password">Password</label>
-            <input
-              id="login-password"
-              type="password"
-              className="form-input"
-              placeholder="••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              autoComplete="current-password"
-            />
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+              <input
+                id="login-password"
+                type={showPassword ? 'text' : 'password'}
+                className="form-input"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                autoComplete="current-password"
+                style={{ paddingRight: 38 }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                title={showPassword ? 'Hide password' : 'Show password'}
+                style={{
+                  position: 'absolute',
+                  right: 10,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  color: '#94a3b8',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 4,
+                  borderRadius: 4,
+                  transition: 'color 0.15s ease',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = '#334155'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = '#94a3b8'; }}
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
           </div>
 
           <button

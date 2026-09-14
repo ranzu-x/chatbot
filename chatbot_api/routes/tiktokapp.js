@@ -6,10 +6,26 @@ import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { resolveTikTokAppSettings } from "../utils/appCredentials.js";
 
 const router = express.Router();
-// Scoped to "/settings/tiktok-app" — an unscoped router.use(mw) would run
-// for every /api/v1/* request reaching this router, silently blocking every
-// later-mounted router for non-AGENCY/ADMIN roles. See the identical fix +
-// full explanation in routes/channels.js.
+
+// Public Client Key (no secret) — accessible by RESELLER, ADMIN, and USER (so end users can connect TikTok)
+router.get("/settings/tiktok-app/client-key", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), async (req, res) => {
+  const agencyId = await resolveAgencyId(req);
+  try {
+    const appSettings = await resolveTikTokAppSettings(agencyId);
+    if (!appSettings?.client_key) {
+      return res.json({ success: false, clientKey: null, message: "TikTok App not configured" });
+    }
+    return res.json({
+      success: true,
+      clientKey: appSettings.client_key,
+      redirectUri: appSettings.redirect_uri,
+      isConfigured: Boolean(appSettings.is_configured),
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 router.use("/settings/tiktok-app", authMiddleware, roleMiddleware("RESELLER", "ADMIN"));
 
 async function resolveAgencyId(req) {
@@ -37,7 +53,7 @@ router.get("/settings/tiktok-app", async (req, res) => {
     let verifyToken = settings?.verify_token;
 
     if (!verifyToken) {
-      verifyToken = "nexa_tiktok_" + crypto.randomBytes(12).toString("hex");
+      verifyToken = crypto.randomBytes(16).toString("hex");
     }
 
     return res.json({
@@ -127,26 +143,6 @@ router.post("/settings/tiktok-app/test", async (req, res) => {
   }
 });
 
-// ─── GET CLIENT KEY (PUBLIC/AGENCY FOR OAUTH) ─────────────────────
-// Same inheritance as Meta's app-id endpoint — a Reseller's own customer
-// connecting TikTok sees the Reseller's app (or the Platform's, if neither
-// has configured one), not a dead end.
-router.get("/settings/tiktok-app/client-key", async (req, res) => {
-  const agencyId = await resolveAgencyId(req);
-  try {
-    const appSettings = await resolveTikTokAppSettings(agencyId);
-    if (!appSettings?.client_key) {
-      return res.json({ success: false, clientKey: null, message: "TikTok App not configured" });
-    }
-    return res.json({
-      success: true,
-      clientKey: appSettings.client_key,
-      redirectUri: appSettings.redirect_uri,
-      isConfigured: Boolean(appSettings.is_configured),
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
-  }
-});
+
 
 export default router;

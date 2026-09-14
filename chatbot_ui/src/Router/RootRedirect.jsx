@@ -24,6 +24,6 @@ export default function RootRedirect() {
     return <Navigate to={home} replace />;
   }
 
-  // If user is logged out or unauthenticated, redirect to /login
-  return <Navigate to="/login" replace />;
+  // If user is not authenticated, show the public landing page
+  return <Navigate to="/landing" replace />;
 }

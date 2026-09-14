@@ -24,6 +24,9 @@ import uploadRoutes from "./routes/upload.js";
 import templateRoutes from "./routes/templates.js";
 import cannedResponseRoutes from "./routes/cannedResponses.js";
 import campaignRoutes from "./routes/campaigns.js";
+import broadcastRoutes from "./routes/broadcasts.js";
+import whatsappCallRoutes from "./routes/whatsappCalls.js";
+import supportDeskRoutes from "./routes/supportDesk.js";
 import sequenceRoutes from "./routes/sequences.js";
 import domainRoutes from "./routes/domains.js";
 import commentRoutes from "./routes/comments.js";
@@ -53,6 +56,8 @@ import roleRoutes from "./routes/roles.js";
 import resellerCustomerRoutes from "./routes/resellerCustomers.js";
 import agencyPackageRoutes from "./routes/agencyPackages.js";
 import platformSettingsRoutes from "./routes/platformSettings.js";
+import blogRoutes from "./routes/blog.js";
+import { initBlogTable } from "./routes/blog.js";
 
 import http from "http";
 import { initSocket } from "./utils/socket.js";
@@ -62,6 +67,8 @@ import { initBotErrorLogsTable } from "./utils/botLogger.js";
 import { startSocialPostScheduler } from "./utils/socialPostScheduler.js";
 import { startFlowDelayScheduler } from "./utils/flowDelayScheduler.js";
 import { startBotResumeScheduler } from "./utils/botResumeScheduler.js";
+import { startBroadcastScheduler } from "./utils/broadcastScheduler.js";
+import { startSupportDeskScheduler } from "./utils/supportDeskScheduler.js";
 
 dotenv.config();
 
@@ -76,6 +83,8 @@ startTelegramPoller();
 startSocialPostScheduler();
 startFlowDelayScheduler();
 startBotResumeScheduler();
+startBroadcastScheduler();
+startSupportDeskScheduler();
 
 // ─── Middleware ────────────────────────────────────────────────────────────────
 app.use(
@@ -143,6 +152,7 @@ try {
   console.log("✅ MySQL Connected to:", process.env.DB_NAME);
   conn.release();
   await initBotErrorLogsTable();
+  await initBlogTable();
 } catch (err) {
   console.error("❌ DB Connection Failed:", err.message);
 }
@@ -168,6 +178,9 @@ app.use("/api/v1", uploadRoutes);
 app.use("/api/v1", templateRoutes);
 app.use("/api/v1", cannedResponseRoutes);
 app.use("/api/v1", campaignRoutes);
+app.use("/api/v1", broadcastRoutes);
+app.use("/api/v1", whatsappCallRoutes);
+app.use("/api/v1", supportDeskRoutes);
 app.use("/api/v1", sequenceRoutes);
 app.use("/api/v1", domainRoutes);
 app.use("/api/v1", commentRoutes);
@@ -196,6 +209,7 @@ app.use("/api/v1", roleRoutes);
 app.use("/api/v1", resellerCustomerRoutes);
 app.use("/api/v1", agencyPackageRoutes);
 app.use("/api/v1", platformSettingsRoutes);
+app.use("/api/v1", blogRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {

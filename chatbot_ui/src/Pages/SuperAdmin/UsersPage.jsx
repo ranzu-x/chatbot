@@ -66,7 +66,6 @@ export default function UsersPage() {
   const [packageFilter, setPackageFilter] = useState('');
   const [userTypeFilter, setUserTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
-  const [accountTypeFilter, setAccountTypeFilter] = useState('');
   const [packages, setPackages] = useState([]);
 
   // Pagination
@@ -221,16 +220,9 @@ export default function UsersPage() {
         (statusFilter === 'active' && Boolean(u.is_active)) ||
         (statusFilter === 'inactive' && !u.is_active);
 
-      // Reseller customers never show in the plain (blank-filter) view —
-      // they belong in the "Reseller Customers" filter instead. See
-      // routes/admin.js's GET /admin/users, which now joins account_type.
-      const matchesAccountType = accountTypeFilter
-        ? accountTypeFilter === 'ALL' || u.accountType === accountTypeFilter
-        : u.accountType !== 'RESELLER_CUSTOMER';
-
-      return matchesSearch && matchesPkg && matchesType && matchesStatus && matchesAccountType;
+      return matchesSearch && matchesPkg && matchesType && matchesStatus;
     });
-  }, [users, search, packageFilter, userTypeFilter, statusFilter, accountTypeFilter]);
+  }, [users, search, packageFilter, userTypeFilter, statusFilter]);
 
   const totalUsers = filteredUsers.length;
   const totalPages = Math.ceil(totalUsers / pageSize) || 1;
@@ -287,6 +279,7 @@ export default function UsersPage() {
 
   return (
     <AppLayout>
+      <div className="page-content">
       <style>{`
         .user-table th {
           padding: 12px 14px;
@@ -501,40 +494,6 @@ export default function UsersPage() {
             <option value="MEMBER">User</option>
             <option value="RESELLER">Reseller</option>
             <option value="ADMIN">Super Admin</option>
-          </select>
-          <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--text-muted)', fontSize: '0.7rem' }}>
-            ▼
-          </span>
-        </div>
-
-        {/* Dropdown 2b: Account Type — Direct Customers / Reseller Customers / Resellers.
-            Blank defaults to excluding Reseller Customers (they never show in the plain
-            Direct Customer view — see filteredUsers below), per the approved plan. */}
-        <div style={{ position: 'relative', minWidth: 170, flex: '1 1 160px' }}>
-          <select
-            value={accountTypeFilter}
-            onChange={(e) => {
-              setAccountTypeFilter(e.target.value);
-              setCurrentPage(1);
-            }}
-            style={{
-              width: '100%',
-              padding: '9px 32px 9px 14px',
-              borderRadius: 8,
-              border: '1px solid var(--border)',
-              background: 'var(--bg-input)',
-              color: 'var(--text-primary)',
-              fontSize: '0.84rem',
-              appearance: 'none',
-              cursor: 'pointer',
-              outline: 'none',
-            }}
-          >
-            <option value="">Direct Customers (default)</option>
-            <option value="RESELLER_CUSTOMER">Reseller Customers</option>
-            <option value="RESELLER">Resellers</option>
-            <option value="PLATFORM">Platform Team</option>
-            <option value="ALL">All Accounts</option>
           </select>
           <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--text-muted)', fontSize: '0.7rem' }}>
             ▼
@@ -1463,7 +1422,7 @@ export default function UsersPage() {
         >
           {toast.msg}
         </div>
-      )}
+      )}</div>
     </AppLayout>
   );
 }

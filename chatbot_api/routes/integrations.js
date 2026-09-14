@@ -90,7 +90,16 @@ router.get("/integrations", async (req, res) => {
       }));
     }
 
-    return res.json({ success: true, integrations: stripSecrets(integrations, req) });
+    const enriched = integrations.map(item => {
+      if (!item.profile_picture_url) {
+        if (item.platform === 'FACEBOOK' && item.fb_page_id) {
+          item.profile_picture_url = `https://graph.facebook.com/v21.0/${item.fb_page_id}/picture?type=large`;
+        }
+      }
+      return item;
+    });
+
+    return res.json({ success: true, integrations: stripSecrets(enriched, req) });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: "Server error" });

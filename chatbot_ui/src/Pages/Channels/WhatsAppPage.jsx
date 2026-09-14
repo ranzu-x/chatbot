@@ -104,7 +104,7 @@ function StatusBadge({ label, color = '#10b981', bg = 'rgba(16,185,129,0.1)' }) 
 // ─────────────────────────────────────────────────────────────────────────────
 export default function WhatsAppPage({ embedded = false }) {
   const { user } = useAuth();
-  const { fbReady, appId, configId } = useFacebookSDK();
+  const { fbReady, appId, configId, configIdCatalog } = useFacebookSDK();
 
   // Data
   const [accounts, setAccounts] = useState([]);
@@ -119,6 +119,14 @@ export default function WhatsAppPage({ embedded = false }) {
   const [withCatalog, setWithCatalog] = useState(false);
   const [onboardingType, setOnboardingType] = useState('new_number'); // 'new_number' | 'coexistence'
   const metaSessionRef = useRef({ phoneNumberId: null, wabaId: null, code: null });
+
+  // Per Meta's own Embedded Signup guidance, catalog access should come
+  // from a SEPARATE Configuration (one that actually has the Catalogs
+  // asset/permission granted) rather than a runtime flag layered on top of
+  // the plain one — bundling catalog into a shared config makes non-catalog
+  // customers hit an unexpected catalog-selection screen. So which
+  // Configuration ID gets used depends on the Step 2 choice below.
+  const effectiveConfigId = withCatalog ? configIdCatalog : configId;
 
   // Manual form
   const [manualForm, setManualForm] = useState({
@@ -216,8 +224,12 @@ export default function WhatsAppPage({ embedded = false }) {
 
   // ── Launch Meta Embedded Signup Popup ───────────────────────────────────────
   const launchEmbeddedSignup = () => {
-    if (!appId || !configId) {
-      notify.error('Meta App ID and Configuration ID are required. Go to Settings → Meta App Setup.');
+    if (!appId || !effectiveConfigId) {
+      notify.error(
+        withCatalog
+          ? 'No "With Catalog" Configuration ID is set up yet. Go to Settings → Meta App Setup and add one — catalog access needs its own Configuration, separate from the plain one.'
+          : 'Meta App ID and Configuration ID are required. Go to Settings → Meta App Setup.'
+      );
       return;
     }
     if (!fbReady || !window.FB) {
@@ -272,13 +284,13 @@ export default function WhatsAppPage({ embedded = false }) {
           }
         },
         {
-          config_id: configId,
+          // The With/Without Catalog choice is now which Configuration we
+          // use, not a runtime flag — see effectiveConfigId above.
+          config_id: effectiveConfigId,
           response_type: 'code',
           override_default_response_type: true,
           extras: {
             sessionInfoVersion: 3,
-            // Catalog mode uses additional commerce permissions
-            ...(withCatalog ? { featureType: 'catalog' } : {}),
             // Coexistence mode keeps existing WhatsApp app active
             ...(onboardingType === 'coexistence' ? { featureType: 'coexistence' } : {}),
           },
@@ -760,8 +772,13 @@ export default function WhatsAppPage({ embedded = false }) {
               </div>
               {withCatalog && <Check size={14} color="#4f46e5" />}
             </div>
-            <div style={{ fontWeight: 700, fontSize: '0.84rem', color: '#0f172a', marginBottom: 4 }}>
+            <div style={{ fontWeight: 700, fontSize: '0.84rem', color: '#0f172a', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
               With Catalog
+              {!configIdCatalog && (
+                <span style={{ fontSize: '0.62rem', fontWeight: 700, color: '#b45309', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 5, padding: '1px 6px' }}>
+                  Not set up
+                </span>
+              )}
             </div>
             <p style={{ margin: 0, fontSize: '0.72rem', color: '#64748b', lineHeight: 1.4 }}>
               Includes product catalog, interactive product cards, and cart checkout.
@@ -776,12 +793,18 @@ export default function WhatsAppPage({ embedded = false }) {
       </div>
 
       {/* SDK missing warning */}
-      {(!appId || !configId) && (
+      {(!appId || !effectiveConfigId) && (
         <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: '0.78rem', color: '#92400e', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
           <Info size={14} style={{ marginTop: 2, flexShrink: 0 }} />
           <span>
-            Meta App ID or Configuration ID is missing. Go to{' '}
-            <strong>Settings → Meta App Setup</strong> to configure them before using Embedded Signup.
+            {!appId || !configId ? (
+              <>Meta App ID or Configuration ID is missing. Go to{' '}
+                <strong>Settings → Meta App Setup</strong> to configure them before using Embedded Signup.</>
+            ) : (
+              <>The <strong>With Catalog</strong> Configuration ID isn't set up yet — it needs its own Configuration
+                (separate from the plain one) in <strong>Settings → Meta App Setup</strong>, or switch to{' '}
+                <strong>Without Catalog</strong> above.</>
+            )}
           </span>
         </div>
       )}
@@ -789,13 +812,13 @@ export default function WhatsAppPage({ embedded = false }) {
       {/* Launch button */}
       <button
         onClick={launchEmbeddedSignup}
-        disabled={connecting || !appId || !configId}
+        disabled={connecting || !appId || !effectiveConfigId}
         style={{
           width: '100%', padding: '13px 18px', borderRadius: 10,
           background: withCatalog ? '#6366f1' : '#25d366',
           color: '#ffffff', border: 'none', fontWeight: 800, fontSize: '0.94rem',
-          cursor: (connecting || !appId || !configId) ? 'not-allowed' : 'pointer',
-          opacity: (connecting || !appId || !configId) ? 0.6 : 1,
+          cursor: (connecting || !appId || !effectiveConfigId) ? 'not-allowed' : 'pointer',
+          opacity: (connecting || !appId || !effectiveConfigId) ? 0.6 : 1,
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
           boxShadow: withCatalog ? '0 4px 14px rgba(99,102,241,0.3)' : '0 4px 14px rgba(37,211,102,0.3)',
         }}
@@ -958,6 +981,18 @@ export default function WhatsAppPage({ embedded = false }) {
                     </td>
                     <td style={{ padding: '12px 14px', textAlign: 'right' }}>
                       <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                        <a
+                          href={acc.wa_business_acc_id
+                            ? `https://business.facebook.com/wa/manage/phone-numbers/?waba_id=${acc.wa_business_acc_id}`
+                            : 'https://business.facebook.com/wa/manage/phone-numbers/'}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="btn btn-secondary btn-sm"
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 9px', fontSize: '0.72rem', background: 'rgba(37,99,235,0.08)', borderColor: 'rgba(37,99,235,0.3)', color: '#2563eb', fontWeight: 700, textDecoration: 'none' }}
+                          title="Open this number in WhatsApp Manager — enable Calling, check quality rating, and more"
+                        >
+                          <ExternalLink size={11} /> Manage
+                        </a>
                         <button
                           onClick={() => openActivateModal(acc)}
                           className="btn btn-secondary btn-sm"

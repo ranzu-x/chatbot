@@ -15,6 +15,8 @@ import {
 import SendMenuPanel from '../../Components/Inbox/SendMenuPanel';
 import JoinChatModal from '../../Components/Inbox/JoinChatModal';
 import CreateCannedModal from '../../Components/Inbox/CreateCannedModal';
+import WhatsAppCallPanel from '../../Components/Inbox/WhatsAppCallPanel';
+import useWhatsAppCall from '../../hooks/useWhatsAppCall';
 import { useAuth } from '../../Provider/AuthContext';
 import { useLayout } from '../../Provider/LayoutContext';
 import io from 'socket.io-client';
@@ -66,6 +68,8 @@ import {
   Mail,
   Sliders,
   ChevronDown,
+  ChevronLeft,
+  UserX,
 } from 'lucide-react';
 
 /* ─── Platform Map ─── */
@@ -708,26 +712,95 @@ const SYSTEM_FIELD_LABELS = {
   is_premium: 'Telegram Premium',
 };
 
-const STATUS_CHIPS = ['All', 'OPEN', 'PENDING', 'RESOLVED'];
 // Labels is deliberately NOT in this tab bar — it's pinned as its own
 // always-visible section at the bottom of the drawer instead (see the
 // "Labels — pinned bottom section" block below the tabbed content).
 const DRAWER_TABS = ['Overview', 'Sequences', 'Follow-ups', 'Custom Fields', 'Notes'];
 
-// Shared compact style for the conversation-list filter dropdowns —
-// small enough that Channel/Agent/Label/Date-range all fit without
-// eating much vertical space (they wrap onto a 2nd row only if needed).
-const compactSelectStyle = {
-  flex: '1 1 auto',
-  minWidth: 90,
-  fontSize: '0.72rem',
-  padding: '4px 6px',
-  borderRadius: 6,
-  border: '1px solid #e2e8f0',
-  background: '#fff',
-  color: '#475569',
-  height: 28,
-};
+// Small active-filter chip shown next to the Filter trigger in the
+// conversation-list header (see below) — one per currently-applied filter.
+function FilterChip({ label, onRemove }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 5px 3px 8px', borderRadius: 6, background: 'rgba(37, 99, 235, 0.08)', color: '#2563eb', fontSize: '0.7rem', fontWeight: 600, height: 22 }}>
+      {label}
+      <button type="button" onClick={onRemove} title="Remove filter" style={{ display: 'flex', border: 'none', background: 'transparent', color: '#2563eb', cursor: 'pointer', padding: 1 }}>
+        <X size={11} />
+      </button>
+    </span>
+  );
+}
+function fmtISODate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// A single-month range calendar (pick a "from", then a "to", in one grid) —
+// deliberately not the twin-month strip a lot of pickers use: one flat-fill
+// highlight between two solid end-caps, our own blue, our own rhythm.
+function InboxRangeCalendar({ month, from, to, onNavigate, onPick }) {
+  const year = month.getFullYear();
+  const mIdx = month.getMonth();
+  const startOffset = new Date(year, mIdx, 1).getDay();
+  const daysInMonth = new Date(year, mIdx + 1, 0).getDate();
+  const daysInPrevMonth = new Date(year, mIdx, 0).getDate();
+
+  const cells = [];
+  for (let i = 0; i < startOffset; i++) {
+    const day = daysInPrevMonth - startOffset + 1 + i;
+    cells.push({ day, inMonth: false, dateStr: fmtISODate(new Date(year, mIdx - 1, day)) });
+  }
+  for (let day = 1; day <= daysInMonth; day++) {
+    cells.push({ day, inMonth: true, dateStr: fmtISODate(new Date(year, mIdx, day)) });
+  }
+  let trailing = 1;
+  while (cells.length < 42) {
+    cells.push({ day: trailing, inMonth: false, dateStr: fmtISODate(new Date(year, mIdx + 1, trailing)) });
+    trailing++;
+  }
+
+  const isEdge = (dateStr) => dateStr === from || dateStr === to;
+  const inRange = (dateStr) => from && to && dateStr > from && dateStr < to;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <button type="button" onClick={() => onNavigate(-1)} title="Previous month" style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#64748b', display: 'flex', padding: 2 }}>
+          <ChevronLeft size={15} />
+        </button>
+        <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#0f172a' }}>{month.toLocaleString(undefined, { month: 'long', year: 'numeric' })}</span>
+        <button type="button" onClick={() => onNavigate(1)} title="Next month" style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#64748b', display: 'flex', padding: 2 }}>
+          <ChevronRight size={15} />
+        </button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 2 }}>
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+          <div key={i} style={{ textAlign: 'center', fontSize: '0.62rem', fontWeight: 700, color: '#94a3b8' }}>{d}</div>
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', rowGap: 2 }}>
+        {cells.map((c, i) => {
+          const edge = isEdge(c.dateStr);
+          const within = inRange(c.dateStr);
+          return (
+            <button
+              key={i}
+              type="button"
+              onClick={() => onPick(c.dateStr)}
+              style={{
+                height: 26, border: 'none', cursor: 'pointer', fontSize: '0.72rem',
+                fontWeight: edge ? 700 : 500,
+                borderRadius: edge ? 99 : 0,
+                color: !c.inMonth ? '#cbd5e1' : edge ? '#fff' : within ? '#2563eb' : '#334155',
+                background: edge ? '#2563eb' : within ? 'rgba(37, 99, 235, 0.1)' : 'transparent',
+              }}
+            >
+              {c.day}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 // Remembers the selected subscriber across a page refresh (per browser tab).
 const SELECTED_CONVERSATION_KEY = 'inbox_selected_conversation_id';
@@ -735,6 +808,7 @@ const SELECTED_CONVERSATION_KEY = 'inbox_selected_conversation_id';
 export default function InboxPage() {
   const { user } = useAuth();
   const { openPopupNav } = useLayout();
+  const whatsappCall = useWhatsAppCall();
 
   // Conversations & Messages
   const [conversations, setConversations] = useState([]);
@@ -783,6 +857,79 @@ export default function InboxPage() {
   const [newLabelName, setNewLabelName] = useState('');
   const [savingLabel, setSavingLabel] = useState(false);
   const [labelFilterId, setLabelFilterId] = useState('');
+
+  // One filter panel — Agent + Label + Date Range all visible together
+  // (staged locally, committed on Apply) instead of three permanent
+  // dropdowns or a pick-one-at-a-time popover.
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const filterMenuRef = useRef(null);
+  const [stagedAgentFilter, setStagedAgentFilter] = useState('');
+  const [stagedLabelFilterId, setStagedLabelFilterId] = useState('');
+  const [stagedDatePreset, setStagedDatePreset] = useState('7d');
+  const [stagedDateFrom, setStagedDateFrom] = useState('');
+  const [stagedDateTo, setStagedDateTo] = useState('');
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date());
+  useEffect(() => {
+    if (!filterMenuOpen) return;
+    const handleClickOutside = (e) => {
+      if (filterMenuRef.current && !filterMenuRef.current.contains(e.target)) {
+        setFilterMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [filterMenuOpen]);
+
+  const openFilterPanel = () => {
+    if (!filterMenuOpen) {
+      setStagedAgentFilter(agentFilter);
+      setStagedLabelFilterId(labelFilterId);
+      setStagedDatePreset(dateRangePreset);
+      setStagedDateFrom(dateRangePreset === 'custom' ? customDateFrom : '');
+      setStagedDateTo(dateRangePreset === 'custom' ? customDateTo : '');
+      setCalendarMonth(dateRangePreset === 'custom' && customDateFrom ? new Date(customDateFrom) : new Date());
+    }
+    setFilterMenuOpen((o) => !o);
+  };
+  const applyFilterPanel = () => {
+    setAgentFilter(stagedAgentFilter);
+    setLabelFilterId(stagedLabelFilterId);
+    if (stagedDateFrom && stagedDateTo) {
+      setDateRangePreset('custom');
+      setCustomDateFrom(stagedDateFrom);
+      setCustomDateTo(stagedDateTo);
+    } else {
+      setDateRangePreset(stagedDatePreset === 'custom' ? '7d' : stagedDatePreset);
+      setCustomDateFrom('');
+      setCustomDateTo('');
+    }
+    setFilterMenuOpen(false);
+  };
+  const resetFilterPanel = () => {
+    setStagedAgentFilter('');
+    setStagedLabelFilterId('');
+    setStagedDatePreset('7d');
+    setStagedDateFrom('');
+    setStagedDateTo('');
+    setAgentFilter('');
+    setLabelFilterId('');
+    setDateRangePreset('7d');
+    setCustomDateFrom('');
+    setCustomDateTo('');
+    setFilterMenuOpen(false);
+  };
+  const pickCalendarDate = (dateStr) => {
+    setStagedDatePreset('custom');
+    if (!stagedDateFrom || stagedDateTo) {
+      setStagedDateFrom(dateStr);
+      setStagedDateTo('');
+    } else if (dateStr < stagedDateFrom) {
+      setStagedDateTo(stagedDateFrom);
+      setStagedDateFrom(dateStr);
+    } else {
+      setStagedDateTo(dateStr);
+    }
+  };
 
   // Custom Fields (agency-defined field types + per-subscriber values)
   const [customFieldDefs, setCustomFieldDefs] = useState([]);
@@ -883,6 +1030,31 @@ export default function InboxPage() {
   }, [selectedConv?.assigned_to_id, agentsList]);
 
   const currentAgentName = selectedConv?.assignedAgentName || assignedAgent?.name;
+
+  // The logged-in user's own agent_profiles.id — what agentFilter actually
+  // compares against (see the Agent <select>'s options below) — so the
+  // "Mine" quick-view can set agentFilter to the right value.
+  const myProfileId = useMemo(() => {
+    const mine = agentsList.find((a) => String(a.id) === String(user?.id));
+    return mine ? String(mine.profileId || mine.agent_profile_id || mine.id) : null;
+  }, [agentsList, user]);
+
+  // Display labels for the progressive filter popover's chips/rows.
+  const DATE_PRESET_LABELS = { today: 'Today', '7d': 'Last 7 days', '30d': 'Last 30 days', custom: 'Custom range' };
+  const agentFilterLabel = useMemo(() => {
+    if (!agentFilter) return null;
+    if (agentFilter === 'unassigned') return 'Unassigned';
+    const ag = agentsList.find((a) => String(a.profileId || a.agent_profile_id || a.id) === String(agentFilter));
+    return ag ? (ag.name || ag.email) : 'Agent';
+  }, [agentFilter, agentsList]);
+  const labelFilterLabel = useMemo(() => {
+    if (!labelFilterId) return null;
+    return agencyLabels.find((lb) => String(lb.id) === String(labelFilterId))?.name || 'Label';
+  }, [labelFilterId, agencyLabels]);
+  const dateFilterLabel = dateRangePreset === 'custom' && customDateFrom && customDateTo
+    ? `${customDateFrom} → ${customDateTo}`
+    : DATE_PRESET_LABELS[dateRangePreset];
+  const isDateFilterActive = dateRangePreset !== '7d';
 
   // Load Canned Responses, Team Agents, Labels & Custom Field definitions
   useEffect(() => {
@@ -1991,192 +2163,268 @@ export default function InboxPage() {
   return (
     <AppLayout>
       <div className="inbox-layout" style={{ display: 'flex', height: '100vh', width: '100%', overflow: 'hidden', background: '#f8fafc' }}>
+        {/* ── 0. Views & Channels Rail ──────────────────────────────────
+            Icon-only — deliberately thin (52px) so the conversation list
+            keeps the space. Same statusFilter/agentFilter/platformFilter
+            state the header drives below — not a parallel filter system.
+            Every button carries a title tooltip since there's no label. */}
+        <aside className="inbox-views-rail" style={{ width: 52, flexShrink: 0, borderRight: '1px solid #e2e8f0', background: '#ffffff', display: 'flex', flexDirection: 'column', alignItems: 'center', overflowY: 'auto', padding: '12px 0' }}>
+          {/* Nav-menu (pop bar) trigger — top of the rail */}
+          <button
+            onClick={openPopupNav}
+            title="Open Navigation Menu (Pop Bar)"
+            style={{
+              width: 34, height: 34, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              border: 'none', background: 'transparent', color: '#475569', cursor: 'pointer', marginBottom: 10,
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = '#2563eb'; e.currentTarget.style.background = '#f8fafc'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = '#475569'; e.currentTarget.style.background = 'transparent'; }}
+          >
+            <Menu size={17} />
+          </button>
+
+          {/* Views — status chips (All/Open/Pending/Resolved) plus the
+              Mine/Unassigned smart views, all as one icon group. There's no
+              "Blocked" state here — this app has no block-a-subscriber
+              feature yet, so a button for it would filter on nothing. */}
+          {[
+            { key: 'all', label: 'All', icon: <Layers size={16} />, active: statusFilter === 'All' && !agentFilter, onClick: () => { setStatusFilter('All'); setAgentFilter(''); } },
+            { key: 'open', label: 'Open', icon: <MessageSquare size={16} />, active: statusFilter === 'OPEN' && !agentFilter, onClick: () => { setStatusFilter('OPEN'); setAgentFilter(''); } },
+            { key: 'pending', label: 'Pending', icon: <Clock size={16} />, active: statusFilter === 'PENDING' && !agentFilter, onClick: () => { setStatusFilter('PENDING'); setAgentFilter(''); } },
+            { key: 'resolved', label: 'Resolved', icon: <CheckCircle2 size={16} />, active: statusFilter === 'RESOLVED' && !agentFilter, onClick: () => { setStatusFilter('RESOLVED'); setAgentFilter(''); } },
+            { key: 'mine', label: 'Mine', icon: <User size={16} />, active: !!myProfileId && agentFilter === myProfileId, disabled: !myProfileId, onClick: () => { setStatusFilter('All'); setAgentFilter(myProfileId); } },
+            { key: 'unassigned', label: 'Unassigned', icon: <UserX size={16} />, active: agentFilter === 'unassigned', onClick: () => { setStatusFilter('All'); setAgentFilter('unassigned'); } },
+          ].map(({ key, label, icon, active, disabled, onClick }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={onClick}
+              disabled={disabled}
+              title={disabled ? "You don't have a team profile on this workspace yet" : label}
+              style={{
+                width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 3,
+                border: 'none', borderRadius: 8, cursor: disabled ? 'default' : 'pointer',
+                background: active ? 'rgba(37, 99, 235, 0.1)' : 'transparent',
+                color: disabled ? '#cbd5e1' : (active ? '#2563eb' : '#94a3b8'),
+              }}
+              onMouseEnter={(e) => { if (!active && !disabled) e.currentTarget.style.background = '#f8fafc'; }}
+              onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent'; }}
+            >
+              {icon}
+            </button>
+          ))}
+
+          <div style={{ width: 24, borderTop: '1px solid #f1f5f9', margin: '8px 0' }} />
+
+          {[
+            { key: 'WHATSAPP', label: 'WhatsApp', icon: <MessageCircle size={16} color="#25d366" /> },
+            { key: 'FACEBOOK', label: 'Messenger', icon: <Facebook size={16} color="#1877f2" /> },
+            { key: 'INSTAGRAM', label: 'Instagram', icon: <Instagram size={16} color="#e1306c" /> },
+            { key: 'TELEGRAM', label: 'Telegram', icon: <Send size={16} color="#229ed9" /> },
+            { key: 'WEBCHAT', label: 'Webchat', icon: <Globe size={16} color="#6366f1" /> },
+          ].map(({ key, label, icon }) => {
+            const active = platformFilter === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setPlatformFilter(active ? '' : key)}
+                title={label}
+                style={{
+                  width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 3,
+                  border: 'none', borderRadius: 8, cursor: 'pointer',
+                  background: active ? 'rgba(37, 99, 235, 0.1)' : 'transparent',
+                  opacity: active || !platformFilter ? 1 : 0.45,
+                }}
+                onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = '#f8fafc'; }}
+                onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent'; }}
+              >
+                {icon}
+              </button>
+            );
+          })}
+        </aside>
+
         {/* ── 1. Conversation List Column ── */}
-        <aside className="conversation-list" style={{ width: 330, flexShrink: 0, borderRight: '1px solid #e2e8f0', background: '#ffffff', display: 'flex', flexDirection: 'column' }}>
+        {/* Widened from 330 — the views rail going icon-only (was 212px)
+            and the filter row collapsing to one trigger freed up room,
+            reallocated here so the subscriber list gets more space. */}
+        <aside className="conversation-list" style={{ width: 380, flexShrink: 0, borderRight: '1px solid #e2e8f0', background: '#ffffff', display: 'flex', flexDirection: 'column' }}>
           <div className="conversation-list-header" style={{ padding: '10px 14px', borderBottom: '1px solid #e2e8f0' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <button
-                  onClick={openPopupNav}
-                  title="Open Navigation Menu (Pop Bar)"
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: 7,
-                    border: '1px solid #e2e8f0',
-                    background: '#f8fafc',
-                    color: '#475569',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    transition: 'all 0.12s',
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = '#2563eb'; e.currentTarget.style.background = '#f1f5f9'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = '#475569'; e.currentTarget.style.background = '#f8fafc'; }}
-                >
-                  <Menu size={15} />
-                </button>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 800, fontSize: '0.92rem', color: '#0f172a' }}>
-                  <MessageSquare size={16} color="#2563eb" /> Conversations
-                </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 800, fontSize: '0.92rem', color: '#0f172a' }}>
+                <MessageSquare size={16} color="#2563eb" /> Conversations
               </div>
               <span style={{ fontSize: '0.72rem', fontWeight: 600, padding: '2px 8px', borderRadius: 12, background: 'rgba(37, 99, 235, 0.08)', color: '#2563eb' }}>
                 {filteredConversations.length} Active
               </span>
             </div>
 
-            {/* Search Box — filters the loaded conversation list instantly
-                (client-side) while ALSO firing the fast indexed subscriber
-                search below, which can find a subscriber the list doesn't
-                have loaded (or one with no open conversation at all). */}
-            <div style={{ position: 'relative', marginBottom: 8 }}>
-              <Search size={14} color="#94a3b8" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
-              <input
-                ref={searchInputRef}
-                type="text"
-                className="form-input"
-                placeholder="Search subscribers by name or phone... (Ctrl+K)"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                style={{ paddingLeft: 30, fontSize: '0.8rem', height: 32, width: '100%' }}
-              />
-              {search.trim().length >= 2 && (fastSearching || fastSearchResults.length > 0) && (
-                <div style={{
-                  position: 'absolute', top: 36, left: 0, right: 0,
-                  background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10,
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.12)', overflow: 'hidden', zIndex: 25, maxHeight: 260, overflowY: 'auto',
-                }}>
-                  <div style={{ padding: '6px 12px', fontSize: '0.68rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.4, borderBottom: '1px solid #f1f5f9' }}>
-                    {fastSearching ? 'Searching subscribers…' : `${fastSearchResults.length} subscriber${fastSearchResults.length === 1 ? '' : 's'}`}
+            {/* Search + Filter — one row. Search stays narrow (flex-1, not
+                full width) so the icon-only Filter trigger fits beside it
+                instead of eating a whole row of its own. The search box
+                filters the loaded list instantly (client-side) while ALSO
+                firing the fast indexed subscriber search below, which can
+                find a subscriber the list doesn't have loaded. */}
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
+              <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+                <Search size={14} color="#94a3b8" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  className="form-input"
+                  placeholder="Search... (Ctrl+K)"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  style={{ paddingLeft: 30, fontSize: '0.8rem', height: 32, width: '100%' }}
+                />
+                {search.trim().length >= 2 && (fastSearching || fastSearchResults.length > 0) && (
+                  <div style={{
+                    position: 'absolute', top: 36, left: 0, right: 0,
+                    background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10,
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.12)', overflow: 'hidden', zIndex: 25, maxHeight: 260, overflowY: 'auto',
+                  }}>
+                    <div style={{ padding: '6px 12px', fontSize: '0.68rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.4, borderBottom: '1px solid #f1f5f9' }}>
+                      {fastSearching ? 'Searching subscribers…' : `${fastSearchResults.length} subscriber${fastSearchResults.length === 1 ? '' : 's'}`}
+                    </div>
+                    {fastSearchResults.map((r) => (
+                      <button
+                        key={r.id}
+                        type="button"
+                        onClick={() => handleJumpToSearchResult(r)}
+                        disabled={!r.conversationId}
+                        style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', textAlign: 'left',
+                          padding: '8px 12px', border: 'none', background: 'transparent', cursor: r.conversationId ? 'pointer' : 'default',
+                        }}
+                        onMouseEnter={(e) => { if (r.conversationId) e.currentTarget.style.background = '#f8fafc'; }}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                      >
+                        <div>
+                          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#0f172a' }}>{r.name || 'Unnamed'}</div>
+                          <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>{r.phone || r.platform}</div>
+                        </div>
+                        {!r.conversationId && <span style={{ fontSize: '0.68rem', color: '#cbd5e1' }}>No chat yet</span>}
+                      </button>
+                    ))}
                   </div>
-                  {fastSearchResults.map((r) => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() => handleJumpToSearchResult(r)}
-                      disabled={!r.conversationId}
-                      style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', textAlign: 'left',
-                        padding: '8px 12px', border: 'none', background: 'transparent', cursor: r.conversationId ? 'pointer' : 'default',
-                      }}
-                      onMouseEnter={(e) => { if (r.conversationId) e.currentTarget.style.background = '#f8fafc'; }}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                    >
-                      <div>
-                        <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#0f172a' }}>{r.name || 'Unnamed'}</div>
-                        <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>{r.phone || r.platform}</div>
-                      </div>
-                      {!r.conversationId && <span style={{ fontSize: '0.68rem', color: '#cbd5e1' }}>No chat yet</span>}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+                )}
+              </div>
 
-            {/* Status chips (compact — kept as chips, everything else below
-                is a dropdown to save space, per the layout requirement) */}
-            <div style={{ display: 'flex', gap: 4, marginBottom: 6, flexWrap: 'wrap' }}>
-              {STATUS_CHIPS.map((s) => (
+              {/* Filter panel — Agent, Label and Date Range all visible at
+                  once, staged locally and committed on Apply (or discarded
+                  by Reset). Channel/status live on the rail, not here. */}
+              <div ref={filterMenuRef} style={{ position: 'relative', flexShrink: 0 }}>
                 <button
-                  key={s}
-                  onClick={() => setStatusFilter(s)}
+                  type="button"
+                  onClick={openFilterPanel}
+                  title="Filter by agent, label or date"
                   style={{
-                    padding: '3px 8px',
-                    borderRadius: 6,
-                    fontSize: '0.7rem',
-                    fontWeight: 600,
-                    border: '1px solid',
-                    borderColor: statusFilter === s ? '#2563eb' : '#e2e8f0',
-                    background: statusFilter === s ? '#2563eb' : '#ffffff',
-                    color: statusFilter === s ? '#ffffff' : '#64748b',
-                    cursor: 'pointer',
+                    position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 8,
+                    border: '1px solid #e2e8f0', background: filterMenuOpen ? '#f1f5f9' : '#fff', color: '#475569', cursor: 'pointer',
                   }}
                 >
-                  {s}
+                  <SlidersHorizontal size={14} />
+                  {(agentFilterLabel || labelFilterLabel || isDateFilterActive) && (
+                    <span style={{ position: 'absolute', top: 4, right: 4, width: 6, height: 6, borderRadius: 99, background: '#2563eb' }} />
+                  )}
                 </button>
-              ))}
-            </div>
 
-            {/* Channel / Agent / Label / Date-range — all compact dropdowns,
-                wrapping onto a second row only if the sidebar is narrow. */}
-            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-              <select
-                value={platformFilter}
-                onChange={(e) => setPlatformFilter(e.target.value)}
-                style={compactSelectStyle}
-                title="Channel"
-              >
-                <option value="">All Channels</option>
-                <option value="WHATSAPP">WhatsApp</option>
-                <option value="FACEBOOK">Facebook</option>
-                <option value="INSTAGRAM">Instagram</option>
-                <option value="TELEGRAM">Telegram</option>
-                <option value="WEBCHAT">Webchat</option>
-              </select>
+                {filterMenuOpen && (
+                  <div style={{
+                    // Anchored to the trigger's RIGHT edge, growing leftward —
+                    // the trigger sits at the right end of the search row, so
+                    // opening left:0 (growing rightward) pushed this past the
+                    // 380px conversation-list panel and under the chat pane.
+                    position: 'absolute', top: 36, right: 0, zIndex: 30, width: 268,
+                    background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12,
+                    boxShadow: '0 12px 32px rgba(0,0,0,0.14)', padding: 14,
+                    maxHeight: 'calc(100vh - 160px)', overflowY: 'auto',
+                  }}>
+                    <div className="form-group" style={{ marginBottom: 10 }}>
+                      <label className="form-label">Team Member</label>
+                      <select className="form-input" value={stagedAgentFilter} onChange={(e) => setStagedAgentFilter(e.target.value)}>
+                        <option value="">All Agents</option>
+                        <option value="unassigned">Unassigned</option>
+                        {agentsList.map((a) => {
+                          const pid = String(a.profileId || a.agent_profile_id || a.id);
+                          return <option key={pid} value={pid}>{a.name || a.email}</option>;
+                        })}
+                      </select>
+                    </div>
 
-              <select
-                value={agentFilter}
-                onChange={(e) => setAgentFilter(e.target.value)}
-                style={compactSelectStyle}
-                title="Agent"
-              >
-                <option value="">All Agents</option>
-                <option value="unassigned">Unassigned</option>
-                {agentsList.map((a) => {
-                  const pid = a.profileId || a.agent_profile_id || a.id;
-                  return (
-                    <option key={pid} value={pid}>{a.name || a.email}</option>
-                  );
-                })}
-              </select>
+                    {agencyLabels.length > 0 && (
+                      <div className="form-group" style={{ marginBottom: 10 }}>
+                        <label className="form-label">Label</label>
+                        <select className="form-input" value={stagedLabelFilterId} onChange={(e) => setStagedLabelFilterId(e.target.value)}>
+                          <option value="">All Labels</option>
+                          {agencyLabels.map((lb) => (
+                            <option key={lb.id} value={lb.id}>{lb.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
 
-              {agencyLabels.length > 0 && (
-                <select
-                  value={labelFilterId}
-                  onChange={(e) => setLabelFilterId(e.target.value)}
-                  style={compactSelectStyle}
-                  title="Label"
-                >
-                  <option value="">All Labels</option>
-                  {agencyLabels.map((lb) => (
-                    <option key={lb.id} value={lb.id}>{lb.name}</option>
-                  ))}
-                </select>
-              )}
+                    <div style={{ marginBottom: 4 }}>
+                      <label className="form-label" style={{ display: 'block', marginBottom: 6 }}>Date Range</label>
+                      <div style={{ display: 'flex', gap: 5, marginBottom: 10 }}>
+                        {[['today', 'Today'], ['7d', '7 Days'], ['30d', '30 Days']].map(([value, label]) => {
+                          const active = stagedDatePreset === value && !stagedDateFrom;
+                          return (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() => { setStagedDatePreset(value); setStagedDateFrom(''); setStagedDateTo(''); }}
+                              style={{
+                                flex: 1, padding: '5px 0', borderRadius: 6, fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
+                                border: `1px solid ${active ? '#2563eb' : '#e2e8f0'}`,
+                                background: active ? 'rgba(37, 99, 235, 0.08)' : '#fff',
+                                color: active ? '#2563eb' : '#64748b',
+                              }}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
 
-              <select
-                value={dateRangePreset}
-                onChange={(e) => setDateRangePreset(e.target.value)}
-                style={compactSelectStyle}
-                title="Date range"
-              >
-                <option value="today">Today</option>
-                <option value="7d">Last 7 days</option>
-                <option value="30d">Last 30 days</option>
-                <option value="custom">Custom range…</option>
-              </select>
-            </div>
+                      <InboxRangeCalendar
+                        month={calendarMonth}
+                        from={stagedDateFrom}
+                        to={stagedDateTo}
+                        onNavigate={(dir) => setCalendarMonth((m) => { const d = new Date(m); d.setMonth(d.getMonth() + dir); return d; })}
+                        onPick={pickCalendarDate}
+                      />
 
-            {dateRangePreset === 'custom' && (
-              <div style={{ display: 'flex', gap: 5, alignItems: 'center', marginTop: 5 }}>
-                <input
-                  type="date"
-                  value={customDateFrom}
-                  onChange={(e) => setCustomDateFrom(e.target.value)}
-                  style={{ ...compactSelectStyle, flex: 1 }}
-                />
-                <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>to</span>
-                <input
-                  type="date"
-                  value={customDateTo}
-                  onChange={(e) => setCustomDateTo(e.target.value)}
-                  style={{ ...compactSelectStyle, flex: 1 }}
-                />
+                      {(stagedDateFrom || stagedDateTo) && (
+                        <div style={{ fontSize: '0.72rem', color: '#475569', fontWeight: 600, marginTop: 8, textAlign: 'center' }}>
+                          {stagedDateFrom || '…'} &rarr; {stagedDateTo || '…'}
+                        </div>
+                      )}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 8, marginTop: 12, paddingTop: 12, borderTop: '1px solid #f1f5f9' }}>
+                      <button type="button" className="btn btn-secondary btn-sm" style={{ flex: 1 }} onClick={resetFilterPanel}>Reset</button>
+                      <button type="button" className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={applyFilterPanel}>Apply</button>
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
-            {dateRangePreset === 'custom' && customDateFrom && customDateTo && (Date.parse(customDateTo) - Date.parse(customDateFrom)) / 86400000 > 30 && (
-              <div style={{ fontSize: '0.68rem', color: '#f59e0b', marginTop: 3 }}>Custom ranges are limited to 30 days — the range will be narrowed automatically.</div>
+            </div>
+
+            {/* Active filter chips — only takes a row when something is
+                actually set, so the default state stays one thin line. */}
+            {(agentFilterLabel || labelFilterLabel || isDateFilterActive) && (
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
+                {agentFilterLabel && <FilterChip label={agentFilterLabel} onRemove={() => setAgentFilter('')} />}
+                {labelFilterLabel && <FilterChip label={labelFilterLabel} onRemove={() => setLabelFilterId('')} />}
+                {isDateFilterActive && (
+                  <FilterChip
+                    label={dateFilterLabel}
+                    onRemove={() => { setDateRangePreset('7d'); setCustomDateFrom(''); setCustomDateTo(''); }}
+                  />
+                )}
+              </div>
             )}
           </div>
 
@@ -2413,6 +2661,39 @@ export default function InboxPage() {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {(selectedConv.platform || selectedConv.integrationPlatform || selectedConv.contactPlatform || '').toUpperCase() === 'WHATSAPP' && (
+                    <button
+                      onClick={() => whatsappCall.placeCall(
+                        selectedConv.contact_id || selectedConv.contactId,
+                        selectedId,
+                        selectedConv.contactName || selectedConv.contact_name || selectedConv.external_id,
+                        selectedConv.integration_id || selectedConv.integrationId
+                      )}
+                      disabled={whatsappCall.callState !== 'idle'}
+                      title="Call this subscriber on WhatsApp"
+                      className="transition-all duration-150 hover:brightness-95 active:scale-95"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        padding: '4px 11px',
+                        height: 28,
+                        borderRadius: 16,
+                        border: '1px solid #86efac',
+                        background: '#dcfce7',
+                        color: '#15803d',
+                        fontSize: '0.74rem',
+                        fontWeight: 700,
+                        cursor: whatsappCall.callState !== 'idle' ? 'default' : 'pointer',
+                        opacity: whatsappCall.callState !== 'idle' ? 0.6 : 1,
+                        boxShadow: '0 1px 3px rgba(34, 197, 94, 0.12)',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <PhoneCall size={12} />
+                      <span>Call</span>
+                    </button>
+                  )}
                   <button
                     onClick={handleToggleBot}
                     disabled={togglingBot}
@@ -4087,6 +4368,20 @@ export default function InboxPage() {
           </div>
         </div>
       )}
+
+      <WhatsAppCallPanel
+        contactName={whatsappCall.calleeName}
+        callState={whatsappCall.callState}
+        errorMessage={whatsappCall.errorMessage}
+        duration={whatsappCall.duration}
+        muted={whatsappCall.muted}
+        remoteAudioRef={whatsappCall.remoteAudioRef}
+        onHangUp={whatsappCall.hangUp}
+        onToggleMute={whatsappCall.toggleMute}
+        onRequestPermission={(note) => whatsappCall.requestPermission(whatsappCall.calleeContactId, whatsappCall.calleeIntegrationId, note)}
+        onClose={whatsappCall.reset}
+        onRetry={() => whatsappCall.placeCall(whatsappCall.calleeContactId, selectedId, whatsappCall.calleeName, whatsappCall.calleeIntegrationId)}
+      />
     </AppLayout>
   );
 }

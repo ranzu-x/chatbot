@@ -4,6 +4,8 @@ import { channelAPI } from '../../services/api';
 import { Video, Plus, Trash2, CheckCircle2, AlertCircle, ExternalLink, RefreshCw, Key, ShieldCheck } from 'lucide-react';
 import { Link } from 'react-router';
 
+const EmbeddedWrapper = ({ children }) => <div>{children}</div>;
+
 export default function TikTokPage({ embedded = false }) {
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -73,7 +75,7 @@ export default function TikTokPage({ embedded = false }) {
     }
   };
 
-  const LayoutWrapper = embedded ? ({ children }) => <div>{children}</div> : AppLayout;
+  const LayoutWrapper = embedded ? EmbeddedWrapper : AppLayout;
 
   return (
     <LayoutWrapper>

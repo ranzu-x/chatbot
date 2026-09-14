@@ -16,10 +16,11 @@ import {
   User, Settings2, CornerDownRight, Image, Upload,
   Video, Music, FileText, Globe, ExternalLink,
   Smartphone, RotateCcw, Undo2, Redo2, ThumbsUp, Sparkles, MoreVertical,
-  Copy, ShoppingBag, HelpCircle, Flag, ClipboardList, Workflow, Tag, Timer, Palette
+  Copy, ShoppingBag, HelpCircle, Flag, ClipboardList, Workflow, Tag, Timer, Palette, Megaphone
 } from 'lucide-react';
 import FlowPhonePreview from './FlowPhonePreview';
 import PlatformIcon, { getPlatformMeta } from '../../Components/Common/PlatformIcon';
+import BroadcastStartNodeProperties from '../../Components/Broadcast/BroadcastStartNodeProperties';
 import { flowAPI, uploadAPI, integrationAPI, customFieldAPI, userInputFlowAPI, sequenceAPI, labelAPI, googleSheetsAPI, channelAPI } from '../../services/api';
 import WidgetAppearancePanel from '../../Components/Engagement/WidgetAppearancePanel';
 import Swal from 'sweetalert2';
@@ -2669,6 +2670,49 @@ function StartNode({ id, data, selected }) {
         </div>
         <div className="fb-next-step-row" style={{ marginTop: 14, marginRight: -16, marginLeft: -16, paddingLeft: 16 }}>
           <span>First Step</span>
+          <Handle type="source" position={Position.Right} id="next-step" className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`} />
+        </div>
+      </div>
+    );
+  }
+
+  // A Broadcast campaign's Start node holds the whole campaign (audience,
+  // schedule, send) — configured in the properties panel — rather than a
+  // keyword trigger, since it's never triggered by an inbound message at
+  // all; it's invoked directly by routes/broadcasts.js's send engine. Same
+  // reasoning/fix as uifStart/sequenceStart above.
+  if (data.broadcastStart) {
+    return (
+      <div
+        className={`fb-node${selected ? ' selected' : ''}`}
+        style={{
+          borderColor: selected ? '#2563eb' : '#e2e8f0', background: '#ffffff',
+          minWidth: 260, maxWidth: 280, width: 270, borderRadius: 20,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.06)', padding: '16px 16px 14px 16px',
+          position: 'relative',
+        }}
+      >
+        <NodeHoverActions nodeId={id} nodeType="start" />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, paddingLeft: 2 }}>
+          <Megaphone size={18} strokeWidth={2.5} color="#2563eb" />
+          <span style={{ fontWeight: 800, fontSize: 15, color: '#0f172a' }}>Broadcast</span>
+        </div>
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px',
+          borderRadius: 12, background: '#eff6ff', border: '1px solid #dbeafe',
+        }}>
+          <div style={{
+            width: 20, height: 20, borderRadius: '50%', background: '#2563eb',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1,
+          }}>
+            <Megaphone size={11} color="#fff" />
+          </div>
+          <div style={{ fontSize: 11.5, color: '#1d4ed8', lineHeight: 1.4 }}>
+            Click here to set the audience, tag label, and Send Now / Schedule for this campaign.
+          </div>
+        </div>
+        <div className="fb-next-step-row" style={{ marginTop: 14, marginRight: -16, marginLeft: -16, paddingLeft: 16 }}>
+          <span>Message</span>
           <Handle type="source" position={Position.Right} id="next-step" className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`} />
         </div>
       </div>
@@ -6697,7 +6741,7 @@ function UserInputFlowStartProperties({ data, updateField, platform, flowName, o
   );
 }
 
-function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFields = [], onCustomFieldCreated, userInputFlows = [], onUserInputFlowCreated, isUserInputFlow = false, sequences = [], onSequenceCreated, isSequence = false, flows = [], currentFlowId = null, flowName, onFlowNameChange, onDrillIn, onAttachSequence, attachedSequenceNode, onSelectSequenceNode }) {
+function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFields = [], onCustomFieldCreated, userInputFlows = [], onUserInputFlowCreated, isUserInputFlow = false, sequences = [], onSequenceCreated, isSequence = false, isBroadcastFlow = false, flows = [], currentFlowId = null, flowName, onFlowNameChange, onDrillIn, onAttachSequence, attachedSequenceNode, onSelectSequenceNode }) {
   if (!node) return null;
 
   const { data, type } = node;
@@ -6719,8 +6763,19 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
   const renderFields = () => {
     switch (type) {
       case 'start':
-        // A User Input Flow's / Sequence's Start node configures the form/
-        // sequence itself, not a trigger — neither is ever keyword-triggered.
+        // A Broadcast campaign's / User Input Flow's / Sequence's Start node
+        // configures the campaign/form/sequence itself, not a trigger — none
+        // of the three is ever keyword-triggered.
+        if (isBroadcastFlow) {
+          return (
+            <BroadcastStartNodeProperties
+              flowId={currentFlowId}
+              flowName={flowName}
+              onFlowNameChange={onFlowNameChange}
+              platform={platform}
+            />
+          );
+        }
         if (isSequence) {
           return (
             <div className="fb-field">
@@ -8861,6 +8916,11 @@ function FlowBuilderInner() {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [flowData, setFlowData] = useState(null);
+  // Derived, not route-based like isUserInputFlow/isSequence — a Broadcast
+  // flow lives at the same /flows/:id URL as any other flow, so this is
+  // only knowable once the flow itself has loaded (routes/broadcasts.js's
+  // start-with-flow is what actually sets trigger_type='BROADCAST').
+  const isBroadcastFlow = flowData?.trigger_type === 'BROADCAST';
   const [flowName, setFlowName] = useState('');
   const [platform, setPlatform] = useState(() => {
     const q = searchParams.get('platform');
@@ -9067,7 +9127,11 @@ function FlowBuilderInner() {
 
         setFlowData(flow);
         setFlowName(flow.name || 'Untitled Flow');
-        
+        // A Broadcasting-module flow (routes/broadcasts.js's start-with-flow
+        // set this at creation) — its Start node shows the campaign's
+        // audience/schedule/send controls instead of a keyword trigger.
+        const isBroadcastFlowLoaded = flow.trigger_type === 'BROADCAST';
+
         let resolvedPlatform = flow.platform || 'WEBCHAT';
         if (flow.integration_id && intRes.status === 'fulfilled') {
           const matched = (intRes.value.data?.integrations || []).find((i) => String(i.id) === String(flow.integration_id));
@@ -9152,13 +9216,14 @@ function FlowBuilderInner() {
             // existed still validates.
             ...(isUserInputFlow && n.type === 'start' ? { uifStart: true } : {}),
             ...(isSequence && n.type === 'start' ? { sequenceStart: true } : {}),
+            ...(isBroadcastFlowLoaded && n.type === 'start' ? { broadcastStart: true } : {}),
             _unsupported: !isNodeSupportedOnPlatform(n.type, flow.platform || 'WEBCHAT'),
           };
 
-          // Skipped for a User Input Flow's / Sequence's Start node — neither
-          // has a trigger to backfill, and injecting placeholder keywords
-          // there would be misleading.
-          if (n.type === 'start' && !isUserInputFlow && !isSequence) {
+          // Skipped for a User Input Flow's / Sequence's / Broadcast's Start
+          // node — none of the three has a keyword trigger to backfill, and
+          // injecting placeholder keywords there would be misleading.
+          if (n.type === 'start' && !isUserInputFlow && !isSequence && !isBroadcastFlowLoaded) {
             if (!nodeData.triggers || !Array.isArray(nodeData.triggers) || nodeData.triggers.length === 0) {
               const kws = nodeData.keywords !== undefined
                 ? (Array.isArray(nodeData.keywords) ? nodeData.keywords : [nodeData.keywords])
@@ -10528,6 +10593,7 @@ function FlowBuilderInner() {
             sequences={sequencesList}
             onSequenceCreated={(seq) => setSequencesList((prev) => [...prev, seq])}
             isSequence={isSequence}
+            isBroadcastFlow={isBroadcastFlow}
             flows={flowsList}
             currentFlowId={(!isUserInputFlow && !isSequence) ? Number(id) : null}
             flowName={flowName}

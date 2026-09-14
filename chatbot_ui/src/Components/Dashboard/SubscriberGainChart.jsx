@@ -1,27 +1,18 @@
-import React, { useMemo } from 'react';
+﻿import React, { useMemo } from 'react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from 'recharts';
 
-// "Subscriber Bloom" — a soft, light-toned redesign of the old stacked bar
-// chart, approved by the user from a set of mockups. The line sweeps
-// through a "dawn" gradient (cool lavender at the oldest day, warm
-// coral-gold at today) — light visually warming toward the present as a
-// stand-in for growth — with a soft glow on the most recent point, a serif
-// (Fraunces) headline number, and an airy per-channel breakdown row instead
-// of boxed stat tiles. Deliberately keeps the exact prop contract the old
-// component had (rawData / timeRange / onTimeRangeChange) so nothing else
-// in AgencyDashboard.jsx needs to change.
+// "Subscriber Gain" chart redesigned to match the blue enterprise dashboard
+// theme (--primary: #2563eb). Light, clean blues replace the warm orange/coral
+// palette. Keeps the same prop contract: rawData / timeRange / onTimeRangeChange.
 
 const CHANNELS = [
-  { key: 'whatsapp',  name: 'WhatsApp',  hue: '#25d366', tint: 'rgba(37,211,102,.14)' },
-  { key: 'facebook',  name: 'Facebook',  hue: '#4c8bf0', tint: 'rgba(76,139,240,.14)' },
-  { key: 'instagram', name: 'Instagram', hue: '#e0558a', tint: 'rgba(224,85,138,.14)' },
-  { key: 'telegram',  name: 'Telegram',  hue: '#41a8d8', tint: 'rgba(65,168,216,.14)' },
-  { key: 'webchat',   name: 'Webchat',   hue: '#7a7ce0', tint: 'rgba(122,124,224,.14)' },
+  { key: 'whatsapp',  name: 'WhatsApp',  hue: '#25d366', tint: 'rgba(37,211,102,.12)' },
+  { key: 'facebook',  name: 'Facebook',  hue: '#1877f2', tint: 'rgba(24,119,242,.12)' },
+  { key: 'instagram', name: 'Instagram', hue: '#e1306c', tint: 'rgba(225,48,108,.12)' },
+  { key: 'telegram',  name: 'Telegram',  hue: '#229ed9', tint: 'rgba(34,158,217,.12)' },
+  { key: 'webchat',   name: 'Webchat',   hue: '#2563eb', tint: 'rgba(37,99,235,.12)'  },
 ];
 
-// Attractive fallback sample timeline if the workspace has no history yet —
-// carried over from the previous chart so a brand-new account still sees a
-// populated-looking preview rather than an empty axis.
 function generateSampleDays(days = 14) {
   const result = [];
   const now = new Date();
@@ -66,33 +57,33 @@ function CustomDot(props) {
   if (index !== dataLength - 1 || cx == null || cy == null) return null;
   return (
     <g>
-      <circle cx={cx} cy={cy} r={20} fill="url(#bloomGlow)" />
-      <circle cx={cx} cy={cy} r={5.5} fill="#ff9d6c" stroke="#fffefc" strokeWidth={2.5} />
+      <circle cx={cx} cy={cy} r={18} fill="url(#dotGlow)" />
+      <circle cx={cx} cy={cy} r={5} fill="#2563eb" stroke="#ffffff" strokeWidth={2.5} />
     </g>
   );
 }
 
-function BloomTooltip({ active, payload, label }) {
+function ChartTooltip({ active, payload, label }) {
   if (!active || !payload || !payload.length) return null;
   const total = payload[0]?.payload?.new_subscribers ?? 0;
   return (
     <div
       style={{
-        background: '#fffefc',
-        border: '1px solid #f0eeee',
-        borderRadius: 14,
-        padding: '11px 14px',
-        boxShadow: '0 18px 40px -14px rgba(90, 60, 90, 0.28)',
+        background: '#ffffff',
+        border: '1px solid #e2e8f0',
+        borderRadius: 10,
+        padding: '10px 14px',
+        boxShadow: '0 4px 16px rgba(37,99,235,0.10)',
         minWidth: 150,
       }}
     >
-      <div style={{ fontFamily: "'Fraunces', serif", fontStyle: 'italic', fontWeight: 440, fontSize: '0.86rem', color: '#5c5566', marginBottom: 5 }}>
+      <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#64748b', marginBottom: 4 }}>
         {label}
       </div>
-      <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 560, fontSize: '1.3rem', color: '#20222c', fontVariantNumeric: 'tabular-nums' }}>
+      <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', fontVariantNumeric: 'tabular-nums' }}>
         +{total}
       </div>
-      <div style={{ fontSize: '0.68rem', color: '#a39cae', marginTop: 1 }}>new subscribers that day</div>
+      <div style={{ fontSize: '0.68rem', color: '#94a3b8', marginTop: 1 }}>new subscribers</div>
     </div>
   );
 }
@@ -144,56 +135,52 @@ export default function SubscriberGainChart({ rawData = [], timeRange = 14, onTi
     <div
       style={{
         position: 'relative',
-        background: '#fffefc',
-        border: '1px solid #efeeee',
-        borderRadius: 28,
-        boxShadow:
-          '0 1px 1px rgba(35,39,51,0.03), 0 30px 60px -30px rgba(90,60,90,0.18), 0 14px 28px -20px rgba(90,60,90,0.10)',
-        padding: '40px 40px 36px',
+        background: '#ffffff',
+        border: '1px solid #e2e8f0',
+        borderRadius: 12,
+        boxShadow: '0 1px 3px rgba(37,99,235,0.04), 0 4px 16px rgba(37,99,235,0.06)',
+        padding: '24px 28px 20px',
         overflow: 'hidden',
       }}
     >
-      {/* one soft bokeh glow tucked in the corner — the card's single flourish */}
+      {/* Subtle blue glow in the top-right corner */}
       <div
         style={{
           position: 'absolute',
-          width: 340,
-          height: 340,
+          width: 280,
+          height: 280,
           borderRadius: '50%',
-          top: -160,
-          right: -140,
-          background: 'radial-gradient(circle at 50% 50%, rgba(255,157,108,0.20), rgba(255,157,108,0) 70%)',
+          top: -140,
+          right: -100,
+          background: 'radial-gradient(circle at 50% 50%, rgba(37,99,235,0.07), rgba(37,99,235,0) 70%)',
           pointerEvents: 'none',
         }}
       />
 
-      {/* ── Header row: headline + timeframe control ── */}
+      {/* Header row */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
-        <div style={{ position: 'relative', maxWidth: '30ch' }}>
-          <div style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#b9a8c9', marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#94a3b8', marginBottom: 6 }}>
             Subscriber Growth
           </div>
-          <span
-            style={{
-              fontFamily: "'Fraunces', serif",
-              fontWeight: 560,
-              fontSize: '2.6rem',
-              letterSpacing: '-0.02em',
-              lineHeight: 1.02,
-              color: '#20222c',
-              fontVariantNumeric: 'tabular-nums',
-              backgroundImage: 'linear-gradient(100deg, #3a2f45 0%, #6a4a3f 60%, #b35b2e 100%)',
-              WebkitBackgroundClip: 'text',
-              backgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-            }}
-          >
-            {totalGained.toLocaleString('en-US')}
-          </span>
-          <span style={{ fontFamily: "'Fraunces', serif", fontWeight: 440, fontStyle: 'italic', fontSize: '1.15rem', color: '#5c5566', marginLeft: 6 }}>
-            new subscribers
-          </span>
-          <div style={{ fontSize: '0.88rem', color: '#8a8695', marginTop: 6, lineHeight: 1.55, maxWidth: '44ch' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span
+              style={{
+                fontSize: '2.2rem',
+                fontWeight: 800,
+                letterSpacing: '-0.03em',
+                lineHeight: 1.1,
+                color: '#0f172a',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {totalGained.toLocaleString('en-US')}
+            </span>
+            <span style={{ fontSize: '0.95rem', fontWeight: 500, color: '#64748b' }}>
+              new subscribers
+            </span>
+          </div>
+          <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: 4 }}>
             Across WhatsApp, Facebook, Instagram, Telegram and Webchat.
           </div>
         </div>
@@ -204,10 +191,10 @@ export default function SubscriberGainChart({ rawData = [], timeRange = 14, onTi
             onChange={(e) => onTimeRangeChange(Number(e.target.value))}
             style={{
               padding: '6px 12px',
-              borderRadius: 999,
-              border: '1px solid #efeeee',
-              background: '#fffefc',
-              color: '#5c5566',
+              borderRadius: 8,
+              border: '1px solid #e2e8f0',
+              background: '#f8fafc',
+              color: '#475569',
               fontSize: '0.78rem',
               fontWeight: 600,
               cursor: 'pointer',
@@ -221,19 +208,19 @@ export default function SubscriberGainChart({ rawData = [], timeRange = 14, onTi
         )}
       </div>
 
-      {/* ── Meta row ── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
+      {/* Meta badges */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
         <span
           style={{
             display: 'inline-flex',
             alignItems: 'center',
             gap: 5,
-            fontSize: '0.78rem',
+            fontSize: '0.75rem',
             fontWeight: 600,
-            color: '#a2440f',
-            background: 'linear-gradient(120deg, rgba(255,157,108,0.16), rgba(255,215,153,0.16))',
-            border: '1px solid rgba(255,157,108,0.28)',
-            padding: '5px 11px 5px 9px',
+            color: deltaPct >= 0 ? '#059669' : '#ef4444',
+            background: deltaPct >= 0 ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+            border: `1px solid ${deltaPct >= 0 ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`,
+            padding: '4px 10px 4px 8px',
             borderRadius: 999,
           }}
         >
@@ -243,96 +230,96 @@ export default function SubscriberGainChart({ rawData = [], timeRange = 14, onTi
           {deltaPct >= 0 ? '+' : ''}
           {deltaPct}% vs the {timeRange === 7 ? '3.5' : Math.round(timeRange / 2)} days before
         </span>
-        <span style={{ fontSize: '0.78rem', color: '#8a8695', fontVariantNumeric: 'tabular-nums' }}>
-          {dailyAvg.toFixed(1)} a day, on average
+        <span style={{ fontSize: '0.76rem', color: '#94a3b8', fontVariantNumeric: 'tabular-nums' }}>
+          {dailyAvg.toFixed(1)} / day avg
         </span>
       </div>
 
-      {/* ── Chart ── */}
-      <div style={{ height: 280, width: '100%', marginTop: 26 }}>
+      {/* Area Chart */}
+      <div style={{ height: 240, width: '100%', marginTop: 20 }}>
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chartData} margin={{ top: 14, right: 6, left: 0, bottom: 0 }}>
+          <AreaChart data={chartData} margin={{ top: 10, right: 6, left: 0, bottom: 0 }}>
             <defs>
-              <linearGradient id="bloomLine" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stopColor="#b9a8dc" />
-                <stop offset="55%" stopColor="#e8a690" />
-                <stop offset="100%" stopColor="#ff9d6c" />
+              <linearGradient id="chartLine" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stopColor="#bfdbfe" />
+                <stop offset="55%" stopColor="#60a5fa" />
+                <stop offset="100%" stopColor="#2563eb" />
               </linearGradient>
-              <linearGradient id="bloomFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="rgba(255,157,108,0.30)" />
-                <stop offset="100%" stopColor="rgba(255,157,108,0)" />
+              <linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="rgba(37,99,235,0.16)" />
+                <stop offset="100%" stopColor="rgba(37,99,235,0)" />
               </linearGradient>
-              <radialGradient id="bloomGlow">
-                <stop offset="0%" stopColor="rgba(255,157,108,0.55)" />
-                <stop offset="100%" stopColor="rgba(255,157,108,0)" />
+              <radialGradient id="dotGlow">
+                <stop offset="0%" stopColor="rgba(37,99,235,0.35)" />
+                <stop offset="100%" stopColor="rgba(37,99,235,0)" />
               </radialGradient>
             </defs>
             <XAxis
               dataKey="date"
-              stroke="#b3aebd"
+              stroke="#e2e8f0"
               fontSize={11}
               tickLine={false}
               axisLine={false}
               tickMargin={10}
               interval="preserveStartEnd"
               minTickGap={24}
+              tick={{ fill: '#94a3b8' }}
             />
             <YAxis hide domain={[0, 'dataMax + 2']} />
-            <Tooltip content={<BloomTooltip />} cursor={{ stroke: '#f0eeee', strokeWidth: 1 }} />
+            <Tooltip content={<ChartTooltip />} cursor={{ stroke: '#e2e8f0', strokeWidth: 1 }} />
             <Area
               type="monotone"
               dataKey="new_subscribers"
-              stroke="url(#bloomLine)"
+              stroke="url(#chartLine)"
               strokeWidth={2.25}
-              fill="url(#bloomFill)"
+              fill="url(#chartFill)"
               dot={(dotProps) => <CustomDot key={dotProps.index} {...dotProps} dataLength={chartData.length} />}
-              activeDot={{ r: 6, fill: '#ff9d6c', stroke: '#fffefc', strokeWidth: 2.5 }}
+              activeDot={{ r: 5, fill: '#2563eb', stroke: '#ffffff', strokeWidth: 2.5 }}
               animationDuration={700}
             />
           </AreaChart>
         </ResponsiveContainer>
       </div>
 
-      {/* ── Channel bloom row ── */}
+      {/* Per-channel breakdown row */}
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
-          gap: 18,
-          marginTop: 34,
-          paddingTop: 28,
-          borderTop: '1px solid #f1efef',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))',
+          gap: 16,
+          marginTop: 20,
+          paddingTop: 18,
+          borderTop: '1px solid #f1f5f9',
         }}
       >
         {channelTotals.map((ch) => {
           const path = sparkPath(ch.series.length > 1 ? ch.series : [0, ...ch.series], 100, 18, 2);
           return (
-            <div key={ch.key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 9 }}>
+            <div key={ch.key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>
               <div
                 style={{
-                  width: 34,
-                  height: 34,
-                  borderRadius: '50%',
+                  width: 30,
+                  height: 30,
+                  borderRadius: 8,
                   background: ch.tint,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.03)',
                 }}
               >
                 <svg width={8} height={8} viewBox="0 0 8 8">
                   <circle cx="4" cy="4" r="4" fill={ch.hue} />
                 </svg>
               </div>
-              <div style={{ fontSize: '0.72rem', fontWeight: 600, color: '#9a95a3', letterSpacing: '0.02em', textTransform: 'uppercase' }}>
+              <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
                 {ch.name}
               </div>
-              <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 560, fontSize: '1.28rem', color: '#232733', fontVariantNumeric: 'tabular-nums' }}>
+              <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0f172a', fontVariantNumeric: 'tabular-nums' }}>
                 +{ch.total}
               </div>
-              <div style={{ width: '100%', height: 18 }}>
+              <div style={{ width: '100%', height: 16 }}>
                 <svg viewBox="0 0 100 18" preserveAspectRatio="none" style={{ display: 'block', width: '100%', height: '100%' }}>
-                  <path d={path} fill="none" stroke={ch.hue} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" opacity="0.75" />
+                  <path d={path} fill="none" stroke={ch.hue} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
                 </svg>
               </div>
             </div>

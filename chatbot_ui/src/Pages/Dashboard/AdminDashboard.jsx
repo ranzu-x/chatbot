@@ -9,7 +9,6 @@ import {
   MessageSquare,
   Send,
   ArrowUpRight,
-  Plus,
   ExternalLink,
   CheckCircle2,
   Shield,
@@ -120,14 +119,6 @@ export default function AdminDashboard() {
               System-wide platform overview, agencies, subscriber acquisition and message traffic metrics
             </p>
           </div>
-
-          <button
-            className="btn btn-primary btn-sm"
-            onClick={() => navigate('/admin/agencies')}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', fontSize: '0.82rem' }}
-          >
-            <Plus size={15} /> + Add Agency
-          </button>
         </div>
 
         {loading ? (

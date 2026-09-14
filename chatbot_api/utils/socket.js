@@ -39,6 +39,16 @@ export function initSocket(server, corsOrigin) {
       socket.leave(`conv:${conversationId}`);
     });
 
+    // Support Desk ticket detail viewers (both the requester and helpdesk
+    // staff join the same room while a ticket's thread is open on screen)
+    socket.on('join_ticket', (ticketId) => {
+      socket.join(`ticket:${ticketId}`);
+    });
+
+    socket.on('leave_ticket', (ticketId) => {
+      socket.leave(`ticket:${ticketId}`);
+    });
+
     // Webchat widget connections
     socket.on('webchat_join', ({ widgetId, sessionId, conversationId }) => {
       socket.join(`conv:${conversationId}`);
@@ -65,4 +75,9 @@ export function emitToAgency(agencyId, event, data) {
 /** Emit an event to a specific conversation room */
 export function emitToConversation(conversationId, event, data) {
   if (io) io.to(`conv:${conversationId}`).emit(event, data);
+}
+
+/** Emit an event to a specific Support Desk ticket's viewers */
+export function emitToTicket(ticketId, event, data) {
+  if (io) io.to(`ticket:${ticketId}`).emit(event, data);
 }

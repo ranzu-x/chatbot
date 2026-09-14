@@ -1,4 +1,5 @@
 import express from "express";
+import crypto from "crypto";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
@@ -271,7 +272,7 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
     let accessToken = isValidMetaToken(clientAccessToken) ? clientAccessToken.trim() : null;
     let appId = appSettings?.app_id || process.env.META_APP_ID;
     let appSecret = appSettings?.app_secret || process.env.META_APP_SECRET;
-    let verifyToken = appSettings?.verify_token || "nexa_meta_verify_token";
+    let verifyToken = appSettings?.verify_token || crypto.randomBytes(16).toString("hex");
 
     // 2. Exchange authorization code for permanent/long-lived access token if code provided
     if (code && appId && appSecret) {
@@ -509,14 +510,20 @@ router.get("/channels/facebook", async (req, res) => {
       "SELECT * FROM integrations WHERE agency_id = ? AND platform = 'FACEBOOK' ORDER BY created_at DESC",
       [req.agencyId]
     );
-    return res.json({ success: true, pages: stripSecrets(rows, req) });
+    const pages = rows.map(r => ({
+      ...r,
+      profile_picture_url: r.profile_picture_url || (r.fb_page_id ? `https://graph.facebook.com/v21.0/${r.fb_page_id}/picture?type=large` : null)
+    }));
+    return res.json({ success: true, pages: stripSecrets(pages, req) });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
 router.post("/channels/facebook", async (req, res) => {
-  const { name, accessToken, userAccessToken, verifyToken, fbPageId, fbPageName } = req.body;
+  const { name, accessToken, userAccessToken, verifyToken, fbPageId, fbPageName, profilePictureUrl, profile_picture_url } = req.body;
   if (!name || !accessToken || !fbPageId)
     return res.status(400).json({ success: false, message: "Name, access token and page ID are required" });
+
+  const effectivePictureUrl = profilePictureUrl || profile_picture_url || (fbPageId ? `https://graph.facebook.com/v21.0/${fbPageId}/picture?type=large` : null);
 
   try {
     await assertModuleAccess(req.agencyId, "channel_facebook");
@@ -577,15 +584,15 @@ router.post("/channels/facebook", async (req, res) => {
 
     if (existing.length) {
       await pool.query(
-        `UPDATE integrations SET name = ?, access_token = ?, user_access_token = ?, verify_token = ?, fb_page_name = ?, is_active = 1
+        `UPDATE integrations SET name = ?, access_token = ?, user_access_token = ?, verify_token = ?, fb_page_name = ?, profile_picture_url = COALESCE(?, profile_picture_url), is_active = 1
          WHERE id = ?`,
-        [name, finalAccessToken, finalUserToken, verifyToken || null, fbPageName || null, existing[0].id]
+        [name, finalAccessToken, finalUserToken, verifyToken || null, fbPageName || null, effectivePictureUrl, existing[0].id]
       );
     } else {
       await pool.query(
-        `INSERT INTO integrations (agency_id, platform, name, access_token, user_access_token, verify_token, fb_page_id, fb_page_name, is_active)
-         VALUES (?, 'FACEBOOK', ?, ?, ?, ?, ?, ?, 1)`,
-        [req.agencyId, name, finalAccessToken, finalUserToken, verifyToken || null, fbPageId, fbPageName || null]
+        `INSERT INTO integrations (agency_id, platform, name, access_token, user_access_token, verify_token, fb_page_id, fb_page_name, profile_picture_url, is_active)
+         VALUES (?, 'FACEBOOK', ?, ?, ?, ?, ?, ?, ?, 1)`,
+        [req.agencyId, name, finalAccessToken, finalUserToken, verifyToken || null, fbPageId, fbPageName || null, effectivePictureUrl]
       );
     }
 
@@ -602,7 +609,7 @@ router.post("/channels/facebook/quick-connect", async (req, res) => {
   const { token } = req.body;
   if (!token) return res.status(400).json({ success: false, message: "Token is required" });
 
-  const agencyId = req.user?.agencyId || 1;
+  const agencyId = req.agencyId || await resolveAgencyId(req);
 
   try {
     await assertModuleAccess(agencyId, "channel_facebook");
@@ -676,18 +683,19 @@ router.post("/channels/facebook/quick-connect", async (req, res) => {
         [agencyId, page.id]
       );
 
+      const pagePic = `https://graph.facebook.com/v21.0/${page.id}/picture?type=large`;
       if (existing.length) {
         await pool.query(
-          "UPDATE integrations SET name = ?, access_token = ?, user_access_token = ?, fb_page_name = ?, is_active = 1 WHERE id = ?",
-          [page.name, page.access_token, effectiveToken, page.name, existing[0].id]
+          "UPDATE integrations SET name = ?, access_token = ?, user_access_token = ?, fb_page_name = ?, profile_picture_url = COALESCE(profile_picture_url, ?), is_active = 1 WHERE id = ?",
+          [page.name, page.access_token, effectiveToken, page.name, pagePic, existing[0].id]
         );
-        savedPages.push({ id: existing[0].id, name: page.name, fbPageId: page.id });
+        savedPages.push({ id: existing[0].id, name: page.name, fbPageId: page.id, profile_picture_url: pagePic });
       } else {
         const [ins] = await pool.query(
-          "INSERT INTO integrations (agency_id, platform, name, access_token, user_access_token, verify_token, fb_page_id, fb_page_name, is_active) VALUES (?, 'FACEBOOK', ?, ?, ?, ?, ?, ?, 1)",
-          [agencyId, page.name, page.access_token, effectiveToken, `fb_${page.id}`, page.id, page.name]
+          "INSERT INTO integrations (agency_id, platform, name, access_token, user_access_token, verify_token, fb_page_id, fb_page_name, profile_picture_url, is_active) VALUES (?, 'FACEBOOK', ?, ?, ?, ?, ?, ?, ?, 1)",
+          [agencyId, page.name, page.access_token, effectiveToken, `fb_${page.id}`, page.id, page.name, pagePic]
         );
-        savedPages.push({ id: ins.insertId, name: page.name, fbPageId: page.id });
+        savedPages.push({ id: ins.insertId, name: page.name, fbPageId: page.id, profile_picture_url: pagePic });
       }
     }
 
@@ -908,7 +916,7 @@ router.post("/channels/facebook/import-pages", async (req, res) => {
   try {
     const pageMap = new Map();
 
-    const agencyId = req.user?.agencyId || 1;
+    const agencyId = req.agencyId || await resolveAgencyId(req);
     let appSecret = null;
     let appId = null;
     try {
@@ -940,22 +948,48 @@ router.post("/channels/facebook/import-pages", async (req, res) => {
     }
 
     // 2. Direct /me/accounts call with effective token to get NEVER-EXPIRING page tokens
+    let accError = null;
     try {
       const response = await fetch(
-        `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token,category&access_token=${effectiveUserToken}`,
+        `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token,category,picture{url}&access_token=${effectiveUserToken}`,
         { signal: AbortSignal.timeout(7000) }
       );
       const data = await response.json();
       console.log('[FB import-pages] /me/accounts response count:', data.data?.length);
-      if (Array.isArray(data.data)) {
+      if (data.error) {
+        accError = data.error.message;
+        console.warn('[FB import-pages] /me/accounts warning with effectiveUserToken:', data.error);
+        // Fallback: try direct userAccessToken if token exchange altered it
+        if (effectiveUserToken !== userAccessToken) {
+          try {
+            const rawRes = await fetch(
+              `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token,category,picture{url}&access_token=${userAccessToken}`,
+              { signal: AbortSignal.timeout(7000) }
+            );
+            const rawData = await rawRes.json();
+            if (Array.isArray(rawData.data)) {
+              for (const p of rawData.data) {
+                if (p.id) {
+                  p.profile_picture_url = p.picture?.data?.url || `https://graph.facebook.com/v21.0/${p.id}/picture?type=large`;
+                  pageMap.set(p.id, p);
+                }
+              }
+            }
+          } catch (_) {}
+        }
+      } else if (Array.isArray(data.data)) {
         for (const p of data.data) {
-          if (p.id) pageMap.set(p.id, p);
+          if (p.id) {
+            p.profile_picture_url = p.picture?.data?.url || `https://graph.facebook.com/v21.0/${p.id}/picture?type=large`;
+            pageMap.set(p.id, p);
+          }
         }
       }
     } catch (err) {
       console.error('[FB import-pages] error fetching /me/accounts:', err.message || err);
     }
 
+    let grantedScopes = [];
     const debugTokenAccess = (appId && appSecret) ? `${appId}|${appSecret}` : userAccessToken;
     try {
       const debugRes = await fetch(
@@ -965,10 +999,12 @@ router.post("/channels/facebook/import-pages", async (req, res) => {
       const debugData = await debugRes.json();
       console.log('[FB import-pages] debug_token response:', JSON.stringify(debugData, null, 2));
 
+      grantedScopes = debugData.data?.scopes || [];
       const granularScopes = debugData.data?.granular_scopes || [];
       const targetIds = new Set();
       for (const scopeObj of granularScopes) {
-        if (Array.isArray(scopeObj.target_ids)) {
+        // Exclude WhatsApp-specific scopes which hold WABA IDs
+        if (!scopeObj.scope?.startsWith("whatsapp_") && Array.isArray(scopeObj.target_ids)) {
           scopeObj.target_ids.forEach(id => targetIds.add(id));
         }
       }
@@ -978,12 +1014,14 @@ router.post("/channels/facebook/import-pages", async (req, res) => {
         if (!pageMap.has(targetId)) {
           try {
             const pRes = await fetch(
-              `https://graph.facebook.com/v19.0/${targetId}?fields=id,name,access_token,category&access_token=${userAccessToken}`,
+              `https://graph.facebook.com/v21.0/${targetId}?fields=id,name,access_token,category,tasks,picture{url}&access_token=${userAccessToken}`,
               { signal: AbortSignal.timeout(5000) }
             );
             const pData = await pRes.json();
             console.log(`[FB import-pages] fetched target_id ${targetId}:`, pData);
-            if (pData.id && !pData.error) {
+            // Must have category or access_token confirming it is a genuine Facebook Page
+            if (pData.id && !pData.error && (pData.category || pData.access_token)) {
+              pData.profile_picture_url = pData.picture?.data?.url || `https://graph.facebook.com/v21.0/${pData.id}/picture?type=large`;
               pageMap.set(pData.id, pData);
             }
           } catch (pe) {
@@ -998,7 +1036,7 @@ router.post("/channels/facebook/import-pages", async (req, res) => {
     // 3. Check /me/businesses for pages owned or managed via Business Manager
     try {
       const bizRes = await fetch(
-        `https://graph.facebook.com/v19.0/me/businesses?fields=id,name,owned_pages{id,name,access_token,category},client_pages{id,name,access_token,category}&access_token=${userAccessToken}`,
+        `https://graph.facebook.com/v21.0/me/businesses?fields=id,name,owned_pages{id,name,access_token,category,picture{url}},client_pages{id,name,access_token,category,picture{url}}&access_token=${userAccessToken}`,
         { signal: AbortSignal.timeout(7000) }
       );
       const bizData = await bizRes.json();
@@ -1008,7 +1046,10 @@ router.post("/channels/facebook/import-pages", async (req, res) => {
           const owned = biz.owned_pages?.data || [];
           const client = biz.client_pages?.data || [];
           [...owned, ...client].forEach(p => {
-            if (p.id && !pageMap.has(p.id)) pageMap.set(p.id, p);
+            if (p.id && !pageMap.has(p.id)) {
+              p.profile_picture_url = p.picture?.data?.url || `https://graph.facebook.com/v21.0/${p.id}/picture?type=large`;
+              pageMap.set(p.id, p);
+            }
           });
         }
       }
@@ -1016,13 +1057,37 @@ router.post("/channels/facebook/import-pages", async (req, res) => {
       console.error('[FB import-pages] /me/businesses error:', be.message || be);
     }
 
-    const pages = Array.from(pageMap.values());
+    // Filter to genuine Facebook Pages only (exclude WhatsApp Business Accounts / WABAs)
+    const pages = Array.from(pageMap.values())
+      .filter(p => {
+        if (!p || !p.id || !p.name) return false;
+        const lower = (p.name || "").toLowerCase();
+        if (lower.includes("whatsapp business") || lower.includes("test whatsapp") || lower.includes("waba")) {
+          return false;
+        }
+        return true;
+      })
+      .map(p => ({
+        ...p,
+        profile_picture_url: p.profile_picture_url || (p.id ? `https://graph.facebook.com/v21.0/${p.id}/picture?type=large` : null),
+      }));
+
+    let warning = null;
+    if (pages.length === 0) {
+      if (grantedScopes.length > 0 && !grantedScopes.includes("pages_show_list")) {
+        warning = "The 'pages_show_list' permission was not granted in the Facebook dialog. Please click 'Continue with Facebook' and grant access to your Pages.";
+      } else {
+        warning = "No Facebook Pages found. Make sure this Facebook account manages a Page (on facebook.com/pages) and that you selected it in the login popup.";
+      }
+    }
+
     console.log(`[FB import-pages] Final resolved pages count: ${pages.length}`);
 
     return res.json({
       success: true,
       pages,
-      debug: { total: pages.length }
+      warning,
+      debug: { total: pages.length, grantedScopes, accError }
     });
   } catch (err) {
     console.error('[FB import-pages] fatal error:', err);
@@ -1048,14 +1113,47 @@ router.get("/channels/instagram", async (req, res) => {
       "SELECT * FROM integrations WHERE agency_id = ? AND platform = 'INSTAGRAM' ORDER BY created_at DESC",
       [req.agencyId]
     );
-    return res.json({ success: true, accounts: stripSecrets(rows, req) });
+
+    // Auto-backfill profile_picture_url if missing for any account
+    const accounts = await Promise.all(rows.map(async (acc) => {
+      if (acc.profile_picture_url) return acc;
+      if (acc.ig_account_id && acc.access_token) {
+        try {
+          const picRes = await fetch(
+            `https://graph.facebook.com/v21.0/${acc.ig_account_id}?fields=profile_picture_url&access_token=${acc.access_token}`,
+            { signal: AbortSignal.timeout(3000) }
+          );
+          const picData = await picRes.json();
+          if (picData?.profile_picture_url) {
+            acc.profile_picture_url = picData.profile_picture_url;
+            pool.query("UPDATE integrations SET profile_picture_url = ? WHERE id = ?", [picData.profile_picture_url, acc.id]).catch(() => {});
+          }
+        } catch (_) {}
+      }
+      return acc;
+    }));
+
+    return res.json({ success: true, accounts: stripSecrets(accounts, req) });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
 router.post("/channels/instagram", async (req, res) => {
-  const { name, accessToken, verifyToken, igAccountId, igUsername, pageId, pageAccessToken } = req.body;
+  const { name, accessToken, verifyToken, igAccountId, igUsername, pageId, pageAccessToken, profilePictureUrl, profile_picture_url } = req.body;
   if (!name || !accessToken || !igAccountId)
     return res.status(400).json({ success: false, message: "Name, access token and account ID are required" });
+
+  let effectivePictureUrl = profilePictureUrl || profile_picture_url || null;
+  if (!effectivePictureUrl && igAccountId && (pageAccessToken || accessToken)) {
+    try {
+      const picRes = await fetch(
+        `https://graph.facebook.com/v21.0/${igAccountId}?fields=profile_picture_url&access_token=${pageAccessToken || accessToken}`,
+        { signal: AbortSignal.timeout(3500) }
+      );
+      const picData = await picRes.json();
+      if (picData?.profile_picture_url) effectivePictureUrl = picData.profile_picture_url;
+    } catch (_) {}
+  }
+
   try {
     await assertModuleAccess(req.agencyId, "channel_instagram");
     await assertLimit(req.agencyId, "max_bot_accounts");
@@ -1069,15 +1167,15 @@ router.post("/channels/instagram", async (req, res) => {
     if (existing.length > 0) {
       await pool.query(
         `UPDATE integrations 
-         SET name = ?, access_token = ?, verify_token = ?, ig_username = ?, fb_page_id = COALESCE(?, fb_page_id), is_active = 1
+         SET name = ?, access_token = ?, verify_token = ?, ig_username = ?, fb_page_id = COALESCE(?, fb_page_id), profile_picture_url = COALESCE(?, profile_picture_url), is_active = 1
          WHERE id = ?`,
-        [name, accessToken, verifyToken || null, igUsername || null, pageId || null, existing[0].id]
+        [name, accessToken, verifyToken || null, igUsername || null, pageId || null, effectivePictureUrl, existing[0].id]
       );
     } else {
       await pool.query(
-        `INSERT INTO integrations (agency_id, platform, name, access_token, verify_token, ig_account_id, ig_username, fb_page_id)
-         VALUES (?, 'INSTAGRAM', ?, ?, ?, ?, ?, ?)`,
-        [req.agencyId, name, accessToken, verifyToken || null, igAccountId, igUsername || null, pageId || null]
+        `INSERT INTO integrations (agency_id, platform, name, access_token, verify_token, ig_account_id, ig_username, fb_page_id, profile_picture_url, is_active)
+         VALUES (?, 'INSTAGRAM', ?, ?, ?, ?, ?, ?, ?, 1)`,
+        [req.agencyId, name, accessToken, verifyToken || null, igAccountId, igUsername || null, pageId || null, effectivePictureUrl]
       );
     }
 
@@ -1210,16 +1308,16 @@ router.post("/channels/instagram/quick-connect", async (req, res) => {
 
       if (existing.length) {
         await pool.query(
-          "UPDATE integrations SET name = ?, access_token = ?, user_access_token = ?, ig_username = ?, fb_page_id = ?, is_active = 1 WHERE id = ?",
-          [displayName, tokenToSave, effectiveToken, acc.username || null, acc.pageId || null, existing[0].id]
+          "UPDATE integrations SET name = ?, access_token = ?, user_access_token = ?, ig_username = ?, fb_page_id = ?, profile_picture_url = COALESCE(?, profile_picture_url), is_active = 1 WHERE id = ?",
+          [displayName, tokenToSave, effectiveToken, acc.username || null, acc.pageId || null, acc.profile_picture_url || null, existing[0].id]
         );
-        savedAccounts.push({ id: existing[0].id, name: displayName, username: acc.username, igAccountId: acc.id });
+        savedAccounts.push({ id: existing[0].id, name: displayName, username: acc.username, igAccountId: acc.id, profile_picture_url: acc.profile_picture_url || null });
       } else {
         const [ins] = await pool.query(
-          "INSERT INTO integrations (agency_id, platform, name, access_token, user_access_token, verify_token, ig_account_id, ig_username, fb_page_id, is_active) VALUES (?, 'INSTAGRAM', ?, ?, ?, ?, ?, ?, ?, 1)",
-          [agencyId, displayName, tokenToSave, effectiveToken, `ig_${acc.id}`, acc.id, acc.username || null, acc.pageId || null]
+          "INSERT INTO integrations (agency_id, platform, name, access_token, user_access_token, verify_token, ig_account_id, ig_username, fb_page_id, profile_picture_url, is_active) VALUES (?, 'INSTAGRAM', ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+          [agencyId, displayName, tokenToSave, effectiveToken, `ig_${acc.id}`, acc.id, acc.username || null, acc.pageId || null, acc.profile_picture_url || null]
         );
-        savedAccounts.push({ id: ins.insertId, name: displayName, username: acc.username, igAccountId: acc.id });
+        savedAccounts.push({ id: ins.insertId, name: displayName, username: acc.username, igAccountId: acc.id, profile_picture_url: acc.profile_picture_url || null });
       }
     }
 
@@ -1278,16 +1376,16 @@ router.post("/channels/instagram/sync-from-facebook", async (req, res) => {
 
           if (existing.length) {
             await pool.query(
-              "UPDATE integrations SET name = ?, access_token = ?, user_access_token = ?, ig_username = ?, fb_page_id = ?, is_active = 1 WHERE id = ?",
-              [displayName, pageToken, fb.user_access_token || pageToken, ig.username || null, fb.fb_page_id || checkData.id, existing[0].id]
+              "UPDATE integrations SET name = ?, access_token = ?, user_access_token = ?, ig_username = ?, fb_page_id = ?, profile_picture_url = COALESCE(?, profile_picture_url), is_active = 1 WHERE id = ?",
+              [displayName, pageToken, fb.user_access_token || pageToken, ig.username || null, fb.fb_page_id || checkData.id, ig.profile_picture_url || null, existing[0].id]
             );
-            connectedIgList.push({ id: existing[0].id, username: ig.username, name: displayName });
+            connectedIgList.push({ id: existing[0].id, username: ig.username, name: displayName, profile_picture_url: ig.profile_picture_url || null });
           } else {
             const [ins] = await pool.query(
-              "INSERT INTO integrations (agency_id, platform, name, access_token, user_access_token, verify_token, ig_account_id, ig_username, fb_page_id, is_active) VALUES (?, 'INSTAGRAM', ?, ?, ?, ?, ?, ?, ?, 1)",
-              [agencyId, displayName, pageToken, fb.user_access_token || pageToken, `ig_${ig.id}`, ig.id, ig.username || null, fb.fb_page_id || checkData.id]
+              "INSERT INTO integrations (agency_id, platform, name, access_token, user_access_token, verify_token, ig_account_id, ig_username, fb_page_id, profile_picture_url, is_active) VALUES (?, 'INSTAGRAM', ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+              [agencyId, displayName, pageToken, fb.user_access_token || pageToken, `ig_${ig.id}`, ig.id, ig.username || null, fb.fb_page_id || checkData.id, ig.profile_picture_url || null]
             );
-            connectedIgList.push({ id: ins.insertId, username: ig.username, name: displayName });
+            connectedIgList.push({ id: ins.insertId, username: ig.username, name: displayName, profile_picture_url: ig.profile_picture_url || null });
           }
         }
       } catch (err) {

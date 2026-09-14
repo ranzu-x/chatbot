@@ -1,10 +1,13 @@
-﻿import "./landing.css";
+import "./landing.css";
+import "./blog.css";
 import { Link } from "react-router";
 import {
   MessageSquare, Bot, Users, Zap, BarChart3, Shield,
-  CheckCircle, ArrowRight, Globe, Clock, Layers, Send, Menu, X, Sparkles
+  CheckCircle, ArrowRight, Globe, Clock, Layers, Send, Menu, X, Sparkles, LayoutDashboard
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useAuth } from "../../Provider/AuthContext";
+import { blogAPI } from "../../services/api";
 
 const features = [
   { 
@@ -87,7 +90,17 @@ const steps = [
 ];
 
 export default function LandingPage() {
+  const { user } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [latestPosts, setLatestPosts] = useState([]);
+
+  const dashboardPath = user?.role === 'ADMIN' ? '/admin' : '/agency';
+
+  useEffect(() => {
+    blogAPI.list({ limit: 3, page: 1 })
+      .then((r) => setLatestPosts(r.data?.posts || []))
+      .catch(() => {});
+  }, []);
 
   return (
     <div className="lp-wrapper">
@@ -106,15 +119,24 @@ export default function LandingPage() {
               <a href="#features" className="lp-nav-link">Features</a>
               <a href="#benefits" className="lp-nav-link">Benefits</a>
               <a href="#how-it-works" className="lp-nav-link">How It Works</a>
+              <Link to="/blog" className="lp-nav-link">Blog</Link>
               <Link to="/privacy-policy" className="lp-nav-link">Privacy Policy</Link>
               <Link to="/terms-of-service" className="lp-nav-link">Terms</Link>
             </div>
 
             <div className="lp-nav-actions">
-              <Link to="/login" className="lp-btn-login">Sign In</Link>
-              <Link to="/register" className="lp-btn-primary">
-                Get Started Free <ArrowRight size={16} />
-              </Link>
+              {user ? (
+                <Link to={dashboardPath} className="lp-btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  <LayoutDashboard size={16} /> Dashboard
+                </Link>
+              ) : (
+                <>
+                  <Link to="/login" className="lp-btn-login">Sign In</Link>
+                  <Link to="/register" className="lp-btn-primary">
+                    Get Started Free <ArrowRight size={16} />
+                  </Link>
+                </>
+              )}
             </div>
 
             <button
@@ -132,12 +154,21 @@ export default function LandingPage() {
             <a href="#features" className="lp-nav-link" onClick={() => setMenuOpen(false)}>Features</a>
             <a href="#benefits" className="lp-nav-link" onClick={() => setMenuOpen(false)}>Benefits</a>
             <a href="#how-it-works" className="lp-nav-link" onClick={() => setMenuOpen(false)}>How It Works</a>
+            <Link to="/blog" className="lp-nav-link" onClick={() => setMenuOpen(false)}>Blog</Link>
             <Link to="/privacy-policy" className="lp-nav-link" onClick={() => setMenuOpen(false)}>Privacy Policy</Link>
             <Link to="/terms-of-service" className="lp-nav-link" onClick={() => setMenuOpen(false)}>Terms of Service</Link>
-            <div style={{ display: "flex", gap: "12px", marginTop: "8px" }}>
-              <Link to="/login" className="lp-btn-secondary" style={{ flex: 1, textAlign: "center" }} onClick={() => setMenuOpen(false)}>Sign In</Link>
-              <Link to="/register" className="lp-btn-primary" style={{ flex: 1, textAlign: "center" }} onClick={() => setMenuOpen(false)}>Get Started</Link>
-            </div>
+            {user ? (
+              <div style={{ marginTop: "8px" }}>
+                <Link to={dashboardPath} className="lp-btn-primary" style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 8 }} onClick={() => setMenuOpen(false)}>
+                  <LayoutDashboard size={16} /> Dashboard
+                </Link>
+              </div>
+            ) : (
+              <div style={{ display: "flex", gap: "12px", marginTop: "8px" }}>
+                <Link to="/login" className="lp-btn-login" style={{ flex: 1, textAlign: "center" }} onClick={() => setMenuOpen(false)}>Sign In</Link>
+                <Link to="/register" className="lp-btn-primary" style={{ flex: 1, textAlign: "center" }} onClick={() => setMenuOpen(false)}>Get Started</Link>
+              </div>
+            )}
           </div>
         )}
       </nav>
@@ -273,6 +304,49 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* ─── Blog Preview Section ────────────────────────────── */}
+      {latestPosts.length > 0 && (
+        <section className="lp-blog-preview">
+          <div className="lp-container">
+            <div className="lp-section-header">
+              <span className="lp-section-tag">Knowledge Hub</span>
+              <h2 className="lp-section-title">
+                Latest from <span className="lp-gradient-text">Our Blog</span>
+              </h2>
+              <p className="lp-section-desc">
+                Guides, tutorials, and industry insights to help you grow with AI-powered conversational marketing.
+              </p>
+            </div>
+            <div className="lp-blog-preview-grid">
+              {latestPosts.map((post) => (
+                <Link key={post.id} to={`/blog/${post.slug}`} className="lp-blog-mini-card">
+                  <div className="lp-blog-mini-card__img">
+                    {post.cover_image
+                      ? <img src={post.cover_image} alt={post.title} />
+                      : <div style={{ width: '100%', height: '100%', background: 'linear-gradient(135deg, #e2e8f0, #f1f5f9)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}><MessageSquare size={28} /></div>
+                    }
+                  </div>
+                  <div className="lp-blog-mini-card__body">
+                    <div className="lp-blog-mini-card__cat">{post.category}</div>
+                    <div className="lp-blog-mini-card__title">{post.title}</div>
+                    <div className="lp-blog-mini-card__meta">
+                      <Clock size={12} /> {post.read_time || 1} min read
+                      <span>·</span>
+                      <span>{new Date(post.published_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <Link to="/blog" className="lp-btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '12px 28px', fontWeight: 700 }}>
+                View All Articles <ArrowRight size={16} />
+              </Link>
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* ─── CTA Box ───────────────────────────────────────────── */}
       <section className="lp-cta-section">
         <div className="lp-container">
@@ -302,9 +376,14 @@ export default function LandingPage() {
             <div className="lp-footer-links">
               <a href="#features" className="lp-footer-link">Features</a>
               <a href="#benefits" className="lp-footer-link">Benefits</a>
+              <Link to="/blog" className="lp-footer-link">Blog</Link>
               <Link to="/privacy-policy" className="lp-footer-link">Privacy Policy</Link>
               <Link to="/terms-of-service" className="lp-footer-link">Terms of Service</Link>
-              <Link to="/login" className="lp-footer-link">Sign In</Link>
+              {user ? (
+                <Link to={dashboardPath} className="lp-footer-link">Dashboard</Link>
+              ) : (
+                <Link to="/login" className="lp-footer-link">Sign In</Link>
+              )}
             </div>
           </div>
 

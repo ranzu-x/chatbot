@@ -6,15 +6,22 @@ import { metaAppAPI } from '../services/api';
  * agency's App ID fetched from the backend.
  *
  * Returns:
- *   fbReady   – true once window.FB is available and initialised
- *   appId     – the Meta App ID (or null if not configured)
- *   sdkError  – error message if App ID is missing / SDK fails
- *   login     – function(scope, callback) — wraps FB.login
+ *   fbReady         – true once window.FB is available and initialised
+ *   appId           – the Meta App ID (or null if not configured)
+ *   configId        – the "without catalog" Embedded Signup Configuration ID
+ *   configIdCatalog – the "with catalog" Embedded Signup Configuration ID
+ *                      (null if the agency hasn't set one up) — per Meta's
+ *                      own guidance, catalog access should come from a
+ *                      SEPARATE Configuration, not a runtime flag layered
+ *                      on top of the plain one (see WhatsAppPage.jsx).
+ *   sdkError        – error message if App ID is missing / SDK fails
+ *   login           – function(scope, callback) — wraps FB.login
  */
 export default function useFacebookSDK() {
   const [fbReady, setFbReady]   = useState(false);
   const [appId, setAppId]       = useState(null);
   const [configId, setConfigId] = useState(null);
+  const [configIdCatalog, setConfigIdCatalog] = useState(null);
   const [sdkError, setSdkError] = useState(null);
 
   useEffect(() => {
@@ -27,8 +34,10 @@ export default function useFacebookSDK() {
         if (cancelled) return;
         const id = res.data.appId;
         const cfgId = res.data.configId || null;
+        const cfgIdCatalog = res.data.configIdCatalog || null;
         setAppId(id);
         setConfigId(cfgId);
+        setConfigIdCatalog(cfgIdCatalog);
 
         if (!id) {
           setSdkError('Meta App ID is not configured');
@@ -112,5 +121,5 @@ export default function useFacebookSDK() {
     }
   }, []);
 
-  return { fbReady, appId, configId, sdkError, login };
+  return { fbReady, appId, configId, configIdCatalog, sdkError, login };
 }

@@ -18,6 +18,100 @@ import { runPrivateReplyFlow, generateCommentReply } from "../utils/commentPriva
 const router = express.Router();
 
 /**
+ * Mirrors a message's delivered/read/failed status onto its broadcast_logs
+ * row (if this message was actually a broadcast send — most aren't, so a
+ * no-op UPDATE affecting 0 rows is the common case and is cheap) and keeps
+ * broadcast_campaigns' delivered_count/read_count/failed_count counters in
+ * sync. Called from the same status-webhook handlers that already update
+ * the `messages` table for WhatsApp `statuses` events and Messenger's
+ * delivery/read watermark events.
+ */
+async function markBroadcastLogStatus(externalMsgId, status, errorMessage = null) {
+  if (!externalMsgId) return;
+  try {
+    const [[log]] = await pool.query(
+      "SELECT id, campaign_id, status FROM broadcast_logs WHERE external_msg_id = ? LIMIT 1",
+      [externalMsgId]
+    );
+    if (!log) return;
+    // Never move a log backwards (e.g. a late "delivered" event arriving
+    // after "read" already landed) — READ implies DELIVERED already happened.
+    const rank = { PENDING: 0, SENT: 1, DELIVERED: 2, READ: 3, FAILED: 4 };
+    if (status !== "FAILED" && rank[status] <= rank[log.status]) return;
+
+    const column = status === "DELIVERED" ? "delivered_at" : status === "READ" ? "read_at" : null;
+    await pool.query(
+      `UPDATE broadcast_logs SET status = ?${column ? `, ${column} = NOW()` : ""}${status === "FAILED" ? ", error_message = ?" : ""} WHERE id = ?`,
+      status === "FAILED" ? [status, errorMessage, log.id] : [status, log.id]
+    );
+    const counterColumn = status === "DELIVERED" ? "delivered_count" : status === "READ" ? "read_count" : status === "FAILED" ? "failed_count" : null;
+    if (counterColumn) {
+      await pool.query(`UPDATE broadcast_campaigns SET ${counterColumn} = ${counterColumn} + 1 WHERE id = ?`, [log.campaign_id]);
+    }
+  } catch (err) {
+    console.error("[Broadcast] failed to mirror status update:", err.message);
+  }
+}
+
+/**
+ * WhatsApp Calling — handles the `calls` array (connect/terminate events)
+ * and the call-specific entries inside the `statuses` array (RINGING/
+ * ACCEPTED/REJECTED — uppercase, which is how they're distinguished from
+ * ordinary lowercase message statuses sharing that same array). Emits to
+ * the agency's Socket.io room so the agent's browser tab that placed the
+ * call — running a real RTCPeerConnection — can react: apply the SDP
+ * answer, update the call UI, or tear the connection down.
+ * See routes/whatsappCalls.js for the REST side of this flow.
+ */
+const CALL_STATUS_VALUES = new Set(["RINGING", "ACCEPTED", "REJECTED"]);
+
+async function handleWhatsAppCallStatus(statusObj) {
+  const wacid = statusObj.id;
+  const status = statusObj.status;
+  if (!wacid || !CALL_STATUS_VALUES.has(status)) return false; // not a call status — let the caller fall through to message-status handling
+
+  try {
+    const [[call]] = await pool.query("SELECT * FROM whatsapp_calls WHERE wacid = ? LIMIT 1", [wacid]);
+    if (!call) return true; // recognized as a call status, just not one we placed (e.g. a stale/foreign wacid) — still handled, don't fall through
+
+    const newStatus = status === "REJECTED" ? "REJECTED" : status; // RINGING / ACCEPTED map 1:1
+    await pool.query("UPDATE whatsapp_calls SET status = ? WHERE id = ?", [newStatus, call.id]);
+    emitToAgency(call.agency_id, "whatsapp_call_status", { callDbId: call.id, wacid, status: newStatus });
+  } catch (err) {
+    console.error("[WA Calling] status webhook error:", err.message);
+  }
+  return true;
+}
+
+async function handleWhatsAppCallEvent(callObj) {
+  const wacid = callObj.id;
+  const event = callObj.event; // "connect" | "terminate"
+  if (!wacid || !event) return;
+
+  try {
+    const [[call]] = await pool.query("SELECT * FROM whatsapp_calls WHERE wacid = ? LIMIT 1", [wacid]);
+    if (!call) return;
+
+    if (event === "connect") {
+      const sdpAnswer = callObj.session?.sdp;
+      if (!sdpAnswer) return;
+      await pool.query("UPDATE whatsapp_calls SET status = 'CONNECTED', sdp_answer = ?, connected_at = NOW() WHERE id = ?", [sdpAnswer, call.id]);
+      emitToAgency(call.agency_id, "whatsapp_call_answer", { callDbId: call.id, wacid, sdpAnswer });
+    } else if (event === "terminate") {
+      const finalStatus = callObj.status === "COMPLETED" ? "COMPLETED" : "FAILED";
+      const duration = typeof callObj.duration === "number" ? callObj.duration : null;
+      await pool.query(
+        "UPDATE whatsapp_calls SET status = ?, duration_seconds = ?, ended_at = NOW() WHERE id = ?",
+        [finalStatus, duration, call.id]
+      );
+      emitToAgency(call.agency_id, "whatsapp_call_terminated", { callDbId: call.id, wacid, status: finalStatus, duration });
+    }
+  } catch (err) {
+    console.error("[WA Calling] call event webhook error:", err.message);
+  }
+}
+
+/**
  * Meta Webhook handler for WhatsApp, Facebook Messenger, and Instagram.
  * Meta sends ALL events to one webhook endpoint. We differentiate by integration.
  *
@@ -241,9 +335,23 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
         const value = change?.value;
         if (!value) continue;
 
-        // Handle message status updates (sent, delivered, read, failed)
+        // WhatsApp Calling: connect (SDP answer) / terminate events — a
+        // separate array from message statuses, only ever present on a
+        // webhook carrying call activity.
+        if (Array.isArray(value.calls)) {
+          for (const callObj of value.calls) {
+            await handleWhatsAppCallEvent(callObj);
+          }
+        }
+
+        // Handle message status updates (sent, delivered, read, failed) —
+        // WhatsApp Calling's RINGING/ACCEPTED/REJECTED status also arrives
+        // in this SAME array (Meta reuses it for both), distinguished by
+        // being uppercase where message statuses are lowercase.
         if (Array.isArray(value.statuses)) {
           for (const statusObj of value.statuses) {
+            if (await handleWhatsAppCallStatus(statusObj)) continue;
+
             const externalMsgId = statusObj.id;
             const status = statusObj.status; // "delivered", "read", "sent", "failed"
             if (!externalMsgId || !status) continue;
@@ -261,6 +369,7 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
 
               if (status === "delivered") {
                 await pool.query("UPDATE messages SET delivered_at = NOW() WHERE id = ?", [msgRow.id]);
+                await markBroadcastLogStatus(externalMsgId, "DELIVERED");
                 const payload = { messageId: msgRow.id, conversationId: msgRow.conversation_id, deliveredAt: new Date().toISOString() };
                 // Agent Inbox UI only ever joins the `agency:` room (see utils/socket.js) — the
                 // `conv:` room is for webchat widget sessions. Emit to both so either listener works.
@@ -268,6 +377,7 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
                 emitToConversation(msgRow.conversation_id, "message_status_update", payload);
               } else if (status === "read") {
                 await pool.query("UPDATE messages SET read_at = NOW(), is_read = 1 WHERE id = ?", [msgRow.id]);
+                await markBroadcastLogStatus(externalMsgId, "READ");
                 const payload = { messageId: msgRow.id, conversationId: msgRow.conversation_id, readAt: new Date().toISOString(), isRead: true };
                 emitToAgency(msgRow.agency_id, "message_status_update", payload);
                 emitToConversation(msgRow.conversation_id, "message_status_update", payload);
@@ -289,6 +399,7 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
                   "UPDATE messages SET status = 'FAILED', failure_stage = 'DELIVERY', failure_reason = ? WHERE id = ?",
                   [errorMessage, msgRow.id]
                 );
+                await markBroadcastLogStatus(externalMsgId, "FAILED", errorMessage);
                 {
                   const payload = {
                     messageId: msgRow.id, conversationId: msgRow.conversation_id,
@@ -339,6 +450,33 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
             msgBody = msg.button?.text || "";
           } else if (msg.type === "interactive") {
             const type = msg.interactive?.type;
+            if (type === "call_permission_reply") {
+              // Not a chat message — the user's answer to a call-permission
+              // request. Update our cached permission state and stop; this
+              // must never reach findMatchingFlow/AI reply as if it were a
+              // real inbound message.
+              const reply = msg.interactive.call_permission_reply || {};
+              try {
+                const [[contact]] = await pool.query(
+                  "SELECT id FROM contacts WHERE agency_id = ? AND platform = 'WHATSAPP' AND external_id = ? LIMIT 1",
+                  [agencyId, msg.from]
+                );
+                if (contact) {
+                  const status = reply.response === "accept" ? "GRANTED" : "REJECTED";
+                  const expiresAt = reply.expiration_timestamp ? new Date(Number(reply.expiration_timestamp) * 1000) : null;
+                  await pool.query(
+                    `INSERT INTO whatsapp_call_permissions (agency_id, contact_id, integration_id, status, is_permanent, expires_at, responded_at)
+                     VALUES (?, ?, ?, ?, ?, ?, NOW())
+                     ON DUPLICATE KEY UPDATE status = VALUES(status), is_permanent = VALUES(is_permanent), expires_at = VALUES(expires_at), responded_at = NOW()`,
+                    [agencyId, contact.id, integrationId, status, reply.is_permanent ? 1 : 0, expiresAt]
+                  );
+                  emitToAgency(agencyId, "whatsapp_call_permission_update", { contactId: contact.id, status, isPermanent: Boolean(reply.is_permanent) });
+                }
+              } catch (permErr) {
+                console.error("[WA Calling] permission reply webhook error:", permErr.message);
+              }
+              continue;
+            }
             if (type === "button_reply") {
               msgBody = msg.interactive?.button_reply?.title || msg.interactive?.button_reply?.id || "";
               buttonRoute = msg.interactive?.button_reply?.id || null;
@@ -669,6 +807,42 @@ async function handleFacebookPayload(body, agencyId, integrationId, integration)
       // 2. Direct Messages
       const messaging = entry?.messaging || [];
       for (const event of messaging) {
+        // Delivery/read receipts — Messenger reports these as separate
+        // `delivery`/`read` events on the same `messaging` array, not as a
+        // `statuses` array like WhatsApp. `delivery` carries the specific
+        // message ids delivered; `read` only carries a watermark timestamp
+        // (Meta's own semantics: "every message sent at or before this time
+        // has been read"), so that branch sweeps this contact's un-read
+        // outbound messages up to the watermark rather than targeting one id.
+        if (event.delivery) {
+          const mids = Array.isArray(event.delivery.mids) ? event.delivery.mids : [];
+          for (const mid of mids) {
+            await pool.query("UPDATE messages SET delivered_at = NOW() WHERE external_msg_id = ? AND delivered_at IS NULL", [mid]);
+            await markBroadcastLogStatus(mid, "DELIVERED");
+          }
+          continue;
+        }
+        if (event.read?.watermark) {
+          try {
+            const senderId = event.sender?.id;
+            const [readRows] = await pool.query(
+              `SELECT m.id, m.external_msg_id FROM messages m
+               JOIN conversations c ON c.id = m.conversation_id
+               JOIN contacts ct ON ct.id = c.contact_id
+               WHERE ct.external_id = ? AND m.direction = 'OUTBOUND' AND m.read_at IS NULL
+                 AND m.created_at <= FROM_UNIXTIME(? / 1000)`,
+              [senderId, event.read.watermark]
+            );
+            for (const r of readRows) {
+              await pool.query("UPDATE messages SET read_at = NOW(), is_read = 1 WHERE id = ?", [r.id]);
+              if (r.external_msg_id) await markBroadcastLogStatus(r.external_msg_id, "READ");
+            }
+          } catch (readErr) {
+            console.error("[Messenger read watermark] failed:", readErr.message);
+          }
+          continue;
+        }
+
         if (!event.message && !event.postback) continue;
         if (event.message?.is_echo) continue;
 

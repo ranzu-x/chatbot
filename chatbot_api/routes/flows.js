@@ -79,7 +79,14 @@ router.put("/flows/:id", async (req, res) => {
   const platform = req.body.platform;
   const integrationId = req.body.integrationId !== undefined ? req.body.integrationId : req.body.integration_id;
   const triggerKeyword = req.body.triggerKeyword || req.body.trigger_keyword || null;
-  const triggerType = req.body.triggerType || req.body.trigger_type || 'KEYWORD';
+  // No default here — a broadcast-authoring save from the Flow Builder never
+  // sends triggerType (it only edits nodes/edges), and defaulting to
+  // 'KEYWORD' when it's omitted used to silently downgrade a flow's real
+  // trigger_type (e.g. 'BROADCAST', set at creation so findMatchingFlow()
+  // never picks it up for inbound matching) back to 'KEYWORD' on every
+  // single save. COALESCE below preserves the existing value instead,
+  // exactly like platform/is_active already do on this same query.
+  const triggerType = req.body.triggerType || req.body.trigger_type || null;
   const botId = req.body.botId || req.body.bot_id || null;
   const nodes = req.body.nodesJson !== undefined ? req.body.nodesJson : req.body.nodes_json;
   const edges = req.body.edgesJson !== undefined ? req.body.edgesJson : req.body.edges_json;
@@ -90,7 +97,7 @@ router.put("/flows/:id", async (req, res) => {
 
   try {
     await pool.query(
-      `UPDATE flows SET name=?, platform=COALESCE(?, platform), integration_id=?, trigger_keyword=?, trigger_type=?, bot_id=?,
+      `UPDATE flows SET name=?, platform=COALESCE(?, platform), integration_id=?, trigger_keyword=?, trigger_type=COALESCE(?, trigger_type), bot_id=?,
        nodes_json=?, edges_json=?, is_active=COALESCE(?, is_active) WHERE id=? AND agency_id=?`,
       [name, platform || null, integrationId || null, triggerKeyword, triggerType, botId,
         nodesStr, edgesStr,

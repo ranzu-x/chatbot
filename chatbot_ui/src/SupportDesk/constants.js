@@ -1,0 +1,2 @@
+export const STATUS_OPTIONS = ["PENDING", "ANSWERED", "ON_HOLD", "SOLVED", "CLOSED"];
+export const PRIORITY_OPTIONS = ["LOW", "NORMAL", "HIGH", "URGENT"];

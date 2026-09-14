@@ -1,4 +1,4 @@
-﻿/* ═══════════════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════════
    NEXA AI CHAT - LANDING & LEGAL PAGES STYLESHEET
    Self-contained, responsive, and matching the app design system
 ═══════════════════════════════════════════════════════════════════ */
@@ -105,18 +105,28 @@
 }
 
 .lp-btn-login {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 0.95rem;
   font-weight: 600;
-  color: #334155;
+  color: #4f46e5;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1.5px solid #6366f1;
   text-decoration: none;
-  padding: 8px 16px;
-  border-radius: 8px;
+  padding: 8px 18px;
+  border-radius: 9px;
+  box-shadow: 0 2px 6px rgba(99, 102, 241, 0.12);
   transition: all 0.2s ease;
+  cursor: pointer;
 }
 
 .lp-btn-login:hover {
-  color: #6366f1;
-  background: #f1f5f9;
+  color: #ffffff !important;
+  background: #4f46e5;
+  border-color: #4338ca;
+  box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35);
+  transform: translateY(-1px);
 }
 
 .lp-btn-primary {

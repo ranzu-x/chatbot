@@ -162,6 +162,8 @@ export default function InstagramPage({ embedded = false }) {
           setStep('idle'); return;
         }
         setFetchedAccounts(accounts);
+        const notConnected = accounts.filter(a => !connectedIds.has(a.id));
+        setSelected(notConnected.length > 0 ? notConnected : accounts);
         setStep('selecting');
       } catch (e) { showToast(e.response?.data?.message || 'Failed to fetch accounts', 'error'); setStep('idle'); }
     });
@@ -172,6 +174,10 @@ export default function InstagramPage({ embedded = false }) {
   );
 
   const handleImport = async () => {
+    if (!selected.length) {
+      showToast('Please select at least one Instagram account', 'error');
+      return;
+    }
     setImporting(true);
     try {
       for (const acc of selected) {
@@ -183,6 +189,7 @@ export default function InstagramPage({ embedded = false }) {
           verifyToken: `ig_${acc.id}`,
           pageId: acc.pageId,
           pageAccessToken: acc.pageAccessToken,
+          profilePictureUrl: acc.profile_picture_url || null,
         });
       }
       showToast(`✅ ${selected.length} Instagram account(s) connected!`);
@@ -276,8 +283,12 @@ export default function InstagramPage({ embedded = false }) {
                           <tr key={a.id}>
                             <td>
                               <div className="flex items-center gap-3">
-                                <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg,#833ab4,#fd1d1d)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: '0.85rem', flexShrink: 0 }}>
-                                  {a.ig_username?.[0]?.toUpperCase() || 'I'}
+                                <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg,#833ab4,#fd1d1d)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: '0.85rem', flexShrink: 0, overflow: 'hidden' }}>
+                                  {a.profile_picture_url ? (
+                                    <img src={a.profile_picture_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.currentTarget.style.display = 'none'; }} />
+                                  ) : (
+                                    a.ig_username?.[0]?.toUpperCase() || 'I'
+                                  )}
                                 </div>
                                 <div>
                                   <div className="font-medium">{a.name}</div>

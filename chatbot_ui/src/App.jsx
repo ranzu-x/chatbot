@@ -10,6 +10,8 @@ import RootRedirect from './Router/RootRedirect';
 import LandingPage    from './Pages/Landing/LandingPage';
 import PrivacyPolicy  from './Pages/Landing/PrivacyPolicy';
 import TermsOfService from './Pages/Landing/TermsOfService';
+import BlogListPage   from './Pages/Landing/BlogListPage';
+import BlogDetailPage from './Pages/Landing/BlogDetailPage';
 
 // Core pages
 import Login            from './Pages/LogIn/Login';
@@ -21,6 +23,8 @@ import UsersPage        from './Pages/SuperAdmin/UsersPage';
 import TeamMembersPage  from './Pages/Team/TeamMembersPage';
 import AdminTeamPage    from './Pages/SuperAdmin/AdminTeamPage';
 import PlatformSettingsPage from './Pages/SuperAdmin/PlatformSettingsPage';
+import BlogManagerPage  from './Pages/SuperAdmin/BlogManagerPage';
+import BlogEditorPage   from './Pages/SuperAdmin/BlogEditorPage';
 import RolesPage        from './Pages/Roles/RolesPage';
 import ResellerCustomersPage from './Pages/Agency/ResellerCustomersPage';
 import AgencyPackagesPage    from './Pages/Agency/AgencyPackagesPage';
@@ -32,6 +36,8 @@ import BillingSuccessPage from './Pages/Billing/BillingSuccessPage';
 import WebhooksManagerPage from './Pages/Integrations/WebhooksManagerPage';
 import OrdersPage       from './Pages/Payments/OrdersPage';
 import InChatPaymentCheckoutPage from './Pages/Payments/InChatPaymentCheckoutPage';
+import SupportDeskApp from './SupportDesk/SupportDeskApp';
+import AppearancePage from './Pages/Settings/AppearancePage';
 import InboxPage        from './Pages/Inbox/InboxPage';
 
 // Channel & Connect Account pages
@@ -185,17 +191,30 @@ export default function App() {
             <Route path="/settings/tiktok-app" element={<ProtectedRoute roles={ADMIN_AGENCY}><TikTokAppPage /></ProtectedRoute>} />
             <Route path="/settings/ai-providers" element={<ProtectedRoute roles={ADMIN_AGENCY}><AIProvidersPage /></ProtectedRoute>} />
             <Route path="/settings/whatsapp-flows" element={<ProtectedRoute roles={ADMIN_AGENCY}><WhatsAppFlowRefsPage /></ProtectedRoute>} />
+            <Route path="/settings/appearance" element={<ProtectedRoute roles={ALL_ROLES}><AppearancePage /></ProtectedRoute>} />
             <Route path="/settings/canned-responses" element={<ProtectedRoute roles={ALL_ROLES}><CannedResponsesPage /></ProtectedRoute>} />
 
             {/* ── Live Chat Inbox & Contacts ── */}
             <Route path="/inbox" element={<ProtectedRoute roles={ALL_ROLES}><InboxPage /></ProtectedRoute>} />
             <Route path="/contacts" element={<ProtectedRoute roles={ALL_ROLES}><ContactsPage /></ProtectedRoute>} />
 
+            {/* ── Support Desk — a fully standalone portal, not connected to the
+                 dashboard (own login, own layout, own design). Everything
+                 under /support/* is self-contained inside SupportDeskApp. ── */}
+            <Route path="/support/*" element={<SupportDeskApp />} />
+
             {/* ── Public Pages ── */}
             <Route path="/landing"          element={<LandingPage />} />
             <Route path="/payments/pay/:orderId" element={<InChatPaymentCheckoutPage />} />
             <Route path="/privacy-policy"   element={<PrivacyPolicy />} />
             <Route path="/terms-of-service" element={<TermsOfService />} />
+            <Route path="/blog"             element={<BlogListPage />} />
+            <Route path="/blog/:slug"       element={<BlogDetailPage />} />
+
+            {/* ── Admin Blog Management ── */}
+            <Route path="/admin/blog"           element={<ProtectedRoute roles={['ADMIN']}><BlogManagerPage /></ProtectedRoute>} />
+            <Route path="/admin/blog/new"        element={<ProtectedRoute roles={['ADMIN']}><BlogEditorPage /></ProtectedRoute>} />
+            <Route path="/admin/blog/:id/edit"   element={<ProtectedRoute roles={['ADMIN']}><BlogEditorPage /></ProtectedRoute>} />
 
             {/* Catch-all */}
             <Route path="*" element={<Navigate to="/" replace />} />

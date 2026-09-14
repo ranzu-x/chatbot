@@ -131,29 +131,77 @@ export default function FacebookPage({ embedded = false }) {
         showToast('Facebook login was cancelled or failed', 'error');
       }
     }, {
-      scope: 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_manage_engagement,pages_manage_posts,pages_utility_messaging,instagram_basic,instagram_content_publish,instagram_manage_comments,instagram_manage_messages',
+      scope: 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_manage_engagement,pages_manage_posts,business_management',
       return_scopes: true,
+      auth_type: 'rerequest',
     });
   };
 
-  const fetchUserPages = (userAccessToken) => {
+  const fetchUserPages = async (userAccessToken) => {
     setFbUserToken(userAccessToken);
     setStep('fetching');
-    window.FB.api('/me/accounts', { access_token: userAccessToken, fields: 'id,name,access_token,category,tasks' }, (res) => {
-      if (res && !res.error) {
-        setFetchedPages(res.data || []);
-        setSelected(res.data || []);
-        setStep('selecting');
-      } else {
-        showToast(res?.error?.message || 'Failed to fetch pages', 'error');
-        setStep('idle');
+
+    let pages = [];
+    let backendWarning = null;
+    try {
+      const res = await channelAPI.importFBPages(userAccessToken);
+      if (res.data?.pages?.length) {
+        pages = res.data.pages;
       }
+      if (res.data?.warning) {
+        backendWarning = res.data.warning;
+      }
+    } catch (e) {
+      console.warn('Backend import-pages error, falling back to window.FB.api:', e);
+    }
+
+    if (!pages.length && window.FB) {
+      try {
+        await new Promise((resolve) => {
+          window.FB.api('/me/accounts', { access_token: userAccessToken, fields: 'id,name,access_token,category,tasks,picture{url}' }, (fbRes) => {
+            if (fbRes && !fbRes.error && Array.isArray(fbRes.data)) {
+              pages = fbRes.data.map(p => ({
+                ...p,
+                profile_picture_url: p.picture?.data?.url || (p.id ? `https://graph.facebook.com/v21.0/${p.id}/picture?type=large` : null),
+              }));
+            }
+            resolve();
+          });
+        });
+      } catch (fbErr) {
+        console.warn('window.FB.api error:', fbErr);
+      }
+    }
+
+    // Filter out WhatsApp Business Accounts / WABAs
+    pages = pages.filter(p => {
+      if (!p || !p.id || !p.name) return false;
+      const lower = (p.name || '').toLowerCase();
+      if (lower.includes('whatsapp business') || lower.includes('test whatsapp') || lower.includes('waba')) {
+        return false;
+      }
+      return true;
     });
+
+    if (pages.length > 0) {
+      setFetchedPages(pages);
+      const connectedPageIds = new Set(connected.map(p => p.fb_page_id));
+      const unlinked = pages.filter(p => !connectedPageIds.has(p.id));
+      setSelected(unlinked.length > 0 ? unlinked : pages);
+      setStep('selecting');
+    } else {
+      showToast(backendWarning || 'No Facebook Pages found. Make sure you granted page permissions in the Facebook dialog.', 'error');
+      setStep('idle');
+    }
   };
 
   const handleImport = async () => {
-    if (!selected.length) return;
+    if (!selected.length) {
+      showToast('Please select at least one page to connect', 'error');
+      return;
+    }
     setImporting(true);
+    let successCount = 0;
     try {
       for (const page of selected) {
         await channelAPI.addFacebook({
@@ -162,9 +210,11 @@ export default function FacebookPage({ embedded = false }) {
           userAccessToken: fbUserToken || null,
           fbPageId: page.id,
           fbPageName: page.name,
+          profilePictureUrl: page.profile_picture_url || page.picture?.data?.url || null,
         });
+        successCount++;
       }
-      showToast(`Connected ${selected.length} Facebook page(s) with Personal Account!`);
+      showToast(`Successfully connected ${successCount} Facebook page(s)!`);
       setStep('done');
       setSelected([]);
       fetchConnected();
@@ -505,8 +555,12 @@ export default function FacebookPage({ embedded = false }) {
                       <tr key={page.id}>
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <div style={{ width: 34, height: 34, borderRadius: 8, background: '#1877f2', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>
-                              {page.name?.[0]?.toUpperCase() || 'P'}
+                            <div style={{ width: 34, height: 34, borderRadius: '50%', background: '#1877f2', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, overflow: 'hidden', flexShrink: 0, border: '1px solid #e4e4f0' }}>
+                              {page.profile_picture_url ? (
+                                <img src={page.profile_picture_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.currentTarget.style.display = 'none'; }} />
+                              ) : (
+                                page.name?.[0]?.toUpperCase() || 'P'
+                              )}
                             </div>
                             <div>
                               <div style={{ fontWeight: 700, color: '#1a1a2e' }}>{page.name}</div>
@@ -558,17 +612,142 @@ export default function FacebookPage({ embedded = false }) {
 
           {/* Right Connect Tools */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {/* FB Login Card */}
-            <div style={{ background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, padding: 20, textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
-              <div style={{ fontSize: '2.2rem', marginBottom: 8 }}>📘</div>
-              <div style={{ fontWeight: 700, fontSize: '0.96rem', marginBottom: 4, color: '#1a1a2e' }}>
-                Connect via Facebook Login
+            {sdkError && (
+              <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 10, padding: '14px 16px', fontSize: '0.82rem', color: '#b45309' }}>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>⚠️ {sdkError}</div>
+                <div style={{ color: '#5c5c80', fontSize: '0.78rem' }}>
+                  Please ensure your Meta App ID is configured in <em>Settings → Meta App Setup</em>.
+                </div>
               </div>
-              <div style={{ fontSize: '0.8rem', color: '#5c5c80', marginBottom: 16, lineHeight: 1.5 }}>
-                Log in to select and import pages with <code>pages_messaging</code>, <code>pages_manage_engagement</code>, <code>pages_manage_posts</code>, and <code>pages_utility_messaging</code> permissions for full DM, comment automation & utility messaging outside the 24h window.
+            )}
+
+            {/* State: Fetching pages */}
+            {step === 'fetching' && (
+              <div style={{ background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, padding: 30, textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
+                <span className="loading-spinner" style={{ width: 28, height: 28, borderColor: 'rgba(24,119,242,0.2)', borderTopColor: '#1877f2', margin: '0 auto 12px', display: 'block' }} />
+                <div style={{ fontWeight: 700, fontSize: '0.92rem', color: '#1a1a2e', marginBottom: 4 }}>Discovering Facebook Pages…</div>
+                <div style={{ fontSize: '0.78rem', color: '#5c5c80' }}>Fetching authorized pages and permissions</div>
               </div>
-              <FBLoginButton onClick={handleFBLogin} loading={loginLoading} disabled={loginLoading} />
-            </div>
+            )}
+
+            {/* State: Selecting pages to import */}
+            {step === 'selecting' && (
+              <div style={{ background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, padding: 18, boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                  <div style={{ fontWeight: 700, fontSize: '0.94rem', color: '#1a1a2e' }}>Select Facebook Pages</div>
+                  <span style={{ fontSize: '0.74rem', fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: 'rgba(24,119,242,0.1)', color: '#1877f2' }}>
+                    {fetchedPages.length} found
+                  </span>
+                </div>
+
+                <div style={{ maxHeight: 300, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+                  {fetchedPages.map(page => {
+                    const isConnected = connected.some(c => c.fb_page_id === page.id);
+                    const isChecked = !!selected.find(s => s.id === page.id);
+                    return (
+                      <div
+                        key={page.id}
+                        onClick={() => {
+                          if (isConnected) return;
+                          setSelected(prev => isChecked ? prev.filter(s => s.id !== page.id) : [...prev, page]);
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '10px 12px',
+                          borderRadius: 8,
+                          border: `1.5px solid ${isChecked ? '#1877f2' : '#e4e4f0'}`,
+                          background: isChecked ? 'rgba(24,119,242,0.04)' : '#fafafa',
+                          cursor: isConnected ? 'default' : 'pointer',
+                          transition: 'all 0.15s',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#1877f2', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.8rem', overflow: 'hidden', flexShrink: 0 }}>
+                            {page.profile_picture_url ? (
+                              <img src={page.profile_picture_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.currentTarget.style.display = 'none'; }} />
+                            ) : (
+                              <Facebook size={16} />
+                            )}
+                          </div>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: '0.84rem', color: '#1a1a2e' }}>{page.name}</div>
+                            <div style={{ fontSize: '0.72rem', color: '#8c8ca1' }}>ID: {page.id} {page.category ? `• ${page.category}` : ''}</div>
+                          </div>
+                        </div>
+
+                        {isConnected ? (
+                          <span style={{ fontSize: '0.72rem', color: '#10b981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 }}>
+                            <Check size={13} /> Connected
+                          </span>
+                        ) : (
+                          <div style={{
+                            width: 18, height: 18, borderRadius: 4,
+                            border: `1.5px solid ${isChecked ? '#1877f2' : '#cbd5e1'}`,
+                            background: isChecked ? '#1877f2' : '#ffffff',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          }}>
+                            {isChecked && <Check size={12} color="#fff" strokeWidth={3} />}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => { setStep('idle'); setSelected([]); }}
+                    style={{
+                      flex: 1, padding: '9px', borderRadius: 8, border: '1px solid #e4e4f0',
+                      background: '#fff', color: '#5c5c80', fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleImport}
+                    disabled={!selected.length || importing}
+                    style={{
+                      flex: 2, padding: '9px', borderRadius: 8, border: 'none',
+                      background: '#1877f2', color: '#fff', fontWeight: 700, fontSize: '0.82rem',
+                      cursor: !selected.length || importing ? 'not-allowed' : 'pointer',
+                      opacity: !selected.length || importing ? 0.6 : 1,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    }}
+                  >
+                    {importing ? (
+                      <>
+                        <span className="loading-spinner" style={{ width: 14, height: 14, borderColor: 'rgba(255,255,255,0.3)', borderTopColor: '#fff' }} />
+                        Connecting…
+                      </>
+                    ) : (
+                      `Connect ${selected.length} Page${selected.length !== 1 ? 's' : ''}`
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* State: Idle / Done (FB Login Button) */}
+            {(step === 'idle' || step === 'done') && (
+              <div style={{ background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, padding: 20, textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
+                <div style={{ fontSize: '2.2rem', marginBottom: 8 }}>📘</div>
+                <div style={{ fontWeight: 700, fontSize: '0.96rem', marginBottom: 4, color: '#1a1a2e' }}>
+                  Connect via Facebook Login
+                </div>
+                <div style={{ fontSize: '0.8rem', color: '#5c5c80', marginBottom: 16, lineHeight: 1.5 }}>
+                  Log in to select and import pages with <code>pages_show_list</code>, <code>pages_messaging</code>, <code>pages_manage_engagement</code>, and <code>pages_manage_posts</code> permissions for full DM and comment automation.
+                </div>
+                <FBLoginButton onClick={handleFBLogin} loading={loginLoading} disabled={loginLoading || !fbReady || !!sdkError} />
+                {!fbReady && !sdkError && (
+                  <div style={{ marginTop: 8, fontSize: '0.75rem', color: '#8c8ca1' }}>Initializing Meta SDK…</div>
+                )}
+              </div>
+            )}
 
             {/* 1-Click Permanent Token Generator */}
             <div style={{ background: 'rgba(99, 102, 241, 0.05)', border: '1.5px solid rgba(99, 102, 241, 0.25)', borderRadius: 12, padding: 18 }}>

@@ -1,4 +1,5 @@
 import express from "express";
+import crypto from "crypto";
 import bcrypt from "bcrypt";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
@@ -152,6 +153,13 @@ router.post("/admin/agencies", requirePermission("admin.agencies.manage"), async
         [agencyId, packageId]
       );
     }
+
+    // Auto-generate an unbranded random verify token for webhooks (no company/branding names)
+    const initialVerifyToken = crypto.randomBytes(16).toString("hex");
+    await conn.query(
+      "INSERT INTO meta_app_settings (agency_id, verify_token, is_configured, is_active) VALUES (?, ?, 0, 1)",
+      [agencyId, initialVerifyToken]
+    );
 
     await conn.commit();
     return res.status(201).json({ success: true, message: "Agency created successfully", agencyId });

@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import AppLayout from '../../Layout/AppLayout';
 import { channelAPI } from '../../services/api';
 
+const EmbeddedWrapper = ({ children }) => <div>{children}</div>;
+
 export default function TelegramPage({ embedded = false }) {
   const [bots, setBots] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -38,7 +40,7 @@ export default function TelegramPage({ embedded = false }) {
     catch { showToast('Failed', 'error'); }
   };
 
-  const LayoutWrapper = embedded ? ({ children }) => <div>{children}</div> : AppLayout;
+  const LayoutWrapper = embedded ? EmbeddedWrapper : AppLayout;
 
   return (
     <LayoutWrapper>
