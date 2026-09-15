@@ -10,6 +10,7 @@ import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { requirePermission } from "../middleware/permissionMiddleware.js";
 import { assertLimit } from "../utils/entitlements.js";
+import { logAuditEvent } from "../utils/auditLog.js";
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -105,6 +106,14 @@ router.post("/reseller/customers", requirePermission("reseller.customers.manage"
     }
 
     await conn.commit();
+
+    logAuditEvent({
+      agencyId: reseller.id, actor: req.user, action: "reseller_customer.create",
+      entityType: "agency", entityId: customerId, entityLabel: name,
+      summary: `Created customer "${name}" (owner: ${ownerEmail})`,
+      targetAgencyId: customerId,
+    });
+
     return res.status(201).json({ success: true, message: "Customer created", customerId });
   } catch (err) {
     await conn.rollback();
@@ -122,9 +131,9 @@ router.patch("/reseller/customers/:id/package", requirePermission("reseller.cust
   const { agencyPackageId } = req.body;
   if (!agencyPackageId) return res.status(400).json({ success: false, message: "agencyPackageId is required" });
   try {
-    const [[customer]] = await pool.query("SELECT id FROM agencies WHERE id = ? AND parent_agency_id = ? AND account_type='RESELLER_CUSTOMER'", [req.params.id, reseller.id]);
+    const [[customer]] = await pool.query("SELECT id, name FROM agencies WHERE id = ? AND parent_agency_id = ? AND account_type='RESELLER_CUSTOMER'", [req.params.id, reseller.id]);
     if (!customer) return res.status(404).json({ success: false, message: "Customer not found" });
-    const [[pkg]] = await pool.query("SELECT id FROM agency_packages WHERE id = ? AND agency_id = ?", [agencyPackageId, reseller.id]);
+    const [[pkg]] = await pool.query("SELECT id, name FROM agency_packages WHERE id = ? AND agency_id = ?", [agencyPackageId, reseller.id]);
     if (!pkg) return res.status(400).json({ success: false, message: "Package not found" });
 
     await pool.query("UPDATE agency_client_subscriptions SET status='CANCELLED' WHERE client_agency_id = ? AND status='ACTIVE'", [customer.id]);
@@ -132,6 +141,14 @@ router.patch("/reseller/customers/:id/package", requirePermission("reseller.cust
       "INSERT INTO agency_client_subscriptions (agency_id, client_agency_id, package_id, provider, status, started_at, notes) VALUES (?, ?, ?, 'STRIPE', 'ACTIVE', NOW(), 'Reassigned by reseller')",
       [reseller.id, customer.id, agencyPackageId]
     );
+
+    logAuditEvent({
+      agencyId: reseller.id, actor: req.user, action: "reseller_customer.package_change",
+      entityType: "agency", entityId: customer.id, entityLabel: customer.name,
+      summary: `Changed "${customer.name}"'s plan to "${pkg.name}"`,
+      targetAgencyId: customer.id,
+    });
+
     return res.json({ success: true, message: "Package reassigned. Existing data is always kept — if the new plan's limits are lower, this customer just can't add more of that resource until they're back under the limit." });
   } catch (err) {
     console.error("PATCH /reseller/customers/:id/package error:", err);
@@ -144,10 +161,19 @@ router.patch("/reseller/customers/:id/toggle", requirePermission("reseller.custo
   const reseller = await requireCallerIsReseller(req, res);
   if (!reseller) return;
   try {
-    const [[customer]] = await pool.query("SELECT id, is_active FROM agencies WHERE id = ? AND parent_agency_id = ? AND account_type='RESELLER_CUSTOMER'", [req.params.id, reseller.id]);
+    const [[customer]] = await pool.query("SELECT id, is_active, name FROM agencies WHERE id = ? AND parent_agency_id = ? AND account_type='RESELLER_CUSTOMER'", [req.params.id, reseller.id]);
     if (!customer) return res.status(404).json({ success: false, message: "Customer not found" });
     const newStatus = customer.is_active ? 0 : 1;
     await pool.query("UPDATE agencies SET is_active = ? WHERE id = ?", [newStatus, customer.id]);
+
+    logAuditEvent({
+      agencyId: reseller.id, actor: req.user, action: "reseller_customer.toggle",
+      entityType: "agency", entityId: customer.id, entityLabel: customer.name,
+      summary: `${newStatus ? "Activated" : "Deactivated"} customer "${customer.name}"`,
+      changes: { is_active: { before: !!customer.is_active, after: newStatus === 1 } },
+      targetAgencyId: customer.id,
+    });
+
     return res.json({ success: true, isActive: newStatus === 1 });
   } catch (err) {
     console.error("PATCH /reseller/customers/:id/toggle error:", err);

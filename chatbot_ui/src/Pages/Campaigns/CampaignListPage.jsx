@@ -193,12 +193,16 @@ export default function CampaignListPage() {
   const [configuring, setConfiguring] = useState(null);
   const [configIntegrationId, setConfigIntegrationId] = useState('');
   const [audienceForm, setAudienceForm] = useState({ includeLabelIds: [], excludeLabelIds: [], includeContacts: [], excludeContacts: [], tagLabelId: null });
+  const [abEnabled, setAbEnabled] = useState(false);
+  const [variantBTemplateId, setVariantBTemplateId] = useState('');
+  const [abSplitPercent, setAbSplitPercent] = useState(50);
   const [previewCount, setPreviewCount] = useState(null);
   const [scheduleAt, setScheduleAt] = useState('');
   const [savingConfig, setSavingConfig] = useState(false);
 
   const [selectedCampaign, setSelectedCampaign] = useState(null);
   const [campaignLogs, setCampaignLogs] = useState([]);
+  const [variantStats, setVariantStats] = useState(null);
   const [logsLoading, setLogsLoading] = useState(false);
 
   const [toast, setToast] = useState(null);
@@ -294,6 +298,9 @@ export default function CampaignListPage() {
       tagLabelId: camp.tag_label_id || null,
     });
     setScheduleAt('');
+    setAbEnabled(!!camp.variant_b_template_id);
+    setVariantBTemplateId(camp.variant_b_template_id ? String(camp.variant_b_template_id) : '');
+    setAbSplitPercent(camp.ab_split_percent || 50);
   };
 
   const handleCreateSubmit = async (e) => {
@@ -334,6 +341,10 @@ export default function CampaignListPage() {
         includeContactIds: audienceForm.includeContacts.map((c) => c.id),
         excludeContactIds: audienceForm.excludeContacts.map((c) => c.id),
         tagLabelId: audienceForm.tagLabelId,
+        ...(configuring.mode === 'TEMPLATE' ? {
+          variantBTemplateId: abEnabled && variantBTemplateId ? variantBTemplateId : null,
+          abSplitPercent: abEnabled ? abSplitPercent : null,
+        } : {}),
       });
       if (sendMode === 'now') {
         await broadcastAPI.sendNow(configuring.id);
@@ -361,6 +372,7 @@ export default function CampaignListPage() {
       const res = await broadcastAPI.getOne(camp.id);
       setCampaignLogs(res.data.logs || []);
       setSelectedCampaign(res.data.campaign);
+      setVariantStats(res.data.variantStats || null);
     } catch {
       showToast('Failed to load recipient logs', 'error');
     } finally {
@@ -637,6 +649,36 @@ export default function CampaignListPage() {
                   {selectedCampaign.error_message}
                 </div>
               )}
+
+              {selectedCampaign.variant_b_template_id && (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '.8rem', fontWeight: 700, marginBottom: 8 }}>
+                    <Zap size={13} /> A/B Results
+                  </div>
+                  {(!variantStats || variantStats.length === 0) ? (
+                    <p style={{ fontSize: '.76rem', color: 'var(--text-muted)', margin: 0 }}>No sends yet for either variant.</p>
+                  ) : (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      {['A', 'B'].map((v) => {
+                        const stat = variantStats.find((s) => s.variant === v) || { targeted: 0, sent: 0, delivered: 0, read_count: 0, failed: 0 };
+                        const label = v === 'A' ? selectedCampaign.template_name : selectedCampaign.variant_b_template_name;
+                        return (
+                          <div key={v} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '10px 12px' }}>
+                            <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>
+                              Variant {v}{label ? ` — ${label}` : ''}
+                            </div>
+                            <div style={{ display: 'flex', gap: 14, fontSize: '.78rem' }}>
+                              <span>Sent <strong>{nf(stat.sent)}</strong></span>
+                              <span>Delivered <strong>{nf(stat.delivered)}</strong> ({pctOf(stat.delivered, stat.sent)}%)</span>
+                              <span>Read <strong>{nf(stat.read_count)}</strong> ({pctOf(stat.read_count, stat.sent)}%)</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div style={{ padding: '14px 20px 6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -753,6 +795,42 @@ export default function CampaignListPage() {
             <div style={{ height: 1, background: 'var(--border)' }} />
 
             <AudienceForm platform={configuring.platform} labels={labels} value={audienceForm} onChange={setAudienceForm} previewCount={previewCount} />
+
+            {configuring.mode === 'TEMPLATE' && (
+              <>
+                <div style={{ height: 1, background: 'var(--border)' }} />
+                <div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: abEnabled ? 10 : 0 }}>
+                    <input type="checkbox" checked={abEnabled} onChange={(e) => setAbEnabled(e.target.checked)} />
+                    <span className="form-label" style={{ margin: 0 }}>A/B test two message variants</span>
+                  </label>
+                  {abEnabled && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingLeft: 24 }}>
+                      <p style={{ fontSize: '.78rem', color: 'var(--text-muted)', margin: 0 }}>
+                        Variant A is the template chosen when this campaign was created ({configuring.template_name || 'template'}). Pick Variant B and how the audience splits — delivery and read rates are compared per variant once sent.
+                      </p>
+                      <div className="form-group">
+                        <label className="form-label">Variant B template</label>
+                        <select className="form-input" value={variantBTemplateId} onChange={(e) => setVariantBTemplateId(e.target.value)}>
+                          <option value="">— Select an approved template —</option>
+                          {templates.filter((t) => String(t.id) !== String(configuring.template_id)).map((t) => (
+                            <option key={t.id} value={t.id}>{t.template_name} ({t.language})</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Split: {abSplitPercent}% Variant A / {100 - abSplitPercent}% Variant B</label>
+                        <input
+                          type="range" min={1} max={99} value={abSplitPercent}
+                          onChange={(e) => setAbSplitPercent(Number(e.target.value))}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
 
             <div style={{ height: 1, background: 'var(--border)' }} />
 

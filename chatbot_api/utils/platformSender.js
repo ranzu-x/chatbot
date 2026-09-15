@@ -4,6 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
+import pool from "../db.js";
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
@@ -178,6 +179,28 @@ async function uploadFacebookAttachment(accessToken, localPath, fullMediaUrl, de
 /**
  * Send message to external platform APIs (WhatsApp, Facebook Messenger, Instagram, Telegram)
  */
+/** See utils/whatsappFlowCrypto.js / routes/whatsappFlowEndpoint.js — the
+ * only place flow_token, contact and relay-webhook get tied together. */
+async function recordFlowSession(integration, contactExternalId, flowToken, metaFlowId) {
+  const [[contact]] = await pool.query(
+    "SELECT id FROM contacts WHERE agency_id = ? AND platform = 'WHATSAPP' AND external_id = ?",
+    [integration.agency_id, contactExternalId]
+  );
+  const [[conversation]] = contact
+    ? await pool.query("SELECT id FROM conversations WHERE contact_id = ? AND integration_id = ?", [contact.id, integration.id])
+    : [[null]];
+  const [[flowRef]] = await pool.query(
+    "SELECT id, relay_webhook_url FROM whatsapp_flow_refs WHERE flow_id = ? AND agency_id = ? AND (integration_id = ? OR integration_id IS NULL)",
+    [metaFlowId, integration.agency_id, integration.id]
+  );
+
+  await pool.query(
+    `INSERT INTO whatsapp_flow_sessions (flow_token, agency_id, integration_id, contact_id, conversation_id, flow_ref_id, relay_webhook_url, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'SENT')`,
+    [flowToken, integration.agency_id, integration.id, contact?.id || null, conversation?.id || null, flowRef?.id || null, flowRef?.relay_webhook_url || null]
+  );
+}
+
 export async function sendPlatformMessage(platform, integration, contactExternalId, messageData) {
   const {
     type = "TEXT",
@@ -243,6 +266,7 @@ export async function sendPlatformMessage(platform, integration, contactExternal
       // interactive Flow message, only usable within the 24h customer-service
       // window (unlike a Flow referenced from an approved Template's button).
       if (whatsappFlow?.flowId) {
+        const flowToken = `inbox_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
         payload.type = "interactive";
         payload.interactive = {
           type: "flow",
@@ -251,7 +275,7 @@ export async function sendPlatformMessage(platform, integration, contactExternal
             name: "flow",
             parameters: {
               flow_message_version: "3",
-              flow_token: `inbox_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              flow_token: flowToken,
               flow_id: whatsappFlow.flowId,
               flow_cta: (whatsappFlow.cta || "Open").slice(0, 20),
               flow_action: "navigate",
@@ -261,6 +285,14 @@ export async function sendPlatformMessage(platform, integration, contactExternal
         };
         const response = await axios.post(url, payload, {
           headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        });
+        // Records flow_token -> agency/contact/relay so the encrypted
+        // data-exchange endpoint (routes/whatsappFlowEndpoint.js) can later
+        // trace an incoming, otherwise-anonymous encrypted POST back to who
+        // it's for. Best-effort: a logging failure must never break the
+        // send that already succeeded.
+        recordFlowSession(integration, contactExternalId, flowToken, whatsappFlow.flowId).catch((err) => {
+          console.error("[WA Flow] Failed to record flow session:", err.message);
         });
         return response.data?.messages?.[0]?.id || null;
       }

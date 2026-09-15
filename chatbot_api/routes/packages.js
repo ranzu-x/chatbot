@@ -3,6 +3,7 @@ import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { getAgencyEntitlements } from "../utils/entitlements.js";
+import { logAuditEvent, diffFields } from "../utils/auditLog.js";
 
 const router = express.Router();
 
@@ -209,6 +210,12 @@ router.post("/packages", authMiddleware, roleMiddleware("ADMIN"), async (req, re
       }
     }
 
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "package.create",
+      entityType: "package", entityId: newPackageId, entityLabel: name.trim(),
+      summary: `Created package "${name.trim()}" (${type}, $${Number(price) || 0}/${billingCycle})`,
+    });
+
     return res.status(201).json({
       success: true,
       message: `Package "${name}" created successfully!`,
@@ -239,12 +246,27 @@ router.put("/packages/:id", authMiddleware, roleMiddleware("ADMIN"), async (req,
       modules = [], // array of { key, isEnabled, limits }
     } = req.body;
 
-    const [existing] = await pool.query("SELECT id FROM packages WHERE id = ?", [req.params.id]);
+    const [existing] = await pool.query("SELECT * FROM packages WHERE id = ?", [req.params.id]);
     if (!existing.length) return res.status(404).json({ success: false, message: "Package not found" });
+    const before = existing[0];
 
     if (isDefault && type) {
       await pool.query("UPDATE packages SET is_default = 0 WHERE type = ? AND id != ?", [type, req.params.id]);
     }
+
+    // Every field below resolves at the JS level (undefined → keep the
+    // existing value, anything else → apply it) rather than relying on SQL
+    // COALESCE — COALESCE(?, col) silently keeps `col` for a bound NULL too,
+    // which is indistinguishable from "field omitted" and was actively wrong
+    // for `description` (any partial update that didn't include it wiped it
+    // to NULL). It was worse for the four max_* limits below: `Number(undefined)`
+    // is NaN, and mysql2 serializes a bound NaN as the bare, unquoted token
+    // `NaN` — MySQL then reads that as a column reference and every partial
+    // update (e.g. just changing price) failed with "Unknown column 'NaN'".
+    const resolvedMaxBotAccounts = maxBotAccounts === undefined ? before.max_bot_accounts : (maxBotAccounts === "" || maxBotAccounts === null ? null : Number(maxBotAccounts));
+    const resolvedMaxSubscribers = maxSubscribers === undefined ? before.max_subscribers : (maxSubscribers === "" || maxSubscribers === null ? null : Number(maxSubscribers));
+    const resolvedMaxTeamMembers = maxTeamMembers === undefined ? before.max_team_members : (maxTeamMembers === "" || maxTeamMembers === null ? null : Number(maxTeamMembers));
+    const resolvedMaxMonthlyMessages = maxMonthlyMessages === undefined ? before.max_monthly_messages : (maxMonthlyMessages === "" || maxMonthlyMessages === null ? null : Number(maxMonthlyMessages));
 
     await pool.query(
       `UPDATE packages SET
@@ -265,15 +287,15 @@ router.put("/packages/:id", authMiddleware, roleMiddleware("ADMIN"), async (req,
         name,
         slug,
         type,
-        description || null,
+        description !== undefined ? (description || null) : before.description,
         price !== undefined ? Number(price) : null,
         billingCycle,
         isActive !== undefined ? (isActive ? 1 : 0) : null,
         isDefault !== undefined ? (isDefault ? 1 : 0) : null,
-        maxBotAccounts === "" || maxBotAccounts === null ? null : Number(maxBotAccounts),
-        maxSubscribers === "" || maxSubscribers === null ? null : Number(maxSubscribers),
-        maxTeamMembers === "" || maxTeamMembers === null ? null : Number(maxTeamMembers),
-        maxMonthlyMessages === "" || maxMonthlyMessages === null ? null : Number(maxMonthlyMessages),
+        resolvedMaxBotAccounts,
+        resolvedMaxSubscribers,
+        resolvedMaxTeamMembers,
+        resolvedMaxMonthlyMessages,
         req.params.id,
       ]
     );
@@ -296,6 +318,14 @@ router.put("/packages/:id", authMiddleware, roleMiddleware("ADMIN"), async (req,
         );
       }
     }
+
+    const after = { name: name ?? before.name, price: price !== undefined ? Number(price) : before.price, is_active: isActive !== undefined ? (isActive ? 1 : 0) : before.is_active, billing_cycle: billingCycle ?? before.billing_cycle };
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "package.update",
+      entityType: "package", entityId: Number(req.params.id), entityLabel: after.name,
+      summary: `Updated package "${after.name}"`,
+      changes: diffFields(before, after, ["name", "price", "is_active", "billing_cycle"]),
+    });
 
     return res.json({ success: true, message: `Package updated successfully!` });
   } catch (err) {
@@ -345,6 +375,12 @@ router.post("/packages/:id/clone", authMiddleware, roleMiddleware("ADMIN"), asyn
       );
     }
 
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "package.clone",
+      entityType: "package", entityId: newId, entityLabel: newName,
+      summary: `Cloned package "${src.name}" as "${newName}"`,
+    });
+
     return res.status(201).json({
       success: true,
       message: `Package cloned as "${newName}"!`,
@@ -367,6 +403,13 @@ router.delete("/packages/:id", authMiddleware, roleMiddleware("ADMIN"), async (r
     }
 
     await pool.query("DELETE FROM packages WHERE id = ?", [req.params.id]);
+
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "package.delete",
+      entityType: "package", entityId: Number(req.params.id), entityLabel: rows[0].name,
+      summary: `Deleted package "${rows[0].name}"`,
+    });
+
     return res.json({ success: true, message: `Package "${rows[0].name}" deleted successfully.` });
   } catch (err) {
     console.error("Delete package error:", err);
@@ -406,6 +449,13 @@ router.post("/packages/assign", authMiddleware, roleMiddleware("ADMIN"), async (
         [userId, packageId, notes || `Assigned ${pkg[0].name}`]
       );
     }
+
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "package.assign",
+      entityType: agencyId ? "agency" : "user", entityId: Number(agencyId || userId), entityLabel: pkg[0].name,
+      summary: `Assigned package "${pkg[0].name}" to ${agencyId ? `agency #${agencyId}` : `user #${userId}`}`,
+      targetAgencyId: agencyId ? Number(agencyId) : null,
+    });
 
     return res.json({
       success: true,

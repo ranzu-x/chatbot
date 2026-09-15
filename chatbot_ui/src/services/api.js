@@ -146,6 +146,12 @@ export const roleAPI = {
   delete: (id) => api.delete(`/roles/${id}`),
 };
 
+// ─── Admin & Reseller Audit Log ────────────────────────────────────
+export const auditLogAPI = {
+  getAll: (params) => api.get("/audit-log", { params }),
+  getFacets: () => api.get("/audit-log/facets"),
+};
+
 // Super Admin's Reseller management merged into adminAPI (getAgencies now
 // returns Direct Customers + Resellers together, "Reseller" is just an
 // isReseller flag on an agency now — see routes/admin.js).
@@ -425,6 +431,13 @@ export const contactAPI = {
   getFormResponses: (id) => api.get(`/contacts/${id}/form-responses`),
   syncAvatars: () => api.post('/contacts/sync-avatars'),
   exportCSV: (params) => api.get('/contacts/export/csv', { params, responseType: 'blob' }),
+  getStats: (params) => api.get('/contacts/stats', { params }),
+  bulkDelete: (contactIds) => api.post('/contacts/bulk-delete', { contactIds }),
+  updateSubscription: (id, status) => api.patch(`/contacts/${id}/subscription`, { status }),
+  block: (id, reason) => api.patch(`/contacts/${id}/block`, { reason }),
+  unblock: (id) => api.patch(`/contacts/${id}/unblock`),
+  bulkSequence: (contactIds, sequenceId) => api.post('/contacts/bulk-sequence', { contactIds, sequenceId }),
+  import: (platform, rows) => api.post('/contacts/import', { platform, rows }),
 };
 
 // ─── Unified Labels ───────────────────────────────────────────────────
@@ -436,6 +449,16 @@ export const labelAPI = {
   attachToContact: (contactId, data) => api.post(`/contacts/${contactId}/labels`, data),
   detachFromContact: (contactId, labelId) => api.delete(`/contacts/${contactId}/labels/${labelId}`),
   bulkAttach: (data) => api.post('/contacts/bulk-labels', data),
+};
+
+// ─── Contact Lists ──────────────────────────────────────────────────────
+export const contactListAPI = {
+  getAll: () => api.get('/contact-lists'),
+  create: (data) => api.post('/contact-lists', data),
+  update: (id, data) => api.put(`/contact-lists/${id}`, data),
+  delete: (id) => api.delete(`/contact-lists/${id}`),
+  bulkAdd: (contactIds, listId) => api.post('/contacts/bulk-list-add', { contactIds, listId }),
+  bulkRemove: (contactIds, listId) => api.post('/contacts/bulk-list-remove', { contactIds, listId }),
 };
 
 // ─── Custom Fields ────────────────────────────────────────────────────
@@ -467,7 +490,16 @@ export const templateAPI = {
 export const whatsappFlowRefAPI = {
   getAll: (params) => api.get('/whatsapp-flow-refs', { params }),
   create: (data) => api.post('/whatsapp-flow-refs', data),
+  update: (id, data) => api.patch(`/whatsapp-flow-refs/${id}`, data),
   delete: (id) => api.delete(`/whatsapp-flow-refs/${id}`),
+};
+
+// ─── WhatsApp Flows — encrypted data-exchange keys ─────────────────
+export const whatsappFlowKeyAPI = {
+  get: (integrationId) => api.get(`/whatsapp-flow-keys/${integrationId}`),
+  generate: (integrationId) => api.post(`/whatsapp-flow-keys/${integrationId}`),
+  remove: (integrationId) => api.delete(`/whatsapp-flow-keys/${integrationId}`),
+  sessions: () => api.get('/whatsapp-flow-sessions'),
 };
 
 // ─── Canned Responses ──────────────────────────────────────────────────
@@ -476,14 +508,6 @@ export const cannedResponseAPI = {
   create: (data) => api.post('/canned-responses', data),
   update: (id, data) => api.put(`/canned-responses/${id}`, data),
   delete: (id) => api.delete(`/canned-responses/${id}`),
-};
-
-// ─── Campaigns ────────────────────────────────────────────────────────
-export const campaignAPI = {
-  getAll: () => api.get('/campaigns'),
-  getOne: (id) => api.get(`/campaigns/${id}`),
-  create: (data) => api.post('/campaigns', data),
-  delete: (id) => api.delete(`/campaigns/${id}`),
 };
 
 // The Broadcasting module — WhatsApp/Messenger/Telegram/TikTok, tabbed on

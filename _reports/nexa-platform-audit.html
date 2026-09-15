@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nexa Platform Audit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --bg: #f2f5f7;
+    --surface: #ffffff;
+    --surface-2: #e9eef1;
+    --ink: #10151b;
+    --ink-2: #3c4552;
+    --muted: #67707d;
+    --line: #dde3e8;
+    --line-2: #c8d0d7;
+    --accent: #0d7568;
+    --accent-ink: #ffffff;
+    --accent-soft: #e2f1ee;
+    --accent-line: #bfe0da;
+
+    --sev-critical: #b31d2c;
+    --sev-critical-bg: #fbe8ea;
+    --sev-critical-line: #f0bfc4;
+    --sev-high: #b1550a;
+    --sev-high-bg: #fbedde;
+    --sev-high-line: #f0cfa9;
+    --sev-medium: #8a6407;
+    --sev-medium-bg: #f8f0d8;
+    --sev-medium-line: #e9d7a0;
+    --sev-low: #4a5568;
+    --sev-low-bg: #edf0f3;
+    --sev-low-line: #d3d9df;
+
+    --shadow: 0 1px 2px rgba(16, 21, 27, 0.04), 0 8px 24px -12px rgba(16, 21, 27, 0.12);
+    --radius: 12px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e1216;
+      --surface: #171d23;
+      --surface-2: #1c232a;
+      --ink: #edf1f4;
+      --ink-2: #c3ccd6;
+      --muted: #8d97a4;
+      --line: #2a323b;
+      --line-2: #343d47;
+      --accent: #3cc3ad;
+      --accent-ink: #05201b;
+      --accent-soft: rgba(60, 195, 173, 0.12);
+      --accent-line: rgba(60, 195, 173, 0.32);
+
+      --sev-critical: #ff8a94;
+      --sev-critical-bg: rgba(217, 62, 76, 0.14);
+      --sev-critical-line: rgba(217, 62, 76, 0.35);
+      --sev-high: #ffb26b;
+      --sev-high-bg: rgba(201, 116, 22, 0.14);
+      --sev-high-line: rgba(201, 116, 22, 0.35);
+      --sev-medium: #ecc768;
+      --sev-medium-bg: rgba(184, 145, 20, 0.14);
+      --sev-medium-line: rgba(184, 145, 20, 0.32);
+      --sev-low: #aab4c1;
+      --sev-low-bg: rgba(107, 120, 139, 0.16);
+      --sev-low-line: rgba(107, 120, 139, 0.32);
+
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1216;
+    --surface: #171d23;
+    --surface-2: #1c232a;
+    --ink: #edf1f4;
+    --ink-2: #c3ccd6;
+    --muted: #8d97a4;
+    --line: #2a323b;
+    --line-2: #343d47;
+    --accent: #3cc3ad;
+    --accent-ink: #05201b;
+    --accent-soft: rgba(60, 195, 173, 0.12);
+    --accent-line: rgba(60, 195, 173, 0.32);
+
+    --sev-critical: #ff8a94;
+    --sev-critical-bg: rgba(217, 62, 76, 0.14);
+    --sev-critical-line: rgba(217, 62, 76, 0.35);
+    --sev-high: #ffb26b;
+    --sev-high-bg: rgba(201, 116, 22, 0.14);
+    --sev-high-line: rgba(201, 116, 22, 0.35);
+    --sev-medium: #ecc768;
+    --sev-medium-bg: rgba(184, 145, 20, 0.14);
+    --sev-medium-line: rgba(184, 145, 20, 0.32);
+    --sev-low: #aab4c1;
+    --sev-low-bg: rgba(107, 120, 139, 0.16);
+    --sev-low-line: rgba(107, 120, 139, 0.32);
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
+  }
+
+  * { box-sizing: border-box; }
+  html { color-scheme: light dark; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    padding-inline: 20px;
+  }
+  a { color: var(--accent); }
+  h1, h2, h3, h4 { text-wrap: balance; font-family: "IBM Plex Sans", system-ui, sans-serif; color: var(--ink); margin: 0; }
+  p { margin: 0; }
+  code, pre, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  ::selection { background: var(--accent-soft); }
+
+  .wrap { max-width: 900px; margin: 0 auto; padding-block: 40px 80px; }
+
+  /* ── Nav ─────────────────────────────────────────────────── */
+  .subnav {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; gap: 4px; overflow-x: auto;
+    padding: 10px 20px; margin: 0 -20px 0;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  .subnav a {
+    flex-shrink: 0;
+    font-size: 0.78rem; font-weight: 600; letter-spacing: 0.01em;
+    color: var(--muted); text-decoration: none;
+    padding: 7px 12px; border-radius: 99px;
+    transition: background .12s, color .12s;
+  }
+  .subnav a:hover { background: var(--surface-2); color: var(--ink); }
+
+  /* ── Cover ───────────────────────────────────────────────── */
+  .cover { padding-top: 36px; padding-bottom: 8px; }
+  .eyebrow {
+    font-size: 0.74rem; font-weight: 700; letter-spacing: 0.11em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 14px; display: flex; align-items: center; gap: 10px;
+  }
+  .eyebrow::before { content: ""; width: 22px; height: 2px; background: var(--accent); display: inline-block; }
+  .cover h1 { font-size: clamp(2.1rem, 5vw, 3rem); font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; }
+  .cover .dek {
+    font-family: "Source Serif 4", Georgia, serif; font-size: 1.14rem; color: var(--ink-2);
+    max-width: 62ch; line-height: 1.55; margin-top: 16px;
+  }
+  .cover-meta {
+    display: flex; flex-wrap: wrap; gap: 22px; margin-top: 26px; padding-top: 20px;
+    border-top: 1px solid var(--line);
+  }
+  .cover-meta div { font-size: 0.8rem; }
+  .cover-meta .k { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 0.66rem; letter-spacing: 0.07em; margin-bottom: 3px; }
+  .cover-meta .v { color: var(--ink); font-weight: 500; }
+
+  /* ── Stat strip ──────────────────────────────────────────── */
+  .stats {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+    background: var(--line); border: 1px solid var(--line); border-radius: var(--radius);
+    overflow: hidden; margin-top: 34px;
+  }
+  .stat { background: var(--surface); padding: 18px 18px 16px; }
+  .stat .n { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1; }
+  .stat .l { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; margin-top: 8px; }
+  .stat[data-sev="critical"] .n { color: var(--sev-critical); }
+  .stat[data-sev="high"] .n { color: var(--sev-high); }
+  .stat[data-sev="medium"] .n { color: var(--sev-medium); }
+  .stat[data-sev="low"] .n { color: var(--sev-low); }
+  .stat .l { color: var(--muted); }
+
+  /* ── Sections ────────────────────────────────────────────── */
+  section { margin-top: 62px; }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 6px; }
+  .sec-num { font-family: "IBM Plex Mono"; font-size: 0.78rem; color: var(--muted); font-weight: 500; }
+  .sec-head h2 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.015em; }
+  .sec-intro {
+    font-family: "Source Serif 4", Georgia, serif; color: var(--ink-2); font-size: 1.02rem;
+    line-height: 1.6; max-width: 68ch; margin-top: 14px;
+  }
+
+  /* ── Findings ────────────────────────────────────────────── */
+  .findings { display: flex; flex-direction: column; gap: 14px; margin-top: 26px; }
+  .finding {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); overflow: hidden;
+  }
+  .finding[data-sev="critical"] { border-left: 4px solid var(--sev-critical); }
+  .finding[data-sev="high"] { border-left: 4px solid var(--sev-high); }
+  .finding[data-sev="medium"] { border-left: 4px solid var(--sev-medium); }
+  .finding[data-sev="low"] { border-left: 4px solid var(--sev-low); }
+  .finding-head { display: flex; align-items: flex-start; gap: 12px; padding: 18px 20px 4px; flex-wrap: wrap; }
+  .sev-badge {
+    flex-shrink: 0; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+    padding: 3px 9px; border-radius: 99px; margin-top: 3px;
+  }
+  .finding[data-sev="critical"] .sev-badge { background: var(--sev-critical-bg); color: var(--sev-critical); border: 1px solid var(--sev-critical-line); }
+  .finding[data-sev="high"] .sev-badge { background: var(--sev-high-bg); color: var(--sev-high); border: 1px solid var(--sev-high-line); }
+  .finding[data-sev="medium"] .sev-badge { background: var(--sev-medium-bg); color: var(--sev-medium); border: 1px solid var(--sev-medium-line); }
+  .finding[data-sev="low"] .sev-badge { background: var(--sev-low-bg); color: var(--sev-low); border: 1px solid var(--sev-low-line); }
+  .finding h3 { font-size: 1.04rem; font-weight: 650; line-height: 1.35; flex: 1; min-width: 220px; }
+  .finding-body {
+    font-family: "Source Serif 4", Georgia, serif; font-size: 0.96rem; line-height: 1.6; color: var(--ink-2);
+    padding: 10px 20px 0; max-width: 72ch;
+  }
+  .finding-body + .finding-body { padding-top: 10px; }
+  .evidence { margin: 14px 20px 0; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .evidence-label {
+    font-size: 0.66rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+    padding: 7px 12px; border-bottom: 1px solid var(--line);
+  }
+  .evidence pre { margin: 0; padding: 11px 12px; overflow-x: auto; font-size: 0.78rem; line-height: 1.55; color: var(--ink-2); }
+  .evidence .path { color: var(--accent); font-weight: 500; }
+  .finding-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 14px 20px 20px; }
+  .finding-meta > div { font-size: 0.86rem; line-height: 1.5; }
+  .meta-label { display: block; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+  @media (max-width: 620px) { .finding-meta { grid-template-columns: 1fr; } }
+
+  /* ── Solid section ───────────────────────────────────────── */
+  .solid-panel {
+    margin-top: 26px; background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: var(--radius);
+    padding: 22px 24px;
+  }
+  .solid-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+  .solid-list li { display: flex; gap: 11px; font-size: 0.92rem; line-height: 1.55; color: var(--ink-2); }
+  .solid-list .check {
+    flex-shrink: 0; width: 18px; height: 18px; margin-top: 2px; border-radius: 5px;
+    background: var(--accent); color: var(--accent-ink); display: flex; align-items: center; justify-content: center;
+    font-size: 0.68rem; font-weight: 700;
+  }
+  .solid-list strong { color: var(--ink); font-weight: 600; }
+
+  /* ── Feature ideas ───────────────────────────────────────── */
+  .ideas { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-top: 26px; }
+  .idea { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; }
+  .idea .tag {
+    font-size: 0.64rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent);
+    margin-bottom: 8px; display: block;
+  }
+  .idea h4 { font-size: 0.98rem; font-weight: 650; margin-bottom: 7px; }
+  .idea p { font-family: "Source Serif 4", Georgia, serif; font-size: 0.89rem; line-height: 1.55; color: var(--ink-2); }
+  @media (max-width: 680px) { .ideas { grid-template-columns: 1fr; } }
+
+  /* ── Roadmap ─────────────────────────────────────────────── */
+  .roadmap { list-style: none; margin: 26px 0 0; padding: 0; display: flex; flex-direction: column; }
+  .roadmap li {
+    display: grid; grid-template-columns: 34px 1fr auto; gap: 14px; align-items: baseline;
+    padding: 14px 4px; border-top: 1px solid var(--line);
+  }
+  .roadmap li:last-child { border-bottom: 1px solid var(--line); }
+  .roadmap .idx { font-family: "IBM Plex Mono"; font-size: 0.82rem; color: var(--muted); font-weight: 500; }
+  .roadmap .txt { font-size: 0.92rem; }
+  .roadmap .txt b { font-weight: 650; }
+  .roadmap .why { font-family: "Source Serif 4", Georgia, serif; color: var(--muted); font-size: 0.85rem; display: block; margin-top: 2px; }
+  .roadmap .sev-badge { justify-self: end; }
+
+  /* ── Footer ──────────────────────────────────────────────── */
+  footer {
+    margin-top: 70px; padding-top: 22px; border-top: 1px solid var(--line);
+    font-size: 0.82rem; color: var(--muted); line-height: 1.6; max-width: 68ch;
+  }
+  footer strong { color: var(--ink-2); }
+
+  @media (max-width: 480px) {
+    .cover h1 { font-size: 1.7rem; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="subnav" aria-label="Report sections">
+    <a href="#summary">Summary</a>
+    <a href="#security">Security</a>
+    <a href="#correctness">Correctness</a>
+    <a href="#architecture">Architecture</a>
+    <a href="#solid">Already Solid</a>
+    <a href="#ideas">Feature Ideas</a>
+    <a href="#roadmap">Fix Order</a>
+  </nav>
+
+  <header class="cover" id="summary">
+    <div class="eyebrow">Platform Audit</div>
+    <h1>Nexa Chatbot — Full Codebase Review</h1>
+    <p class="dek">A read-only pass across both the Express/MySQL API and the React dashboard — security posture, correctness bugs, dependency health, and architectural debt — with a prioritized fix order and a set of grounded feature ideas. Nothing in this report has been changed in the codebase.</p>
+    <div class="cover-meta">
+      <div><div class="k">Scope</div><div class="v">chatbot_api + chatbot_ui, full tree</div></div>
+      <div><div class="k">Method</div><div class="v">Static review + live checks (npm audit, DB queries)</div></div>
+      <div><div class="k">Findings</div><div class="v">15 · none applied</div></div>
+      <div><div class="k">Date</div><div class="v">14 Sept 2026</div></div>
+    </div>
+
+    <div class="stats">
+      <div class="stat" data-sev="critical"><div class="n">1</div><div class="l">Critical</div></div>
+      <div class="stat" data-sev="high"><div class="n">4</div><div class="l">High</div></div>
+      <div class="stat" data-sev="medium"><div class="n">6</div><div class="l">Medium</div></div>
+      <div class="stat" data-sev="low"><div class="n">4</div><div class="l">Low / Info</div></div>
+    </div>
+  </header>
+
+  <!-- ══════════════════════════════ SECURITY ══════════════════════════════ -->
+  <section id="security">
+    <div class="sec-head"><span class="sec-num">01</span><h2>Security</h2></div>
+    <p class="sec-intro">The one finding that needs same-day attention is here. The rest of the platform's security posture is more solid than it looks at first pass — see <a href="#solid">what's already solid</a> below for what I checked and ruled out.</p>
+
+    <div class="findings">
+
+      <article class="finding" data-sev="critical">
+        <div class="finding-head">
+          <span class="sev-badge">Critical</span>
+          <h3>Any WhatsApp media file, from any tenant, is downloadable without logging in</h3>
+        </div>
+        <p class="finding-body"><code>GET /media/whatsapp/:messageId</code> has no auth middleware at all, and <code>messageId</code> is a plain sequential integer (<code>messages.id AUTO_INCREMENT</code>). Anyone — no account, no token — can request <code>id=1</code>, <code>id=2</code>, <code>id=3</code>… and stream back the image, voice note, video or document attached to that message, for <strong>any conversation, in any agency, on the whole platform</strong>. This is the only finding in the report that's a live, walk-up-and-exploit data leak rather than a weakness that needs a specific trigger.</p>
+        <div class="evidence">
+          <div class="evidence-label">Evidence</div>
+          <pre><span class="path">chatbot_api/routes/media.js:13</span>
+router.get("/media/whatsapp/:messageId", async (req, res) => {
+  const { messageId } = req.params;
+  const [rows] = await pool.query("SELECT media_url FROM messages WHERE id = ?", [messageId]);
+  // no authMiddleware, no agency_id / ownership check anywhere in this file</pre>
+        </div>
+        <div class="finding-meta">
+          <div><span class="meta-label">Impact</span>Cross-tenant confidentiality breach — customer photos, ID documents, voice notes and files sent through any connected WhatsApp number are exposed to an unauthenticated, unrelated party.</div>
+          <div><span class="meta-label">Fix shape</span>Add <code>authMiddleware</code>, then join through to the message's conversation and check <code>conversation.agency_id === req.user.agencyId</code> before streaming — the same ownership-check shape already used in <code>routes/conversations.js</code>.</div>
+        </div>
+      </article>
+
+      <article class="finding" data-sev="high">
+        <div class="finding-head">
+          <span class="sev-badge">High</span>
+          <h3>Inbound Meta/Telegram webhooks are never signature-verified</h3>
+        </div>
+        <p class="finding-body">The GET handshake that Meta performs once to register a webhook URL is checked (<code>hub.verify_token</code>), but the actual POST deliveries — every inbound message, delivery status, read receipt and call event, for every connected number on the platform — are accepted with no <code>X-Hub-Signature-256</code> HMAC check. Anyone who learns the webhook URL can POST a forged payload: fake inbound messages that get run through bot flows, fake "delivered/read" statuses on broadcasts, fake call events. Meta's own docs treat this signature check as mandatory for exactly this reason.</p>
+        <div class="evidence">
+          <div class="evidence-label">Evidence</div>
+          <pre><span class="path">chatbot_api/routes/webhook.js</span> — grep for "signature" or "hmac": no matches.
+Contrast <span class="path">chatbot_api/routes/billing.js:122</span>, which does it correctly:
+  const sig = req.headers["stripe-signature"];
+  stripe.webhooks.constructEvent(req.rawBody, sig, endpointSecret);</pre>
+        </div>
+        <div class="finding-meta">
+          <div><span class="meta-label">Impact</span>Forged inbound traffic can trigger bot flows, pollute conversation history, or falsify broadcast delivery analytics — without ever touching a real WhatsApp/Messenger/Telegram account.</div>
+          <div><span class="meta-label">Fix shape</span>The pattern already exists in this codebase (billing.js) — port it: compute HMAC-SHA256 of the raw body with the app secret, compare to <code>X-Hub-Signature-256</code>, reject on mismatch, before any payload processing.</div>
+        </div>
+      </article>
+
+      <article class="finding" data-sev="high">
+        <div class="finding-head">
+          <span class="sev-badge">High</span>
+          <h3>No rate limiting anywhere — including login</h3>
+        </div>
+        <p class="finding-body">There's no <code>express-rate-limit</code>, no slow-down middleware, no attempt counter, on any route in the API — confirmed by searching the whole backend and <code>package.json</code>. <code>POST /auth/login</code> in particular can be hit as fast as the network allows, with no lockout, no backoff, no CAPTCHA — a scripted password-guessing run against any known email address is unthrottled.</p>
+        <div class="finding-meta">
+          <div><span class="meta-label">Impact</span>Credential-stuffing / brute-force risk on every account, plus the API in general has no defense against scripted abuse or accidental hammering.</div>
+          <div><span class="meta-label">Fix shape</span><code>express-rate-limit</code> on <code>/auth/login</code> and <code>/auth/register</code> first (tight — a handful of attempts per IP per minute), then a looser global limit on the rest of <code>/api/v1</code>.</div>
+        </div>
+      </article>
+
+      <article class="finding" data-sev="high">
+        <div class="finding-head">
+          <span class="sev-badge">High</span>
+          <h3>Three actively-used dependencies have known, patched vulnerabilities</h3>
+        </div>
+        <p class="finding-body">Confirmed live with <code>npm audit</code> on both projects — this isn't advisory noise from dev-only tooling, these three are in the runtime path of every request.</p>
+        <div class="evidence">
+          <div class="evidence-label">Evidence — npm audit --omit=dev</div>
+          <pre><span class="path">chatbot_api</span>  mysql2 &lt;=3.23.0 — auth-plugin downgrade leaks plaintext DB credentials;
+             unbounded zlib inflate allows a decompression-bomb DoS
+<span class="path">chatbot_ui</span>   axios (direct dep, services/api.js) — in the vulnerable 1.0.0–1.17.0
+             range; ~29 advisories incl. SSRF via NO_PROXY bypass, prototype
+             pollution → auth bypass / request hijacking
+<span class="path">chatbot_ui</span>   react-router (direct dep, 6.0.0–7.17.0) — open redirect, stored XSS
+             in SSR redirect handling, unauthenticated DoS via route matching</pre>
+        </div>
+        <p class="finding-body">Separately, <code>jspdf</code> shows two <strong>critical</strong>-severity CVEs, but a full source search found zero call sites — it's an installed, unused dependency. Real severity today is low, but it should be upgraded or removed before anyone wires it up.</p>
+        <div class="finding-meta">
+          <div><span class="meta-label">Impact</span>mysql2 is the entire app's DB layer; axios is every frontend API call; react-router is the entire routing tree — patched versions exist for all three today.</div>
+          <div><span class="meta-label">Fix shape</span><code>npm audit fix</code> for mysql2 (non-breaking); axios and react-router need a version bump + a quick regression pass since both are wired everywhere.</div>
+        </div>
+      </article>
+
+      <article class="finding" data-sev="medium">
+        <div class="finding-head">
+          <span class="sev-badge">Medium</span>
+          <h3>Dev-tunnel domains are trusted by CORS even in production</h3>
+        </div>
+        <p class="finding-body">The CORS origin check allowlists <code>*.ngrok-free.dev</code>, <code>*.ngrok.io</code>, <code>*.ngrok-free.app</code> and <code>*.loca.lt</code> unconditionally, with <code>credentials: true</code> — this branch runs whether or not <code>NODE_ENV === 'production'</code>. Only the final "allow anything unmatched" fallback is gated to non-production. Anyone can spin up a free ngrok tunnel in seconds; if this code is what's actually deployed, a page hosted on that tunnel's origin can make credentialed requests against the live API.</p>
+        <div class="evidence">
+          <div class="evidence-label">Evidence</div>
+          <pre><span class="path">chatbot_api/index.js:109</span>
+if (allowed.includes(origin) ||
+    origin.endsWith('.loca.lt') || origin.endsWith('.ngrok-free.dev') ||
+    origin.endsWith('.ngrok.io') || origin.endsWith('.ngrok-free.app')) {
+  return callback(null, true);           // ← not gated by NODE_ENV
+}
+if (process.env.NODE_ENV !== 'production') return callback(null, true);
+return callback(new Error('Not allowed by CORS'));   // only this line is gated</pre>
+        </div>
+        <div class="finding-meta">
+          <div><span class="meta-label">Impact</span>Narrower than it looks — needs a live tunnel URL, not a walk-up exploit — but it's a real, avoidable crack in an otherwise properly-allowlisted production CORS policy.</div>
+          <div><span class="meta-label">Fix shape</span>Wrap the tunnel-domain branch in the same <code>NODE_ENV !== 'production'</code> check the fallback already uses.</div>
+        </div>
+      </article>
+
+      <article class="finding" data-sev="low">
+        <div class="finding-head">
+          <span class="sev-badge">Low · Info</span>
+          <h3>102 unaudited <code>console.log</code> calls in the API</h3>
+        </div>
+        <p class="finding-body">Not a vulnerability by itself, but worth a pass: some of these log full request bodies or webhook payloads, which in a production log aggregator can mean tokens, phone numbers or message content sitting in plaintext logs. No structured logger or log-level control exists — everything ships to stdout the same way in every environment.</p>
+        <div class="finding-meta">
+          <div><span class="meta-label">Fix shape</span>A short grep-and-review pass, then consider a minimal logger (pino/winston) with levels, so debug noise can be turned off in production without deleting it.</div>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════ CORRECTNESS ══════════════════════════════ -->
+  <section id="correctness">
+    <div class="sec-head"><span class="sec-num">02</span><h2>Correctness &amp; Reliability</h2></div>
+    <p class="sec-intro">Two of these are the same root-cause bug already found and fixed twice earlier this build (WhatsApp Calling, then Broadcasting) — it turns out it wasn't fully stamped out.</p>
+
+    <div class="findings">
+
+      <article class="finding" data-sev="high">
+        <div class="finding-head">
+          <span class="sev-badge">High</span>
+          <h3>The old Campaigns system still picks "the first active integration" — same bug as before, still live</h3>
+        </div>
+        <p class="finding-body"><code>routes/campaigns.js</code> and <code>utils/campaignRunner.js</code> are superseded by this build's new Broadcasting module, but they're <strong>still mounted</strong> in <code>index.js</code> and still reachable at <code>POST /api/v1/campaigns</code>. The runner picks an integration with an unordered <code>LIMIT 1</code> — the exact anti-pattern already diagnosed and fixed twice this session (WhatsApp Calling picking a dead number; the new Broadcasting sending from the wrong number). Nothing in the current UI calls this endpoint anymore (<code>campaignAPI</code> is defined in <code>services/api.js</code> but referenced from zero pages) — it's dead from the dashboard's point of view, but not dead on the server.</p>
+        <div class="evidence">
+          <div class="evidence-label">Evidence</div>
+          <pre><span class="path">chatbot_api/utils/campaignRunner.js:32</span>
+"SELECT * FROM integrations WHERE agency_id = ? AND platform = ? AND is_active = 1 LIMIT 1"</pre>
+        </div>
+        <div class="finding-meta">
+          <div><span class="meta-label">Impact</span>Any agency with two integrations on the same platform gets silently wrong-number sends if this endpoint is ever hit — directly, by an old bookmark, or by anything external still pointed at it.</div>
+          <div><span class="meta-label">Fix shape</span>Either retire the route entirely (nothing in the UI uses it), or port the same explicit-<code>integration_id</code> fix already applied to Broadcasting.</div>
+        </div>
+      </article>
+
+      <article class="finding" data-sev="medium">
+        <div class="finding-head">
+          <span class="sev-badge">Medium</span>
+          <h3>Follow-up Sequences has the same "first active integration" fallback</h3>
+        </div>
+        <p class="finding-body">Unlike the dead Campaigns route above, <strong>Sequences is a live, current feature</strong>. When a sequence step fires for a contact with no prior message history to infer the right number from, it falls back to the same unordered pick — the code comment even names the ambiguity it's guessing around.</p>
+        <div class="evidence">
+          <div class="evidence-label">Evidence</div>
+          <pre><span class="path">chatbot_api/utils/sequenceRunner.js:258</span>
+// the API with no prior contact) — fall back to any active integration,
+// same as before, since there's no "which one did they actually use" to go on.
+<span class="path">:261</span>  "SELECT * FROM integrations WHERE agency_id = ? AND platform = ? AND is_active = 1 LIMIT 1"</pre>
+        </div>
+        <div class="finding-meta">
+          <div><span class="meta-label">Impact</span>An agency running Sequences with two numbers on the same platform can have step messages silently sent from the wrong one — same symptom as the two bugs already fixed this session.</div>
+          <div><span class="meta-label">Fix shape</span>Same pattern already proven twice: an explicit, required integration choice at sequence-creation time, falling back automatically only when exactly one candidate exists.</div>
+        </div>
+      </article>
+
+      <article class="finding" data-sev="medium">
+        <div class="finding-head">
+          <span class="sev-badge">Medium</span>
+          <h3>Zero automated tests in the entire project</h3>
+        </div>
+        <p class="finding-body">No <code>*.test.js</code>/<code>*.spec.js</code> file exists anywhere in either project. <code>chatbot_api</code>'s own <code>npm test</code> is still the unedited scaffold placeholder that exits with an error. Every fix made during this build was verified by hand — minting a real JWT, hitting the real API, checking the DB — which is solid discipline, but it means there's no safety net catching a regression the next time something nearby changes.</p>
+        <div class="evidence">
+          <div class="evidence-label">Evidence</div>
+          <pre><span class="path">chatbot_api/package.json</span>  "test": "echo \"Error: no test specified\" && exit 1"</pre>
+        </div>
+        <div class="finding-meta">
+          <div><span class="meta-label">Fix shape</span>Doesn't need to start big — a thin layer over the riskiest paths (login, message send, webhook intake, the two integration-selection bugs above) would already catch the regressions most likely to actually happen.</div>
+        </div>
+      </article>
+
+      <article class="finding" data-sev="low">
+        <div class="finding-head">
+          <span class="sev-badge">Low</span>
+          <h3>The blog feature fails one of its table-init checks on every single boot</h3>
+        </div>
+        <p class="finding-body">Printed on every backend start this session, silently swallowed: MySQL doesn't allow a default value on a <code>TEXT</code>/<code>BLOB</code>/<code>JSON</code> column, and the blog table's <code>tags</code> column is defined with one.</p>
+        <div class="evidence">
+          <div class="evidence-label">Evidence — real backend startup log, this session</div>
+          <pre>❌ Blog table init error: BLOB, TEXT, GEOMETRY or JSON column 'tags' can't have a default value</pre>
+        </div>
+        <div class="finding-meta">
+          <div><span class="meta-label">Fix shape</span>Drop the default on that column, or switch it to a type that allows one — small, contained schema fix.</div>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════ ARCHITECTURE ══════════════════════════════ -->
+  <section id="architecture">
+    <div class="sec-head"><span class="sec-num">03</span><h2>Architecture &amp; Code Health</h2></div>
+    <p class="sec-intro">Nothing here is urgent. All of it gets more expensive to fix the longer the project keeps growing at its current pace.</p>
+
+    <div class="findings">
+
+      <article class="finding" data-sev="medium">
+        <div class="finding-head">
+          <span class="sev-badge">Medium</span>
+          <h3>Several superseded systems are still live side-by-side with their replacements</h3>
+        </div>
+        <p class="finding-body">Beyond the Campaigns/Broadcasting overlap above: <code>fb_comment_rules</code> and its UI in <code>FacebookPage.jsx</code> are dead — never read by the live comment-automation path in <code>webhook.js</code>. <code>comment_automation_rules.private_reply_buttons</code> is a column nothing reads or writes. None of these are actively harmful, but each one is a trap for a future change made in the wrong copy of the logic.</p>
+        <div class="finding-meta">
+          <div><span class="meta-label">Fix shape</span>A deliberate deprecation pass — confirm dead, remove the route/column/UI together rather than leaving the fork.</div>
+        </div>
+      </article>
+
+      <article class="finding" data-sev="medium">
+        <div class="finding-head">
+          <span class="sev-badge">Medium</span>
+          <h3>36 migration scripts, no record of which ran where</h3>
+        </div>
+        <p class="finding-body">Every schema change in this project is its own standalone <code>migrate_*.js</code> file, run by hand. Each one is individually idempotent (existence-checked), which is good practice — but there's no table recording <em>which of the 36 have actually been applied</em> to a given environment, so a fresh deploy has no way to know it ran all of them, in order, short of running every single one and reading the console output.</p>
+        <div class="finding-meta">
+          <div><span class="meta-label">Fix shape</span>A minimal <code>schema_migrations(name, applied_at)</code> ledger and a tiny runner that skips what's already recorded — doesn't require touching any of the 36 existing scripts' logic.</div>
+        </div>
+      </article>
+
+      <article class="finding" data-sev="medium">
+        <div class="finding-head">
+          <span class="sev-badge">Medium</span>
+          <h3>The entire dashboard ships as one 2.88 MB JavaScript file</h3>
+        </div>
+        <p class="finding-body">Confirmed repeatedly by this session's own production builds — one bundle, no route-based code splitting. A user logging in as a Live Chat Agent downloads the full Flow Builder (10,647 lines on its own), every Super Admin screen, every channel's settings page, and everything else, before they see the inbox.</p>
+        <div class="evidence">
+          <div class="evidence-label">Evidence — this session's own <code>vite build</code> output</div>
+          <pre>dist/assets/index-*.js   2,886.60 kB │ gzip: 755.08 kB
+(!) Some chunks are larger than 500 kB after minification.</pre>
+        </div>
+        <div class="finding-meta">
+          <div><span class="meta-label">Fix shape</span><code>React.lazy</code> + dynamic <code>import()</code> per top-level route, starting with Flow Builder and the Super Admin section — the two biggest, least-often-needed-on-first-load chunks.</div>
+        </div>
+      </article>
+
+      <article class="finding" data-sev="low">
+        <div class="finding-head">
+          <span class="sev-badge">Low</span>
+          <h3>A handful of single-file components are getting hard to safely change</h3>
+        </div>
+        <p class="finding-body"><code>FlowBuilderPage.jsx</code> (10,647 lines), <code>InboxPage.jsx</code> (4,387), <code>WhatsAppTemplateManager.jsx</code> (2,923), <code>BotManagerPage.jsx</code> (2,761) — all still workable today, all edited successfully multiple times this session, but each one is a single component doing the work of what would elsewhere be ten.</p>
+        <div class="finding-meta">
+          <div><span class="meta-label">Fix shape</span>Not urgent — worth a planned decomposition pass per file when one of them is next touched for a feature, rather than a dedicated refactor sprint.</div>
+        </div>
+      </article>
+
+      <article class="finding" data-sev="low">
+        <div class="finding-head">
+          <span class="sev-badge">Low</span>
+          <h3>Neither project ships a <code>.env.example</code></h3>
+        </div>
+        <p class="finding-body"><code>.env</code> itself is correctly gitignored in both projects (see <a href="#solid">Already Solid</a>) — but with no example file, setting up a new environment means reverse-engineering every required variable name from <code>process.env.*</code> references in source.</p>
+        <div class="finding-meta">
+          <div><span class="meta-label">Fix shape</span>A committed <code>.env.example</code> with every key referenced in source, values blanked — five-minute fix, meaningful onboarding win.</div>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════ ALREADY SOLID ══════════════════════════════ -->
+  <section id="solid">
+    <div class="sec-head"><span class="sec-num">04</span><h2>What's Already Solid</h2></div>
+    <p class="sec-intro">Checked and ruled out, not assumed — worth stating plainly so the findings above read against an accurate baseline.</p>
+    <div class="solid-panel">
+      <ul class="solid-list">
+        <li><span class="check">✓</span><span><strong>No SQL injection found.</strong> Every place a column or table name is built dynamically (routes like <code>admin.js</code>, <code>agencyPackages.js</code>, <code>sequences.js</code>) constructs it from fixed string literals, never from request input — values always go through parameterized <code>?</code> placeholders.</span></li>
+        <li><span class="check">✓</span><span><strong><code>.env</code> is correctly gitignored</strong> in both projects, and a full source scan found no hardcoded secrets, API keys or passwords anywhere in the codebase.</span></li>
+        <li><span class="check">✓</span><span><strong>The Stripe billing webhook verifies its signature correctly</strong> (<code>routes/billing.js:122</code>) — proof the pattern the Meta webhook finding above is missing is already known and used elsewhere in this exact codebase.</span></li>
+        <li><span class="check">✓</span><span><strong>Production CORS is a real allowlist</strong>, not a wildcard — the one gap is the narrower dev-tunnel issue above, not the policy as a whole.</span></li>
+        <li><span class="check">✓</span><span><strong><code>helmet</code> is active</strong> for baseline HTTP security headers, and file uploads (<code>routes/upload.js</code>) already validate type and size before accepting anything.</span></li>
+        <li><span class="check">✓</span><span><strong><code>JWT_SECRET</code> has no insecure fallback</strong> — an unset secret makes every token operation fail loudly, rather than silently signing with something guessable.</span></li>
+        <li><span class="check">✓</span><span><strong>The multi-tenant permission system is real and consistently used</strong> — Platform → Reseller → Reseller's End User, enforced through one actual <code>organization_members</code>/<code>roles</code>/<code>role_permissions</code> system rather than scattered role checks. The Support Desk built earlier this session slotted into it cleanly, which is a good sign for the design.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════ FEATURE IDEAS ══════════════════════════════ -->
+  <section id="ideas">
+    <div class="sec-head"><span class="sec-num">05</span><h2>New Feature Ideas</h2></div>
+    <p class="sec-intro">Grounded in what's already built, not generic suggestions — each one either completes something left deliberately half-finished this session, or fills a gap the audit above surfaced directly.</p>
+
+    <div class="ideas">
+      <div class="idea"><span class="tag">Support Desk</span><h4>Email notifications for tickets</h4><p>Scoped out when the Support Desk was built this session — no SMTP layer exists anywhere in the API yet. New-ticket and new-reply emails are the natural next step.</p></div>
+      <div class="idea"><span class="tag">Support Desk</span><h4>CSAT trend reporting</h4><p>Every solved ticket already captures a 1–5 rating. Nothing aggregates it into a trend line per agency or per agent — a small addition on top of data already being collected.</p></div>
+      <div class="idea"><span class="tag">Inbox</span><h4>Block a subscriber</h4><p>Came up directly in an earlier request this session — there's genuinely no block/unblock concept in the schema today. A real feature, not a UI toggle: needs a status, an enforcement point, and a way to reopen.</p></div>
+      <div class="idea"><span class="tag">Reliability</span><h4>Finish the integration-picker fix</h4><p>Port the explicit-<code>integration_id</code> pattern (already proven twice: Calling, Broadcasting) to Sequences, and retire or fix the dead Campaigns runner — directly closes two findings above.</p></div>
+      <div class="idea"><span class="tag">Platform</span><h4>Admin &amp; Reseller audit log</h4><p>Who changed which package, price or role, and when. A natural fit for this hierarchy, and genuinely useful the first time a Reseller disputes a billing change.</p></div>
+      <div class="idea"><span class="tag">Broadcasting</span><h4>A/B send testing</h4><p>Two message variants split across the audience, delivery and read rates compared — a direct extension of the Broadcasting module built this session, reusing its existing delivery tracking.</p></div>
+      <div class="idea"><span class="tag">WhatsApp</span><h4>Meta's native WhatsApp Flows</h4><p>Distinct from this app's own visual Flow Builder — Meta's in-chat form/survey capability. Given how deep the existing WhatsApp integration already goes (Calling, Catalog, Templates), this is a real unclaimed capability, not a stretch.</p></div>
+      <div class="idea"><span class="tag">Engineering</span><h4>A thin test layer on the riskiest paths</h4><p>Not full coverage — just login, message send, and webhook intake, the three places a silent regression would do the most damage given zero coverage exists today.</p></div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════ ROADMAP ══════════════════════════════ -->
+  <section id="roadmap">
+    <div class="sec-head"><span class="sec-num">06</span><h2>Suggested Fix Order</h2></div>
+    <p class="sec-intro">One reasonable sequence, not the only one — roughly cheapest-and-most-urgent first. Nothing here has been done; this is the order I'd pitch if asked.</p>
+
+    <ol class="roadmap">
+      <li><span class="idx">1</span><span class="txt"><b>Add auth + ownership check to the media endpoint</b><span class="why">Same shape already used in conversations.js — this is the one genuinely urgent item in the report.</span></span><span class="sev-badge" style="background:var(--sev-critical-bg);color:var(--sev-critical);border:1px solid var(--sev-critical-line)">Critical</span></li>
+      <li><span class="idx">2</span><span class="txt"><b>Verify webhook signatures</b><span class="why">The pattern already exists in billing.js — porting it is most of the work.</span></span><span class="sev-badge" style="background:var(--sev-high-bg);color:var(--sev-high);border:1px solid var(--sev-high-line)">High</span></li>
+      <li><span class="idx">3</span><span class="txt"><b>Rate-limit /auth/login, then the rest of the API</b><span class="why">One dependency, a few lines of middleware.</span></span><span class="sev-badge" style="background:var(--sev-high-bg);color:var(--sev-high);border:1px solid var(--sev-high-line)">High</span></li>
+      <li><span class="idx">4</span><span class="txt"><b>Patch mysql2, axios, react-router</b><span class="why">mysql2 is a clean audit-fix; axios/react-router need a version bump plus a regression pass since both are used everywhere.</span></span><span class="sev-badge" style="background:var(--sev-high-bg);color:var(--sev-high);border:1px solid var(--sev-high-line)">High</span></li>
+      <li><span class="idx">5</span><span class="txt"><b>Port the integration-picker fix to Sequences; retire or fix Campaigns</b><span class="why">Same fix shape already proven twice this session.</span></span><span class="sev-badge" style="background:var(--sev-high-bg);color:var(--sev-high);border:1px solid var(--sev-high-line)">High</span></li>
+      <li><span class="idx">6</span><span class="txt"><b>Gate the dev-tunnel CORS allowlist to non-production</b><span class="why">One line, same guard the fallback already has.</span></span><span class="sev-badge" style="background:var(--sev-medium-bg);color:var(--sev-medium);border:1px solid var(--sev-medium-line)">Medium</span></li>
+      <li><span class="idx">7</span><span class="txt"><b>Add a migration-tracking table</b><span class="why">Doesn't touch any of the 36 existing scripts' own logic.</span></span><span class="sev-badge" style="background:var(--sev-medium-bg);color:var(--sev-medium);border:1px solid var(--sev-medium-line)">Medium</span></li>
+      <li><span class="idx">8</span><span class="txt"><b>Start code-splitting the two biggest routes</b><span class="why">Flow Builder and Super Admin first — the largest, least-often-needed-on-login chunks.</span></span><span class="sev-badge" style="background:var(--sev-medium-bg);color:var(--sev-medium);border:1px solid var(--sev-medium-line)">Medium</span></li>
+      <li><span class="idx">9</span><span class="txt"><b>Stand up a minimal test layer</b><span class="why">Login, message send, webhook intake — an ongoing investment, not a one-time task.</span></span><span class="sev-badge" style="background:var(--sev-medium-bg);color:var(--sev-medium);border:1px solid var(--sev-medium-line)">Medium</span></li>
+    </ol>
+  </section>
+
+  <footer>
+    <strong>Methodology &amp; scope.</strong> This was a static, read-only review — source inspection across both projects, <code>npm audit</code> run live against both lockfiles, and a handful of direct DB queries to verify hierarchy/permission claims. It is not a penetration test: I did not attempt exploitation, did not review every one of the ~90 backend route files or ~108 frontend files line by line, and did not audit the mobile/webhook payload parsing logic in depth beyond the signature-verification gap above. Treat this as a strong first pass that surfaced real, verified issues — not a guarantee that these fifteen are the only ones.
+  </footer>
+
+</div>
+</body>
+</html>

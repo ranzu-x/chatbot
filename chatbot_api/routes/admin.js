@@ -5,6 +5,7 @@ import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { requirePermission } from "../middleware/permissionMiddleware.js";
 import { assignPackageLocally } from "../services/stripeService.js";
+import { logAuditEvent, diffFields } from "../utils/auditLog.js";
 
 const router = express.Router();
 
@@ -162,6 +163,14 @@ router.post("/admin/agencies", requirePermission("admin.agencies.manage"), async
     );
 
     await conn.commit();
+
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "agency.create",
+      entityType: "agency", entityId: agencyId, entityLabel: resolvedAgencyName,
+      summary: `Created ${accountType === "RESELLER" ? "reseller" : "agency"} "${resolvedAgencyName}" (owner: ${ownerEmail})`,
+      targetAgencyId: agencyId,
+    });
+
     return res.status(201).json({ success: true, message: "Agency created successfully", agencyId });
   } catch (err) {
     await conn.rollback();
@@ -175,10 +184,19 @@ router.post("/admin/agencies", requirePermission("admin.agencies.manage"), async
 // ─── TOGGLE AGENCY ACTIVE STATUS (quick switch) ──────────────────────────────
 router.patch("/admin/agencies/:id/toggle", requirePermission("admin.agencies.manage"), async (req, res) => {
   try {
-    const [rows] = await pool.query("SELECT is_active FROM agencies WHERE id = ?", [req.params.id]);
+    const [rows] = await pool.query("SELECT is_active, name FROM agencies WHERE id = ?", [req.params.id]);
     if (!rows.length) return res.status(404).json({ success: false, message: "Agency not found" });
     const newStatus = !rows[0].is_active;
     await pool.query("UPDATE agencies SET is_active = ? WHERE id = ?", [newStatus, req.params.id]);
+
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "agency.toggle",
+      entityType: "agency", entityId: Number(req.params.id), entityLabel: rows[0].name,
+      summary: `${newStatus ? "Activated" : "Deactivated"} agency "${rows[0].name}"`,
+      changes: { is_active: { before: !!rows[0].is_active, after: newStatus } },
+      targetAgencyId: Number(req.params.id),
+    });
+
     return res.json({ success: true, isActive: newStatus });
   } catch (err) {
     console.error(err);
@@ -195,7 +213,7 @@ router.patch("/admin/agencies/:id", requirePermission("admin.agencies.manage"), 
   const conn = await pool.getConnection();
   try {
     const [[agency]] = await conn.query(
-      "SELECT id, owner_id, account_type FROM agencies WHERE id = ? AND account_type IN ('DIRECT_CUSTOMER','RESELLER')",
+      "SELECT id, owner_id, account_type, name, website, is_active FROM agencies WHERE id = ? AND account_type IN ('DIRECT_CUSTOMER','RESELLER')",
       [req.params.id]
     );
     if (!agency) return res.status(404).json({ success: false, message: "Agency not found" });
@@ -275,6 +293,15 @@ router.patch("/admin/agencies/:id", requirePermission("admin.agencies.manage"), 
     }
 
     await conn.commit();
+
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "agency.update",
+      entityType: "agency", entityId: Number(req.params.id), entityLabel: name || agency.name,
+      summary: `Updated agency "${agency.name}"`,
+      changes: diffFields(agency, { name: name ?? agency.name, website: website !== undefined ? (website || null) : agency.website, is_active: typeof isActive === "boolean" ? (isActive ? 1 : 0) : agency.is_active }, ["name", "website", "is_active"]),
+      targetAgencyId: Number(req.params.id),
+    });
+
     return res.json({ success: true, message: "Agency updated" });
   } catch (err) {
     await conn.rollback();
@@ -288,7 +315,7 @@ router.patch("/admin/agencies/:id", requirePermission("admin.agencies.manage"), 
 // ─── DELETE AGENCY ────────────────────────────────────────────────────────────
 router.delete("/admin/agencies/:id", requirePermission("admin.agencies.manage"), async (req, res) => {
   try {
-    const [rows] = await pool.query("SELECT account_type FROM agencies WHERE id = ?", [req.params.id]);
+    const [rows] = await pool.query("SELECT account_type, name FROM agencies WHERE id = ?", [req.params.id]);
     if (!rows.length) return res.status(404).json({ success: false, message: "Agency not found" });
     if (rows[0].account_type === "PLATFORM") {
       return res.status(400).json({ success: false, message: "The platform account cannot be deleted" });
@@ -300,6 +327,13 @@ router.delete("/admin/agencies/:id", requirePermission("admin.agencies.manage"),
       return res.status(400).json({ success: false, message: `Cannot delete — this account still has ${childCount} customer(s) under it` });
     }
     await pool.query("DELETE FROM agencies WHERE id = ?", [req.params.id]);
+
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "agency.delete",
+      entityType: "agency", entityId: Number(req.params.id), entityLabel: rows[0].name,
+      summary: `Deleted agency "${rows[0].name}"`,
+    });
+
     return res.json({ success: true, message: "Agency deleted" });
   } catch (err) {
     console.error(err);
@@ -376,10 +410,18 @@ router.get("/admin/users", requirePermission("admin.users.view", "admin.users.ma
 // ─── TOGGLE USER STATUS ───────────────────────────────────────────────────────
 router.patch("/admin/users/:id/toggle", requirePermission("admin.users.manage"), async (req, res) => {
   try {
-    const [rows] = await pool.query("SELECT is_active FROM users WHERE id = ?", [req.params.id]);
+    const [rows] = await pool.query("SELECT is_active, name FROM users WHERE id = ?", [req.params.id]);
     if (!rows.length) return res.status(404).json({ success: false, message: "User not found" });
     const newStatus = rows[0].is_active ? 0 : 1;
     await pool.query("UPDATE users SET is_active = ? WHERE id = ?", [newStatus, req.params.id]);
+
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "user.toggle",
+      entityType: "user", entityId: Number(req.params.id), entityLabel: rows[0].name,
+      summary: `${newStatus ? "Activated" : "Deactivated"} user "${rows[0].name}"`,
+      changes: { is_active: { before: !!rows[0].is_active, after: newStatus === 1 } },
+    });
+
     return res.json({ success: true, isActive: newStatus === 1 });
   } catch (err) {
     console.error(err);
@@ -409,6 +451,13 @@ router.post("/admin/users", requirePermission("admin.users.manage"), async (req,
     );
 
     const [created] = await pool.query("SELECT id, name, email, role, is_active, created_at FROM users WHERE id = ?", [result.insertId]);
+
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "user.create",
+      entityType: "user", entityId: result.insertId, entityLabel: name,
+      summary: `Created user "${name}" (${email}, role ${role})`,
+    });
+
     return res.status(201).json({ success: true, user: created[0] });
   } catch (err) {
     console.error("Create user error:", err);
@@ -460,6 +509,14 @@ router.put("/admin/users/:id", requirePermission("admin.users.manage"), async (r
       "SELECT id, name, email, phone, address, role, package_id, is_active, created_at, updated_at FROM users WHERE id = ?",
       [req.params.id]
     );
+
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "user.update",
+      entityType: "user", entityId: Number(req.params.id), entityLabel: name || existing.name,
+      summary: `Updated user "${existing.name}"${packageChange ? ` — plan → ${packageChange.toPackage}` : ""}`,
+      changes: diffFields(existing, { name: name ?? existing.name, email: email ?? existing.email, role: role ?? existing.role, is_active: typeof isActive === "boolean" ? (isActive ? 1 : 0) : existing.is_active }, ["name", "email", "role", "is_active"]),
+    });
+
     return res.json({ success: true, user: updated[0], packageChange });
   } catch (err) {
     console.error(err);
@@ -470,7 +527,17 @@ router.put("/admin/users/:id", requirePermission("admin.users.manage"), async (r
 // ─── DELETE USER ──────────────────────────────────────────────────────────────
 router.delete("/admin/users/:id", requirePermission("admin.users.manage"), async (req, res) => {
   try {
+    const [[user]] = await pool.query("SELECT name, email FROM users WHERE id = ?", [req.params.id]);
     await pool.query("DELETE FROM users WHERE id = ?", [req.params.id]);
+
+    if (user) {
+      logAuditEvent({
+        agencyId: req.user.agencyId, actor: req.user, action: "user.delete",
+        entityType: "user", entityId: Number(req.params.id), entityLabel: user.name,
+        summary: `Deleted user "${user.name}" (${user.email})`,
+      });
+    }
+
     return res.json({ success: true, message: "User deleted" });
   } catch (err) {
     console.error(err);
@@ -586,6 +653,13 @@ router.post("/admin/team", requirePermission("admin.team.manage"), async (req, r
       [userResult.insertId, req.user.agencyId, roleRow.id]
     );
     await conn.commit();
+
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "team_member.create",
+      entityType: "user", entityId: userResult.insertId, entityLabel: name,
+      summary: `Added platform team member "${name}" (${email}, ${roleSlug})`,
+    });
+
     return res.status(201).json({ success: true, message: "Platform team member created" });
   } catch (err) {
     await conn.rollback();
@@ -598,10 +672,20 @@ router.post("/admin/team", requirePermission("admin.team.manage"), async (req, r
 
 router.delete("/admin/team/:membershipId", requirePermission("admin.team.manage"), async (req, res) => {
   try {
-    const [[member]] = await pool.query("SELECT user_id FROM organization_members WHERE id = ? AND agency_id = ?", [req.params.membershipId, req.user.agencyId]);
+    const [[member]] = await pool.query(
+      `SELECT om.user_id, u.name FROM organization_members om JOIN users u ON u.id = om.user_id WHERE om.id = ? AND om.agency_id = ?`,
+      [req.params.membershipId, req.user.agencyId]
+    );
     if (!member) return res.status(404).json({ success: false, message: "Team member not found" });
     if (member.user_id === req.user.id) return res.status(400).json({ success: false, message: "You cannot remove yourself" });
     await pool.query("DELETE FROM organization_members WHERE id = ?", [req.params.membershipId]);
+
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "team_member.remove",
+      entityType: "user", entityId: member.user_id, entityLabel: member.name,
+      summary: `Removed platform team member "${member.name}"`,
+    });
+
     return res.json({ success: true, message: "Team member removed" });
   } catch (err) {
     console.error("DELETE /admin/team/:id error:", err);

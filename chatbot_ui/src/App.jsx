@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
 import { AuthProvider } from './Provider/AuthContext';
 import { LayoutProvider } from './Provider/LayoutContext';
@@ -18,18 +19,23 @@ import Login            from './Pages/LogIn/Login';
 import Register         from './Pages/Register/Register';
 import AdminDashboard   from './Pages/Dashboard/AdminDashboard';
 import AgencyDashboard  from './Pages/Dashboard/AgencyDashboard';
-import AgenciesPage     from './Pages/SuperAdmin/AgenciesPage';
-import UsersPage        from './Pages/SuperAdmin/UsersPage';
+// Super Admin section — ADMIN-only, and the second-biggest slice of the
+// bundle after Flow Builder (AgenciesPage/UsersPage/PackagesPage alone are
+// ~3000 lines combined). Lazy-loaded below so a RESELLER/USER login — the
+// overwhelming majority of sessions — never downloads any of it.
+const AgenciesPage         = lazy(() => import('./Pages/SuperAdmin/AgenciesPage'));
+const UsersPage            = lazy(() => import('./Pages/SuperAdmin/UsersPage'));
+const AdminTeamPage        = lazy(() => import('./Pages/SuperAdmin/AdminTeamPage'));
+const PlatformSettingsPage = lazy(() => import('./Pages/SuperAdmin/PlatformSettingsPage'));
+const AuditLogPage         = lazy(() => import('./Pages/SuperAdmin/AuditLogPage'));
+const BlogManagerPage      = lazy(() => import('./Pages/SuperAdmin/BlogManagerPage'));
+const BlogEditorPage       = lazy(() => import('./Pages/SuperAdmin/BlogEditorPage'));
+const PackagesPage         = lazy(() => import('./Pages/SuperAdmin/PackagesPage'));
 import TeamMembersPage  from './Pages/Team/TeamMembersPage';
-import AdminTeamPage    from './Pages/SuperAdmin/AdminTeamPage';
-import PlatformSettingsPage from './Pages/SuperAdmin/PlatformSettingsPage';
-import BlogManagerPage  from './Pages/SuperAdmin/BlogManagerPage';
-import BlogEditorPage   from './Pages/SuperAdmin/BlogEditorPage';
 import RolesPage        from './Pages/Roles/RolesPage';
 import ResellerCustomersPage from './Pages/Agency/ResellerCustomersPage';
 import AgencyPackagesPage    from './Pages/Agency/AgencyPackagesPage';
 import IntegrationsPage from './Pages/Agency/IntegrationsPage';
-import PackagesPage     from './Pages/SuperAdmin/PackagesPage';
 import DomainSettingsPage from './Pages/Agency/DomainSettingsPage';
 import MyAccountPage    from './Pages/Account/MyAccountPage';
 import BillingSuccessPage from './Pages/Billing/BillingSuccessPage';
@@ -58,9 +64,11 @@ import AIProvidersPage       from './Pages/Settings/AIProvidersPage';
 import WhatsAppFlowRefsPage  from './Pages/Settings/WhatsAppFlowRefsPage';
 import CannedResponsesPage   from './Pages/Settings/CannedResponsesPage';
 
-// Flow Builder
+// Flow Builder — by far the single biggest file in the app (10k+ lines: the
+// canvas, every node type's property panel, Sequence/User-Input-Flow modes).
+// Lazy-loaded so it only downloads when someone actually opens a bot/flow.
 import FlowListPage     from './Pages/Flows/FlowListPage';
-import FlowBuilderPage  from './Pages/Flows/FlowBuilderPage';
+const FlowBuilderPage   = lazy(() => import('./Pages/Flows/FlowBuilderPage'));
 
 // User Input Flows (reusable question sequences) — the builder is FlowBuilderPage
 // running in User Input Flow mode, keyed off the /user-input-flows route. The
@@ -87,6 +95,7 @@ export default function App() {
       <BrowserRouter>
         <LayoutProvider>
           <NotificationProvider>
+            <Suspense fallback={<div className="loading-overlay"><div className="loading-spinner" /></div>}>
             <Routes>
               {/* ── Public Landing & Auth ── */}
               <Route path="/" element={<RootRedirect />} />
@@ -108,6 +117,7 @@ export default function App() {
               <Route path="/admin/resellers" element={<Navigate to="/admin/agencies" replace />} />
               <Route path="/admin/platform-settings" element={<ProtectedRoute roles={['ADMIN']}><PlatformSettingsPage /></ProtectedRoute>} />
               <Route path="/roles" element={<ProtectedRoute roles={ADMIN_AGENCY}><RolesPage /></ProtectedRoute>} />
+              <Route path="/admin/audit-log" element={<ProtectedRoute roles={ADMIN_AGENCY}><AuditLogPage /></ProtectedRoute>} />
               <Route path="/reseller/customers" element={<ProtectedRoute roles={['RESELLER']}><ResellerCustomersPage /></ProtectedRoute>} />
               {/* "Packages & Modules" for an agency is now package-creation for ITS
                   OWN customers (used to be reseller-only) — /reseller/packages kept
@@ -219,6 +229,7 @@ export default function App() {
             {/* Catch-all */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+            </Suspense>
           </NotificationProvider>
         </LayoutProvider>
       </BrowserRouter>

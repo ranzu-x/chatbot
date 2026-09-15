@@ -135,11 +135,12 @@ router.get("/broadcasts/:id", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
     const [[campaign]] = await pool.query(
-      `SELECT bc.*, f.name AS flow_name, wt.template_name, l.name AS tag_label_name,
-              i.name AS integration_name, i.wa_display_phone
+      `SELECT bc.*, f.name AS flow_name, wt.template_name, wtb.template_name AS variant_b_template_name,
+              l.name AS tag_label_name, i.name AS integration_name, i.wa_display_phone
        FROM broadcast_campaigns bc
        LEFT JOIN flows f ON f.id = bc.flow_id
        LEFT JOIN whatsapp_templates wt ON wt.id = bc.template_id
+       LEFT JOIN whatsapp_templates wtb ON wtb.id = bc.variant_b_template_id
        LEFT JOIN labels l ON l.id = bc.tag_label_id
        LEFT JOIN integrations i ON i.id = bc.integration_id
        WHERE bc.id = ? AND bc.agency_id = ?`,
@@ -153,7 +154,27 @@ router.get("/broadcasts/:id", async (req, res) => {
        WHERE bl.campaign_id = ? ORDER BY bl.id ASC`,
       [req.params.id]
     );
-    return res.json({ success: true, campaign, logs });
+
+    // Per-variant delivery/read comparison — only meaningful once this is an
+    // A/B campaign (variant_b_template_id set), but harmless (empty/single
+    // row) to compute either way.
+    let variantStats = null;
+    if (campaign.variant_b_template_id) {
+      const [rows] = await pool.query(
+        `SELECT variant,
+                COUNT(*) AS targeted,
+                SUM(status IN ('SENT','DELIVERED','READ')) AS sent,
+                SUM(status IN ('DELIVERED','READ')) AS delivered,
+                SUM(status = 'READ') AS read_count,
+                SUM(status = 'FAILED') AS failed
+         FROM broadcast_logs WHERE campaign_id = ? AND variant IS NOT NULL
+         GROUP BY variant`,
+        [req.params.id]
+      );
+      variantStats = rows;
+    }
+
+    return res.json({ success: true, campaign, logs, variantStats });
   } catch (err) {
     console.error("Get broadcast error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -256,7 +277,7 @@ router.put("/broadcasts/:id", async (req, res) => {
   const agencyId = req.user.agencyId;
   const {
     name, includeLabelIds, excludeLabelIds, includeContactIds, excludeContactIds,
-    tagLabelId, scheduledAt, templateId, integrationId,
+    tagLabelId, scheduledAt, templateId, integrationId, variantBTemplateId, abSplitPercent,
   } = req.body;
 
   try {
@@ -271,12 +292,30 @@ router.put("/broadcasts/:id", async (req, res) => {
       resolvedIntegrationId = validated;
     }
 
+    // A/B testing is TEMPLATE-mode only — a WINDOW-mode (flow-driven)
+    // campaign's content is a whole flow canvas, not a single swappable
+    // message, so there's no equivalent "variant B" to pick there.
+    let resolvedVariantB = existing.variant_b_template_id;
+    if (variantBTemplateId !== undefined) {
+      if (variantBTemplateId === null || variantBTemplateId === "") {
+        resolvedVariantB = null;
+      } else if (existing.mode !== "TEMPLATE") {
+        return res.status(400).json({ success: false, message: "A/B testing is only available for template-based campaigns" });
+      } else {
+        const [[tplB]] = await pool.query("SELECT id FROM whatsapp_templates WHERE id = ? AND agency_id = ? AND status = 'APPROVED'", [variantBTemplateId, agencyId]);
+        if (!tplB) return res.status(400).json({ success: false, message: "Variant B template not found or not approved" });
+        resolvedVariantB = variantBTemplateId;
+      }
+    }
+    const resolvedSplit = abSplitPercent !== undefined ? Math.min(99, Math.max(1, Number(abSplitPercent) || 50)) : existing.ab_split_percent;
+
     await pool.query(
       `UPDATE broadcast_campaigns SET
         name = COALESCE(?, name),
         integration_id = ?,
         include_label_ids = ?, exclude_label_ids = ?, include_contact_ids = ?, exclude_contact_ids = ?,
-        tag_label_id = ?, scheduled_at = ?, template_id = COALESCE(?, template_id)
+        tag_label_id = ?, scheduled_at = ?, template_id = COALESCE(?, template_id),
+        variant_b_template_id = ?, ab_split_percent = ?
        WHERE id = ? AND agency_id = ?`,
       [
         name || null,
@@ -284,6 +323,7 @@ router.put("/broadcasts/:id", async (req, res) => {
         JSON.stringify(toIdArray(includeLabelIds)), JSON.stringify(toIdArray(excludeLabelIds)),
         JSON.stringify(toIdArray(includeContactIds)), JSON.stringify(toIdArray(excludeContactIds)),
         tagLabelId || null, scheduledAt || null, templateId || null,
+        resolvedVariantB, resolvedSplit,
         req.params.id, agencyId,
       ]
     );

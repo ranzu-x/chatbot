@@ -162,7 +162,9 @@ export async function computeAudience(agencyId, platform, targeting = {}) {
   } = targeting;
 
   const params = [agencyId, platform];
-  let sql = `SELECT DISTINCT c.id, c.external_id, c.name, c.phone, c.email, c.platform FROM contacts c WHERE c.agency_id = ? AND c.platform = ?`;
+  // subscription_status — a subscriber who opted out (Subscribers page) is
+  // never a valid broadcast recipient regardless of label/contact targeting.
+  let sql = `SELECT DISTINCT c.id, c.external_id, c.name, c.phone, c.email, c.platform FROM contacts c WHERE c.agency_id = ? AND c.platform = ? AND c.subscription_status = 'SUBSCRIBED'`;
 
   const includeClauses = [];
   if (includeLabelIds.length) {
@@ -208,15 +210,31 @@ function parseTargeting(campaign) {
   };
 }
 
-async function sendToContact(campaign, contact, flow, sendableNodes, integration) {
+/** Which A/B variant a given contact falls into for this campaign —
+ * deterministic on contact.id so re-running a partially-sent campaign (or
+ * looking the assignment up again later for stats) always gives the same
+ * answer, without needing to store a random seed anywhere. Only meaningful
+ * when the campaign actually has a variant_b_template_id set; callers that
+ * don't check that first will just always get 'A'. */
+function assignVariant(campaign, contactId) {
+  if (!campaign.variant_b_template_id) return null;
+  const splitPercent = campaign.ab_split_percent ?? 50;
+  // A simple, fast, well-distributed hash of the contact id — no need for
+  // cryptographic quality, just an even A/B split that's stable per contact.
+  const hash = (Number(contactId) * 2654435761) % 100;
+  return hash < splitPercent ? "A" : "B";
+}
+
+async function sendToContact(campaign, contact, flow, sendableNodes, integration, variant) {
   const conversation = await findOrCreateConversationForBroadcast(campaign.agency_id, contact.id, integration.id);
 
   if (campaign.mode === "TEMPLATE") {
+    const templateId = variant === "B" && campaign.variant_b_template_id ? campaign.variant_b_template_id : campaign.template_id;
     const [[tpl]] = await pool.query(
       "SELECT * FROM whatsapp_templates WHERE id = ? AND agency_id = ? AND status = 'APPROVED'",
-      [campaign.template_id, campaign.agency_id]
+      [templateId, campaign.agency_id]
     );
-    if (!tpl) throw new Error("Linked WhatsApp Template is missing or not approved");
+    if (!tpl) throw new Error(`Linked WhatsApp Template${variant ? ` (Variant ${variant})` : ""} is missing or not approved`);
 
     const message = await sendMsg(campaign.agency_id, conversation, `[Template: ${tpl.template_name}]`, "TEXT", integration, {
       whatsappTemplate: { name: tpl.template_name, language: tpl.language },
@@ -290,9 +308,9 @@ export async function executeBroadcast(campaignId) {
     const pendingTargets = audience.filter((c) => !alreadyDone.has(c.id));
 
     if (!existingLogs.length) {
-      const logRows = audience.map((c) => [campaignId, c.id, "PENDING"]);
+      const logRows = audience.map((c) => [campaignId, c.id, "PENDING", assignVariant(campaign, c.id)]);
       if (logRows.length) {
-        await pool.query("INSERT INTO broadcast_logs (campaign_id, contact_id, status) VALUES ?", [logRows]);
+        await pool.query("INSERT INTO broadcast_logs (campaign_id, contact_id, status, variant) VALUES ?", [logRows]);
       }
     }
 
@@ -303,7 +321,8 @@ export async function executeBroadcast(campaignId) {
 
     for (const contact of pendingTargets) {
       try {
-        const message = await sendToContact(campaign, contact, flow, sendableNodes, integration);
+        const variant = assignVariant(campaign, contact.id);
+        const message = await sendToContact(campaign, contact, flow, sendableNodes, integration, variant);
         await pool.query(
           "UPDATE broadcast_logs SET status = 'SENT', external_msg_id = ?, sent_at = NOW() WHERE campaign_id = ? AND contact_id = ?",
           [message.external_msg_id, campaignId, contact.id]

@@ -244,6 +244,12 @@ router.post("/webchat/message", async (req, res) => {
     const [contacts] = await pool.query("SELECT * FROM contacts WHERE id = ?", [conversation.contact_id]);
     const contact = contacts[0];
 
+    // A blocked visitor's messages are dropped before saving or any
+    // bot/AI/agent notification — see migrate_block_subscriber.js.
+    if (contact?.is_blocked) {
+      return res.status(403).json({ success: false, message: "This conversation is no longer available." });
+    }
+
     // Save message
     const message = await saveMessage(conversationId, "INBOUND", "TEXT", body, null);
 

@@ -231,38 +231,37 @@ async function processSubscriber(sub) {
   const contact = contactRows[0];
   if (!contact) { await markComplete(sub.id); return; }
 
-  // Resolve via the contact's own most-recently-active conversation on this
-  // platform FIRST, not "any active integration for this platform" — an
-  // agency can have multiple active integrations on the same channel (e.g.
-  // two WhatsApp numbers), and a contact only ever really has one they've
-  // been talking to. Picking an arbitrary one (the original bug here) could
-  // resolve a completely different, long-dormant conversation and compute
-  // the messaging-window check against ITS stale history instead of the
-  // real one — reporting "outside the 24h window" even seconds after the
-  // contact actually messaged in, because it was checking the wrong thread.
-  const [existingConvRows] = await pool.query(
-    `SELECT c.* FROM conversations c
-     JOIN integrations i ON i.id = c.integration_id
-     WHERE c.agency_id = ? AND c.contact_id = ? AND i.platform = ? AND i.is_active = 1
-     ORDER BY c.last_message_at DESC LIMIT 1`,
-    [sequence.agency_id, contact.id, sequence.platform]
-  );
-  let conversation = existingConvRows[0] || null;
-  let integration = null;
-
-  if (conversation) {
-    const [integRows] = await pool.query("SELECT * FROM integrations WHERE id = ?", [conversation.integration_id]);
-    integration = integRows[0] || null;
-  } else {
-    // No conversation history at all on this platform (e.g. bulk-enrolled via
-    // the API with no prior contact) — fall back to any active integration,
-    // same as before, since there's no "which one did they actually use" to go on.
-    const [integrationRows] = await pool.query(
-      "SELECT * FROM integrations WHERE agency_id = ? AND platform = ? AND is_active = 1 LIMIT 1",
-      [sequence.agency_id, sequence.platform]
-    );
-    integration = integrationRows[0] || null;
+  // A subscriber who opted out (Subscribers page) stops receiving Sequence
+  // steps immediately, same as a completed/stopped enrollment — not silently
+  // skipped tick after tick.
+  if (contact.subscription_status === "UNSUBSCRIBED") {
+    await logDelivery(sub.id, node.id, "SKIPPED_WINDOW", "Subscriber unsubscribed");
+    await markComplete(sub.id);
+    return;
   }
+
+  // The sequence sends from ONE explicit channel account (sequences.integration_id,
+  // chosen at create/edit time — see routes/sequences.js) — never "whichever
+  // active integration for this platform comes back first". An agency can have
+  // multiple active integrations on the same channel (e.g. two WhatsApp
+  // numbers); picking an arbitrary one could attach the conversation to a
+  // completely different, long-dormant thread and compute the messaging-window
+  // check against ITS stale history — reporting "outside the 24h window" even
+  // seconds after the contact actually messaged in, because it was checking
+  // the wrong thread. Mirrors utils/broadcastRunner.js's identical fix.
+  if (!sequence.integration_id) {
+    await logBotError({
+      agencyId: sequence.agency_id, contactId: contact.id, contactIdentifier: contact.external_id || contact.phone || null,
+      customMessage: `Sequence "${sequence.name}" delivery failed: no account chosen to send from — open it and pick one.`,
+    });
+    await pool.query("UPDATE sequence_subscribers SET current_node_id = ?, next_run_at = DATE_ADD(NOW(), INTERVAL 1 HOUR) WHERE id = ?", [currentNodeId, sub.id]);
+    return;
+  }
+
+  const [[integration]] = await pool.query(
+    "SELECT * FROM integrations WHERE id = ? AND agency_id = ? AND platform = ? AND is_active = 1",
+    [sequence.integration_id, sequence.agency_id, sequence.platform]
+  );
 
   if (!integration) {
     // conversations.integration_id is NOT NULL — every channel, including
@@ -270,7 +269,7 @@ async function processSubscriber(sub) {
     // codebase, same as any other channel), needs one to attach a conversation to.
     await logBotError({
       agencyId: sequence.agency_id, contactId: contact.id, contactIdentifier: contact.external_id || contact.phone || null,
-      customMessage: `Sequence "${sequence.name}" delivery failed: no active ${sequence.platform} channel account found.`,
+      customMessage: `Sequence "${sequence.name}" delivery failed: the account it sends from is no longer connected.`,
     });
     // Re-check in an hour rather than retry-storming every poll — the agency
     // may reconnect the channel later.
@@ -278,9 +277,7 @@ async function processSubscriber(sub) {
     return;
   }
 
-  if (!conversation) {
-    conversation = await getOrCreateConversation(sequence.agency_id, contact.id, integration.id);
-  }
+  let conversation = await getOrCreateConversation(sequence.agency_id, contact.id, integration.id);
   const windowCheck = await canSendNow(sequence.platform, conversation.id, sequence.agency_id, node);
 
   if (!windowCheck.allowed) {

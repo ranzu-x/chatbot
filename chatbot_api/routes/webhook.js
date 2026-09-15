@@ -1,6 +1,8 @@
 import express from "express";
 import axios from "axios";
 import pool from "../db.js";
+import { resolveMetaAppSettings } from "../utils/appCredentials.js";
+import { isValidMetaSignature } from "../utils/metaSignature.js";
 import { processFlow } from "../utils/flowEngine.js";
 import { runAIReply } from "../utils/aiReplyEngine.js";
 import {
@@ -16,6 +18,40 @@ import { logBotError, extractErrorMessage } from "../utils/botLogger.js";
 import { runPrivateReplyFlow, generateCommentReply } from "../utils/commentPrivateReplyFlow.js";
 
 const router = express.Router();
+
+/**
+ * Verifies Meta's X-Hub-Signature-256 header — an HMAC-SHA256 of the raw
+ * request body, keyed with the receiving app's secret — before trusting a
+ * POST to /webhook/:agencyId(/:integrationId) as genuinely from Meta.
+ * Previously nothing checked this at all: anyone who found an agency's
+ * webhook URL could POST a forged payload (fake inbound messages, fake
+ * delivered/read statuses, fake call events) straight into that agency's
+ * conversations and automations. Mirrors the same pattern already used for
+ * Stripe's webhook in routes/billing.js, just HMAC instead of Stripe's SDK.
+ *
+ * A MISSING header is tolerated outside production (curl/manual testing
+ * during development never computes one) but a header that's PRESENT and
+ * WRONG is rejected in every environment — this never accepts a forged
+ * signature, it only relaxes "did you send one at all" for local dev.
+ */
+async function verifyMetaSignature(req) {
+  const header = req.headers["x-hub-signature-256"];
+  const agencyId = req.params.agencyId;
+
+  if (!header) {
+    return process.env.NODE_ENV !== "production";
+  }
+  if (!req.rawBody) return false;
+
+  const appSettings = await resolveMetaAppSettings(Number(agencyId)).catch(() => null);
+  const appSecret = appSettings?.app_secret;
+  if (!appSecret) {
+    console.warn(`[Webhook Signature] No app_secret resolvable for agency ${agencyId} — rejecting signed request`);
+    return false;
+  }
+
+  return isValidMetaSignature(req.rawBody, header, appSecret);
+}
 
 /**
  * Mirrors a message's delivered/read/failed status onto its broadcast_logs
@@ -238,6 +274,11 @@ router.get("/webhook/:agencyId/:integrationId", async (req, res) => {
 router.post("/webhook/:agencyId", async (req, res) => {
   const { agencyId } = req.params;
   const body = req.body;
+
+  if (!(await verifyMetaSignature(req))) {
+    console.warn(`[Webhook Signature] Rejected unsigned/invalid POST to /webhook/${agencyId}`);
+    return res.status(401).send("Invalid signature");
+  }
 
   console.log(`\n📨 [Webhook POST] /webhook/${agencyId} received:`, JSON.stringify(body, null, 2));
 
@@ -985,6 +1026,11 @@ router.post("/webhook/:agencyId/:integrationId", async (req, res) => {
   const { agencyId, integrationId } = req.params;
   const body = req.body;
 
+  if (!(await verifyMetaSignature(req))) {
+    console.warn(`[Webhook Signature] Rejected unsigned/invalid POST to /webhook/${agencyId}/${integrationId}`);
+    return res.status(401).send("Invalid signature");
+  }
+
   // Always respond 200 immediately to Meta
   res.sendStatus(200);
 
@@ -1190,6 +1236,11 @@ async function handleIncomingPayload({
       avatar,
       platformProfile
     );
+
+    // 2b. A blocked subscriber's messages are dropped here, before any
+    // conversation is touched or reopened, any bot/AI runs, or any agent is
+    // notified — see migrate_block_subscriber.js.
+    if (contact.is_blocked) return;
 
     // 3. Find or create conversation
     const { conversation, isNew } = await findOrCreateConversation(agencyId, contact.id, integrationId, platform, contact._overLimit);

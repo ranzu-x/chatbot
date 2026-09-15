@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router";
-import { LifeBuoy, Inbox, LayoutGrid, MessageSquareText, Plus, LogOut, Menu } from "lucide-react";
+import { LifeBuoy, Inbox, LayoutGrid, MessageSquareText, Plus, LogOut, Menu, TrendingUp } from "lucide-react";
 import { useState } from "react";
 import { useSupportAuth } from "../context/SupportAuthContext";
 
@@ -42,6 +42,9 @@ export default function SupportShell({ bootstrap, children }) {
                   </Link>
                   <Link to="/support/canned-responses" className={`sd-nav-item ${isActive("/support/canned-responses") ? "active" : ""}`} onClick={() => setNavOpen(false)}>
                     <MessageSquareText size={16} /> Canned Responses
+                  </Link>
+                  <Link to="/support/reports" className={`sd-nav-item ${isActive("/support/reports") ? "active" : ""}`} onClick={() => setNavOpen(false)}>
+                    <TrendingUp size={16} /> CSAT Reports
                   </Link>
                 </>
               )}

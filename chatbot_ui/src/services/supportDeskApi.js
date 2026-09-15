@@ -84,6 +84,7 @@ export const cannedResponseAPI = {
 
 export const statsAPI = {
   get: () => supportApi.get("/support-desk/stats"),
+  csatTrend: (days) => supportApi.get("/support-desk/csat-trend", { params: { days } }),
 };
 
 export const agentsAPI = {

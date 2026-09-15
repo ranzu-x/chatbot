@@ -27,6 +27,7 @@ import {
   Blocks,
   KeyRound,
   Workflow,
+  ScrollText,
 } from 'lucide-react';
 
 const NAV_CONFIG = {
@@ -54,6 +55,7 @@ const NAV_CONFIG = {
       { label: 'User Manager',        icon: Users,     path: '/admin/users' },
       { label: 'Team Members',        icon: Users,     path: '/team' },
       { label: 'Roles & Permissions', icon: KeyRound,  path: '/roles' },
+      { label: 'Audit Log',           icon: ScrollText, path: '/admin/audit-log' },
       { label: 'Platform Settings',   icon: Settings,  path: '/admin/platform-settings' },
     ]},
   ],
@@ -79,6 +81,7 @@ const NAV_CONFIG = {
       { label: 'Custom Domain',       icon: Globe,    path: '/agency/domain-settings', moduleKey: 'feature_custom_domain' },
       { label: 'User Manager',        icon: Users,    path: '/agency/team' },
       { label: 'Team Roles & Permissions', icon: KeyRound, path: '/roles' },
+      { label: 'Audit Log',                icon: ScrollText, path: '/admin/audit-log' },
     ]},
   ],
   // User (a Reseller's team member) gets every day-to-day operational menu

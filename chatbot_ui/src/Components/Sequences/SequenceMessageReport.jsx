@@ -1,9 +1,13 @@
-import { Fragment, useState, useEffect, useCallback } from 'react';
+import { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router';
-import { sequenceAPI } from '../../services/api';
+import { sequenceAPI, integrationAPI } from '../../services/api';
 import PlatformIcon, { getPlatformMeta } from '../Common/PlatformIcon';
-import { ChevronDown, ChevronRight, RefreshCw, Plus, Pencil, Trash2, ExternalLink } from 'lucide-react';
+import { ChevronDown, ChevronRight, RefreshCw, Plus, Pencil, Trash2, ExternalLink, Send } from 'lucide-react';
 import Swal from 'sweetalert2';
+
+function integrationLabel(i) {
+  return i.wa_display_phone || i.fb_page_name || i.name || `Account #${i.id}`;
+}
 
 const PLATFORM_OPTIONS = ['WHATSAPP', 'FACEBOOK', 'INSTAGRAM', 'TELEGRAM', 'TIKTOK', 'WEBCHAT'];
 
@@ -101,6 +105,11 @@ export default function SequenceMessageReport() {
   const [creating, setCreating] = useState(false);
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
+  const [integrations, setIntegrations] = useState([]);
+  const [createIntegrationId, setCreateIntegrationId] = useState('');
+  const [accountPickerFor, setAccountPickerFor] = useState(null);
+  const [accountPickerValue, setAccountPickerValue] = useState('');
+  const [savingAccount, setSavingAccount] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -111,12 +120,30 @@ export default function SequenceMessageReport() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { integrationAPI.getAll().then((res) => setIntegrations(res.data?.integrations || [])).catch(() => {}); }, []);
+
+  const integrationsForNewPlatform = useMemo(
+    () => integrations.filter((i) => i.platform === newPlatform && i.is_active),
+    [integrations, newPlatform]
+  );
+  useEffect(() => {
+    setCreateIntegrationId(integrationsForNewPlatform.length === 1 ? String(integrationsForNewPlatform[0].id) : '');
+  }, [integrationsForNewPlatform]);
+
+  const integrationsForPickerPlatform = useMemo(
+    () => integrations.filter((i) => i.platform === accountPickerFor?.platform && i.is_active),
+    [integrations, accountPickerFor]
+  );
 
   const handleCreate = async () => {
     if (!newName.trim() || creating) return;
+    if (!createIntegrationId) {
+      Swal.fire({ icon: 'info', title: 'Choose an account', text: `Pick which connected ${getPlatformMeta(newPlatform).label} account this sequence sends from.` });
+      return;
+    }
     try {
       setCreating(true);
-      const res = await sequenceAPI.create({ name: newName.trim(), platform: newPlatform });
+      const res = await sequenceAPI.create({ name: newName.trim(), platform: newPlatform, integrationId: createIntegrationId });
       const id = res.data?.sequence?.id;
       setShowCreate(false);
       setNewName('');
@@ -126,6 +153,25 @@ export default function SequenceMessageReport() {
       Swal.fire({ icon: 'error', title: 'Could not create sequence', text: err?.response?.data?.message || 'Please try again.' });
     } finally {
       setCreating(false);
+    }
+  };
+
+  const openAccountPicker = (seq) => {
+    setAccountPickerFor(seq);
+    setAccountPickerValue(seq.integration_id ? String(seq.integration_id) : '');
+  };
+
+  const handleSaveAccount = async () => {
+    if (!accountPickerFor || !accountPickerValue || savingAccount) return;
+    try {
+      setSavingAccount(true);
+      await sequenceAPI.update(accountPickerFor.id, { integrationId: accountPickerValue });
+      load();
+      setAccountPickerFor(null);
+    } catch (err) {
+      Swal.fire({ icon: 'error', title: 'Could not change account', text: err?.response?.data?.message || 'Please try again.' });
+    } finally {
+      setSavingAccount(false);
     }
   };
 
@@ -200,6 +246,7 @@ export default function SequenceMessageReport() {
                 <th style={{ padding: '10px 14px' }}></th>
                 <th style={{ padding: '10px 14px' }}>Sequence</th>
                 <th style={{ padding: '10px 14px' }}>Channel</th>
+                <th style={{ padding: '10px 14px' }}>Sends From</th>
                 <th style={{ padding: '10px 14px' }}>Active</th>
                 <th style={{ padding: '10px 14px' }}>Completed</th>
                 <th style={{ padding: '10px 14px', color: '#16a34a' }}>Sent</th>
@@ -245,6 +292,23 @@ export default function SequenceMessageReport() {
                           <PlatformIcon platform={s.platform} size={11} /> {meta.label}
                         </span>
                       </td>
+                      <td style={{ padding: '10px 14px' }}>
+                        <button
+                          type="button"
+                          onClick={() => openAccountPicker(s)}
+                          title="Change sending account"
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', borderRadius: 999,
+                            border: s.integration_id ? '1px solid transparent' : '1px solid #fca5a5',
+                            background: s.integration_id ? '#f1f5f9' : '#fef2f2',
+                            color: s.integration_id ? '#334155' : '#dc2626',
+                            fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer',
+                          }}
+                        >
+                          <Send size={11} />
+                          {s.wa_display_phone || s.integration_name || 'Choose account'}
+                        </button>
+                      </td>
                       <td style={{ padding: '10px 14px', color: '#334155' }}>{s.active_count || 0}</td>
                       <td style={{ padding: '10px 14px', color: '#334155' }}>{s.completed_count || 0}</td>
                       <td style={{ padding: '10px 14px', color: '#16a34a', fontWeight: 700 }}>{s.sent_count || 0}</td>
@@ -270,7 +334,7 @@ export default function SequenceMessageReport() {
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td colSpan={10} style={{ padding: 0, background: '#fafbfc' }}>
+                        <td colSpan={11} style={{ padding: 0, background: '#fafbfc' }}>
                           <SequenceLogRows sequenceId={s.id} />
                         </td>
                       </tr>
@@ -306,6 +370,17 @@ export default function SequenceMessageReport() {
             <select value={newPlatform} onChange={(e) => setNewPlatform(e.target.value)} style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #e2e8f0', fontSize: '0.86rem', boxSizing: 'border-box' }}>
               {PLATFORM_OPTIONS.map((p) => <option key={p} value={p}>{getPlatformMeta(p).label}</option>)}
             </select>
+            <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: 700, color: '#475569', margin: '14px 0 5px' }}>Sends From</label>
+            {integrationsForNewPlatform.length === 0 ? (
+              <div style={{ padding: '9px 12px', borderRadius: 9, background: '#fef3c7', color: '#92400e', fontSize: '0.78rem' }}>
+                No connected, active {getPlatformMeta(newPlatform).label} account. Connect one first.
+              </div>
+            ) : (
+              <select value={createIntegrationId} onChange={(e) => setCreateIntegrationId(e.target.value)} style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #e2e8f0', fontSize: '0.86rem', boxSizing: 'border-box' }}>
+                <option value="">Choose an account…</option>
+                {integrationsForNewPlatform.map((i) => <option key={i.id} value={i.id}>{integrationLabel(i)}</option>)}
+              </select>
+            )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 22 }}>
               <button type="button" onClick={() => setShowCreate(false)} style={{ padding: '9px 18px', borderRadius: 9, border: 'none', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer', background: '#f1f5f9', color: '#475569' }}>
                 Cancel
@@ -313,15 +388,57 @@ export default function SequenceMessageReport() {
               <button
                 type="button"
                 onClick={handleCreate}
-                disabled={!newName.trim() || creating}
+                disabled={!newName.trim() || !createIntegrationId || creating}
                 style={{
                   padding: '9px 18px', borderRadius: 9, border: 'none', fontSize: '0.84rem', fontWeight: 700,
-                  cursor: !newName.trim() || creating ? 'not-allowed' : 'pointer',
-                  background: !newName.trim() || creating ? '#67e8f9' : 'linear-gradient(135deg, #0891b2 0%, #0e7490 100%)',
+                  cursor: !newName.trim() || !createIntegrationId || creating ? 'not-allowed' : 'pointer',
+                  background: !newName.trim() || !createIntegrationId || creating ? '#67e8f9' : 'linear-gradient(135deg, #0891b2 0%, #0e7490 100%)',
                   color: '#fff',
                 }}
               >
                 {creating ? 'Creating...' : 'Create & Build'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {accountPickerFor && (
+        <div
+          onClick={() => setAccountPickerFor(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 420, background: '#fff', borderRadius: 16, padding: 24, boxShadow: '0 24px 60px rgba(0,0,0,0.25)' }}>
+            <h2 style={{ margin: '0 0 6px', fontSize: '1.05rem', fontWeight: 800, color: '#0f172a' }}>Sends From</h2>
+            <p style={{ margin: '0 0 16px', fontSize: '0.8rem', color: '#64748b', lineHeight: 1.5 }}>
+              Which connected {getPlatformMeta(accountPickerFor.platform).label} account should "{accountPickerFor.name}" send from?
+            </p>
+            {integrationsForPickerPlatform.length === 0 ? (
+              <div style={{ padding: '9px 12px', borderRadius: 9, background: '#fef3c7', color: '#92400e', fontSize: '0.78rem' }}>
+                No connected, active {getPlatformMeta(accountPickerFor.platform).label} account. Connect one first.
+              </div>
+            ) : (
+              <select value={accountPickerValue} onChange={(e) => setAccountPickerValue(e.target.value)} style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #e2e8f0', fontSize: '0.86rem', boxSizing: 'border-box' }}>
+                <option value="">Choose an account…</option>
+                {integrationsForPickerPlatform.map((i) => <option key={i.id} value={i.id}>{integrationLabel(i)}</option>)}
+              </select>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 22 }}>
+              <button type="button" onClick={() => setAccountPickerFor(null)} style={{ padding: '9px 18px', borderRadius: 9, border: 'none', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer', background: '#f1f5f9', color: '#475569' }}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveAccount}
+                disabled={!accountPickerValue || savingAccount}
+                style={{
+                  padding: '9px 18px', borderRadius: 9, border: 'none', fontSize: '0.84rem', fontWeight: 700,
+                  cursor: !accountPickerValue || savingAccount ? 'not-allowed' : 'pointer',
+                  background: !accountPickerValue || savingAccount ? '#67e8f9' : 'linear-gradient(135deg, #0891b2 0%, #0e7490 100%)',
+                  color: '#fff',
+                }}
+              >
+                {savingAccount ? 'Saving...' : 'Save'}
               </button>
             </div>
           </div>

@@ -6,6 +6,28 @@ import { roleMiddleware } from "../middleware/roleMiddleware.js";
 const router = express.Router();
 router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
 
+// A sequence sends from ONE explicit channel account — never "whichever
+// active integration for this platform comes back first" (see
+// utils/sequenceRunner.js's now-fixed fallback, and the identical bug fixed
+// earlier for Broadcasting, routes/broadcasts.js). Only auto-picks when
+// there's exactly one candidate; otherwise the caller must choose explicitly.
+async function resolveDefaultIntegrationId(agencyId, platform) {
+  const [rows] = await pool.query(
+    "SELECT id FROM integrations WHERE agency_id = ? AND platform = ? AND is_active = 1",
+    [agencyId, platform]
+  );
+  return rows.length === 1 ? rows[0].id : null;
+}
+
+async function validateIntegration(agencyId, platform, integrationId) {
+  if (!integrationId) return null;
+  const [[row]] = await pool.query(
+    "SELECT id FROM integrations WHERE id = ? AND agency_id = ? AND platform = ? AND is_active = 1",
+    [integrationId, agencyId, platform]
+  );
+  return row ? integrationId : null;
+}
+
 /**
  * Enrolls one or more contacts into a Sequence. Shared by the HTTP
  * subscribe route below AND the "Start Sequence" Flow Builder node /
@@ -82,7 +104,7 @@ router.get("/sequences", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
     const [sequences] = await pool.query(
-      `SELECT s.*,
+      `SELECT s.*, i.name as integration_name, i.wa_display_phone,
               (SELECT COUNT(*) FROM sequence_subscribers WHERE sequence_id = s.id) as subscriber_count,
               (SELECT COUNT(*) FROM sequence_subscribers WHERE sequence_id = s.id AND status = 'ACTIVE') as active_count,
               (SELECT COUNT(*) FROM sequence_subscribers WHERE sequence_id = s.id AND status = 'COMPLETED') as completed_count,
@@ -95,6 +117,7 @@ router.get("/sequences", async (req, res) => {
               (SELECT MAX(sl.created_at) FROM sequence_subscriber_log sl JOIN sequence_subscribers ss ON ss.id = sl.subscriber_id
                 WHERE ss.sequence_id = s.id) as last_activity_at
        FROM sequences s
+       LEFT JOIN integrations i ON i.id = s.integration_id
        WHERE s.agency_id = ?
        ORDER BY s.updated_at DESC`,
       [agencyId]
@@ -125,7 +148,10 @@ router.get("/sequences/:id", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
     const [seqs] = await pool.query(
-      "SELECT * FROM sequences WHERE id = ? AND agency_id = ?",
+      `SELECT s.*, i.name as integration_name, i.wa_display_phone
+       FROM sequences s
+       LEFT JOIN integrations i ON i.id = s.integration_id
+       WHERE s.id = ? AND s.agency_id = ?`,
       [req.params.id, agencyId]
     );
     if (!seqs.length) {
@@ -198,9 +224,22 @@ router.post("/sequences", async (req, res) => {
       return res.status(400).json({ success: false, message: "Sequence name is required" });
     }
 
+    let integrationId = await validateIntegration(agencyId, platform, req.body.integrationId);
+    if (!integrationId) {
+      integrationId = await resolveDefaultIntegrationId(agencyId, platform);
+    }
+    if (!integrationId) {
+      return res.status(400).json({
+        success: false,
+        message: req.body.integrationId
+          ? "That account isn't a valid, active integration for this platform."
+          : "Choose which connected account this sequence should send from.",
+      });
+    }
+
     const [seqResult] = await pool.query(
-      "INSERT INTO sequences (agency_id, name, platform, is_active, nodes_json, edges_json, created_at) VALUES (?, ?, ?, 1, NULL, NULL, NOW())",
-      [agencyId, name.trim(), platform]
+      "INSERT INTO sequences (agency_id, name, platform, integration_id, is_active, nodes_json, edges_json, created_at) VALUES (?, ?, ?, ?, 1, NULL, NULL, NOW())",
+      [agencyId, name.trim(), platform, integrationId]
     );
 
     const [created] = await pool.query("SELECT * FROM sequences WHERE id = ?", [seqResult.insertId]);
@@ -215,19 +254,26 @@ router.post("/sequences", async (req, res) => {
 router.put("/sequences/:id", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    const [owned] = await pool.query("SELECT id FROM sequences WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
+    const [owned] = await pool.query("SELECT id, platform, integration_id FROM sequences WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
     if (!owned.length) return res.status(404).json({ success: false, message: "Sequence not found" });
 
     // Accepts nodes_json/edges_json as already-serialized strings, matching
     // flowAPI/userInputFlowAPI's convention (the Flow Builder pre-serializes
     // before calling update) — not raw arrays.
-    const { name, nodes_json, edges_json, isActive } = req.body;
+    const { name, nodes_json, edges_json, isActive, integrationId } = req.body;
     const fields = [];
     const params = [];
     if (name !== undefined) { fields.push("name = ?"); params.push(name); }
     if (nodes_json !== undefined) { fields.push("nodes_json = ?"); params.push(nodes_json); }
     if (edges_json !== undefined) { fields.push("edges_json = ?"); params.push(edges_json); }
     if (isActive !== undefined) { fields.push("is_active = ?"); params.push(isActive ? 1 : 0); }
+    if (integrationId !== undefined) {
+      const validated = await validateIntegration(agencyId, owned[0].platform, integrationId);
+      if (!validated) {
+        return res.status(400).json({ success: false, message: "That account isn't a valid, active integration for this platform." });
+      }
+      fields.push("integration_id = ?"); params.push(validated);
+    }
     // Note: `platform` is intentionally NOT editable here, same reasoning as
     // user_input_flows.platform — a Sequence authored for one channel's node
     // set shouldn't silently start being interpreted as another channel's.

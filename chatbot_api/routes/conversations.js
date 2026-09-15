@@ -45,7 +45,7 @@ router.get("/conversations", async (req, res) => {
              i.platform as platform, i.platform as integrationPlatform, i.name as integrationName,
              c.name as contactName, c.phone as contactPhone, c.email as contactEmail,
              c.avatar as contactAvatar, c.platform as contactPlatform, c.external_id as contactExternalId,
-             c.tags as contactTags, c.bot_paused as contactBotPaused,
+             c.tags as contactTags, c.bot_paused as contactBotPaused, c.is_blocked as contactIsBlocked,
              u.name as assignedAgentName,
              m.body as lastMessageBody, m.direction as lastMessageDirection, m.created_at as lastMessageTime,
              m.status as lastMessageStatus, m.failure_stage as lastMessageFailureStage,
@@ -170,6 +170,7 @@ router.get("/conversations/:id", async (req, res) => {
              c.name as contactName, c.phone as contactPhone, c.email as contactEmail,
              c.avatar as contactAvatar, c.platform as contactPlatform, c.external_id as contactExternalId,
              c.tags as contactTags, c.bot_paused as contactBotPaused, c.platform_profile as contactPlatformProfile,
+             c.is_blocked as contactIsBlocked, c.blocked_reason as contactBlockedReason,
              u.name as assignedAgentName
       FROM conversations cv
       JOIN contacts c ON c.id = cv.contact_id

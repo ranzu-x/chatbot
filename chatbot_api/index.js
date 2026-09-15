@@ -8,6 +8,7 @@ import pool from "./db.js";
 
 // ─── Route Imports ─────────────────────────────────────────────────────────────
 import authRoutes from "./routes/auth.js";
+import { authLimiter, apiLimiter } from "./middleware/rateLimiter.js";
 import adminRoutes from "./routes/admin.js";
 import agencyRoutes from "./routes/agency.js";
 import conversationRoutes from "./routes/conversations.js";
@@ -17,13 +18,14 @@ import botRoutes from "./routes/bots.js";
 import metaAppRoutes from "./routes/metaapp.js";
 import tiktokAppRoutes from "./routes/tiktokapp.js";
 import webhookRoutes from "./routes/webhook.js";
+import whatsappFlowEndpointRoutes from "./routes/whatsappFlowEndpoint.js";
 import flowRoutes from "./routes/flows.js";
 import webchatRoutes from "./routes/webchat.js";
 import contactRoutes from "./routes/contacts.js";
+import contactListRoutes from "./routes/contactLists.js";
 import uploadRoutes from "./routes/upload.js";
 import templateRoutes from "./routes/templates.js";
 import cannedResponseRoutes from "./routes/cannedResponses.js";
-import campaignRoutes from "./routes/campaigns.js";
 import broadcastRoutes from "./routes/broadcasts.js";
 import whatsappCallRoutes from "./routes/whatsappCalls.js";
 import supportDeskRoutes from "./routes/supportDesk.js";
@@ -53,6 +55,7 @@ import followupRoutes from "./routes/followups.js";
 import whatsappFlowRefRoutes from "./routes/whatsappFlowRefs.js";
 import aiRewriteRoutes from "./routes/aiRewrite.js";
 import roleRoutes from "./routes/roles.js";
+import auditLogRoutes from "./routes/auditLog.js";
 import resellerCustomerRoutes from "./routes/resellerCustomers.js";
 import agencyPackageRoutes from "./routes/agencyPackages.js";
 import platformSettingsRoutes from "./routes/platformSettings.js";
@@ -93,7 +96,13 @@ app.use(
   })
 );
 app.use(compression());
-app.use(express.json({ limit: "5mb" }));
+// The `verify` callback stashes the exact raw request bytes onto req.rawBody
+// alongside the normal parsed req.body — needed so routes/webhook.js can
+// verify Meta's X-Hub-Signature-256 HMAC (which is computed over the raw
+// bytes, not a re-serialization of the parsed object) without switching the
+// whole route to express.raw() and rewriting every req.body.* access in it.
+// Inert for every other route — it's just an extra Buffer on req.
+app.use(express.json({ limit: "5mb", verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true }));
 const corsAppDashboard = cors({
   origin: function (origin, callback) {
@@ -105,19 +114,27 @@ const corsAppDashboard = cors({
       'http://localhost:5175',
       process.env.FRONTEND_URL,
     ].filter(Boolean);
-    // Also allow any *.loca.lt or *.ngrok-free.dev or *.ngrok.io domain
-    if (
-      allowed.includes(origin) ||
-      origin.endsWith('.loca.lt') ||
-      origin.endsWith('.ngrok-free.dev') ||
-      origin.endsWith('.ngrok.io') ||
-      origin.endsWith('.ngrok-free.app')
-    ) {
+    if (allowed.includes(origin)) {
       return callback(null, true);
     }
-    // Outside production, keep dev convenient (unregistered local tunnels etc).
-    // In production, unknown origins are rejected instead of silently allowed.
-    if (process.env.NODE_ENV !== 'production') return callback(null, true);
+    // Dev-tunnel domains (ngrok/localtunnel) — a real convenience for local
+    // testing, but previously allowed unconditionally, in production too.
+    // Anyone can spin up a free tunnel in seconds, so with credentials:true
+    // that meant any such tunnel's origin could make authenticated
+    // cross-origin requests against a live production deploy. Now gated by
+    // the exact same NODE_ENV check the final fallback below already uses.
+    if (process.env.NODE_ENV !== 'production') {
+      if (
+        origin.endsWith('.loca.lt') ||
+        origin.endsWith('.ngrok-free.dev') ||
+        origin.endsWith('.ngrok.io') ||
+        origin.endsWith('.ngrok-free.app')
+      ) {
+        return callback(null, true);
+      }
+      // Outside production, keep dev convenient beyond just those domains too.
+      return callback(null, true);
+    }
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
@@ -158,7 +175,21 @@ try {
 }
 
 // ─── Public Routes (No Auth Required) ──────────────────────────────────────────
+// webhookRoutes deliberately gets NO rate limit — Meta/Telegram traffic
+// arrives from shared platform IPs (many unrelated customers' webhooks ride
+// the same source IPs), so IP-based limiting there would throttle other
+// tenants' real traffic. It's protected by signature verification instead
+// (see routes/webhook.js's verifyMetaSignature).
 app.use("/api/v1", webhookRoutes);
+// Meta's Flow data-exchange traffic shares the same platform-IP-pool
+// reasoning as webhookRoutes above — exempted from apiLimiter for the same
+// reason, protected by the encryption itself instead.
+app.use("/api/v1", whatsappFlowEndpointRoutes);
+
+app.use("/api/v1/auth/login", authLimiter);
+app.use(["/api/v1/auth/register", "/api/v1/hospital-admin/signup"], authLimiter);
+app.use("/api/v1", apiLimiter);
+
 app.use("/api/v1", webchatRoutes);
 app.use("/api/v1", authRoutes);
 app.use("/api/v1", mediaRoutes);
@@ -174,10 +205,10 @@ app.use("/api/v1", metaAppRoutes);
 app.use("/api/v1", tiktokAppRoutes);
 app.use("/api/v1", flowRoutes);
 app.use("/api/v1", contactRoutes);
+app.use("/api/v1", contactListRoutes);
 app.use("/api/v1", uploadRoutes);
 app.use("/api/v1", templateRoutes);
 app.use("/api/v1", cannedResponseRoutes);
-app.use("/api/v1", campaignRoutes);
 app.use("/api/v1", broadcastRoutes);
 app.use("/api/v1", whatsappCallRoutes);
 app.use("/api/v1", supportDeskRoutes);
@@ -206,6 +237,7 @@ app.use("/api/v1", followupRoutes);
 app.use("/api/v1", whatsappFlowRefRoutes);
 app.use("/api/v1", aiRewriteRoutes);
 app.use("/api/v1", roleRoutes);
+app.use("/api/v1", auditLogRoutes);
 app.use("/api/v1", resellerCustomerRoutes);
 app.use("/api/v1", agencyPackageRoutes);
 app.use("/api/v1", platformSettingsRoutes);

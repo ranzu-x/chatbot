@@ -7,6 +7,7 @@ import TicketDetailPage from "./pages/TicketDetailPage";
 import NewTicketPage from "./pages/NewTicketPage";
 import DepartmentsPage from "./pages/DepartmentsPage";
 import CannedResponsesPage from "./pages/CannedResponsesPage";
+import ReportsPage from "./pages/ReportsPage";
 import SupportShell from "./components/SupportShell";
 import { ticketAPI } from "../services/supportDeskApi";
 import "./supportDesk.css";
@@ -59,6 +60,7 @@ function SupportDeskGuarded() {
         <Route path="queue" element={<TicketListPage mode="queue" />} />
         <Route path="departments" element={bootstrap.canManage ? <DepartmentsPage /> : <Navigate to="/support/tickets" replace />} />
         <Route path="canned-responses" element={bootstrap.canManage ? <CannedResponsesPage /> : <Navigate to="/support/tickets" replace />} />
+        <Route path="reports" element={bootstrap.canManage ? <ReportsPage /> : <Navigate to="/support/tickets" replace />} />
         <Route path="*" element={<Navigate to="/support/tickets" replace />} />
       </Routes>
     </SupportShell>

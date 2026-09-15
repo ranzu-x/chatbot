@@ -7,46 +7,117 @@ import { assertLimit } from "../utils/entitlements.js";
 const router = express.Router();
 router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
 
+// ─── SUBSCRIBER STATS (for the page's stat cards) ─────────────────────────────
+// Real counts, not the placeholder percentages the page used to compute
+// client-side (e.g. `Math.round(total * 0.94)` for "retained"). Scoped by the
+// same platform filter the page is currently showing, so "Total" always
+// matches what's actually in the table.
+router.get("/contacts/stats", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const { platform } = req.query;
+    const platformClause = platform ? " AND platform = ?" : "";
+    const platformParams = platform ? [platform] : [];
+
+    const [[{ total }]] = await pool.query(
+      `SELECT COUNT(*) as total FROM contacts WHERE agency_id = ?${platformClause}`,
+      [agencyId, ...platformParams]
+    );
+    const [[{ retained }]] = await pool.query(
+      `SELECT COUNT(*) as retained FROM contacts c WHERE c.agency_id = ?${platformClause} AND EXISTS (
+         SELECT 1 FROM conversations cv JOIN messages m ON m.conversation_id = cv.id
+         WHERE cv.contact_id = c.id AND m.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+       )`,
+      [agencyId, ...platformParams]
+    );
+    const [[{ unsubscribed }]] = await pool.query(
+      `SELECT COUNT(*) as unsubscribed FROM contacts WHERE agency_id = ?${platformClause} AND subscription_status = 'UNSUBSCRIBED'`,
+      [agencyId, ...platformParams]
+    );
+    const [[{ inSequence }]] = await pool.query(
+      `SELECT COUNT(DISTINCT ss.contact_id) as inSequence FROM sequence_subscribers ss
+       JOIN sequences s ON s.id = ss.sequence_id
+       JOIN contacts c ON c.id = ss.contact_id
+       WHERE s.agency_id = ? AND ss.status = 'ACTIVE'${platform ? " AND c.platform = ?" : ""}`,
+      [agencyId, ...platformParams]
+    );
+
+    return res.json({ success: true, stats: { total, retained, unsubscribed, inSequence } });
+  } catch (err) {
+    console.error("Contact stats error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // ─── LIST CONTACTS ────────────────────────────────────────────────────────────
 router.get("/contacts", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    const { search, platform, labelId, limit = 50, page = 1 } = req.query;
+    const { search, platform, labelId, listId, integrationId, status, retained, limit = 50, page = 1 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    let query = `
-      SELECT c.*, 
-             (SELECT COUNT(*) FROM conversations WHERE contact_id = c.id) as conversationCount,
-             (SELECT MAX(created_at) FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE contact_id = c.id)) as lastActivity
-      FROM contacts c
-      WHERE c.agency_id = ?
-    `;
+    // RETAINED = had any message activity in the last 30 days — the same
+    // "engaged audience" definition the page's stat cards use. Computed, not
+    // stored, so it's never stale.
+    const retainedExpr = `EXISTS (
+      SELECT 1 FROM conversations cv JOIN messages m ON m.conversation_id = cv.id
+      WHERE cv.contact_id = c.id AND m.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+    )`;
+
+    // WHERE clause built once and reused for both the count and the page
+    // query — the count only needs `c`, so it skips the per-row correlated
+    // subqueries (conversationCount/lastActivity/accountLabel) entirely
+    // rather than computing them just to throw them away, which matters once
+    // an agency has a large subscriber table.
+    let where = " WHERE c.agency_id = ?";
     const params = [agencyId];
 
     if (platform) {
-      query += " AND c.platform = ?";
+      where += " AND c.platform = ?";
       params.push(platform);
     }
-
     if (labelId) {
-      query += " AND c.id IN (SELECT contact_id FROM contact_labels WHERE label_id = ?)";
+      where += " AND c.id IN (SELECT contact_id FROM contact_labels WHERE label_id = ?)";
       params.push(labelId);
     }
-
+    if (listId) {
+      where += " AND c.id IN (SELECT contact_id FROM contact_list_members WHERE list_id = ?)";
+      params.push(listId);
+    }
+    if (integrationId) {
+      where += " AND EXISTS (SELECT 1 FROM conversations cv3 WHERE cv3.contact_id = c.id AND cv3.integration_id = ?)";
+      params.push(integrationId);
+    }
+    if (status === "SUBSCRIBED" || status === "UNSUBSCRIBED") {
+      where += " AND c.subscription_status = ?";
+      params.push(status);
+    }
+    if (retained === "RETAINED") {
+      where += ` AND ${retainedExpr}`;
+    } else if (retained === "NOT_RETAINED") {
+      where += ` AND NOT ${retainedExpr}`;
+    }
     if (search) {
-      query += " AND (c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR c.external_id LIKE ?)";
+      where += " AND (c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR c.external_id LIKE ?)";
       const searchPattern = `%${search}%`;
       params.push(searchPattern, searchPattern, searchPattern, searchPattern);
     }
 
-    // Count total
-    const countQuery = `SELECT COUNT(*) as total FROM (${query}) as sub`;
-    const [[{ total }]] = await pool.query(countQuery, params);
+    const [[{ total }]] = await pool.query(`SELECT COUNT(*) as total FROM contacts c${where}`, params);
 
-    query += " ORDER BY c.updated_at DESC LIMIT ? OFFSET ?";
-    params.push(parseInt(limit), parseInt(offset));
+    const query = `
+      SELECT c.*,
+             (SELECT COUNT(*) FROM conversations WHERE contact_id = c.id) as conversationCount,
+             (SELECT MAX(created_at) FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE contact_id = c.id)) as lastActivity,
+             (SELECT i.wa_display_phone FROM conversations cv2 JOIN integrations i ON i.id = cv2.integration_id
+              WHERE cv2.contact_id = c.id ORDER BY cv2.last_message_at DESC LIMIT 1) as accountLabel,
+             ${retainedExpr} as retained
+      FROM contacts c${where}
+      ORDER BY c.updated_at DESC LIMIT ? OFFSET ?`;
+    const pageParams = [...params, parseInt(limit), parseInt(offset)];
 
-    const [contacts] = await pool.query(query, params);
+    const [contacts] = await pool.query(query, pageParams);
+    for (const c of contacts) c.retained = !!c.retained;
 
     // Fetch and attach structured labels for all contacts
     if (contacts.length > 0) {
@@ -155,15 +226,15 @@ router.get("/contacts/search", async (req, res) => {
 router.get("/contacts/export/csv", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    const { platform, labelId } = req.query;
+    const { platform, labelId, listId, status } = req.query;
 
     let query = `
-      SELECT c.id, c.name, c.platform, c.external_id, c.phone, c.email, c.created_at,
-             (SELECT GROUP_CONCAT(l.name SEPARATOR '; ') 
-              FROM contact_labels cl 
-              JOIN labels l ON l.id = cl.label_id 
+      SELECT c.id, c.name, c.platform, c.external_id, c.phone, c.email, c.created_at, c.subscription_status,
+             (SELECT GROUP_CONCAT(l.name SEPARATOR '; ')
+              FROM contact_labels cl
+              JOIN labels l ON l.id = cl.label_id
               WHERE cl.contact_id = c.id) as labelNames
-      FROM contacts c 
+      FROM contacts c
       WHERE c.agency_id = ?
     `;
     const params = [agencyId];
@@ -178,18 +249,29 @@ router.get("/contacts/export/csv", async (req, res) => {
       params.push(labelId);
     }
 
+    if (listId) {
+      query += " AND c.id IN (SELECT contact_id FROM contact_list_members WHERE list_id = ?)";
+      params.push(listId);
+    }
+
+    if (status === "SUBSCRIBED" || status === "UNSUBSCRIBED") {
+      query += " AND c.subscription_status = ?";
+      params.push(status);
+    }
+
     query += " ORDER BY c.created_at DESC";
 
     const [contacts] = await pool.query(query, params);
 
     // Build CSV string
-    const headers = ["Name", "Platform", "External ID", "Phone", "Email", "Labels", "Created At"];
+    const headers = ["Name", "Platform", "External ID", "Phone", "Email", "Status", "Labels", "Created At"];
     const rows = contacts.map(c => [
       `"${(c.name || '').replace(/"/g, '""')}"`,
       `"${c.platform || ''}"`,
       `"${c.external_id || ''}"`,
       `"${(c.phone || '').replace(/"/g, '""')}"`,
       `"${(c.email || '').replace(/"/g, '""')}"`,
+      `"${c.subscription_status || 'SUBSCRIBED'}"`,
       `"${(c.labelNames || '').replace(/"/g, '""')}"`,
       `"${c.created_at ? new Date(c.created_at).toISOString() : ''}"`,
     ]);
@@ -368,6 +450,246 @@ router.put("/contacts/:id", async (req, res) => {
     return res.json({ success: true, message: "Contact updated", contact: updated[0] });
   } catch (err) {
     console.error("Update contact error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── SUBSCRIPTION STATUS (opt-in / opt-out) ───────────────────────────────────
+// The one real "is this person still reachable" flag — nothing previously
+// recorded it, so broadcasts/sequences had no way to skip someone who'd
+// opted out. Toggled from the subscriber row or the detail drawer.
+router.patch("/contacts/:id/subscription", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const { status } = req.body;
+    if (status !== "SUBSCRIBED" && status !== "UNSUBSCRIBED") {
+      return res.status(400).json({ success: false, message: "status must be SUBSCRIBED or UNSUBSCRIBED" });
+    }
+    const [result] = await pool.query(
+      "UPDATE contacts SET subscription_status = ? WHERE id = ? AND agency_id = ?",
+      [status, req.params.id, agencyId]
+    );
+    if (!result.affectedRows) return res.status(404).json({ success: false, message: "Contact not found" });
+    return res.json({ success: true, subscriptionStatus: status });
+  } catch (err) {
+    console.error("Update subscription status error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── BLOCK / UNBLOCK A SUBSCRIBER ──────────────────────────────────────────────
+// Distinct from subscription_status above: unsubscribing opts a contact out
+// of proactive broadcasts/sequences but they can still message in normally.
+// Blocking is a moderation action — their inbound messages are dropped
+// entirely before any conversation/bot/AI processing runs (see
+// routes/webhook.js's handleIncomingPayload and routes/webchat.js's
+// POST /webchat/message). "A way to reopen" is just /unblock, below.
+router.patch("/contacts/:id/block", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const { reason } = req.body || {};
+    const [result] = await pool.query(
+      "UPDATE contacts SET is_blocked = 1, blocked_at = NOW(), blocked_reason = ?, blocked_by = ? WHERE id = ? AND agency_id = ?",
+      [reason?.trim() || null, req.user.id, req.params.id, agencyId]
+    );
+    if (!result.affectedRows) return res.status(404).json({ success: false, message: "Contact not found" });
+    return res.json({ success: true, isBlocked: true });
+  } catch (err) {
+    console.error("Block contact error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+router.patch("/contacts/:id/unblock", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const [result] = await pool.query(
+      "UPDATE contacts SET is_blocked = 0, blocked_at = NULL, blocked_reason = NULL, blocked_by = NULL WHERE id = ? AND agency_id = ?",
+      [req.params.id, agencyId]
+    );
+    if (!result.affectedRows) return res.status(404).json({ success: false, message: "Contact not found" });
+    return res.json({ success: true, isBlocked: false });
+  } catch (err) {
+    console.error("Unblock contact error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+/** Deletes one contact's conversations (and, via ON DELETE CASCADE, their
+ * messages) plus its contact_labels rows (contact_labels has no FK, so
+ * nothing cascades it automatically) before removing the contact itself.
+ * Every other dependent table (contact_notes, contact_custom_field_values,
+ * sequence_subscribers, contact_list_members, broadcast/campaign logs,
+ * whatsapp_calls*) is already ON DELETE CASCADE; appointments.contact_id is
+ * ON DELETE SET NULL. Runs on one connection so a failure partway through
+ * rolls back instead of leaving a contact half-deleted. */
+async function deleteContactCascade(conn, contactId, agencyId) {
+  await conn.query("DELETE FROM conversations WHERE contact_id = ? AND agency_id = ?", [contactId, agencyId]);
+  await conn.query("DELETE FROM contact_labels WHERE contact_id = ?", [contactId]);
+  const [result] = await conn.query("DELETE FROM contacts WHERE id = ? AND agency_id = ?", [contactId, agencyId]);
+  return result.affectedRows > 0;
+}
+
+// ─── DELETE CONTACT ───────────────────────────────────────────────────────────
+router.delete("/contacts/:id", async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const deleted = await deleteContactCascade(conn, req.params.id, req.user.agencyId);
+    if (!deleted) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: "Contact not found" });
+    }
+    await conn.commit();
+    return res.json({ success: true, message: "Subscriber deleted" });
+  } catch (err) {
+    await conn.rollback();
+    console.error("Delete contact error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+});
+
+// ─── BULK DELETE CONTACTS ─────────────────────────────────────────────────────
+router.post("/contacts/bulk-delete", async (req, res) => {
+  const { contactIds } = req.body;
+  if (!Array.isArray(contactIds) || contactIds.length === 0) {
+    return res.status(400).json({ success: false, message: "contactIds array is required" });
+  }
+  const agencyId = req.user.agencyId;
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    let deletedCount = 0;
+    for (const id of contactIds) {
+      if (await deleteContactCascade(conn, id, agencyId)) deletedCount++;
+    }
+    await conn.commit();
+    return res.json({ success: true, message: `Deleted ${deletedCount} subscriber(s)`, deletedCount });
+  } catch (err) {
+    await conn.rollback();
+    console.error("Bulk delete contacts error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+});
+
+// ─── BULK ENROLL CONTACTS INTO A SEQUENCE ─────────────────────────────────────
+router.post("/contacts/bulk-sequence", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const { contactIds, sequenceId } = req.body;
+    if (!Array.isArray(contactIds) || contactIds.length === 0 || !sequenceId) {
+      return res.status(400).json({ success: false, message: "contactIds array and sequenceId are required" });
+    }
+
+    const [[sequence]] = await pool.query("SELECT id, platform FROM sequences WHERE id = ? AND agency_id = ?", [sequenceId, agencyId]);
+    if (!sequence) return res.status(404).json({ success: false, message: "Sequence not found" });
+
+    const { enrollContactsInSequence } = await import("./sequences.js");
+    const [contacts] = await pool.query("SELECT id, platform FROM contacts WHERE id IN (?) AND agency_id = ?", [contactIds, agencyId]);
+
+    let enrolled = 0;
+    let skippedWrongPlatform = 0;
+    for (const c of contacts) {
+      // A sequence's node canvas is built for one specific channel — enrolling
+      // a contact from a different platform would try to send that channel's
+      // buttons/lists to a contact who can't receive them, so it's skipped
+      // rather than silently mismatched (same rule the create-sequence UI
+      // already states: "it can only enroll contacts on that same channel").
+      if (c.platform !== sequence.platform) { skippedWrongPlatform++; continue; }
+      const result = await enrollContactsInSequence(sequenceId, agencyId, { contactId: c.id, enrolledVia: "BULK_ACTION" });
+      enrolled += result.enrolled || 0;
+    }
+
+    return res.json({
+      success: true,
+      message: `Enrolled ${enrolled} subscriber(s)${skippedWrongPlatform ? `, skipped ${skippedWrongPlatform} on a different channel` : ""}`,
+      enrolled,
+      skippedWrongPlatform,
+    });
+  } catch (err) {
+    console.error("Bulk sequence enroll error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── IMPORT CONTACTS (WhatsApp phone numbers / Telegram chat IDs) ────────────
+// Deliberately restricted to WhatsApp and Telegram — the only two channels
+// where a "cold" identifier (a phone number a business already has consent
+// for, or a Telegram chat_id from a subscriber who has already started a
+// chat elsewhere) is enough to message someone. Facebook Messenger and
+// Instagram only ever hand out a PSID/IGSID once a user messages the Page
+// first (Meta Messenger Platform policy — no way to mint one from an
+// imported identifier), and Webchat contacts only exist for the lifetime of
+// an actual widget session, so neither can be "pre-created" here.
+router.post("/contacts/import", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const { platform, rows } = req.body;
+
+    if (platform !== "WHATSAPP" && platform !== "TELEGRAM") {
+      return res.status(400).json({ success: false, message: "Import is only available for WhatsApp and Telegram." });
+    }
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ success: false, message: "No rows to import" });
+    }
+    if (rows.length > 5000) {
+      return res.status(400).json({ success: false, message: "Import is limited to 5000 rows at a time — split the file and try again." });
+    }
+
+    let created = 0, updated = 0, skipped = 0;
+    const errors = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const externalId = (platform === "WHATSAPP" ? row.phone : row.chatId || row.externalId || "")?.toString().trim();
+      const name = (row.name || "").toString().trim() || externalId;
+      const phone = platform === "WHATSAPP" ? externalId : (row.phone || "").toString().trim() || null;
+      const email = (row.email || "").toString().trim() || null;
+
+      if (!externalId) {
+        skipped++;
+        errors.push({ row: i + 2, reason: platform === "WHATSAPP" ? "Missing phone number" : "Missing Telegram Chat ID" });
+        continue;
+      }
+
+      const [existing] = await pool.query(
+        "SELECT id FROM contacts WHERE agency_id = ? AND platform = ? AND external_id = ?",
+        [agencyId, platform, externalId]
+      );
+
+      if (existing.length) {
+        await pool.query(
+          "UPDATE contacts SET name = COALESCE(NULLIF(?, ''), name), phone = COALESCE(?, phone), email = COALESCE(?, email) WHERE id = ?",
+          [name, phone, email, existing[0].id]
+        );
+        updated++;
+        continue;
+      }
+
+      if (req.user.role !== "ADMIN") {
+        try {
+          await assertLimit(agencyId, "max_subscribers", 1, req.user.id);
+        } catch (limitErr) {
+          errors.push({ row: i + 2, reason: limitErr.message || "Subscriber limit reached for your current plan." });
+          skipped += rows.length - i; // stop here — every remaining row would hit the same limit
+          break;
+        }
+      }
+
+      await pool.query(
+        `INSERT INTO contacts (agency_id, platform, external_id, name, phone, email, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+        [agencyId, platform, externalId, name, phone, email]
+      );
+      created++;
+    }
+
+    return res.json({ success: true, created, updated, skipped, errors: errors.slice(0, 20) });
+  } catch (err) {
+    console.error("Import contacts error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });

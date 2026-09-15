@@ -12,6 +12,7 @@ import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { requirePermission } from "../middleware/permissionMiddleware.js";
+import { logAuditEvent, diffFields } from "../utils/auditLog.js";
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -54,6 +55,12 @@ router.post("/reseller/packages", requirePermission("agency.packages.manage", "r
       [reseller.id, name, slug, description || null, price, currency, billingCycle, isDefault ? 1 : 0,
         maxBotAccounts ?? null, maxSubscribers ?? null, maxTeamMembers ?? null, maxMonthlyMessages ?? null]
     );
+    logAuditEvent({
+      agencyId: reseller.id, actor: req.user, action: "agency_package.create",
+      entityType: "agency_package", entityId: ins.insertId, entityLabel: name,
+      summary: `Created plan "${name}" ($${price}/${billingCycle})`,
+    });
+
     return res.status(201).json({ success: true, packageId: ins.insertId });
   } catch (err) {
     console.error("POST /reseller/packages error:", err);
@@ -65,7 +72,7 @@ router.put("/reseller/packages/:id", requirePermission("agency.packages.manage",
   const reseller = await requireCallerIsAgency(req, res);
   if (!reseller) return;
   try {
-    const [[pkg]] = await pool.query("SELECT id FROM agency_packages WHERE id = ? AND agency_id = ?", [req.params.id, reseller.id]);
+    const [[pkg]] = await pool.query("SELECT * FROM agency_packages WHERE id = ? AND agency_id = ?", [req.params.id, reseller.id]);
     if (!pkg) return res.status(404).json({ success: false, message: "Package not found" });
     const { name, description, price, currency, billingCycle, maxBotAccounts, maxSubscribers, maxTeamMembers, maxMonthlyMessages, isActive, isDefault } = req.body;
     if (isDefault) await pool.query("UPDATE agency_packages SET is_default = 0 WHERE agency_id = ?", [reseller.id]);
@@ -80,6 +87,14 @@ router.put("/reseller/packages/:id", requirePermission("agency.packages.manage",
       values.push(req.params.id);
       await pool.query(`UPDATE agency_packages SET ${fields.join(", ")} WHERE id = ?`, values);
     }
+
+    logAuditEvent({
+      agencyId: reseller.id, actor: req.user, action: "agency_package.update",
+      entityType: "agency_package", entityId: Number(req.params.id), entityLabel: name || pkg.name,
+      summary: `Updated plan "${pkg.name}"`,
+      changes: diffFields(pkg, { name: name ?? pkg.name, price: price ?? pkg.price, is_active: typeof isActive === "boolean" ? (isActive ? 1 : 0) : pkg.is_active }, ["name", "price", "is_active"]),
+    });
+
     return res.json({ success: true, message: "Package updated" });
   } catch (err) {
     console.error("PUT /reseller/packages/:id error:", err);
@@ -91,11 +106,18 @@ router.delete("/reseller/packages/:id", requirePermission("agency.packages.manag
   const reseller = await requireCallerIsAgency(req, res);
   if (!reseller) return;
   try {
-    const [[pkg]] = await pool.query("SELECT id FROM agency_packages WHERE id = ? AND agency_id = ?", [req.params.id, reseller.id]);
+    const [[pkg]] = await pool.query("SELECT id, name FROM agency_packages WHERE id = ? AND agency_id = ?", [req.params.id, reseller.id]);
     if (!pkg) return res.status(404).json({ success: false, message: "Package not found" });
     const [[{ cnt }]] = await pool.query("SELECT COUNT(*) as cnt FROM agency_client_subscriptions WHERE package_id = ? AND status = 'ACTIVE'", [req.params.id]);
     if (cnt > 0) return res.status(400).json({ success: false, message: `Cannot delete — ${cnt} customer(s) are actively on this plan` });
     await pool.query("DELETE FROM agency_packages WHERE id = ?", [req.params.id]);
+
+    logAuditEvent({
+      agencyId: reseller.id, actor: req.user, action: "agency_package.delete",
+      entityType: "agency_package", entityId: Number(req.params.id), entityLabel: pkg.name,
+      summary: `Deleted plan "${pkg.name}"`,
+    });
+
     return res.json({ success: true, message: "Package deleted" });
   } catch (err) {
     console.error("DELETE /reseller/packages/:id error:", err);

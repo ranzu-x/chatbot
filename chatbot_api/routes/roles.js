@@ -7,6 +7,7 @@
  */
 import express from "express";
 import pool from "../db.js";
+import { logAuditEvent } from "../utils/auditLog.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { requirePermission, invalidateRoleCache } from "../middleware/permissionMiddleware.js";
 
@@ -108,6 +109,12 @@ router.post("/roles", requireRoleManage, async (req, res) => {
     for (const key of finalKeys) {
       await pool.query("INSERT IGNORE INTO role_permissions (role_id, permission_key) VALUES (?, ?)", [ins.insertId, key]);
     }
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "role.create",
+      entityType: "role", entityId: ins.insertId, entityLabel: name,
+      summary: `Created role "${name}"${cloneFromRoleId ? " (cloned)" : ""} with ${finalKeys.length} permission(s)`,
+    });
+
     return res.status(201).json({ success: true, role: { id: ins.insertId, name, slug, permissionKeys: finalKeys } });
   } catch (err) {
     console.error("POST /roles error:", err);
@@ -135,6 +142,14 @@ router.put("/roles/:id", requireRoleManage, async (req, res) => {
       }
       invalidateRoleCache(Number(req.params.id));
     }
+
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "role.update",
+      entityType: "role", entityId: Number(req.params.id), entityLabel: name || roleRows[0].name,
+      summary: `Updated role "${roleRows[0].name}"${name && name !== roleRows[0].name ? ` → "${name}"` : ""}`,
+      changes: Array.isArray(permissionKeys) ? { permissionKeys: { before: null, after: permissionKeys.length } } : null,
+    });
+
     return res.json({ success: true, message: "Role updated" });
   } catch (err) {
     console.error("PUT /roles/:id error:", err);
@@ -153,6 +168,13 @@ router.delete("/roles/:id", requireRoleManage, async (req, res) => {
     if (cnt > 0) return res.status(400).json({ success: false, message: `Cannot delete — ${cnt} member(s) still use this role` });
     await pool.query("DELETE FROM roles WHERE id = ?", [req.params.id]);
     invalidateRoleCache(Number(req.params.id));
+
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "role.delete",
+      entityType: "role", entityId: Number(req.params.id), entityLabel: roleRows[0].name,
+      summary: `Deleted role "${roleRows[0].name}"`,
+    });
+
     return res.json({ success: true, message: "Role deleted" });
   } catch (err) {
     console.error("DELETE /roles/:id error:", err);

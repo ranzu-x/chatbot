@@ -20,6 +20,7 @@ import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { requirePermission, loadOrgMember } from "../middleware/permissionMiddleware.js";
 import pool from "../db.js";
 import { emitToAgency, emitToTicket } from "../utils/socket.js";
+import { sendTicketEmail, ticketUrl } from "../utils/emailNotifications.js";
 
 const router = express.Router();
 
@@ -176,6 +177,13 @@ router.post("/support-desk/tickets", async (req, res) => {
 
     emitToAgency(helpdeskAgencyId, "support_ticket:new", { ticketId, ticketNumber: ticketNumber(ticketId), subject: subject.trim(), requesterName: req.user.name, priority: priority || "NORMAL" });
 
+    sendTicketEmail({
+      to: req.user.email,
+      subject: `[${ticketNumber(ticketId)}] We've received your ticket`,
+      title: `Ticket ${ticketNumber(ticketId)} received`,
+      bodyHtml: `<p>Hi ${req.user.name},</p><p>We've received your ticket <strong>"${subject.trim()}"</strong> and a member of our support team will get back to you shortly.</p><p><a href="${ticketUrl(ticketId)}">View your ticket</a></p>`,
+    });
+
     res.status(201).json({ success: true, ticketId, ticketNumber: ticketNumber(ticketId) });
   } catch (err) {
     await conn.rollback();
@@ -275,6 +283,50 @@ router.get("/support-desk/stats", requireDeskView, async (req, res) => {
   } catch (err) {
     console.error("GET /support-desk/stats error:", err);
     res.status(500).json({ success: false, message: "Failed to load stats" });
+  }
+});
+
+// ─── CSAT TREND ────────────────────────────────────────────────────────────
+// Every solved ticket already captures a 1-5 rating (see POST .../rate
+// below) — nothing aggregated it into a trend before this. Daily average +
+// count over a window (default 30 days), plus a per-agent breakdown so a
+// manager can see whose resolutions are actually landing well.
+router.get("/support-desk/csat-trend", requireDeskView, async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const days = Math.min(365, Math.max(7, Number(req.query.days) || 30));
+
+    const [daily] = await pool.query(
+      `SELECT DATE(rated_at) AS date, AVG(rating) AS avg_rating, COUNT(*) AS rating_count
+       FROM support_tickets
+       WHERE helpdesk_agency_id = ? AND rating IS NOT NULL AND rated_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+       GROUP BY DATE(rated_at)
+       ORDER BY DATE(rated_at) ASC`,
+      [agencyId, days]
+    );
+
+    const [byAgent] = await pool.query(
+      `SELECT au.id AS agent_id, au.name AS agent_name, AVG(t.rating) AS avg_rating, COUNT(*) AS rating_count
+       FROM support_tickets t
+       JOIN users au ON au.id = t.assigned_to
+       WHERE t.helpdesk_agency_id = ? AND t.rating IS NOT NULL AND t.rated_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+       GROUP BY au.id, au.name
+       ORDER BY avg_rating DESC`,
+      [agencyId, days]
+    );
+
+    const [[overall]] = await pool.query(
+      `SELECT AVG(rating) AS avg_rating, COUNT(*) AS rating_count,
+              SUM(rating >= 4) AS satisfied_count, SUM(rating <= 2) AS unsatisfied_count
+       FROM support_tickets
+       WHERE helpdesk_agency_id = ? AND rating IS NOT NULL AND rated_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
+      [agencyId, days]
+    );
+
+    res.json({ success: true, days, daily, byAgent, overall });
+  } catch (err) {
+    console.error("GET /support-desk/csat-trend error:", err);
+    res.status(500).json({ success: false, message: "Failed to load CSAT trend" });
   }
 });
 
@@ -509,6 +561,30 @@ router.post("/support-desk/tickets/:id/messages", async (req, res) => {
       emitToTicket(ticket.id, "support_ticket:message", payload);
       emitToAgency(ticket.helpdesk_agency_id, "support_ticket:updated", { ticketId: ticket.id, status: newStatus });
       emitToAgency(ticket.requester_agency_id, "support_ticket:updated", { ticketId: ticket.id, status: newStatus });
+
+      // New-reply email — not awaited: a slow/unreachable mail server must
+      // never delay the reply itself, and sendTicketEmail never throws.
+      if (senderType === "AGENT") {
+        pool.query("SELECT email, name FROM users WHERE id = ?", [ticket.requester_user_id]).then(([[requester]]) => {
+          if (!requester) return;
+          sendTicketEmail({
+            to: requester.email,
+            subject: `[${ticket.ticket_number}] New reply on your ticket`,
+            title: `${req.user.name} replied to ${ticket.ticket_number}`,
+            bodyHtml: `<p>Hi ${requester.name},</p><p><strong>${req.user.name}</strong> replied to your ticket <strong>"${ticket.subject}"</strong>:</p><p style="padding:10px 14px;background:#f8fafc;border-radius:6px;">${body.trim().slice(0, 500)}</p><p><a href="${ticketUrl(ticket.id)}">View and reply</a></p>`,
+          });
+        }).catch(() => {});
+      } else if (senderType === "REQUESTER" && ticket.assigned_to) {
+        pool.query("SELECT email, name FROM users WHERE id = ?", [ticket.assigned_to]).then(([[agent]]) => {
+          if (!agent) return;
+          sendTicketEmail({
+            to: agent.email,
+            subject: `[${ticket.ticket_number}] Customer replied`,
+            title: `New reply on ${ticket.ticket_number}`,
+            bodyHtml: `<p>Hi ${agent.name},</p><p>The customer replied to <strong>"${ticket.subject}"</strong>:</p><p style="padding:10px 14px;background:#f8fafc;border-radius:6px;">${body.trim().slice(0, 500)}</p><p><a href="${ticketUrl(ticket.id)}">View and reply</a></p>`,
+          });
+        }).catch(() => {});
+      }
     } else {
       emitToAgency(ticket.helpdesk_agency_id, "support_ticket:internal_note", payload);
     }
@@ -544,7 +620,7 @@ router.post("/support-desk/tickets/:id/rate", async (req, res) => {
     if (!["SOLVED", "CLOSED"].includes(ticket.status)) return res.status(400).json({ success: false, message: "Ticket must be solved or closed to rate" });
     const rating = Number(req.body.rating);
     if (!rating || rating < 1 || rating > 5) return res.status(400).json({ success: false, message: "Rating must be 1-5" });
-    await pool.query("UPDATE support_tickets SET rating = ?, rating_comment = ? WHERE id = ?", [rating, req.body.comment || null, ticket.id]);
+    await pool.query("UPDATE support_tickets SET rating = ?, rating_comment = ?, rated_at = NOW() WHERE id = ?", [rating, req.body.comment || null, ticket.id]);
     emitToAgency(ticket.helpdesk_agency_id, "support_ticket:updated", { ticketId: ticket.id });
     res.json({ success: true });
   } catch (err) {

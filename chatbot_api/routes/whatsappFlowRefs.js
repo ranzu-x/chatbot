@@ -47,6 +47,25 @@ router.post("/whatsapp-flow-refs", roleMiddleware("RESELLER", "ADMIN"), async (r
   }
 });
 
+// Wires this Flow to the agency's own server/automation that implements
+// its actual per-screen logic — see routes/whatsappFlowEndpoint.js, which
+// relays the encrypted data-exchange traffic here once configured.
+router.patch("/whatsapp-flow-refs/:id", roleMiddleware("RESELLER", "ADMIN"), async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const { relayWebhookUrl } = req.body;
+    const [result] = await pool.query(
+      "UPDATE whatsapp_flow_refs SET relay_webhook_url = ? WHERE id = ? AND agency_id = ?",
+      [relayWebhookUrl?.trim() || null, req.params.id, agencyId]
+    );
+    if (!result.affectedRows) return res.status(404).json({ success: false, message: "Flow reference not found" });
+    return res.json({ success: true, message: "Relay webhook updated" });
+  } catch (err) {
+    console.error("PATCH /whatsapp-flow-refs/:id error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 router.delete("/whatsapp-flow-refs/:id", roleMiddleware("RESELLER", "ADMIN"), async (req, res) => {
   try {
     const agencyId = req.user.agencyId;

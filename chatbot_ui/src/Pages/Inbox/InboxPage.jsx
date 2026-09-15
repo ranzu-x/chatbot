@@ -51,6 +51,7 @@ import {
   LogOut,
   RotateCcw,
   BellOff,
+  Ban,
   Shield,
   CheckCircle2,
   Smile,
@@ -1806,6 +1807,30 @@ export default function InboxPage() {
     } catch (err) {
       console.error('Failed to unsubscribe', err);
       alert(err?.response?.data?.message || 'Failed to unsubscribe');
+    } finally {
+      setSubscriberActionBusy(false);
+    }
+  };
+
+  const handleToggleBlock = async () => {
+    if (!selectedContactId || subscriberActionBusy) return;
+    setShowSubscriberMenu(false);
+    const isBlocked = Boolean(selectedConv?.contactIsBlocked);
+    try {
+      if (isBlocked) {
+        await contactAPI.unblock(selectedContactId);
+        setSelectedConv((prev) => (prev ? { ...prev, contactIsBlocked: false, contactBlockedReason: null } : prev));
+      } else {
+        const reason = window.prompt('Block this subscriber — their messages will stop reaching your inbox entirely (bot, AI, and agents). Optional reason:');
+        if (reason === null) return; // cancelled
+        setSubscriberActionBusy(true);
+        await contactAPI.block(selectedContactId, reason);
+        setSelectedConv((prev) => (prev ? { ...prev, contactIsBlocked: true, contactBlockedReason: reason || null } : prev));
+      }
+      loadConversations();
+    } catch (err) {
+      console.error('Failed to update block status', err);
+      alert(err?.response?.data?.message || 'Failed to update block status');
     } finally {
       setSubscriberActionBusy(false);
     }
@@ -3605,7 +3630,15 @@ export default function InboxPage() {
                 >
                   {activePlatformInfo.label}
                 </span>
-                <div ref={subscriberMenuRef} style={{ position: 'relative' }}>
+                {selectedConv?.contactIsBlocked && (
+                  <span
+                    title={selectedConv?.contactBlockedReason || 'Blocked'}
+                    style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 12, background: '#fee2e2', color: '#dc2626', display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 6 }}
+                  >
+                    <Ban size={11} /> Blocked
+                  </span>
+                )}
+                <div ref={subscriberMenuRef} style={{ position: 'relative', marginLeft: 'auto' }}>
                   <button
                     onClick={() => setShowSubscriberMenu((v) => !v)}
                     disabled={subscriberActionBusy}
@@ -3652,6 +3685,13 @@ export default function InboxPage() {
                         style={subscriberMenuItemStyle}
                       >
                         <BellOff size={14} color="#d97706" /> Unsubscribe from Sequences
+                      </button>
+                      <button
+                        onClick={handleToggleBlock}
+                        disabled={subscriberActionBusy}
+                        style={subscriberMenuItemStyle}
+                      >
+                        <Ban size={14} color="#dc2626" /> {selectedConv?.contactIsBlocked ? 'Unblock Subscriber' : 'Block Subscriber'}
                       </button>
                       <div style={{ height: 1, background: '#f1f5f9', margin: '4px 0' }} />
                       <button
