@@ -71,6 +71,13 @@ import {
   ChevronDown,
   ChevronLeft,
   UserX,
+  Languages,
+  MoreHorizontal,
+  MailOpen,
+  Star,
+  Archive,
+  MinusCircle,
+  UserMinus,
 } from 'lucide-react';
 
 /* ─── Platform Map ─── */
@@ -833,6 +840,7 @@ export default function InboxPage() {
   const [sendError, setSendError] = useState('');
   const [uploading, setUploading] = useState(false);
 
+  const [viewFilter, setViewFilter] = useState('all'); // 'all' | 'unread' | 'important' | 'resolved' | 'archived' | 'blocked'
   const [statusFilter, setStatusFilter] = useState('All');
   const [platformFilter, setPlatformFilter] = useState('');
   const [agentFilter, setAgentFilter] = useState(''); // '' = any, 'unassigned', or an agent_profile id
@@ -968,9 +976,13 @@ export default function InboxPage() {
   // Canned Responses State
   const [cannedResponses, setCannedResponses] = useState([]);
 
-  // Send Menu (Bot Flow / Message Template / WhatsApp Flow) — right-side panel
+  // Send Menu (Bot Flow / Message Template / WhatsApp Flow / Canned Response) —
+  // right-side panel. The "+" button first opens a small 2-option picker
+  // (Flows & Templates / Canned Response); choosing one opens the panel
+  // straight into that section.
   const [showSendMenu, setShowSendMenu] = useState(false);
   const [sendMenuSection, setSendMenuSection] = useState('menu');
+  const [showSendMenuPicker, setShowSendMenuPicker] = useState(false);
 
   const handleOpenTemplatePicker = useCallback(() => {
     setSendMenuSection('template');
@@ -1021,6 +1033,28 @@ export default function InboxPage() {
     selectedIdRef.current = selectedId;
     selectedContactIdRef.current = selectedContactId;
   }, [selectedId, selectedContactId]);
+
+  // Floating 3-dots context menu state for conversation cards
+  const [convMenuTarget, setConvMenuTarget] = useState(null); // { conv, anchorRect }
+  const convMenuRef = useRef(null);
+
+  useEffect(() => {
+    if (!convMenuTarget) return;
+    const handleOutsideClick = (e) => {
+      if (convMenuRef.current && !convMenuRef.current.contains(e.target)) {
+        setConvMenuTarget(null);
+      }
+    };
+    const handleScroll = () => {
+      setConvMenuTarget(null);
+    };
+    window.addEventListener('mousedown', handleOutsideClick, true);
+    window.addEventListener('scroll', handleScroll, true);
+    return () => {
+      window.removeEventListener('mousedown', handleOutsideClick, true);
+      window.removeEventListener('scroll', handleScroll, true);
+    };
+  }, [convMenuTarget]);
 
   const assignedAgent = useMemo(() => {
     if (!selectedConv?.assigned_to_id) return null;
@@ -1089,7 +1123,19 @@ export default function InboxPage() {
   const loadConversations = useCallback(async () => {
     try {
       const params = { page: 1, limit: 30, ...buildDateRangeParams() };
-      if (statusFilter !== 'All') params.status = statusFilter;
+      if (viewFilter === 'unread') {
+        params.unread = true;
+      } else if (viewFilter === 'important') {
+        params.important = true;
+      } else if (viewFilter === 'archived') {
+        params.archived = true;
+      } else if (viewFilter === 'blocked') {
+        params.blocked = true;
+      } else if (viewFilter === 'resolved') {
+        params.status = 'RESOLVED';
+      } else if (statusFilter !== 'All') {
+        params.status = statusFilter;
+      }
       if (platformFilter) params.platform = platformFilter;
       if (labelFilterId) params.labelId = labelFilterId;
       if (agentFilter) params.assignedToId = agentFilter;
@@ -1103,7 +1149,7 @@ export default function InboxPage() {
     } finally {
       setConvLoading(false);
     }
-  }, [statusFilter, platformFilter, labelFilterId, agentFilter, buildDateRangeParams]);
+  }, [viewFilter, statusFilter, platformFilter, labelFilterId, agentFilter, buildDateRangeParams]);
 
   // Appends the next page instead of replacing the list — the "Load more"
   // row at the bottom of the conversation list calls this.
@@ -1113,7 +1159,19 @@ export default function InboxPage() {
     try {
       const nextPage = convPage + 1;
       const params = { page: nextPage, limit: 30, ...buildDateRangeParams() };
-      if (statusFilter !== 'All') params.status = statusFilter;
+      if (viewFilter === 'unread') {
+        params.unread = true;
+      } else if (viewFilter === 'important') {
+        params.important = true;
+      } else if (viewFilter === 'archived') {
+        params.archived = true;
+      } else if (viewFilter === 'blocked') {
+        params.blocked = true;
+      } else if (viewFilter === 'resolved') {
+        params.status = 'RESOLVED';
+      } else if (statusFilter !== 'All') {
+        params.status = statusFilter;
+      }
       if (platformFilter) params.platform = platformFilter;
       if (labelFilterId) params.labelId = labelFilterId;
       if (agentFilter) params.assignedToId = agentFilter;
@@ -1131,7 +1189,7 @@ export default function InboxPage() {
     } finally {
       setLoadingMoreConvs(false);
     }
-  }, [convPage, convHasMore, loadingMoreConvs, statusFilter, platformFilter, labelFilterId, agentFilter, buildDateRangeParams]);
+  }, [convPage, convHasMore, loadingMoreConvs, viewFilter, statusFilter, platformFilter, labelFilterId, agentFilter, buildDateRangeParams]);
 
   useEffect(() => {
     setConvLoading(true);
@@ -1364,6 +1422,9 @@ export default function InboxPage() {
           ...(data.botPaused !== undefined ? { bot_paused: data.botPaused, botPaused: data.botPaused } : {}),
           ...(data.pauseReason !== undefined ? { pause_reason: data.pauseReason } : {}),
           ...(data.pausedByName !== undefined ? { pausedByName: data.pausedByName } : {}),
+          ...(data.unread_count !== undefined ? { unread_count: data.unread_count } : {}),
+          ...(data.is_important !== undefined ? { is_important: data.is_important ? 1 : 0 } : {}),
+          ...(data.is_archived !== undefined ? { is_archived: data.is_archived ? 1 : 0 } : {}),
         } : prev));
         if (data.status !== undefined) setConvStatus(data.status);
         if (data.botPaused !== undefined) setBotPaused(Boolean(data.botPaused));
@@ -1384,6 +1445,9 @@ export default function InboxPage() {
           ...(data.assignedToId !== undefined ? { assigned_to_id: data.assignedToId, assignedAgentName: resolvedName } : {}),
           ...(data.status !== undefined ? { status: data.status } : {}),
           ...(data.botPaused !== undefined ? { bot_paused: data.botPaused } : {}),
+          ...(data.unread_count !== undefined ? { unread_count: data.unread_count } : {}),
+          ...(data.is_important !== undefined ? { is_important: data.is_important ? 1 : 0 } : {}),
+          ...(data.is_archived !== undefined ? { is_archived: data.is_archived ? 1 : 0 } : {}),
         };
       }));
     });
@@ -1418,6 +1482,55 @@ export default function InboxPage() {
     // Custom field catalog changed (field added/renamed/removed) — refresh definitions
     socket.on('custom_fields_updated', () => {
       customFieldAPI.getAll().then((res) => setCustomFieldDefs(res.data?.fields || [])).catch(() => {});
+    });
+
+    // Canned response created/updated/deleted (by this agent or any teammate,
+    // any tab/PC) — refresh so it's live everywhere without a manual reload.
+    socket.on('canned_response_updated', () => {
+      cannedResponseAPI.getAll().then((res) => setCannedResponses(res.data?.cannedResponses || [])).catch(() => {});
+    });
+
+    // Clear Chat, run by anyone on this conversation — the backend already
+    // emitted this event, it just had no listener here until now.
+    socket.on('conversation_history_cleared', (data) => {
+      if (String(data.conversationId) === String(selectedIdRef.current)) {
+        setMessages([]);
+      }
+      loadConversations();
+    });
+
+    // Block / unblock — patch the open subscriber panel and every matching
+    // conversation-list row so the "blocked" indicator updates for everyone
+    // without a reload.
+    socket.on('contact_updated', (data) => {
+      if (data.isBlocked === undefined) return;
+      if (String(data.contactId) === String(selectedContactIdRef.current)) {
+        setSelectedConv((prev) => (prev ? { ...prev, is_blocked: data.isBlocked ? 1 : 0 } : prev));
+      }
+      setConversations((prev) => prev.map((c) => (
+        String(c.contact_id) === String(data.contactId) ? { ...c, is_blocked: data.isBlocked ? 1 : 0 } : c
+      )));
+    });
+
+    // A subscriber was deleted (by anyone, any tab) — drop their conversations
+    // from the list and close the detail pane if it was open. selectedId has
+    // no setter of its own — it's derived from selectedConv, so clearing that
+    // is enough.
+    socket.on('contact_deleted', (data) => {
+      if (String(data.contactId) === String(selectedContactIdRef.current)) {
+        setSelectedConv(null);
+        setMessages([]);
+      }
+      setConversations((prev) => prev.filter((c) => String(c.contact_id) !== String(data.contactId)));
+    });
+
+    socket.on('contacts_bulk_deleted', (data) => {
+      const ids = (data.contactIds || []).map(String);
+      if (ids.includes(String(selectedContactIdRef.current))) {
+        setSelectedConv(null);
+        setMessages([]);
+      }
+      setConversations((prev) => prev.filter((c) => !ids.includes(String(c.contact_id))));
     });
 
     // A specific subscriber's custom field value changed (by anyone, any tab)
@@ -1704,6 +1817,36 @@ export default function InboxPage() {
     }
   };
 
+  // Live Chat Translator — per-conversation toggle + target language.
+  // Translation of individual messages happens on demand (see
+  // handleTranslateMessage on each message bubble), not eagerly here.
+  const [translatingChat, setTranslatingChat] = useState(false);
+  const handleToggleTranslate = async () => {
+    if (!selectedId) return;
+    const nextEnabled = !selectedConv?.translate_enabled;
+    const targetLang = selectedConv?.translate_target_lang || 'en';
+    setTranslatingChat(true);
+    try {
+      const res = await conversationAPI.toggleTranslate(selectedId, nextEnabled, targetLang);
+      setSelectedConv((prev) => (prev ? { ...prev, translate_enabled: res.data?.translateEnabled ? 1 : 0, translate_target_lang: res.data?.translateTargetLang } : prev));
+    } catch (err) {
+      console.error('Failed to toggle translator', err);
+    } finally {
+      setTranslatingChat(false);
+    }
+  };
+
+  const handleTranslateMessage = async (message) => {
+    if (!selectedId || !message?.id) return;
+    try {
+      const res = await conversationAPI.translateMessage(selectedId, message.id, selectedConv?.translate_target_lang);
+      const translatedText = res.data?.translatedText;
+      setMessages((prev) => prev.map((m) => (m.id === message.id ? { ...m, translated_text: translatedText, translated_lang: selectedConv?.translate_target_lang || 'en' } : m)));
+    } catch (err) {
+      console.error('Failed to translate message', err);
+    }
+  };
+
   // Human Agent Takeover ("Join Chat") — opens JoinChatModal (below), which
   // itself calls POST /conversations/:id/join (pauses bot+AI, assigns to the
   // caller, schedules the configured auto-resume timer from Bot Manager →
@@ -1766,11 +1909,11 @@ export default function InboxPage() {
         bot_paused: false,
         pause_reason: null,
         pausedByName: null,
-        assigned_to_id: res.data?.assignedToId ?? prev.assigned_to_id,
-        assignedAgentName: res.data?.assignedAgentName ?? prev.assignedAgentName,
-        status: res.data?.status || 'OPEN',
+        assigned_to_id: null,
+        assignedAgentName: null,
+        status: 'OPEN',
       } : prev));
-      setConvStatus(res.data?.status || 'OPEN');
+      setConvStatus('OPEN');
       loadConversations();
     } catch (err) {
       console.error('Failed to leave chat', err);
@@ -1853,6 +1996,175 @@ export default function InboxPage() {
     }
   };
 
+  // ─── 3-Dots Conversation Context Menu Handlers ────────────────────────────
+  const handleOpenConvMenu = (e, conv) => {
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const convId = conv._id || conv.id;
+    setConvMenuTarget((prev) => {
+      const prevId = prev?.conv?._id || prev?.conv?.id;
+      return String(prevId) === String(convId) ? null : { conv, anchorRect: rect };
+    });
+  };
+
+  const handleMenuMarkRead = async (conv) => {
+    setConvMenuTarget(null);
+    const convId = conv._id || conv.id;
+    try {
+      await conversationAPI.markRead(convId);
+      setConversations((prev) => prev.map((c) => (
+        String(c._id || c.id) === String(convId) ? { ...c, unread_count: 0 } : c
+      )));
+      if (String(selectedId) === String(convId)) {
+        setSelectedConv((prev) => (prev ? { ...prev, unread_count: 0 } : prev));
+        setMessages((prev) => prev.map((m) => (m.direction === 'INBOUND' ? { ...m, is_read: 1 } : m)));
+      }
+    } catch (err) {
+      console.error('Failed to mark conversation as read', err);
+    }
+  };
+
+  const handleMenuMarkUnread = async (conv) => {
+    setConvMenuTarget(null);
+    const convId = conv._id || conv.id;
+    try {
+      const res = await conversationAPI.markUnread(convId);
+      const newUnread = res.data?.unread_count || 1;
+      setConversations((prev) => prev.map((c) => (
+        String(c._id || c.id) === String(convId) ? { ...c, unread_count: newUnread } : c
+      )));
+      if (String(selectedId) === String(convId)) {
+        setSelectedConv((prev) => (prev ? { ...prev, unread_count: newUnread } : prev));
+      }
+    } catch (err) {
+      console.error('Failed to mark conversation as unread', err);
+    }
+  };
+
+  const handleMenuMarkImportant = async (conv) => {
+    setConvMenuTarget(null);
+    const convId = conv._id || conv.id;
+    const nextVal = !Boolean(conv.is_important);
+    try {
+      await conversationAPI.markImportant(convId, nextVal);
+      setConversations((prev) => prev.map((c) => (
+        String(c._id || c.id) === String(convId) ? { ...c, is_important: nextVal ? 1 : 0 } : c
+      )));
+      if (String(selectedId) === String(convId)) {
+        setSelectedConv((prev) => (prev ? { ...prev, is_important: nextVal ? 1 : 0 } : prev));
+      }
+    } catch (err) {
+      console.error('Failed to update important status', err);
+    }
+  };
+
+  const handleMenuMarkArchived = async (conv) => {
+    setConvMenuTarget(null);
+    const convId = conv._id || conv.id;
+    const nextVal = !Boolean(conv.is_archived);
+    try {
+      await conversationAPI.markArchived(convId, nextVal);
+      setConversations((prev) => prev.map((c) => (
+        String(c._id || c.id) === String(convId) ? { ...c, is_archived: nextVal ? 1 : 0 } : c
+      )));
+      if (String(selectedId) === String(convId)) {
+        setSelectedConv((prev) => (prev ? { ...prev, is_archived: nextVal ? 1 : 0 } : prev));
+      }
+    } catch (err) {
+      console.error('Failed to update archived status', err);
+    }
+  };
+
+  const handleMenuMarkResolve = async (conv) => {
+    setConvMenuTarget(null);
+    const convId = conv._id || conv.id;
+    try {
+      await conversationAPI.updateStatus(convId, 'RESOLVED');
+      setConversations((prev) => prev.map((c) => (
+        String(c._id || c.id) === String(convId) ? { ...c, status: 'RESOLVED' } : c
+      )));
+      if (String(selectedId) === String(convId)) {
+        setConvStatus('RESOLVED');
+        setSelectedConv((prev) => (prev ? { ...prev, status: 'RESOLVED' } : prev));
+      }
+    } catch (err) {
+      console.error('Failed to resolve conversation', err);
+    }
+  };
+
+  const handleMenuBlockUser = async (conv) => {
+    setConvMenuTarget(null);
+    const contactId = conv.contact_id || conv.contactId;
+    if (!contactId) return;
+    const isBlocked = Boolean(conv.contactIsBlocked);
+    try {
+      if (isBlocked) {
+        await contactAPI.unblock(contactId);
+        setConversations((prev) => prev.map((c) => (
+          String(c.contact_id || c.contactId) === String(contactId)
+            ? { ...c, contactIsBlocked: false, contactBlockedReason: null }
+            : c
+        )));
+        if (String(selectedConv?.contact_id || selectedConv?.contactId) === String(contactId)) {
+          setSelectedConv((prev) => (prev ? { ...prev, contactIsBlocked: false, contactBlockedReason: null } : prev));
+        }
+      } else {
+        const reason = window.prompt('Block this subscriber — their messages will stop reaching your inbox entirely (bot, AI, and agents). Optional reason:');
+        if (reason === null) return;
+        await contactAPI.block(contactId, reason);
+        setConversations((prev) => prev.map((c) => (
+          String(c.contact_id || c.contactId) === String(contactId)
+            ? { ...c, contactIsBlocked: true, contactBlockedReason: reason || null }
+            : c
+        )));
+        if (String(selectedConv?.contact_id || selectedConv?.contactId) === String(contactId)) {
+          setSelectedConv((prev) => (prev ? { ...prev, contactIsBlocked: true, contactBlockedReason: reason || null } : prev));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to update block status', err);
+      alert(err?.response?.data?.message || 'Failed to update block status');
+    }
+  };
+
+  const handleMenuClearHistory = async (conv) => {
+    setConvMenuTarget(null);
+    const convId = conv._id || conv.id;
+    if (!window.confirm("Clear this conversation's entire message history? This cannot be undone.")) return;
+    try {
+      await conversationAPI.clearHistory(convId);
+      if (String(selectedId) === String(convId)) {
+        setMessages([]);
+      }
+      setConversations((prev) => prev.map((c) => (
+        String(c._id || c.id) === String(convId)
+          ? { ...c, lastMessageBody: '', lastMessageTime: null, last_message: '', last_message_at: null, unread_count: 0 }
+          : c
+      )));
+    } catch (err) {
+      console.error('Failed to clear history', err);
+      alert(err?.response?.data?.message || 'Failed to clear history');
+    }
+  };
+
+  const handleMenuDeleteSubscriber = async (conv) => {
+    setConvMenuTarget(null);
+    const contactId = conv.contact_id || conv.contactId;
+    const displayName = conv.contactName || conv.contact_name || conv.external_id || 'Subscriber';
+    if (!window.confirm(`Delete subscriber "${displayName}" and all associated conversations? This cannot be undone.`)) return;
+    try {
+      await contactAPI.delete(contactId);
+      setConversations((prev) => prev.filter((c) => String(c.contact_id || c.contactId) !== String(contactId)));
+      if (String(selectedConv?.contact_id || selectedConv?.contactId) === String(contactId)) {
+        setSelectedConv(null);
+        setMessages([]);
+      }
+    } catch (err) {
+      console.error('Failed to delete subscriber', err);
+      alert(err?.response?.data?.message || 'Failed to delete subscriber');
+    }
+  };
+
   // Assign Team Agent
   const handleAssignAgent = async (agentProfileId) => {
     if (!selectedId) return;
@@ -1863,12 +2175,14 @@ export default function InboxPage() {
         String(a.profileId || a.agent_profile_id || a.id) === String(agentProfileId) ||
         String(a.userId || a.id) === String(agentProfileId)
       );
+      const nextStatus = agentProfileId ? 'ASSIGNED' : 'OPEN';
       setSelectedConv((prev) => (prev ? {
         ...prev,
         assigned_to_id: agentProfileId || null,
         assignedAgentName: res.data?.assignedAgentName || ag?.name || null,
-        status: agentProfileId ? 'ASSIGNED' : prev.status,
+        status: nextStatus,
       } : prev));
+      setConvStatus(nextStatus);
       loadConversations();
     } catch (err) {
       console.error('Failed to assign agent', err);
@@ -1884,7 +2198,36 @@ export default function InboxPage() {
     try {
       await conversationAPI.updateStatus(selectedId, newStatus);
       setConvStatus(newStatus);
-      setSelectedConv((prev) => ({ ...prev, status: newStatus }));
+      if (newStatus === 'OPEN' && selectedConv?.assigned_to_id) {
+        // Switching to Open automatically unassigns the agent
+        await conversationAPI.assign(selectedId, null);
+        setSelectedConv((prev) => (prev ? {
+          ...prev,
+          status: 'OPEN',
+          assigned_to_id: null,
+          assignedAgentName: null,
+        } : prev));
+      } else if (newStatus === 'ASSIGNED' && !selectedConv?.assigned_to_id) {
+        // Switching to Assigned when unassigned automatically assigns to current agent
+        const targetProfileId = myProfileId || (agentsList[0] ? (agentsList[0].profileId || agentsList[0].agent_profile_id || agentsList[0].id) : null);
+        if (targetProfileId) {
+          const res = await conversationAPI.assign(selectedId, targetProfileId);
+          const ag = agentsList.find((a) =>
+            String(a.profileId || a.agent_profile_id || a.id) === String(targetProfileId) ||
+            String(a.userId || a.id) === String(targetProfileId)
+          );
+          setSelectedConv((prev) => (prev ? {
+            ...prev,
+            status: 'ASSIGNED',
+            assigned_to_id: targetProfileId,
+            assignedAgentName: res.data?.assignedAgentName || ag?.name || null,
+          } : prev));
+        } else {
+          setSelectedConv((prev) => (prev ? { ...prev, status: 'ASSIGNED' } : prev));
+        }
+      } else {
+        setSelectedConv((prev) => (prev ? { ...prev, status: newStatus } : prev));
+      }
       loadConversations();
     } catch (err) {
       console.error('Failed to update status', err);
@@ -2155,9 +2498,26 @@ export default function InboxPage() {
     const convPlat = (c.platform || c.integrationPlatform || c.contactPlatform || '').toUpperCase();
     const matchesPlatform = !platformFilter || platformFilter === 'ALL' || convPlat === platformFilter.toUpperCase();
 
+    // Match View Filter
+    let matchesView = true;
+    if (viewFilter === 'unread') {
+      matchesView = Number(c.unread_count) > 0;
+    } else if (viewFilter === 'important') {
+      matchesView = Boolean(c.is_important);
+    } else if (viewFilter === 'archived') {
+      matchesView = Boolean(c.is_archived);
+    } else if (viewFilter === 'blocked') {
+      matchesView = Boolean(c.contactIsBlocked);
+    } else if (viewFilter === 'resolved') {
+      matchesView = ['RESOLVED', 'CLOSED'].includes((c.status || '').toUpperCase());
+    } else {
+      // By default ('all', etc.), hide archived conversations from active inbox
+      matchesView = !Boolean(c.is_archived);
+    }
+
     // Match Status
     let matchesStatus = true;
-    if (statusFilter && statusFilter !== 'All') {
+    if (statusFilter && statusFilter !== 'All' && !['unread', 'important', 'archived', 'blocked', 'resolved'].includes(viewFilter)) {
       const convStatus = (c.status || 'OPEN').toUpperCase();
       if (statusFilter.toUpperCase() === 'OPEN') {
         matchesStatus = ['OPEN', 'ASSIGNED'].includes(convStatus);
@@ -2168,7 +2528,7 @@ export default function InboxPage() {
       }
     }
 
-    return matchesSearch && matchesPlatform && matchesStatus;
+    return matchesSearch && matchesPlatform && matchesView && matchesStatus;
   });
 
   const activePlatformInfo = getPlatformInfo(selectedConv?.platform || selectedConv?.integrationPlatform || selectedConv?.contactPlatform);
@@ -2208,17 +2568,40 @@ export default function InboxPage() {
             <Menu size={17} />
           </button>
 
-          {/* Views — status chips (All/Open/Pending/Resolved) plus the
-              Mine/Unassigned smart views, all as one icon group. There's no
-              "Blocked" state here — this app has no block-a-subscriber
-              feature yet, so a button for it would filter on nothing. */}
+          {/* Views — Main inbox view filters: All, Unreads, Importants, Resolved, Archived, Blocked */}
           {[
-            { key: 'all', label: 'All', icon: <Layers size={16} />, active: statusFilter === 'All' && !agentFilter, onClick: () => { setStatusFilter('All'); setAgentFilter(''); } },
-            { key: 'open', label: 'Open', icon: <MessageSquare size={16} />, active: statusFilter === 'OPEN' && !agentFilter, onClick: () => { setStatusFilter('OPEN'); setAgentFilter(''); } },
-            { key: 'pending', label: 'Pending', icon: <Clock size={16} />, active: statusFilter === 'PENDING' && !agentFilter, onClick: () => { setStatusFilter('PENDING'); setAgentFilter(''); } },
-            { key: 'resolved', label: 'Resolved', icon: <CheckCircle2 size={16} />, active: statusFilter === 'RESOLVED' && !agentFilter, onClick: () => { setStatusFilter('RESOLVED'); setAgentFilter(''); } },
-            { key: 'mine', label: 'Mine', icon: <User size={16} />, active: !!myProfileId && agentFilter === myProfileId, disabled: !myProfileId, onClick: () => { setStatusFilter('All'); setAgentFilter(myProfileId); } },
-            { key: 'unassigned', label: 'Unassigned', icon: <UserX size={16} />, active: agentFilter === 'unassigned', onClick: () => { setStatusFilter('All'); setAgentFilter('unassigned'); } },
+            { key: 'all', label: 'All', icon: <Layers size={16} />, active: viewFilter === 'all' && statusFilter === 'All' && !agentFilter, onClick: () => { setViewFilter('all'); setStatusFilter('All'); setAgentFilter(''); } },
+            { key: 'unread', label: 'Unreads', icon: <Mail size={16} />, active: viewFilter === 'unread', onClick: () => { setViewFilter('unread'); setStatusFilter('All'); setAgentFilter(''); } },
+            { key: 'important', label: 'Importants', icon: <Star size={16} />, active: viewFilter === 'important', onClick: () => { setViewFilter('important'); setStatusFilter('All'); setAgentFilter(''); } },
+            { key: 'resolved', label: 'Resolved', icon: <CheckCircle2 size={16} />, active: viewFilter === 'resolved' || statusFilter === 'RESOLVED', onClick: () => { setViewFilter('resolved'); setStatusFilter('RESOLVED'); setAgentFilter(''); } },
+            { key: 'archived', label: 'Archived', icon: <Archive size={16} />, active: viewFilter === 'archived', onClick: () => { setViewFilter('archived'); setStatusFilter('All'); setAgentFilter(''); } },
+            { key: 'blocked', label: 'Blocked', icon: <Ban size={16} />, active: viewFilter === 'blocked', onClick: () => { setViewFilter('blocked'); setStatusFilter('All'); setAgentFilter(''); } },
+          ].map(({ key, label, icon, active, disabled, onClick }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={onClick}
+              disabled={disabled}
+              title={disabled ? "You don't have a team profile on this workspace yet" : label}
+              style={{
+                width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 3,
+                border: 'none', borderRadius: 8, cursor: disabled ? 'default' : 'pointer',
+                background: active ? 'rgba(37, 99, 235, 0.1)' : 'transparent',
+                color: disabled ? '#cbd5e1' : (active ? '#2563eb' : '#94a3b8'),
+              }}
+              onMouseEnter={(e) => { if (!active && !disabled) e.currentTarget.style.background = '#f8fafc'; }}
+              onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent'; }}
+            >
+              {icon}
+            </button>
+          ))}
+
+          <div style={{ width: 24, borderTop: '1px solid #f1f5f9', margin: '8px 0' }} />
+
+          {/* Quick agent assignment filters: Mine & Unassigned */}
+          {[
+            { key: 'mine', label: 'Mine', icon: <User size={16} />, active: viewFilter === 'all' && !!myProfileId && agentFilter === myProfileId, disabled: !myProfileId, onClick: () => { setViewFilter('all'); setStatusFilter('All'); setAgentFilter(myProfileId); } },
+            { key: 'unassigned', label: 'Unassigned', icon: <UserX size={16} />, active: viewFilter === 'all' && agentFilter === 'unassigned', onClick: () => { setViewFilter('all'); setStatusFilter('All'); setAgentFilter('unassigned'); } },
           ].map(({ key, label, icon, active, disabled, onClick }) => (
             <button
               key={key}
@@ -2278,10 +2661,26 @@ export default function InboxPage() {
           <div className="conversation-list-header" style={{ padding: '10px 14px', borderBottom: '1px solid #e2e8f0' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 800, fontSize: '0.92rem', color: '#0f172a' }}>
-                <MessageSquare size={16} color="#2563eb" /> Conversations
+                {viewFilter === 'unread' ? (
+                  <><Mail size={16} color="#2563eb" /> Unread Chats</>
+                ) : viewFilter === 'important' ? (
+                  <><Star size={16} color="#eab308" /> Important Chats</>
+                ) : viewFilter === 'resolved' || statusFilter === 'RESOLVED' ? (
+                  <><CheckCircle2 size={16} color="#16a34a" /> Resolved Chats</>
+                ) : viewFilter === 'archived' ? (
+                  <><Archive size={16} color="#64748b" /> Archived Chats</>
+                ) : viewFilter === 'blocked' ? (
+                  <><Ban size={16} color="#ef4444" /> Blocked Subscribers</>
+                ) : agentFilter === myProfileId ? (
+                  <><User size={16} color="#2563eb" /> Assigned to Me</>
+                ) : agentFilter === 'unassigned' ? (
+                  <><UserX size={16} color="#2563eb" /> Unassigned Chats</>
+                ) : (
+                  <><MessageSquare size={16} color="#2563eb" /> Conversations</>
+                )}
               </div>
               <span style={{ fontSize: '0.72rem', fontWeight: 600, padding: '2px 8px', borderRadius: 12, background: 'rgba(37, 99, 235, 0.08)', color: '#2563eb' }}>
-                {filteredConversations.length} Active
+                {filteredConversations.length} {viewFilter === 'archived' ? 'Archived' : viewFilter === 'blocked' ? 'Blocked' : 'Active'}
               </span>
             </div>
 
@@ -2588,17 +2987,49 @@ export default function InboxPage() {
                             </span>
                           )}
                         </div>
-                        {conv.status && (
-                          <span style={{
-                            fontSize: '0.62rem',
-                            color: conv.status === 'OPEN' ? '#16a34a' : conv.status === 'ASSIGNED' ? '#2563eb' : '#94a3b8',
-                            fontWeight: 700,
-                            textTransform: 'capitalize',
-                            flexShrink: 0,
-                          }}>
-                            {conv.status.toLowerCase()}
-                          </span>
-                        )}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                          {Boolean(conv.is_important) && (
+                            <Star size={10} color="#f59e0b" fill="#f59e0b" title="Important" />
+                          )}
+                          {Boolean(conv.is_archived) && (
+                            <Archive size={10} color="#94a3b8" title="Archived" />
+                          )}
+                          {conv.status && (
+                            <span style={{
+                              fontSize: '0.62rem',
+                              color: conv.status === 'OPEN' ? '#16a34a' : conv.status === 'ASSIGNED' ? '#2563eb' : '#94a3b8',
+                              fontWeight: 700,
+                              textTransform: 'capitalize',
+                              flexShrink: 0,
+                            }}>
+                              {conv.status.toLowerCase()}
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => handleOpenConvMenu(e, conv)}
+                            title="More actions"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              padding: '0 2px',
+                              height: 15,
+                              minWidth: 18,
+                              borderRadius: 3,
+                              border: '1px solid #cbd5e1',
+                              background: '#ffffff',
+                              color: '#64748b',
+                              cursor: 'pointer',
+                              lineHeight: 1,
+                              transition: 'all 0.15s ease',
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#94a3b8'; e.currentTarget.style.color = '#0f172a'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#cbd5e1'; e.currentTarget.style.color = '#64748b'; }}
+                          >
+                            <MoreHorizontal size={11} />
+                          </button>
+                        </div>
                       </div>
                       {Array.isArray(conv.contactLabels) && conv.contactLabels.length > 0 && (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, marginTop: 2 }}>
@@ -2753,6 +3184,32 @@ export default function InboxPage() {
                     />
                     {botPaused ? <Play size={10} fill="#b91c1c" /> : <Pause size={10} />}
                     <span>{botPaused ? 'Resume Bot/AI' : 'Pause Bot/AI'}</span>
+                  </button>
+
+                  <button
+                    onClick={handleToggleTranslate}
+                    disabled={translatingChat}
+                    title={selectedConv?.translate_enabled ? 'Click to turn off message translation' : 'Click to translate incoming messages'}
+                    className="transition-all duration-150 hover:brightness-95 active:scale-95"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      padding: '4px 11px',
+                      height: 28,
+                      borderRadius: 16,
+                      border: selectedConv?.translate_enabled ? '1px solid #c7d2fe' : '1px solid #e2e8f0',
+                      background: selectedConv?.translate_enabled ? '#eef2ff' : '#ffffff',
+                      color: selectedConv?.translate_enabled ? '#4338ca' : '#475569',
+                      fontSize: '0.74rem',
+                      fontWeight: 700,
+                      cursor: translatingChat ? 'default' : 'pointer',
+                      opacity: translatingChat ? 0.6 : 1,
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <Languages size={12} />
+                    <span>Translate</span>
                   </button>
 
                   <button
@@ -2971,6 +3428,24 @@ export default function InboxPage() {
                             <div>
                               {text}
                             </div>
+                          )}
+
+                          {/* ── Live Chat Translator: on-demand per-message translation ── */}
+                          {!isMediaOnly && text && selectedConv?.translate_enabled === 1 && (
+                            msg.translated_text ? (
+                              <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px dashed #e2e8f0', color: '#4338ca', fontSize: '0.82rem', display: 'flex', alignItems: 'flex-start', gap: 5 }}>
+                                <Languages size={12} style={{ marginTop: 3, flexShrink: 0 }} />
+                                <span>{msg.translated_text}</span>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleTranslateMessage(msg)}
+                                style={{ marginTop: 6, background: 'none', border: 'none', color: '#6366f1', fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 4 }}
+                              >
+                                <Languages size={11} /> See translation
+                              </button>
+                            )
                           )}
 
                           {/* ── Interactive Footer (if present) ── */}
@@ -3273,24 +3748,75 @@ export default function InboxPage() {
                     )}
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSendMenuSection('menu');
-                      setShowSendMenu((p) => !p);
-                    }}
-                    title="Send a Bot Flow, Message Template, or WhatsApp Flow"
-                    className="transition-all duration-150 hover:bg-slate-100 active:scale-90"
-                    style={{
-                      width: 38, height: 38, borderRadius: '50%',
-                      border: `1px solid ${showSendMenu ? '#c7d2fe' : '#e2e8f0'}`,
-                      background: showSendMenu ? '#eef2ff' : '#f8fafc',
-                      color: showSendMenu ? '#4338ca' : '#64748b',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: 'pointer',
-                    }}
-                  >
-                    <Plus size={17} />
-                  </button>
+                  <div style={{ position: 'relative' }}>
+                    <button
+                      type="button"
+                      onClick={() => setShowSendMenuPicker((p) => !p)}
+                      title="Send a Bot Flow, Message Template, WhatsApp Flow, or Canned Response"
+                      className="transition-all duration-150 hover:bg-slate-100 active:scale-90"
+                      style={{
+                        width: 38, height: 38, borderRadius: '50%',
+                        border: `1px solid ${showSendMenuPicker || showSendMenu ? '#c7d2fe' : '#e2e8f0'}`,
+                        background: showSendMenuPicker || showSendMenu ? '#eef2ff' : '#f8fafc',
+                        color: showSendMenuPicker || showSendMenu ? '#4338ca' : '#64748b',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: 'pointer',
+                      }}
+                    >
+                      <Plus size={17} />
+                    </button>
+                    {showSendMenuPicker && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          bottom: 46,
+                          left: 0,
+                          width: 220,
+                          background: '#ffffff',
+                          border: '1px solid #e2e8f0',
+                          borderRadius: 12,
+                          boxShadow: '0 12px 28px rgba(0,0,0,0.14)',
+                          zIndex: 40,
+                          overflow: 'hidden',
+                          padding: 6,
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSendMenuPicker(false);
+                            setSendMenuSection('flowsTemplates');
+                            setShowSendMenu(true);
+                          }}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 9, width: '100%', textAlign: 'left',
+                            padding: '9px 10px', borderRadius: 8, border: 'none', background: 'transparent',
+                            cursor: 'pointer', fontSize: '0.82rem', fontWeight: 700, color: '#0f172a',
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = '#f8fafc')}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                        >
+                          <Layers size={16} color="#6366f1" /> Flows & Templates
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSendMenuPicker(false);
+                            setSendMenuSection('cannedResponse');
+                            setShowSendMenu(true);
+                          }}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 9, width: '100%', textAlign: 'left',
+                            padding: '9px 10px', borderRadius: 8, border: 'none', background: 'transparent',
+                            cursor: 'pointer', fontSize: '0.82rem', fontWeight: 700, color: '#0f172a',
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = '#f8fafc')}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                        >
+                          <MessageCircle size={16} color="#0ea5e9" /> Canned Response
+                        </button>
+                      </div>
+                    )}
+                  </div>
 
                   <div style={{ position: 'relative' }}>
                     <button
@@ -3421,14 +3947,18 @@ export default function InboxPage() {
                       if (!botPaused) setShowJoinModal(true);
                     }}
                   >
-                    {showCannedPicker && cannedMatches.length > 0 && (
+                    {showCannedPicker && (
                       <div style={{
                         position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, width: '100%', maxWidth: 380,
                         background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10,
                         boxShadow: '0 8px 24px rgba(0,0,0,0.12)', overflow: 'hidden', zIndex: 30,
                       }}>
                         <div style={{ maxHeight: 200, overflowY: 'auto' }}>
-                          {cannedMatches.map((c) => (
+                          {cannedMatches.length === 0 ? (
+                            <div style={{ padding: '14px 12px', textAlign: 'center', fontSize: '0.76rem', color: '#94a3b8' }}>
+                              {cannedResponses.length === 0 ? 'No canned responses yet.' : 'No matches.'}
+                            </div>
+                          ) : cannedMatches.map((c) => (
                             <button
                               key={c.id}
                               type="button"
@@ -3584,6 +4114,8 @@ export default function InboxPage() {
                 platform={selectedConv?.platform}
                 onSent={handleSendMenuResult}
                 initialSection={sendMenuSection}
+                cannedResponses={cannedResponses}
+                onCannedCreated={(newCanned) => setCannedResponses((prev) => [...prev, newCanned])}
               />
               <JoinChatModal
                 open={showJoinModal}
@@ -4422,6 +4954,242 @@ export default function InboxPage() {
         onClose={whatsappCall.reset}
         onRetry={() => whatsappCall.placeCall(whatsappCall.calleeContactId, selectedId, whatsappCall.calleeName, whatsappCall.calleeIntegrationId)}
       />
+
+      {/* Floating 3-Dots Conversation Context Menu */}
+      {convMenuTarget && (
+        <div
+          ref={convMenuRef}
+          style={{
+            position: 'fixed',
+            top: (() => {
+              const menuHeight = 280;
+              const rect = convMenuTarget.anchorRect;
+              if (rect.bottom + menuHeight > window.innerHeight) {
+                return Math.max(10, rect.top - menuHeight);
+              }
+              return rect.bottom + 4;
+            })(),
+            left: Math.max(10, convMenuTarget.anchorRect.right - 185),
+            width: 185,
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: 8,
+            boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08)',
+            zIndex: 9999,
+            padding: 4,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 1,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => handleMenuMarkRead(convMenuTarget.conv)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '6px 10px',
+              borderRadius: 6,
+              border: 'none',
+              background: 'transparent',
+              width: '100%',
+              textAlign: 'left',
+              cursor: 'pointer',
+              fontSize: '0.78rem',
+              fontWeight: 500,
+              color: '#334155',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = '#f8fafc')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          >
+            <MailOpen size={13} color="#64748b" />
+            <span>Mark As Read</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleMenuMarkUnread(convMenuTarget.conv)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '6px 10px',
+              borderRadius: 6,
+              border: 'none',
+              background: 'transparent',
+              width: '100%',
+              textAlign: 'left',
+              cursor: 'pointer',
+              fontSize: '0.78rem',
+              fontWeight: 500,
+              color: '#334155',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = '#f8fafc')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          >
+            <Mail size={13} color="#64748b" />
+            <span>Mark As Unread</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleMenuMarkImportant(convMenuTarget.conv)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '6px 10px',
+              borderRadius: 6,
+              border: 'none',
+              background: 'transparent',
+              width: '100%',
+              textAlign: 'left',
+              cursor: 'pointer',
+              fontSize: '0.78rem',
+              fontWeight: 500,
+              color: '#334155',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = '#f8fafc')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          >
+            <Star
+              size={13}
+              color={convMenuTarget.conv.is_important ? '#f59e0b' : '#64748b'}
+              fill={convMenuTarget.conv.is_important ? '#f59e0b' : 'none'}
+            />
+            <span>{convMenuTarget.conv.is_important ? 'Unmark Important' : 'Mark As Important'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleMenuMarkArchived(convMenuTarget.conv)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '6px 10px',
+              borderRadius: 6,
+              border: 'none',
+              background: 'transparent',
+              width: '100%',
+              textAlign: 'left',
+              cursor: 'pointer',
+              fontSize: '0.78rem',
+              fontWeight: 500,
+              color: '#334155',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = '#f8fafc')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          >
+            <Archive size={13} color="#64748b" />
+            <span>{convMenuTarget.conv.is_archived ? 'Unarchive' : 'Mark As Archived'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleMenuMarkResolve(convMenuTarget.conv)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '6px 10px',
+              borderRadius: 6,
+              border: 'none',
+              background: 'transparent',
+              width: '100%',
+              textAlign: 'left',
+              cursor: 'pointer',
+              fontSize: '0.78rem',
+              fontWeight: 500,
+              color: '#334155',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = '#f8fafc')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          >
+            <CheckCheck size={13} color="#64748b" />
+            <span>Mark As Resolve</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleMenuBlockUser(convMenuTarget.conv)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '6px 10px',
+              borderRadius: 6,
+              border: 'none',
+              background: 'transparent',
+              width: '100%',
+              textAlign: 'left',
+              cursor: 'pointer',
+              fontSize: '0.78rem',
+              fontWeight: 500,
+              color: '#334155',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = '#f8fafc')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          >
+            <Ban size={13} color="#64748b" />
+            <span>{convMenuTarget.conv.contactIsBlocked ? 'Unblock User' : 'Block User'}</span>
+          </button>
+
+          <div style={{ height: 1, background: '#f1f5f9', margin: '3px 0' }} />
+
+          <button
+            type="button"
+            onClick={() => handleMenuClearHistory(convMenuTarget.conv)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '6px 10px',
+              borderRadius: 6,
+              border: 'none',
+              background: 'transparent',
+              width: '100%',
+              textAlign: 'left',
+              cursor: 'pointer',
+              fontSize: '0.78rem',
+              fontWeight: 500,
+              color: '#dc2626',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = '#fef2f2')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          >
+            <MinusCircle size={13} color="#dc2626" />
+            <span>Clear Chat History</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleMenuDeleteSubscriber(convMenuTarget.conv)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '6px 10px',
+              borderRadius: 6,
+              border: 'none',
+              background: 'transparent',
+              width: '100%',
+              textAlign: 'left',
+              cursor: 'pointer',
+              fontSize: '0.78rem',
+              fontWeight: 500,
+              color: '#dc2626',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = '#fef2f2')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          >
+            <UserMinus size={13} color="#dc2626" />
+            <span>Delete Subscriber</span>
+          </button>
+        </div>
+      )}
     </AppLayout>
   );
 }

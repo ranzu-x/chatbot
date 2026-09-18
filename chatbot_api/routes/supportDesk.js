@@ -19,6 +19,7 @@ import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { requirePermission, loadOrgMember } from "../middleware/permissionMiddleware.js";
 import pool from "../db.js";
+import { buildSearch } from "../utils/searchQuery.js";
 import { emitToAgency, emitToTicket } from "../utils/socket.js";
 import { sendTicketEmail, ticketUrl } from "../utils/emailNotifications.js";
 
@@ -226,7 +227,16 @@ router.get("/support-desk/queue", requireDeskView, async (req, res) => {
     if (departmentId) { where += " AND t.department_id = ?"; params.push(departmentId); }
     if (assignedTo === "unassigned") { where += " AND t.assigned_to IS NULL"; }
     else if (assignedTo) { where += " AND t.assigned_to = ?"; params.push(assignedTo); }
-    if (search) { where += " AND (t.subject LIKE ? OR t.ticket_number LIKE ? OR u.name LIKE ?)"; params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
+    const searchClause = await buildSearch({
+      term: search,
+      fulltext: [{ table: "support_tickets", columns: ["subject"], expr: "t.subject", weight: 4 }],
+      like: ["t.subject", "t.ticket_number", "u.name"],
+      boost: { expr: "t.subject" },
+    });
+    if (searchClause.active) {
+      where += ` AND ${searchClause.where}`;
+      params.push(...searchClause.whereParams);
+    }
 
     const limit = Math.min(Number(pageSize) || 25, 100);
     const offset = (Math.max(Number(page) || 1, 1) - 1) * limit;

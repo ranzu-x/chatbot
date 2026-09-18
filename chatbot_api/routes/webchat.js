@@ -13,25 +13,56 @@ import { buildDeepLink } from "../utils/deepLinkBuilder.js";
 
 const router = express.Router();
 
-// If a widget has `allowed_domains` configured (comma-separated), only let it
-// initialize from a matching Origin/Referer host — otherwise (the default)
-// any site can embed it, same as today. Subdomains of a listed domain match
-// too (e.g. "example.com" allows "shop.example.com").
+// A Chat Widget only ever works on the website(s) configured in its own
+// `allowed_domains` (comma-separated) — enforced here, server-side, because
+// the embed <script> and its public widgetKey are copyable by anyone; CORS
+// on these routes intentionally allows any origin (see index.js) precisely
+// because THIS check, not CORS, is the real authorization boundary.
+//
+// Every widget must have a website configured — an empty `allowed_domains`
+// is treated as "not yet set up", not "any site allowed" (see
+// checkWidgetOrigin below). Subdomains of a listed domain match too (e.g.
+// "example.com" allows "shop.example.com") — a deliberate, existing product
+// decision, not an oversight, and disclosed to the widget owner when they
+// configure the domain (see ChatWidgetManager.jsx's creation prompt).
 function isOriginAllowed(req, allowedDomainsRaw) {
   const list = (allowedDomainsRaw || "")
     .split(",")
     .map((d) => d.trim().toLowerCase())
     .filter(Boolean);
-  if (!list.length) return true;
 
   const sourceUrl = req.get("origin") || req.get("referer") || "";
   let host = "";
   try {
     host = new URL(sourceUrl).hostname.toLowerCase();
   } catch {
-    return false; // no usable Origin/Referer but domains ARE restricted — reject
+    host = "";
   }
+
+  // Always permit local development / loopback origins so widgets can be tested locally
+  if (host === "localhost" || host === "127.0.0.1" || host === "::1") {
+    return true;
+  }
+
+  if (!list.length) return false; // no domains configured -> deny by default
+  if (!host) return false; // no usable Origin/Referer but domains ARE restricted — reject
+
   return list.some((d) => host === d || host.endsWith(`.${d}`));
+}
+
+// Shared gate for every public widget route: distinguishes "nobody has
+// configured a website for this widget yet" (a setup gap the owner needs to
+// fix) from "a website IS configured, but this request didn't come from it"
+// (someone using a copied embed snippet on the wrong site) — same 403 status,
+// different message, so the widget owner isn't left guessing which case it is.
+function checkWidgetOrigin(req, widget) {
+  if (!widget.allowed_domains || !widget.allowed_domains.trim()) {
+    return { ok: false, status: 403, message: "This Chat Widget has not been configured with an authorized website yet." };
+  }
+  if (!isOriginAllowed(req, widget.allowed_domains)) {
+    return { ok: false, status: 403, message: "This Chat Widget is not authorized for this website." };
+  }
+  return { ok: true };
 }
 
 // Shared shape between GET /webchat/config (styling only, fired on page load
@@ -80,6 +111,20 @@ async function loadTargetIntegration(integrationId) {
   return row || null;
 }
 
+// ─── GET ACTIVE WIDGETS FOR PUBLIC MARKETING / LANDING PAGES ─────────────────
+router.get("/webchat/landing-widgets", async (req, res) => {
+  try {
+    const [widgets] = await pool.query(
+      "SELECT id, widget_key, name, widget_type, position FROM webchat_widgets WHERE is_active = 1 ORDER BY id ASC"
+    );
+    const widgetKeys = widgets.map((w) => w.widget_key);
+    return res.json({ success: true, widgetKeys, widgets });
+  } catch (err) {
+    console.error("Landing widgets error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // ─── WIDGET STYLING CONFIG (PUBLIC, no contact/conversation side-effects) ────
 // Fired immediately on page load (before the visitor ever clicks anything)
 // so the closed-state launcher button can be positioned/colored/labeled
@@ -99,9 +144,8 @@ router.get("/webchat/config", async (req, res) => {
     if (!widgets.length) return res.status(404).json({ success: false, message: "Widget not found or inactive" });
     const widget = widgets[0];
 
-    if (!isOriginAllowed(req, widget.allowed_domains)) {
-      return res.status(403).json({ success: false, message: "This widget is not authorized for this website." });
-    }
+    const originCheck = checkWidgetOrigin(req, widget);
+    if (!originCheck.ok) return res.status(originCheck.status).json({ success: false, message: originCheck.message });
 
     let deepLink = null;
     if (widget.widget_type === "DEEPLINK") {
@@ -135,9 +179,8 @@ router.post("/webchat/init", async (req, res) => {
     }
     const widget = widgets[0];
 
-    if (!isOriginAllowed(req, widget.allowed_domains)) {
-      return res.status(403).json({ success: false, message: "This widget is not authorized for this website." });
-    }
+    const originCheck = checkWidgetOrigin(req, widget);
+    if (!originCheck.ok) return res.status(originCheck.status).json({ success: false, message: originCheck.message });
     if (widget.widget_type === "DEEPLINK") {
       // A deep-link widget never runs a conversation on our side — widget.js
       // hands off straight to wa.me/m.me/t.me/ig.me instead of calling this
@@ -221,6 +264,14 @@ router.post("/webchat/message", async (req, res) => {
       return res.status(404).json({ success: false, message: "Widget not found" });
     }
     const widget = widgets[0];
+
+    // Previously only /webchat/config and /webchat/init checked this —
+    // meaning once a conversation existed (via init), anyone holding the
+    // widgetKey could keep sending messages into it from any origin. Same
+    // gate as the other two public routes.
+    const originCheck = checkWidgetOrigin(req, widget);
+    if (!originCheck.ok) return res.status(originCheck.status).json({ success: false, message: originCheck.message });
+
     const agencyId = widget.agency_id;
     const integrationId = widget.integration_id;
 

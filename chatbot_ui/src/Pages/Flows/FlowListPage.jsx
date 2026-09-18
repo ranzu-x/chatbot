@@ -3,6 +3,7 @@ import AppLayout from '../../Layout/AppLayout';
 import { flowAPI } from '../../services/api';
 import { useNavigate, useLocation } from 'react-router';
 import PlatformIcon from '../../Components/Common/PlatformIcon';
+import { buildDefaultWidgetFlowGraph } from '../../utils/chatWidgetHelpers';
 
 /* ─── constants ─── */
 const PLATFORMS = {
@@ -164,7 +165,8 @@ function CreateModal({ open, onClose, onCreate, creating }) {
 
   if (!open) return null;
 
-  const canSubmit = name.trim() && (triggerType !== 'KEYWORD' || triggerKeyword.trim());
+  const isWebchat = platform === 'WEBCHAT';
+  const canSubmit = name.trim() && (isWebchat || triggerType !== 'KEYWORD' || triggerKeyword.trim());
 
   const handleSubmit = e => {
     e.preventDefault();
@@ -172,8 +174,8 @@ function CreateModal({ open, onClose, onCreate, creating }) {
     onCreate({
       name: name.trim(),
       platform,
-      trigger_type: triggerType,
-      trigger_keyword: triggerType === 'KEYWORD' ? triggerKeyword.trim() : '',
+      trigger_type: isWebchat ? 'CHAT_WIDGET' : triggerType,
+      trigger_keyword: (!isWebchat && triggerType === 'KEYWORD') ? triggerKeyword.trim() : '',
     });
   };
 
@@ -274,32 +276,48 @@ function CreateModal({ open, onClose, onCreate, creating }) {
           </div>
 
           {/* trigger type */}
-          <div>
-            <label style={labelStyle}>Trigger Type</label>
-            <select
-              value={triggerType} onChange={e => setTriggerType(e.target.value)}
-              style={{ ...inputStyle, cursor: 'pointer', appearance: 'auto' }}
-              onFocus={e => { e.target.style.borderColor = 'var(--primary, #6366f1)'; e.target.style.boxShadow = '0 0 0 3px rgba(99,102,241,.18)'; }}
-              onBlur={e => { e.target.style.borderColor = 'var(--border, rgba(255,255,255,.12))'; e.target.style.boxShadow = 'none'; }}
-            >
-              {TRIGGER_TYPES.map(t => (
-                <option key={t.value} value={t.value}>{t.label}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* keyword */}
-          {triggerType === 'KEYWORD' && (
-            <div style={{ animation: 'flFadeUp .25s ease' }}>
-              <label style={labelStyle}>Trigger Keyword</label>
-              <input
-                value={triggerKeyword} onChange={e => setTriggerKeyword(e.target.value)}
-                placeholder="e.g. /start"
-                style={inputStyle}
-                onFocus={e => { e.target.style.borderColor = 'var(--primary, #6366f1)'; e.target.style.boxShadow = '0 0 0 3px rgba(99,102,241,.18)'; }}
-                onBlur={e => { e.target.style.borderColor = 'var(--border, rgba(255,255,255,.12))'; e.target.style.boxShadow = 'none'; }}
-              />
+          {isWebchat ? (
+            <div style={{
+              padding: '12px 14px',
+              borderRadius: 'var(--radius, 12px)',
+              background: 'rgba(99,102,241,0.08)',
+              border: '1px solid rgba(99,102,241,0.2)',
+              color: '#818cf8',
+              fontSize: 12.5,
+              lineHeight: 1.5,
+            }}>
+              🌐 <strong>Live Webchat Widget:</strong> This flow starts with the Chat Widget starting node and triggers when visitors chat in the embedded website widget.
             </div>
+          ) : (
+            <>
+              <div>
+                <label style={labelStyle}>Trigger Type</label>
+                <select
+                  value={triggerType} onChange={e => setTriggerType(e.target.value)}
+                  style={{ ...inputStyle, cursor: 'pointer', appearance: 'auto' }}
+                  onFocus={e => { e.target.style.borderColor = 'var(--primary, #6366f1)'; e.target.style.boxShadow = '0 0 0 3px rgba(99,102,241,.18)'; }}
+                  onBlur={e => { e.target.style.borderColor = 'var(--border, rgba(255,255,255,.12))'; e.target.style.boxShadow = 'none'; }}
+                >
+                  {TRIGGER_TYPES.map(t => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* keyword */}
+              {triggerType === 'KEYWORD' && (
+                <div style={{ animation: 'flFadeUp .25s ease' }}>
+                  <label style={labelStyle}>Trigger Keyword</label>
+                  <input
+                    value={triggerKeyword} onChange={e => setTriggerKeyword(e.target.value)}
+                    placeholder="e.g. /start"
+                    style={inputStyle}
+                    onFocus={e => { e.target.style.borderColor = 'var(--primary, #6366f1)'; e.target.style.boxShadow = '0 0 0 3px rgba(99,102,241,.18)'; }}
+                    onBlur={e => { e.target.style.borderColor = 'var(--border, rgba(255,255,255,.12))'; e.target.style.boxShadow = 'none'; }}
+                  />
+                </div>
+              )}
+            </>
           )}
 
           {/* submit */}
@@ -581,7 +599,19 @@ export default function FlowListPage() {
   const handleCreate = async (data) => {
     try {
       setCreating(true);
-      const res = await flowAPI.create(data);
+      const isWebchat = (data.platform || '').toUpperCase() === 'WEBCHAT';
+      let payload = { ...data };
+      if (isWebchat) {
+        const { nodes, edges } = buildDefaultWidgetFlowGraph(data.name, 'WEBCHAT');
+        payload = {
+          ...payload,
+          trigger_type: 'CHAT_WIDGET',
+          trigger_keyword: null,
+          nodes_json: JSON.stringify(nodes),
+          edges_json: JSON.stringify(edges),
+        };
+      }
+      const res = await flowAPI.create(payload);
       if (res.data?.success) {
         toast(`Flow "${data.name}" created!`);
         setShowCreate(false);

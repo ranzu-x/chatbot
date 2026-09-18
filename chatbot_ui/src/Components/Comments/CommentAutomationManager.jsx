@@ -32,9 +32,16 @@ import {
   Upload,
 } from 'lucide-react';
 
-export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' }) {
+// `lockPlatform` ('FACEBOOK' | 'INSTAGRAM') restricts this instance to one
+// platform for good — its integration list, account selector, and campaigns
+// never include the other platform, and `platform` state never switches away
+// from it. This is what BotManagerPage.jsx's two separate Comment Automation
+// sub-tabs (Facebook / Instagram) pass, replacing the old single screen that
+// mixed both platforms behind one combined account dropdown. Omit it for the
+// legacy unlocked behavior (kept for any other future call site).
+export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK', lockPlatform }) {
   const [activeTab, setActiveTab] = useState('posts'); // 'posts' | 'campaigns'
-  const [platform, setPlatform] = useState(defaultPlatform); // 'FACEBOOK' | 'INSTAGRAM'
+  const [platform, setPlatform] = useState(lockPlatform || defaultPlatform); // 'FACEBOOK' | 'INSTAGRAM'
   const [integrations, setIntegrations] = useState([]);
   const [selectedIntegrationId, setSelectedIntegrationId] = useState('');
   
@@ -99,7 +106,6 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' 
 
   useEffect(() => {
     aiAgentAPI.getAll().then((res) => setAiAgents(res.data?.agents || [])).catch(() => setAiAgents([]));
-    flowAPI.getAll().then((res) => setFlows(res.data?.flows || [])).catch(() => setFlows([]));
   }, []);
 
   const handleMediaUpload = async (e) => {
@@ -133,16 +139,29 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' 
   useEffect(() => {
     if (selectedIntegrationId) {
       loadPostsAndCampaigns();
+      flowAPI.getAll({ integrationId: selectedIntegrationId }).then((res) => setFlows(res.data?.flows || [])).catch(() => setFlows([]));
+    } else {
+      setFlows([]);
     }
   }, [selectedIntegrationId, platform]);
 
   const loadIntegrations = async () => {
     try {
       const res = await integrationAPI.getAll();
-      const list = (res.data?.integrations || []).filter(
-        (i) => i.platform === 'FACEBOOK' || i.platform === 'INSTAGRAM'
-      );
+      const allowedPlatforms = lockPlatform ? [lockPlatform] : ['FACEBOOK', 'INSTAGRAM'];
+      const list = (res.data?.integrations || []).filter((i) => allowedPlatforms.includes(i.platform));
       setIntegrations(list);
+      if (lockPlatform) {
+        // Never switch away from the locked platform, even when the agency
+        // has no account of it connected yet (list is empty) — the screen
+        // stays "Facebook Comment Automation" / "Instagram Comment
+        // Automation" rather than silently jumping to the other platform's
+        // account, which is exactly the combined-dropdown behavior this
+        // prop exists to remove.
+        const matched = list[0] || null;
+        if (matched) setSelectedIntegrationId(matched.id);
+        return;
+      }
       const matched = list.find((i) => i.platform === platform) || list[0];
       if (matched) {
         setSelectedIntegrationId(matched.id);
@@ -516,24 +535,34 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' 
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {/* Account Selector */}
-          <select
-            className="form-input"
-            value={selectedIntegrationId}
-            onChange={(e) => {
-              const val = e.target.value;
-              setSelectedIntegrationId(val);
-              const found = integrations.find((i) => String(i.id) === String(val));
-              if (found) setPlatform(found.platform);
-            }}
-            style={{ fontSize: '0.82rem', fontWeight: 600, height: 38, minWidth: 200 }}
-          >
-            {integrations.map((integ) => (
-              <option key={integ.id} value={integ.id}>
-                {integ.platform === 'FACEBOOK' ? '📘 ' : '📸 '} {integ.name || `${integ.platform} Account`}
-              </option>
-            ))}
-          </select>
+          {/* Account Selector — hidden when locked to a single platform with
+              only one (or zero) connected account: nothing to choose between,
+              and this is exactly the spot the old combined Facebook/Instagram
+              dropdown lived, so a locked instance never shows one at all. */}
+          {lockPlatform && integrations.length === 0 ? (
+            <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>No {lockPlatform === 'FACEBOOK' ? 'Facebook Page' : 'Instagram account'} connected yet</span>
+          ) : (!lockPlatform || integrations.length > 1) ? (
+            <select
+              className="form-input"
+              value={selectedIntegrationId}
+              onChange={(e) => {
+                const val = e.target.value;
+                setSelectedIntegrationId(val);
+                const found = integrations.find((i) => String(i.id) === String(val));
+                // Locked instances only ever list accounts of the locked
+                // platform, so this can never actually switch platform — the
+                // call stays here for the unlocked (legacy) case.
+                if (found) setPlatform(found.platform);
+              }}
+              style={{ fontSize: '0.82rem', fontWeight: 600, height: 38, minWidth: 200 }}
+            >
+              {integrations.map((integ) => (
+                <option key={integ.id} value={integ.id}>
+                  {integ.platform === 'FACEBOOK' ? '📘 ' : '📸 '} {integ.name || `${integ.platform} Account`}
+                </option>
+              ))}
+            </select>
+          ) : null}
 
           <button
             type="button"
@@ -1196,6 +1225,7 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK' 
                         <option value="">Select a Bot Flow…</option>
                         {flows
                           .filter((f) => !f.platform || f.platform === platform)
+                          .filter((f) => !f.integration_id || String(f.integration_id) === String(selectedIntegrationId))
                           .map((f) => (
                             <option key={f.id} value={f.id}>{f.name}</option>
                           ))}

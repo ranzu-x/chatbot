@@ -12,6 +12,7 @@ import express from "express";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { resolveCapability } from "../utils/aiProviders/registry.js";
+import { assertLimit } from "../utils/entitlements.js";
 
 const router = express.Router();
 router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
@@ -32,6 +33,8 @@ router.post("/ai/rewrite-message", async (req, res) => {
     if (!text || !text.trim()) return res.status(400).json({ success: false, message: "text is required" });
     const instruction = STYLE_INSTRUCTIONS[style] || STYLE_INSTRUCTIONS.professional;
 
+    await assertLimit(agencyId, "max_ai_tokens_per_month", 0, req.user?.id);
+
     const resolved = await resolveCapability(agencyId, "text_generation");
     if (!resolved) {
       return res.status(403).json({ success: false, message: "No AI provider is configured for this workspace yet. Connect one under Settings → AI Providers.", code: "AI_NOT_CONFIGURED" });
@@ -49,7 +52,7 @@ router.post("/ai/rewrite-message", async (req, res) => {
     return res.json({ success: true, text: rewritten, providerId: resolved.providerId });
   } catch (err) {
     console.error("POST /ai/rewrite-message error:", err);
-    return res.status(500).json({ success: false, message: err.message || "Server error" });
+    return res.status(err.status || 500).json({ success: false, message: err.message || "Server error", code: err.code });
   }
 });
 

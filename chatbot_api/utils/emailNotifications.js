@@ -35,14 +35,14 @@ function getTransporter() {
   return cachedTransporter;
 }
 
-function wrapHtml(title, bodyHtml) {
+function wrapHtml(title, bodyHtml, footer = "This is an automated notification from your Support Desk.") {
   return `<!doctype html><html><body style="margin:0;padding:0;background:#f4f6f8;font-family:-apple-system,'Segoe UI',sans-serif;">
     <div style="max-width:520px;margin:24px auto;background:#ffffff;border-radius:10px;overflow:hidden;border:1px solid #e2e8f0;">
       <div style="padding:20px 24px;border-bottom:1px solid #e2e8f0;">
         <div style="font-size:0.95rem;font-weight:700;color:#0f172a;">${title}</div>
       </div>
       <div style="padding:20px 24px;color:#334155;font-size:0.9rem;line-height:1.6;">${bodyHtml}</div>
-      <div style="padding:14px 24px;background:#f8fafc;color:#94a3b8;font-size:0.75rem;">This is an automated notification from your Support Desk.</div>
+      <div style="padding:14px 24px;background:#f8fafc;color:#94a3b8;font-size:0.75rem;">${footer}</div>
     </div>
   </body></html>`;
 }
@@ -71,4 +71,34 @@ export async function sendTicketEmail({ to, subject, title, bodyHtml }) {
 export function ticketUrl(ticketId) {
   const base = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/+$/, "");
   return `${base}/support/tickets/${ticketId}`;
+}
+
+/** Sent once by the guest-checkout flow (routes/billing.js) right after a
+ * payment webhook creates a brand-new account — the buyer's only notice
+ * that their workspace now exists, since guest checkout never shows them
+ * a signup form. Never throws, same posture as sendTicketEmail. */
+export async function sendWelcomeEmail({ to, name, agencyName, loginUrl }) {
+  if (!to) return;
+  const transporter = getTransporter();
+  const from = process.env.SMTP_FROM || process.env.SMTP_USER || "no-reply@localhost";
+  const subject = `Welcome to ${agencyName} — your account is ready`;
+  const html = wrapHtml(
+    "Your workspace is ready",
+    `<p>Hi ${name || "there"},</p>
+     <p>Thanks for your purchase! Your workspace <strong>${agencyName}</strong> has been created and your plan is active.</p>
+     <p><a href="${loginUrl}" style="display:inline-block;padding:10px 18px;background:#0f172a;color:#ffffff;border-radius:8px;text-decoration:none;font-weight:700;">Log in to your workspace</a></p>
+     <p style="color:#64748b;">Use the email and password you entered at checkout to sign in.</p>`,
+    "This is an automated notification from your account."
+  );
+
+  if (!transporter) {
+    console.log(`[Email:not-sent] to=${to} subject="${subject}" — SMTP not configured`);
+    return;
+  }
+
+  try {
+    await transporter.sendMail({ from, to, subject, html });
+  } catch (err) {
+    console.error(`[Email] Failed to send welcome email to ${to}:`, err.message);
+  }
 }

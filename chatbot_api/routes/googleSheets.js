@@ -6,6 +6,7 @@
 import express from "express";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
+import { requireModule } from "../utils/entitlements.js";
 import * as googleSheets from "../utils/googleSheets.js";
 
 const router = express.Router();
@@ -35,7 +36,7 @@ router.get("/integrations/google-sheets/callback", async (req, res) => {
   }
 });
 
-router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
+router.use("/integrations/google-sheets", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_google_sheets"));
 
 router.get("/integrations/google-sheets/auth-url", async (req, res) => {
   try {

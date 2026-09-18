@@ -7,6 +7,7 @@ import { sendWebhook } from "./outboundWebhook.js";
 import * as googleSheetsUtil from "./googleSheets.js";
 import { resolveNextNodeId, resolveNextStepNodeId } from "./flowGraph.js";
 import { enrollContactsInSequence, unsubscribeContactFromSequence } from "../routes/sequences.js";
+import { executeHttpApiCampaign } from "../services/httpApiExecutor.js";
 
 // Mirrors FlowBuilderPage.jsx's TYPING_ELIGIBLE_NODE_TYPES — only node types
 // that actually send a message to the contact offer "Show typing before
@@ -25,13 +26,47 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
   const isMedia = ["IMAGE", "VIDEO", "AUDIO", "VOICE", "DOCUMENT", "FILE"].includes(upperMsgType);
   
   const integId = integration?.id || null;
-  const [flows] = await pool.query(
-    `SELECT * FROM flows 
-     WHERE agency_id = ? AND platform = ? AND is_active = 1 
-       AND (integration_id IS NULL OR integration_id = ?)
-     ORDER BY (integration_id <=> ?) DESC, (trigger_type = 'KEYWORD') DESC, created_at DESC`,
-    [agencyId, platform, integId, integId]
-  );
+  const query = integId
+    ? `SELECT * FROM flows 
+       WHERE agency_id = ? AND platform = ? AND is_active = 1 
+         AND integration_id = ?
+       ORDER BY (trigger_type = 'KEYWORD') DESC, created_at DESC`
+    : `SELECT * FROM flows 
+       WHERE agency_id = ? AND platform = ? AND is_active = 1 
+         AND integration_id IS NULL
+       ORDER BY (trigger_type = 'KEYWORD') DESC, created_at DESC`;
+  const queryParams = integId ? [agencyId, platform, integId] : [agencyId, platform];
+  const [flows] = await pool.query(query, queryParams);
+
+  // A chat-widget / deep-link hand-off arrives carrying the widget's own
+  // prefilled text, which identifies the click far more precisely than a
+  // substring keyword match — so it is resolved first, ahead of the ordering
+  // above. Without this the widget's flow is unreachable in practice: a
+  // generic "hi" keyword flow sorts first and swallows every visitor (the
+  // stock prefill "Hi, i would like to know more about you." contains "hi"),
+  // and a returning contact never qualifies as a first-contact either,
+  // because their conversation already has history.
+  if (msgText) {
+    for (const f of flows) {
+      let widgetNodes = [];
+      try { widgetNodes = JSON.parse(f.nodes_json || "[]"); } catch { continue; }
+      const widgetStart = widgetNodes.find(n => n.type === "start");
+      if (!widgetStart) continue;
+      if (!widgetStart.data?.chatWidgetStart && f.trigger_type !== "CHAT_WIDGET") continue;
+
+      const prefill = (widgetStart.data?.prefillMessage || "").trim().toLowerCase();
+      // startsWith, not equality — the prefilled text is editable in WhatsApp
+      // and visitors routinely type extra onto the end before sending.
+      if (prefill && msgText.startsWith(prefill)) {
+        return {
+          flow: f,
+          nodes: widgetNodes,
+          edges: JSON.parse(f.edges_json || "[]"),
+          startNode: widgetStart,
+        };
+      }
+    }
+  }
 
   for (const f of flows) {
     let flowNodes = [];
@@ -42,9 +77,15 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
     // Multi-trigger support: check if startNode has `triggers` array
     let triggersList = startNode.data?.triggers;
     if (!Array.isArray(triggersList) || triggersList.length === 0) {
+      // A Chat Widget's Start node is launched by the widget/deep-link, never
+      // by keyword — force this regardless of any stale `data.trigger_type`
+      // left over from the node's properties panel (that field is hidden for
+      // chat-widget starts, see FlowBuilderPage.jsx's validateNodeData, but
+      // can still hold an old value from before a flow was linked to a widget).
+      const isChatWidgetStart = Boolean(startNode.data?.chatWidgetStart) || f.trigger_type === "CHAT_WIDGET";
       triggersList = [
         {
-          type: startNode.data?.trigger_type || f.trigger_type || "keyword",
+          type: isChatWidgetStart ? "chat_widget" : (startNode.data?.trigger_type || f.trigger_type || "keyword"),
           match_type: startNode.data?.match_type || "contains",
           keywords: startNode.data?.keywords || (f.trigger_keyword ? f.trigger_keyword.split(",") : []),
         }
@@ -126,6 +167,23 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
             isMatch = true;
             break;
           }
+        }
+      } else if (tType === "chat_widget" || tType === "chatwidget") {
+        // Same semantics as first_contact: the widget/deep-link hands the
+        // visitor off to send their first message, which is what should
+        // trigger this flow's greeting — not every later message they send.
+        if (conversationId) {
+          const [msgCount] = await pool.query(
+            "SELECT COUNT(*) as count FROM messages WHERE conversation_id = ?",
+            [conversationId]
+          );
+          if (msgCount[0]?.count <= 1) {
+            isMatch = true;
+            break;
+          }
+        } else {
+          isMatch = true;
+          break;
         }
       } else if (tType === "any" || tType === "any_message") {
         isMatch = true;
@@ -1635,6 +1693,47 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           );
 
           stopFlow = true;
+          break;
+        }
+
+        case "httpApi": {
+          // Calls a saved HTTP API Campaign (Automation module) by id —
+          // see services/httpApiExecutor.js for the actual request and its
+          // response -> custom field mapping. Two output handles let a flow
+          // branch on whether the call actually succeeded, same pattern as
+          // "condition" above (getNextNodeId(node.id, handleId)).
+          const campaignId = node.data?.campaignId;
+          if (!campaignId) {
+            console.warn(`[Flow Engine] httpApi node ${node.id} has no campaignId configured — skipping.`);
+            currentNodeId = getNextNodeId(node.id, "fail");
+            break;
+          }
+
+          const [[campaign]] = await pool.query(
+            "SELECT * FROM http_api_campaigns WHERE id = ? AND agency_id = ? AND is_active = 1",
+            [campaignId, agencyId]
+          );
+
+          if (!campaign) {
+            console.warn(`[Flow Engine] httpApi node ${node.id} references missing/inactive campaign ${campaignId}.`);
+            currentNodeId = getNextNodeId(node.id, "fail");
+            break;
+          }
+
+          const httpResult = await executeHttpApiCampaign(campaign, {
+            agencyId,
+            contact,
+            variables,
+            replaceVariables,
+            flowId: flow?.id || session?.flow_id || null,
+            nodeId: node.id,
+          });
+
+          // Persist the (possibly field-updated) session variables, same as
+          // every other node that can mutate them (see collectInput above).
+          await pool.query("UPDATE flow_sessions SET variables = ? WHERE id = ?", [JSON.stringify(variables), session.id]);
+
+          currentNodeId = getNextNodeId(node.id, httpResult.success ? "success" : "fail");
           break;
         }
 

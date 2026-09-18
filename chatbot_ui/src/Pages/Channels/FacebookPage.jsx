@@ -1,12 +1,15 @@
 import { useState, useEffect } from 'react';
 import AppLayout from '../../Layout/AppLayout';
+import ChannelBreadcrumb from '../../Components/Common/ChannelBreadcrumb';
 import { channelAPI } from '../../services/api';
 import useFacebookSDK from '../../hooks/useFacebookSDK';
-import { showAlert, notify } from '../../utils/alerts';
+import { notify, handleLimitError } from '../../utils/alerts';
+import { useAuth } from '../../Provider/AuthContext';
 import {
   Facebook, MessageSquare, Heart, EyeOff, Plus, CheckCircle2,
   Trash2, Edit2, RefreshCw, Zap, Shield, Sparkles, Key, ExternalLink,
-  MessageCircle, Radio, Tag, Filter, Check, Copy
+  MessageCircle, Radio, Tag, Filter, Check, Copy, AlertTriangle,
+  ClipboardList, XCircle, Circle, Globe, X, ArrowLeft, ArrowRight,
 } from 'lucide-react';
 
 // ─── Facebook Login Button ─────────────────────────────────────────
@@ -37,8 +40,7 @@ function FBLoginButton({ onClick, loading, disabled }) {
 }
 
 export default function FacebookPage({ embedded = false }) {
-  const [activeTab, setActiveTab] = useState('pages'); // 'pages' or 'comments'
-
+  const { user } = useAuth();
   // Connected Pages State
   const [connected, setConnected] = useState([]);
   const [loadingConnected, setLoadingConnected] = useState(true);
@@ -52,36 +54,12 @@ export default function FacebookPage({ embedded = false }) {
   const [manualForm, setManualForm] = useState({ name: '', fbPageId: '', fbPageName: '', accessToken: '' });
   const [manualSaving, setManualSaving] = useState(false);
 
-  // Comment Automation State
-  const [commentRules, setCommentRules] = useState([]);
-  const [loadingRules, setLoadingRules] = useState(false);
-  const [showRuleModal, setShowRuleModal] = useState(false);
-  const [editingRule, setEditingRule] = useState(null);
-  const [ruleSaving, setRuleSaving] = useState(false);
-  const [ruleForm, setRuleForm] = useState({
-    campaignName: '',
-    integrationId: '',
-    postId: 'ALL_POSTS',
-    triggerType: 'ALL',
-    triggerKeywords: '',
-    autoReplyComment: '',
-    autoReplyPrivateMessage: '',
-    enableLikeComment: true,
-    enableHideComment: false,
-  });
+  // Connect flow: 'list' | 'choose_method' | 'oauth' | 'token'
+  const [pagesView, setPagesView] = useState('list');
+  const [quickToken, setQuickToken] = useState('');
+  const [quickConnecting, setQuickConnecting] = useState(false);
 
-  const [toast, setToast] = useState(null);
-  const { fbReady, sdkError } = useFacebookSDK();
-
-  // Utility Messaging State
-  const [utilityPageId, setUtilityPageId] = useState('');
-  const [utilityTemplates, setUtilityTemplates] = useState([]);
-  const [utilityTemplatesLoading, setUtilityTemplatesLoading] = useState(false);
-  const [utilityTemplatesError, setUtilityTemplatesError] = useState('');
-  const [selectedTemplate, setSelectedTemplate] = useState(null);
-  const [utilityForm, setUtilityForm] = useState({ recipientId: '', templateName: '', components: [] });
-  const [utilitySending, setUtilitySending] = useState(false);
-  const [utilitySendResult, setUtilitySendResult] = useState(null);
+  const { fbReady, sdkError } = useFacebookSDK('MESSENGER_INSTAGRAM');
 
   const showToast = (msg, type = 'success') => {
     if (type === 'error') notify.error(msg);
@@ -101,22 +79,8 @@ export default function FacebookPage({ embedded = false }) {
     }
   };
 
-  // ── Load Comment Rules ──
-  const fetchCommentRules = async () => {
-    setLoadingRules(true);
-    try {
-      const res = await channelAPI.getFBCommentRules();
-      setCommentRules(res.data.rules || []);
-    } catch {
-      showToast('Failed to load comment automation rules', 'error');
-    } finally {
-      setLoadingRules(false);
-    }
-  };
-
   useEffect(() => {
     fetchConnected();
-    fetchCommentRules();
   }, []);
 
   // ── Facebook SDK Login & Page Fetch ──
@@ -217,11 +181,35 @@ export default function FacebookPage({ embedded = false }) {
       showToast(`Successfully connected ${successCount} Facebook page(s)!`);
       setStep('done');
       setSelected([]);
+      setPagesView('list');
       fetchConnected();
     } catch (err) {
-      showToast(err.response?.data?.message || 'Failed to connect pages', 'error');
+      if (!handleLimitError(err, { userRole: user?.role })) {
+        showToast(err.response?.data?.message || 'Failed to connect pages', 'error');
+      }
     } finally {
       setImporting(false);
+    }
+  };
+
+  const handleQuickConnect = async () => {
+    if (!quickToken.trim()) {
+      showToast('Please paste your Access Token first', 'error');
+      return;
+    }
+    setQuickConnecting(true);
+    try {
+      const res = await channelAPI.quickConnectFacebook(quickToken.trim());
+      showToast(res.data.message || 'Connected with permanent token!');
+      setQuickToken('');
+      setPagesView('list');
+      fetchConnected();
+    } catch (err) {
+      if (!handleLimitError(err, { userRole: user?.role })) {
+        showToast(err.response?.data?.message || 'Failed to connect', 'error');
+      }
+    } finally {
+      setQuickConnecting(false);
     }
   };
 
@@ -236,115 +224,8 @@ export default function FacebookPage({ embedded = false }) {
     }
   };
 
-  // ── Comment Automation CRUD ──
-  const handleRuleSubmit = async (e) => {
-    e.preventDefault();
-    setRuleSaving(true);
-    try {
-      if (editingRule) {
-        await channelAPI.updateFBCommentRule(editingRule.id, ruleForm);
-        showToast('Comment campaign updated');
-      } else {
-        await channelAPI.createFBCommentRule(ruleForm);
-        showToast('Comment automation campaign created!');
-      }
-      setShowRuleModal(false);
-      setEditingRule(null);
-      setRuleForm({
-        campaignName: '',
-        integrationId: '',
-        postId: 'ALL_POSTS',
-        triggerType: 'ALL',
-        triggerKeywords: '',
-        autoReplyComment: '',
-        autoReplyPrivateMessage: '',
-        enableLikeComment: true,
-        enableHideComment: false,
-      });
-      fetchCommentRules();
-    } catch (err) {
-      showToast(err.response?.data?.message || 'Failed to save campaign', 'error');
-    } finally {
-      setRuleSaving(false);
-    }
-  };
-
-  const handleToggleRule = async (rule) => {
-    try {
-      await channelAPI.toggleFBCommentRule(rule.id);
-      setCommentRules(prev => prev.map(r => r.id === rule.id ? { ...r, is_active: r.is_active ? 0 : 1 } : r));
-      showToast(`Campaign ${rule.is_active ? 'disabled' : 'activated'}`);
-    } catch {
-      showToast('Failed to toggle campaign', 'error');
-    }
-  };
-
-  const handleDeleteRule = async (id) => {
-    const ok = await showAlert.confirm({
-      title: 'Delete Campaign?',
-      text: 'Are you sure you want to delete this comment automation campaign?',
-      confirmButtonText: 'Yes, Delete',
-    });
-    if (!ok) return;
-    try {
-      await channelAPI.deleteFBCommentRule(id);
-      notify.success('Campaign deleted successfully');
-      fetchCommentRules();
-    } catch {
-      notify.error('Failed to delete campaign');
-    }
-  };
-
-  // ── Utility Messaging: Fetch Templates for Selected Page ──
-  const fetchUtilityTemplates = async (integrationId) => {
-    if (!integrationId) { setUtilityTemplates([]); return; }
-    setUtilityTemplatesLoading(true);
-    setUtilityTemplatesError('');
-    setSelectedTemplate(null);
-    try {
-      const res = await channelAPI.getFBUtilityTemplates(integrationId);
-      if (res.data.graphError) {
-        setUtilityTemplatesError(res.data.graphError);
-        setUtilityTemplates([]);
-      } else {
-        setUtilityTemplates(res.data.templates || []);
-      }
-    } catch (err) {
-      setUtilityTemplatesError(err?.response?.data?.message || 'Failed to load utility templates');
-      setUtilityTemplates([]);
-    } finally {
-      setUtilityTemplatesLoading(false);
-    }
-  };
-
-  // ── Utility Messaging: Send Message ──
-  const handleSendUtilityMessage = async (e) => {
-    e.preventDefault();
-    setUtilitySendResult(null);
-    if (!utilityPageId) { showToast('Please select a Facebook Page first', 'error'); return; }
-    if (!utilityForm.recipientId) { showToast('Please enter the Recipient PSID', 'error'); return; }
-    if (!utilityForm.templateName) { showToast('Please select a template', 'error'); return; }
-    setUtilitySending(true);
-    try {
-      const res = await channelAPI.sendFBUtilityMessage(utilityPageId, {
-        recipientId: utilityForm.recipientId,
-        templateName: utilityForm.templateName,
-        components: selectedTemplate?.components || [],
-      });
-      setUtilitySendResult({ success: true, messageId: res.data.messageId });
-      showToast('Utility message sent successfully!');
-      setUtilityForm(f => ({ ...f, recipientId: '' }));
-    } catch (err) {
-      const msg = err?.response?.data?.message || 'Failed to send utility message';
-      setUtilitySendResult({ success: false, error: msg });
-      showToast(msg, 'error');
-    } finally {
-      setUtilitySending(false);
-    }
-  };
-
   const pageContent = (
-    <div>
+    <div style={{ width: '100%', padding: embedded ? '0' : '16px 20px' }}>
       <style>{`
         .fb-tab-btn {
           padding: 10px 18px;
@@ -414,111 +295,52 @@ export default function FacebookPage({ embedded = false }) {
         input:checked + .fb-slider:before { transform: translateX(16px); }
       `}</style>
 
+      {!embedded && <ChannelBreadcrumb current="Facebook Messenger" />}
+
       {/* ── Page Header ── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18, flexWrap: 'wrap', gap: 12 }}>
         <div>
           <h1 style={{ fontSize: '1.45rem', fontWeight: 800, margin: 0, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Facebook size={26} color="#1877f2" /> Facebook Marketing & Automation
+            <Facebook size={26} color="#1877f2" /> Facebook Messenger
           </h1>
           <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '3px 0 0 0' }}>
-            Connect Facebook Pages, manage Messenger live chat, and automate comment auto-replies & private DMs
+            Connect Facebook Pages for Messenger live chat. Comment Automation and Utility Messaging now live under Bot Manager.
           </p>
         </div>
-
-        {activeTab === 'comments' && (
-          <button
-            onClick={() => {
-              setEditingRule(null);
-              setRuleForm({
-                campaignName: '',
-                integrationId: connected[0]?.id || '',
-                postId: 'ALL_POSTS',
-                triggerType: 'ALL',
-                triggerKeywords: '',
-                autoReplyComment: '',
-                autoReplyPrivateMessage: '',
-                enableLikeComment: true,
-                enableHideComment: false,
-              });
-              setShowRuleModal(true);
-            }}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '8px 16px',
-              borderRadius: 8,
-              fontSize: '0.84rem',
-              fontWeight: 600,
-              background: '#1877f2',
-              color: '#ffffff',
-              border: 'none',
-              cursor: 'pointer',
-              boxShadow: '0 2px 6px rgba(24, 119, 242, 0.3)',
-            }}
-          >
-            <Plus size={15} /> Create Comment Campaign
-          </button>
-        )}
-      </div>
-
-      {/* ── Tabs Bar ── */}
-      <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
-        <button
-          className={`fb-tab-btn ${activeTab === 'pages' ? 'active' : ''}`}
-          onClick={() => setActiveTab('pages')}
-        >
-          <Facebook size={16} /> Connected Pages ({connected.length})
-        </button>
-        <button
-          className={`fb-tab-btn ${activeTab === 'comments' ? 'active' : ''}`}
-          onClick={() => setActiveTab('comments')}
-        >
-          <MessageSquare size={16} /> Comment Automation ({commentRules.length})
-        </button>
-        <button
-          className={`fb-tab-btn ${activeTab === 'utility' ? 'active' : ''}`}
-          onClick={() => setActiveTab('utility')}
-        >
-          <Zap size={16} /> Utility Messaging
-        </button>
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════
-          TAB 1: CONNECTED PAGES
+          CONNECTED PAGES
           ═══════════════════════════════════════════════════════════════════ */}
-      {activeTab === 'pages' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 20, alignItems: 'start' }}>
-          {/* Left Table */}
-          <div style={{ background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
-            <div style={{ padding: '16px 20px', borderBottom: '1px solid #e4e4f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <h3 style={{ fontSize: '0.96rem', fontWeight: 700, margin: 0, color: '#1a1a2e' }}>
-                  Connected Pages & Messenger Integrations
-                </h3>
-                <div style={{ fontSize: '0.78rem', color: '#5c5c80', marginTop: 2 }}>
-                  Pages connected to receive incoming messages & comments
-                </div>
+      {pagesView === 'list' && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+            <div>
+              <h2 style={{ fontSize: '0.96rem', fontWeight: 700, margin: 0, color: '#1a1a2e' }}>
+                Connected Pages & Messenger Integrations
+              </h2>
+              <div style={{ fontSize: '0.78rem', color: '#5c5c80', marginTop: 2 }}>
+                Pages connected to receive incoming messages & comments
               </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
               <button
                 onClick={fetchConnected}
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: 6,
-                  border: '1px solid #e4e4f0',
-                  background: '#ffffff',
-                  color: '#5c5c80',
-                  fontSize: '0.8rem',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 4,
-                }}
+                className="btn btn-secondary btn-sm"
+                style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 12px', fontSize: '0.82rem' }}
               >
-                <RefreshCw size={13} /> Refresh
+                <RefreshCw size={13} className={loadingConnected ? 'spin' : ''} /> Refresh
+              </button>
+              <button
+                onClick={() => setPagesView('choose_method')}
+                style={{ display: 'flex', alignItems: 'center', gap: 7, height: 34, padding: '0 14px', fontSize: '0.84rem', fontWeight: 700, background: '#1877f2', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', boxShadow: '0 2px 8px rgba(24,119,242,0.25)' }}
+              >
+                <Plus size={15} /> Connect Page
               </button>
             </div>
+          </div>
 
+          <div style={{ background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
             <div style={{ overflowX: 'auto' }}>
               <table className="fb-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
@@ -540,14 +362,20 @@ export default function FacebookPage({ embedded = false }) {
                     </tr>
                   ) : connected.length === 0 ? (
                     <tr>
-                      <td colSpan={5} style={{ padding: 40, textAlign: 'center' }}>
-                        <div style={{ fontSize: '2rem', marginBottom: 6 }}>📘</div>
-                        <h4 style={{ fontSize: '0.92rem', fontWeight: 600, margin: '0 0 4px 0', color: '#1a1a2e' }}>
-                          No Facebook Pages connected
+                      <td colSpan={5} style={{ padding: 48, textAlign: 'center' }}>
+                        <Facebook size={40} color="#cbd5e1" style={{ margin: '0 auto 12px', display: 'block' }} />
+                        <h4 style={{ fontSize: '0.94rem', fontWeight: 700, margin: '0 0 4px 0', color: '#1a1a2e' }}>
+                          No Facebook Pages Connected
                         </h4>
-                        <p style={{ color: '#5c5c80', fontSize: '0.8rem', margin: 0 }}>
-                          Use the login or permanent token box on the right to link your Facebook Page.
+                        <p style={{ color: '#5c5c80', fontSize: '0.78rem', margin: '0 0 16px' }}>
+                          Click "Connect Page" to link your first Facebook Page.
                         </p>
+                        <button
+                          onClick={() => setPagesView('choose_method')}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 16px', fontSize: '0.82rem', fontWeight: 700, background: '#1877f2', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer' }}
+                        >
+                          <Plus size={14} /> Connect Now
+                        </button>
                       </td>
                     </tr>
                   ) : (
@@ -574,8 +402,8 @@ export default function FacebookPage({ embedded = false }) {
                           </code>
                         </td>
                         <td>
-                          <span style={{ fontSize: '0.74rem', fontWeight: 700, padding: '2px 8px', borderRadius: 12, background: 'rgba(16,185,129,0.1)', color: '#10b981' }}>
-                            ● Active
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.74rem', fontWeight: 700, padding: '2px 8px', borderRadius: 12, background: 'rgba(16,185,129,0.1)', color: '#10b981' }}>
+                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981' }} /> Active
                           </span>
                         </td>
                         <td>
@@ -609,968 +437,302 @@ export default function FacebookPage({ embedded = false }) {
               </table>
             </div>
           </div>
-
-          {/* Right Connect Tools */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {sdkError && (
-              <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 10, padding: '14px 16px', fontSize: '0.82rem', color: '#b45309' }}>
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>⚠️ {sdkError}</div>
-                <div style={{ color: '#5c5c80', fontSize: '0.78rem' }}>
-                  Please ensure your Meta App ID is configured in <em>Settings → Meta App Setup</em>.
-                </div>
-              </div>
-            )}
-
-            {/* State: Fetching pages */}
-            {step === 'fetching' && (
-              <div style={{ background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, padding: 30, textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
-                <span className="loading-spinner" style={{ width: 28, height: 28, borderColor: 'rgba(24,119,242,0.2)', borderTopColor: '#1877f2', margin: '0 auto 12px', display: 'block' }} />
-                <div style={{ fontWeight: 700, fontSize: '0.92rem', color: '#1a1a2e', marginBottom: 4 }}>Discovering Facebook Pages…</div>
-                <div style={{ fontSize: '0.78rem', color: '#5c5c80' }}>Fetching authorized pages and permissions</div>
-              </div>
-            )}
-
-            {/* State: Selecting pages to import */}
-            {step === 'selecting' && (
-              <div style={{ background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, padding: 18, boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-                  <div style={{ fontWeight: 700, fontSize: '0.94rem', color: '#1a1a2e' }}>Select Facebook Pages</div>
-                  <span style={{ fontSize: '0.74rem', fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: 'rgba(24,119,242,0.1)', color: '#1877f2' }}>
-                    {fetchedPages.length} found
-                  </span>
-                </div>
-
-                <div style={{ maxHeight: 300, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
-                  {fetchedPages.map(page => {
-                    const isConnected = connected.some(c => c.fb_page_id === page.id);
-                    const isChecked = !!selected.find(s => s.id === page.id);
-                    return (
-                      <div
-                        key={page.id}
-                        onClick={() => {
-                          if (isConnected) return;
-                          setSelected(prev => isChecked ? prev.filter(s => s.id !== page.id) : [...prev, page]);
-                        }}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          padding: '10px 12px',
-                          borderRadius: 8,
-                          border: `1.5px solid ${isChecked ? '#1877f2' : '#e4e4f0'}`,
-                          background: isChecked ? 'rgba(24,119,242,0.04)' : '#fafafa',
-                          cursor: isConnected ? 'default' : 'pointer',
-                          transition: 'all 0.15s',
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#1877f2', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.8rem', overflow: 'hidden', flexShrink: 0 }}>
-                            {page.profile_picture_url ? (
-                              <img src={page.profile_picture_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.currentTarget.style.display = 'none'; }} />
-                            ) : (
-                              <Facebook size={16} />
-                            )}
-                          </div>
-                          <div>
-                            <div style={{ fontWeight: 600, fontSize: '0.84rem', color: '#1a1a2e' }}>{page.name}</div>
-                            <div style={{ fontSize: '0.72rem', color: '#8c8ca1' }}>ID: {page.id} {page.category ? `• ${page.category}` : ''}</div>
-                          </div>
-                        </div>
-
-                        {isConnected ? (
-                          <span style={{ fontSize: '0.72rem', color: '#10b981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 }}>
-                            <Check size={13} /> Connected
-                          </span>
-                        ) : (
-                          <div style={{
-                            width: 18, height: 18, borderRadius: 4,
-                            border: `1.5px solid ${isChecked ? '#1877f2' : '#cbd5e1'}`,
-                            background: isChecked ? '#1877f2' : '#ffffff',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          }}>
-                            {isChecked && <Check size={12} color="#fff" strokeWidth={3} />}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button
-                    type="button"
-                    onClick={() => { setStep('idle'); setSelected([]); }}
-                    style={{
-                      flex: 1, padding: '9px', borderRadius: 8, border: '1px solid #e4e4f0',
-                      background: '#fff', color: '#5c5c80', fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer',
-                    }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleImport}
-                    disabled={!selected.length || importing}
-                    style={{
-                      flex: 2, padding: '9px', borderRadius: 8, border: 'none',
-                      background: '#1877f2', color: '#fff', fontWeight: 700, fontSize: '0.82rem',
-                      cursor: !selected.length || importing ? 'not-allowed' : 'pointer',
-                      opacity: !selected.length || importing ? 0.6 : 1,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                    }}
-                  >
-                    {importing ? (
-                      <>
-                        <span className="loading-spinner" style={{ width: 14, height: 14, borderColor: 'rgba(255,255,255,0.3)', borderTopColor: '#fff' }} />
-                        Connecting…
-                      </>
-                    ) : (
-                      `Connect ${selected.length} Page${selected.length !== 1 ? 's' : ''}`
-                    )}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* State: Idle / Done (FB Login Button) */}
-            {(step === 'idle' || step === 'done') && (
-              <div style={{ background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, padding: 20, textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
-                <div style={{ fontSize: '2.2rem', marginBottom: 8 }}>📘</div>
-                <div style={{ fontWeight: 700, fontSize: '0.96rem', marginBottom: 4, color: '#1a1a2e' }}>
-                  Connect via Facebook Login
-                </div>
-                <div style={{ fontSize: '0.8rem', color: '#5c5c80', marginBottom: 16, lineHeight: 1.5 }}>
-                  Log in to select and import pages with <code>pages_show_list</code>, <code>pages_messaging</code>, <code>pages_manage_engagement</code>, and <code>pages_manage_posts</code> permissions for full DM and comment automation.
-                </div>
-                <FBLoginButton onClick={handleFBLogin} loading={loginLoading} disabled={loginLoading || !fbReady || !!sdkError} />
-                {!fbReady && !sdkError && (
-                  <div style={{ marginTop: 8, fontSize: '0.75rem', color: '#8c8ca1' }}>Initializing Meta SDK…</div>
-                )}
-              </div>
-            )}
-
-            {/* 1-Click Permanent Token Generator */}
-            <div style={{ background: 'rgba(99, 102, 241, 0.05)', border: '1.5px solid rgba(99, 102, 241, 0.25)', borderRadius: 12, padding: 18 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.88rem', color: '#4f46e5', marginBottom: 6 }}>
-                <Zap size={16} /> 1-Click Permanent Token Connect
-              </div>
-              <p style={{ fontSize: '0.78rem', color: '#5c5c80', margin: '0 0 10px 0', lineHeight: 1.4 }}>
-                Paste any token with <code>pages_manage_engagement, pages_manage_posts, pages_messaging</code>. We automatically upgrade it to a <strong>Permanent Never-Expiring Token</strong>.
-              </p>
-              <textarea
-                id="fb-quick-token-input"
-                rows={2}
-                className="form-input w-full"
-                placeholder="Paste Access Token here..."
-                style={{ fontSize: '0.8rem', resize: 'vertical', marginBottom: 8 }}
-              />
-              <button
-                type="button"
-                onClick={async (e) => {
-                  const input = document.getElementById('fb-quick-token-input');
-                  const tokenVal = input?.value?.trim();
-                  if (!tokenVal) {
-                    showToast('Please paste your Access Token first', 'error');
-                    return;
-                  }
-                  const btn = e.currentTarget;
-                  btn.disabled = true;
-                  btn.innerText = 'Connecting…';
-                  try {
-                    const res = await channelAPI.quickConnectFacebook(tokenVal);
-                    showToast(res.data.message || 'Connected with permanent token!');
-                    if (input) input.value = '';
-                    fetchConnected();
-                  } catch (err) {
-                    showToast(err.response?.data?.message || 'Failed to connect', 'error');
-                  } finally {
-                    btn.disabled = false;
-                    btn.innerText = '⚡ Connect & Make Permanent';
-                  }
-                }}
-                style={{
-                  width: '100%',
-                  padding: '8px 14px',
-                  borderRadius: 8,
-                  background: '#6366f1',
-                  color: '#ffffff',
-                  border: 'none',
-                  fontWeight: 700,
-                  fontSize: '0.82rem',
-                  cursor: 'pointer',
-                }}
-              >
-                ⚡ Connect & Make Permanent
-              </button>
-            </div>
-          </div>
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════════════
-          TAB 2: COMMENT AUTOMATION CAMPAIGNS
-          ═══════════════════════════════════════════════════════════════════ */}
-      {activeTab === 'comments' && (
+      {/* ── Choose Connect Method ── */}
+      {pagesView === 'choose_method' && (
         <div>
-          {/* 3 Stat Cards */}
-          <div style={{ display: 'flex', gap: 14, marginBottom: 18, flexWrap: 'wrap' }}>
-            <div style={{ flex: 1, minWidth: 180, background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 14 }}>
-              <div style={{ width: 44, height: 44, borderRadius: 10, background: 'rgba(24,119,242,0.1)', color: '#1877f2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <MessageSquare size={20} />
+          <button onClick={() => setPagesView('list')} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.8rem', marginBottom: 20, padding: 0 }}>
+            <ArrowLeft size={14} /> Back to Pages
+          </button>
+
+          <h2 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0f172a', margin: '0 0 4px' }}>
+            Connect Facebook Page
+          </h2>
+          <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '0 0 20px' }}>
+            Choose how you want to connect your Facebook Page to this workspace.
+          </p>
+
+          {sdkError && (
+            <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 10, padding: '12px 16px', marginBottom: 20, fontSize: '0.82rem', color: '#b45309', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <AlertTriangle size={14} /> {sdkError}
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
+            <div
+              onClick={() => setPagesView('oauth')}
+              style={{
+                border: '2px solid #bbf7d0', borderRadius: 14, padding: '24px 22px',
+                cursor: 'pointer', background: '#fff', transition: 'all 0.15s',
+                display: 'flex', flexDirection: 'column', gap: 14,
+                boxShadow: '0 2px 8px rgba(24,119,242,0.06)',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = '#1877f2'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(24,119,242,0.12)'; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = '#bbf7d0'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(24,119,242,0.06)'; }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div style={{ width: 46, height: 46, borderRadius: 12, background: 'rgba(24,119,242,0.1)', color: '#1877f2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Facebook size={22} />
+                </div>
+                <span style={{ fontSize: '0.7rem', fontWeight: 700, background: 'rgba(24,119,242,0.1)', color: '#1877f2', padding: '3px 8px', borderRadius: 8, textTransform: 'uppercase' }}>
+                  Recommended
+                </span>
               </div>
               <div>
-                <div style={{ fontSize: '0.75rem', color: '#5c5c80', fontWeight: 600 }}>Active Campaigns</div>
-                <div style={{ fontSize: '1.45rem', fontWeight: 800, color: '#1a1a2e' }}>
-                  {commentRules.filter(r => r.is_active).length}
+                <h3 style={{ margin: '0 0 6px', fontSize: '1rem', fontWeight: 800, color: '#0f172a' }}>
+                  Continue with Facebook Login
+                </h3>
+                <p style={{ margin: '0 0 14px', fontSize: '0.8rem', color: '#64748b', lineHeight: 1.5 }}>
+                  Log in to select and import pages with the right permissions for full DM and comment automation.
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  {['Guided Meta OAuth login', 'Select specific pages', 'Auto-configured permissions'].map(f => (
+                    <div key={f} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.76rem', color: '#475569' }}>
+                      <Check size={13} color="#1877f2" /> {f}
+                    </div>
+                  ))}
                 </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', fontWeight: 700, color: '#1877f2', marginTop: 'auto' }}>
+                Continue with Facebook <ArrowRight size={14} />
               </div>
             </div>
 
-            <div style={{ flex: 1, minWidth: 180, background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 14 }}>
-              <div style={{ width: 44, height: 44, borderRadius: 10, background: 'rgba(16,185,129,0.1)', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Heart size={20} />
+            <div
+              onClick={() => setPagesView('token')}
+              style={{
+                border: '2px solid #e2e8f0', borderRadius: 14, padding: '24px 22px',
+                cursor: 'pointer', background: '#fff', transition: 'all 0.15s',
+                display: 'flex', flexDirection: 'column', gap: 14,
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = '#94a3b8'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.06)'; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.boxShadow = 'none'; }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div style={{ width: 46, height: 46, borderRadius: 12, background: 'rgba(99,102,241,0.1)', color: '#4f46e5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Zap size={22} />
+                </div>
+                <span style={{ fontSize: '0.7rem', fontWeight: 700, background: '#f1f5f9', color: '#64748b', padding: '3px 8px', borderRadius: 8, textTransform: 'uppercase' }}>
+                  1-Click
+                </span>
               </div>
               <div>
-                <div style={{ fontSize: '0.75rem', color: '#5c5c80', fontWeight: 600 }}>Auto-Like Enabled</div>
-                <div style={{ fontSize: '1.45rem', fontWeight: 800, color: '#1a1a2e' }}>
-                  {commentRules.filter(r => r.enable_like_comment).length}
+                <h3 style={{ margin: '0 0 6px', fontSize: '1rem', fontWeight: 800, color: '#0f172a' }}>
+                  1-Click Permanent Token
+                </h3>
+                <p style={{ margin: '0 0 14px', fontSize: '0.8rem', color: '#64748b', lineHeight: 1.5 }}>
+                  Paste any token with page permissions — we automatically upgrade it to a permanent never-expiring token.
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  {['Just paste a token', 'Auto-upgrades to permanent', 'Good for developers'].map(f => (
+                    <div key={f} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.76rem', color: '#475569' }}>
+                      <Check size={13} color="#4f46e5" /> {f}
+                    </div>
+                  ))}
                 </div>
               </div>
-            </div>
-
-            <div style={{ flex: 1, minWidth: 180, background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 14 }}>
-              <div style={{ width: 44, height: 44, borderRadius: 10, background: 'rgba(99,102,241,0.1)', color: '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <MessageCircle size={20} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', fontWeight: 700, color: '#4f46e5', marginTop: 'auto' }}>
+                Use a Token <ArrowRight size={14} />
               </div>
-              <div>
-                <div style={{ fontSize: '0.75rem', color: '#5c5c80', fontWeight: 600 }}>Private DMs Enabled</div>
-                <div style={{ fontSize: '1.45rem', fontWeight: 800, color: '#1a1a2e' }}>
-                  {commentRules.filter(r => r.auto_reply_private_message).length}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Campaigns Table Card */}
-          <div style={{ background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
-            <div style={{ overflowX: 'auto' }}>
-              <table className="fb-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr>
-                    <th>CAMPAIGN NAME</th>
-                    <th>PAGE</th>
-                    <th>TARGET POST</th>
-                    <th>TRIGGER CONDITION</th>
-                    <th>PUBLIC COMMENT REPLY</th>
-                    <th>PRIVATE MESSENGER DM</th>
-                    <th>OPTIONS</th>
-                    <th>STATUS</th>
-                    <th>ACTIONS</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loadingRules ? (
-                    <tr>
-                      <td colSpan={9} style={{ padding: 50, textAlign: 'center' }}>
-                        <div className="loading-spinner" style={{ margin: '0 auto 8px' }} />
-                        <p style={{ color: '#5c5c80', fontSize: '0.82rem' }}>Loading comment campaigns...</p>
-                      </td>
-                    </tr>
-                  ) : commentRules.length === 0 ? (
-                    <tr>
-                      <td colSpan={9} style={{ padding: 50, textAlign: 'center' }}>
-                        <div style={{ fontSize: '2.5rem', marginBottom: 8 }}>💬</div>
-                        <h3 style={{ fontSize: '0.98rem', fontWeight: 700, margin: '0 0 4px 0', color: '#1a1a2e' }}>
-                          No Comment Automation Campaigns
-                        </h3>
-                        <p style={{ color: '#5c5c80', fontSize: '0.82rem', margin: '0 0 14px 0' }}>
-                          Automatically reply to user comments on your Facebook posts and send instant private messages via Messenger.
-                        </p>
-                        <button
-                          onClick={() => {
-                            setEditingRule(null);
-                            setRuleForm({
-                              campaignName: '',
-                              integrationId: connected[0]?.id || '',
-                              postId: 'ALL_POSTS',
-                              triggerType: 'ALL',
-                              triggerKeywords: '',
-                              autoReplyComment: '',
-                              autoReplyPrivateMessage: '',
-                              enableLikeComment: true,
-                              enableHideComment: false,
-                            });
-                            setShowRuleModal(true);
-                          }}
-                          style={{
-                            padding: '8px 16px',
-                            borderRadius: 8,
-                            background: '#1877f2',
-                            color: '#ffffff',
-                            border: 'none',
-                            fontWeight: 700,
-                            fontSize: '0.82rem',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          + Create Your First Campaign
-                        </button>
-                      </td>
-                    </tr>
-                  ) : (
-                    commentRules.map((rule) => (
-                      <tr key={rule.id}>
-                        <td>
-                          <div style={{ fontWeight: 700, color: '#1a1a2e', fontSize: '0.86rem' }}>
-                            {rule.campaign_name}
-                          </div>
-                        </td>
-
-                        <td>
-                          <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#1877f2' }}>
-                            {rule.page_name || 'All Connected Pages'}
-                          </span>
-                        </td>
-
-                        <td>
-                          <span style={{ fontSize: '0.76rem', color: '#5c5c80', background: '#f8f8fc', padding: '2px 8px', borderRadius: 4 }}>
-                            {rule.post_id === 'ALL_POSTS' ? '🌐 All Posts' : `Post #${rule.post_id}`}
-                          </span>
-                        </td>
-
-                        <td>
-                          {rule.trigger_type === 'ALL' ? (
-                            <span style={{ fontSize: '0.76rem', fontWeight: 600, color: '#10b981', background: 'rgba(16,185,129,0.1)', padding: '2px 8px', borderRadius: 10 }}>
-                              All Comments
-                            </span>
-                          ) : (
-                            <div>
-                              <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#f59e0b', background: 'rgba(245,158,11,0.1)', padding: '2px 6px', borderRadius: 8 }}>
-                                Keywords
-                              </span>
-                              <div style={{ fontSize: '0.72rem', color: '#5c5c80', marginTop: 2 }}>
-                                {rule.trigger_keywords || '—'}
-                              </div>
-                            </div>
-                          )}
-                        </td>
-
-                        <td style={{ maxWidth: 200 }}>
-                          <div style={{ fontSize: '0.78rem', color: '#1a1a2e', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {rule.auto_reply_comment || '—'}
-                          </div>
-                        </td>
-
-                        <td style={{ maxWidth: 200 }}>
-                          <div style={{ fontSize: '0.78rem', color: '#1a1a2e', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {rule.auto_reply_private_message || '—'}
-                          </div>
-                        </td>
-
-                        <td>
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            {rule.enable_like_comment === 1 && (
-                              <span title="Auto-Like Enabled" style={{ color: '#ef4444', fontSize: '0.85rem' }}>❤️</span>
-                            )}
-                            {rule.enable_hide_comment === 1 && (
-                              <span title="Auto-Hide Enabled" style={{ color: '#f59e0b', fontSize: '0.85rem' }}>🛡️</span>
-                            )}
-                          </div>
-                        </td>
-
-                        <td>
-                          <label className="fb-switch">
-                            <input
-                              type="checkbox"
-                              checked={Boolean(rule.is_active)}
-                              onChange={() => handleToggleRule(rule)}
-                            />
-                            <span className="fb-slider" />
-                          </label>
-                        </td>
-
-                        <td>
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            <button
-                              onClick={() => {
-                                setEditingRule(rule);
-                                setRuleForm({
-                                  campaignName: rule.campaign_name,
-                                  integrationId: rule.integration_id || '',
-                                  postId: rule.post_id || 'ALL_POSTS',
-                                  triggerType: rule.trigger_type || 'ALL',
-                                  triggerKeywords: rule.trigger_keywords || '',
-                                  autoReplyComment: rule.auto_reply_comment || '',
-                                  autoReplyPrivateMessage: rule.auto_reply_private_message || '',
-                                  enableLikeComment: Boolean(rule.enable_like_comment),
-                                  enableHideComment: Boolean(rule.enable_hide_comment),
-                                });
-                                setShowRuleModal(true);
-                              }}
-                              style={{
-                                padding: '5px 8px',
-                                borderRadius: 6,
-                                border: '1px solid #e4e4f0',
-                                background: '#ffffff',
-                                color: '#5c5c80',
-                                cursor: 'pointer',
-                              }}
-                            >
-                              <Edit2 size={13} />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteRule(rule.id)}
-                              style={{
-                                padding: '5px 8px',
-                                borderRadius: 6,
-                                border: '1px solid rgba(239,68,68,0.2)',
-                                background: 'rgba(239,68,68,0.06)',
-                                color: '#ef4444',
-                                cursor: 'pointer',
-                              }}
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
             </div>
           </div>
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════════════
-          TAB 3: UTILITY MESSAGING
-          ═══════════════════════════════════════════════════════════════════ */}
-      {activeTab === 'utility' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 20, alignItems: 'start' }}>
+      {/* ── Connect via Facebook OAuth ── */}
+      {pagesView === 'oauth' && (
+        <div style={{ maxWidth: 560 }}>
+          <button onClick={() => setPagesView('choose_method')} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.8rem', marginBottom: 20, padding: 0 }}>
+            <ArrowLeft size={14} /> Back
+          </button>
 
-          {/* ── Left: Templates Panel ── */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-            {/* Info Banner */}
-            <div style={{ padding: '14px 18px', borderRadius: 12, background: 'rgba(99,102,241,0.06)', border: '1.5px solid rgba(99,102,241,0.2)', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-              <Zap size={18} color="#6366f1" style={{ flexShrink: 0, marginTop: 2 }} />
-              <div>
-                <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#1a1a2e', marginBottom: 3 }}>
-                  About <code>pages_utility_messaging</code>
-                </div>
-                <p style={{ margin: 0, fontSize: '0.78rem', color: '#5c5c80', lineHeight: 1.5 }}>
-                  Utility messages are transactional notifications (receipts, order updates, appointment reminders) that can be sent to users <strong>outside the 24-hour messaging window</strong>. Templates must be pre-approved in your{' '}
-                  <a href="https://business.facebook.com" target="_blank" rel="noreferrer" style={{ color: '#1877f2' }}>Meta Business Suite</a> before they can be used here.
-                </p>
+          {sdkError && (
+            <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 10, padding: '14px 16px', marginBottom: 16, fontSize: '0.82rem', color: '#b45309' }}>
+              <div style={{ fontWeight: 700, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}><AlertTriangle size={14} /> {sdkError}</div>
+              <div style={{ color: '#5c5c80', fontSize: '0.78rem' }}>
+                Please ensure your Meta App ID is configured in <em>Settings → Meta App Setup</em>.
               </div>
             </div>
+          )}
 
-            {/* Page Selector */}
-            <div style={{ background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, padding: 20 }}>
-              <h3 style={{ fontSize: '0.92rem', fontWeight: 700, margin: '0 0 12px 0', color: '#1a1a2e' }}>
-                Step 1 — Select a Facebook Page
-              </h3>
-              {connected.length === 0 ? (
-                <div style={{ fontSize: '0.82rem', color: '#5c5c80', padding: '10px 0' }}>
-                  No Facebook Pages connected yet. Go to the <strong>Connected Pages</strong> tab to connect a page first.
-                </div>
-              ) : (
-                <select
-                  className="form-input w-full"
-                  value={utilityPageId}
-                  onChange={(e) => {
-                    setUtilityPageId(e.target.value);
-                    setUtilityForm(f => ({ ...f, templateName: '' }));
-                    setSelectedTemplate(null);
-                    fetchUtilityTemplates(e.target.value);
-                  }}
-                  style={{ marginBottom: 0 }}
-                >
-                  <option value="">— Choose a Page —</option>
-                  {connected.map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
-              )}
+          {/* State: Fetching pages */}
+          {step === 'fetching' && (
+            <div style={{ background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, padding: 30, textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
+              <span className="loading-spinner" style={{ width: 28, height: 28, borderColor: 'rgba(24,119,242,0.2)', borderTopColor: '#1877f2', margin: '0 auto 12px', display: 'block' }} />
+              <div style={{ fontWeight: 700, fontSize: '0.92rem', color: '#1a1a2e', marginBottom: 4 }}>Discovering Facebook Pages…</div>
+              <div style={{ fontSize: '0.78rem', color: '#5c5c80' }}>Fetching authorized pages and permissions</div>
             </div>
+          )}
 
-            {/* Templates List */}
-            <div style={{ background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, overflow: 'hidden' }}>
-              <div style={{ padding: '14px 20px', borderBottom: '1px solid #e4e4f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 style={{ fontSize: '0.92rem', fontWeight: 700, margin: 0, color: '#1a1a2e' }}>
-                  Step 2 — Browse Utility Templates
-                </h3>
-                {utilityPageId && (
-                  <button
-                    onClick={() => fetchUtilityTemplates(utilityPageId)}
-                    style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid #e4e4f0', background: '#fff', fontSize: '0.78rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, color: '#5c5c80' }}
-                  >
-                    <RefreshCw size={12} /> Refresh
-                  </button>
-                )}
+          {/* State: Selecting pages to import */}
+          {step === 'selecting' && (
+            <div style={{ background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, padding: 18, boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: '0.94rem', color: '#1a1a2e' }}>Select Facebook Pages</div>
+                <span style={{ fontSize: '0.74rem', fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: 'rgba(24,119,242,0.1)', color: '#1877f2' }}>
+                  {fetchedPages.length} found
+                </span>
               </div>
 
-              {!utilityPageId ? (
-                <div style={{ padding: '40px 20px', textAlign: 'center', color: '#94a3b8', fontSize: '0.84rem' }}>
-                  Select a page above to load its utility templates.
-                </div>
-              ) : utilityTemplatesLoading ? (
-                <div style={{ padding: '40px 20px', textAlign: 'center' }}>
-                  <div className="loading-spinner" style={{ margin: '0 auto 8px' }} />
-                  <div style={{ color: '#5c5c80', fontSize: '0.82rem' }}>Fetching templates from Meta Graph API…</div>
-                </div>
-              ) : utilityTemplatesError ? (
-                <div style={{ padding: '20px', margin: 12, borderRadius: 8, background: '#fef2f2', border: '1px solid #fecaca', fontSize: '0.8rem', color: '#dc2626' }}>
-                  <strong>⚠ Graph API Error:</strong> {utilityTemplatesError}
-                  <div style={{ marginTop: 6, color: '#5c5c80', fontSize: '0.76rem' }}>
-                    Make sure your Meta App has <code>pages_utility_messaging</code> approved, and utility templates are created in Meta Business Suite.
-                  </div>
-                </div>
-              ) : utilityTemplates.length === 0 ? (
-                <div style={{ padding: '40px 20px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '2rem', marginBottom: 8 }}>📋</div>
-                  <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#1a1a2e', marginBottom: 4 }}>No Utility Templates Found</div>
-                  <p style={{ fontSize: '0.8rem', color: '#5c5c80', margin: 0 }}>
-                    Create UTILITY category message templates in{' '}
-                    <a href="https://business.facebook.com" target="_blank" rel="noreferrer" style={{ color: '#1877f2' }}>Meta Business Suite</a>{' '}
-                    and they will appear here once approved.
-                  </p>
-                </div>
-              ) : (
-                <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {utilityTemplates.map((tmpl) => {
-                    const isSelected = utilityForm.templateName === tmpl.name;
-                    const headerComp = tmpl.components?.find(c => c.type === 'HEADER');
-                    const bodyComp = tmpl.components?.find(c => c.type === 'BODY');
-                    const statusColor = tmpl.status === 'APPROVED' ? '#10b981' : tmpl.status === 'PENDING' ? '#f59e0b' : '#ef4444';
-                    return (
-                      <div
-                        key={tmpl.name}
-                        onClick={() => {
-                          setSelectedTemplate(tmpl);
-                          setUtilityForm(f => ({ ...f, templateName: tmpl.name }));
-                        }}
-                        style={{
-                          padding: '12px 14px',
-                          borderRadius: 10,
-                          border: `1.5px solid ${isSelected ? '#1877f2' : '#e4e4f0'}`,
-                          background: isSelected ? 'rgba(24,119,242,0.04)' : '#fafafa',
-                          cursor: 'pointer',
-                          transition: 'all 0.15s',
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                          <div style={{ fontWeight: 700, fontSize: '0.84rem', color: '#1a1a2e' }}>{tmpl.name}</div>
-                          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                            {tmpl.language && (
-                              <span style={{ fontSize: '0.7rem', background: '#f1f5f9', color: '#64748b', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>
-                                {tmpl.language}
-                              </span>
-                            )}
-                            <span style={{ fontSize: '0.7rem', fontWeight: 700, color: statusColor, background: statusColor + '15', padding: '2px 8px', borderRadius: 10 }}>
-                              {tmpl.status || 'UNKNOWN'}
-                            </span>
-                          </div>
+              <div style={{ maxHeight: 300, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+                {fetchedPages.map(page => {
+                  const isConnected = connected.some(c => c.fb_page_id === page.id);
+                  const isChecked = !!selected.find(s => s.id === page.id);
+                  return (
+                    <div
+                      key={page.id}
+                      onClick={() => {
+                        if (isConnected) return;
+                        setSelected(prev => isChecked ? prev.filter(s => s.id !== page.id) : [...prev, page]);
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '10px 12px',
+                        borderRadius: 8,
+                        border: `1.5px solid ${isChecked ? '#1877f2' : '#e4e4f0'}`,
+                        background: isChecked ? 'rgba(24,119,242,0.04)' : '#fafafa',
+                        cursor: isConnected ? 'default' : 'pointer',
+                        transition: 'all 0.15s',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#1877f2', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.8rem', overflow: 'hidden', flexShrink: 0 }}>
+                          {page.profile_picture_url ? (
+                            <img src={page.profile_picture_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.currentTarget.style.display = 'none'; }} />
+                          ) : (
+                            <Facebook size={16} />
+                          )}
                         </div>
-                        {headerComp?.text && (
-                          <div style={{ fontSize: '0.76rem', fontWeight: 600, color: '#475569', marginBottom: 2 }}>{headerComp.text}</div>
-                        )}
-                        {bodyComp?.text && (
-                          <div style={{ fontSize: '0.75rem', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {bodyComp.text}
-                          </div>
-                        )}
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: '0.84rem', color: '#1a1a2e' }}>{page.name}</div>
+                          <div style={{ fontSize: '0.72rem', color: '#8c8ca1' }}>ID: {page.id} {page.category ? `• ${page.category}` : ''}</div>
+                        </div>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
 
-          {/* ── Right: Send Form ── */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div style={{ background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
-              <h3 style={{ fontSize: '0.92rem', fontWeight: 700, margin: '0 0 16px 0', color: '#1a1a2e' }}>
-                Step 3 — Send Utility Message
-              </h3>
-
-              <form onSubmit={handleSendUtilityMessage} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: 5, color: '#374151' }}>
-                    Recipient Facebook PSID *
-                  </label>
-                  <input
-                    required
-                    className="form-input w-full"
-                    placeholder="e.g. 1234567890123456"
-                    value={utilityForm.recipientId}
-                    onChange={(e) => setUtilityForm(f => ({ ...f, recipientId: e.target.value }))}
-                  />
-                  <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: 4 }}>
-                    The Page-Scoped User ID (PSID) of the recipient. Found in conversation webhook events.
-                  </div>
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: 5, color: '#374151' }}>
-                    Selected Template
-                  </label>
-                  {selectedTemplate ? (
-                    <div style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(24,119,242,0.06)', border: '1px solid rgba(24,119,242,0.2)', fontSize: '0.82rem' }}>
-                      <div style={{ fontWeight: 700, color: '#1877f2' }}>{selectedTemplate.name}</div>
-                      {selectedTemplate.components?.find(c => c.type === 'BODY')?.text && (
-                        <div style={{ color: '#475569', fontSize: '0.76rem', marginTop: 4 }}>
-                          {selectedTemplate.components.find(c => c.type === 'BODY').text}
+                      {isConnected ? (
+                        <span style={{ fontSize: '0.72rem', color: '#10b981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 }}>
+                          <Check size={13} /> Connected
+                        </span>
+                      ) : (
+                        <div style={{
+                          width: 18, height: 18, borderRadius: 4,
+                          border: `1.5px solid ${isChecked ? '#1877f2' : '#cbd5e1'}`,
+                          background: isChecked ? '#1877f2' : '#ffffff',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          {isChecked && <Check size={12} color="#fff" strokeWidth={3} />}
                         </div>
                       )}
                     </div>
-                  ) : (
-                    <div style={{ padding: '10px 12px', borderRadius: 8, background: '#f8fafc', border: '1px dashed #cbd5e1', fontSize: '0.82rem', color: '#94a3b8' }}>
-                      ← Select a template from the list on the left
-                    </div>
-                  )}
-                </div>
-
-                {/* Preview section when template selected */}
-                {selectedTemplate && (
-                  <div style={{ padding: '12px 14px', borderRadius: 10, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
-                    <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#475569', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                      Message Preview
-                    </div>
-                    {selectedTemplate.components?.map((comp, i) => (
-                      <div key={i} style={{ marginBottom: 6 }}>
-                        <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', marginRight: 6 }}>{comp.type}</span>
-                        <span style={{ fontSize: '0.8rem', color: '#374151' }}>{comp.text || (comp.buttons ? `${comp.buttons.length} button(s)` : '—')}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Send result */}
-                {utilitySendResult && (
-                  <div style={{
-                    padding: '10px 14px',
-                    borderRadius: 8,
-                    background: utilitySendResult.success ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
-                    border: `1px solid ${utilitySendResult.success ? '#a7f3d0' : '#fecaca'}`,
-                    fontSize: '0.8rem',
-                    color: utilitySendResult.success ? '#065f46' : '#dc2626',
-                  }}>
-                    {utilitySendResult.success
-                      ? `✓ Message sent! Message ID: ${utilitySendResult.messageId || 'N/A'}`
-                      : `✗ Failed: ${utilitySendResult.error}`}
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={utilitySending || !selectedTemplate || !utilityForm.recipientId}
-                  style={{
-                    padding: '10px 18px',
-                    borderRadius: 8,
-                    background: (!selectedTemplate || !utilityForm.recipientId) ? '#e2e8f0' : '#1877f2',
-                    color: (!selectedTemplate || !utilityForm.recipientId) ? '#94a3b8' : '#ffffff',
-                    border: 'none',
-                    fontWeight: 700,
-                    fontSize: '0.86rem',
-                    cursor: (!selectedTemplate || !utilityForm.recipientId) ? 'not-allowed' : 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 8,
-                    transition: 'all 0.15s',
-                  }}
-                >
-                  {utilitySending ? (
-                    <><span className="loading-spinner" style={{ width: 14, height: 14, borderColor: 'rgba(255,255,255,0.3)', borderTopColor: '#fff' }} />Sending…</>
-                  ) : (
-                    <><Zap size={15} />Send Utility Message</>
-                  )}
-                </button>
-              </form>
-            </div>
-
-            {/* Permission Checklist Card */}
-            <div style={{ background: '#fff', border: '1px solid #e4e4f0', borderRadius: 12, padding: 18 }}>
-              <div style={{ fontWeight: 700, fontSize: '0.84rem', color: '#1a1a2e', marginBottom: 10 }}>
-                Requirements Checklist
-              </div>
-              {[
-                { label: 'pages_utility_messaging permission approved in Meta App', ok: true },
-                { label: 'Page reconnected with new permission scope (re-login required)', ok: null },
-                { label: 'Utility templates created & approved in Meta Business Suite', ok: utilityTemplates.length > 0 },
-                { label: 'Page Access Token is permanent (never-expiring)', ok: null },
-              ].map((item, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 8, fontSize: '0.78rem' }}>
-                  <span style={{ color: item.ok === true ? '#10b981' : item.ok === false ? '#ef4444' : '#f59e0b', fontSize: '1rem', lineHeight: 1 }}>
-                    {item.ok === true ? '✓' : item.ok === false ? '✗' : '○'}
-                  </span>
-                  <span style={{ color: '#475569' }}>{item.label}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Create / Edit Comment Campaign Modal ── */}
-      {showRuleModal && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.5)',
-            zIndex: 9999,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <div
-            style={{
-              width: 560,
-              maxWidth: '92vw',
-              maxHeight: '90vh',
-              overflowY: 'auto',
-              background: '#ffffff',
-              borderRadius: 14,
-              padding: 24,
-              boxShadow: '0 16px 40px rgba(0,0,0,0.15)',
-              border: '1px solid #e4e4f0',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-              <h3 style={{ fontSize: '1.15rem', fontWeight: 800, margin: 0, color: '#1a1a2e', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <MessageSquare size={18} color="#1877f2" />
-                {editingRule ? 'Edit Comment Campaign' : 'Create Facebook Comment Campaign'}
-              </h3>
-              <button
-                onClick={() => {
-                  setShowRuleModal(false);
-                  setEditingRule(null);
-                }}
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: '50%',
-                  border: '1px solid #e4e4f0',
-                  background: '#f8f8fc',
-                  cursor: 'pointer',
-                }}
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleRuleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>
-                  Campaign Name
-                </label>
-                <input
-                  required
-                  className="form-input w-full"
-                  placeholder="e.g. Summer Promo Auto-Reply"
-                  value={ruleForm.campaignName}
-                  onChange={(e) => setRuleForm({ ...ruleForm, campaignName: e.target.value })}
-                />
+                  );
+                })}
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>
-                    Select Facebook Page
-                  </label>
-                  <select
-                    className="form-input w-full"
-                    value={ruleForm.integrationId}
-                    onChange={(e) => setRuleForm({ ...ruleForm, integrationId: e.target.value })}
-                  >
-                    <option value="">All Connected Pages</option>
-                    {connected.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>
-                    Target Post
-                  </label>
-                  <select
-                    className="form-input w-full"
-                    value={ruleForm.postId}
-                    onChange={(e) => setRuleForm({ ...ruleForm, postId: e.target.value })}
-                  >
-                    <option value="ALL_POSTS">All Page Posts</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>
-                  Reply Trigger Condition
-                </label>
-                <div style={{ display: 'flex', gap: 12 }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.84rem', cursor: 'pointer' }}>
-                    <input
-                      type="radio"
-                      name="triggerType"
-                      checked={ruleForm.triggerType === 'ALL'}
-                      onChange={() => setRuleForm({ ...ruleForm, triggerType: 'ALL' })}
-                    />
-                    Reply to all comments
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.84rem', cursor: 'pointer' }}>
-                    <input
-                      type="radio"
-                      name="triggerType"
-                      checked={ruleForm.triggerType === 'KEYWORDS'}
-                      onChange={() => setRuleForm({ ...ruleForm, triggerType: 'KEYWORDS' })}
-                    />
-                    Filter by Keywords
-                  </label>
-                </div>
-              </div>
-
-              {ruleForm.triggerType === 'KEYWORDS' && (
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>
-                    Comma-separated Keywords
-                  </label>
-                  <input
-                    className="form-input w-full"
-                    placeholder="price, cost, how much, info, buy, discount"
-                    value={ruleForm.triggerKeywords}
-                    onChange={(e) => setRuleForm({ ...ruleForm, triggerKeywords: e.target.value })}
-                  />
-                </div>
-              )}
-
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
-                  <label style={{ fontSize: '0.82rem', fontWeight: 600 }}>
-                    Public Auto-Reply Comment
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setRuleForm({ ...ruleForm, autoReplyComment: ruleForm.autoReplyComment + ' {{name}}' })}
-                    style={{ fontSize: '0.72rem', color: '#1877f2', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
-                  >
-                    + Insert {'{{name}}'}
-                  </button>
-                </div>
-                <textarea
-                  rows={2}
-                  className="form-input w-full"
-                  placeholder="Hi {{name}}, thanks for your comment! We sent you a private message with details."
-                  value={ruleForm.autoReplyComment}
-                  onChange={(e) => setRuleForm({ ...ruleForm, autoReplyComment: e.target.value })}
-                />
-              </div>
-
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
-                  <label style={{ fontSize: '0.82rem', fontWeight: 600 }}>
-                    Private Messenger Reply Message
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setRuleForm({ ...ruleForm, autoReplyPrivateMessage: ruleForm.autoReplyPrivateMessage + ' {{name}}' })}
-                    style={{ fontSize: '0.72rem', color: '#1877f2', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
-                  >
-                    + Insert {'{{name}}'}
-                  </button>
-                </div>
-                <textarea
-                  rows={3}
-                  className="form-input w-full"
-                  placeholder="Hello {{name}}! Here is the special pricing and product link you requested: https://example.com"
-                  value={ruleForm.autoReplyPrivateMessage}
-                  onChange={(e) => setRuleForm({ ...ruleForm, autoReplyPrivateMessage: e.target.value })}
-                />
-              </div>
-
-              {/* Action Checkboxes */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, background: '#f8f8fc', padding: 12, borderRadius: 8 }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.82rem', cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={ruleForm.enableLikeComment}
-                    onChange={(e) => setRuleForm({ ...ruleForm, enableLikeComment: e.target.checked })}
-                  />
-                  <span>Auto-like user's comment upon replying ❤️</span>
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.82rem', cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={ruleForm.enableHideComment}
-                    onChange={(e) => setRuleForm({ ...ruleForm, enableHideComment: e.target.checked })}
-                  />
-                  <span>Auto-hide offensive comments 🛡️</span>
-                </label>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+              <div style={{ display: 'flex', gap: 8 }}>
                 <button
                   type="button"
-                  onClick={() => setShowRuleModal(false)}
+                  onClick={() => { setStep('idle'); setSelected([]); }}
                   style={{
-                    padding: '8px 16px',
-                    borderRadius: 8,
-                    border: '1px solid #e4e4f0',
-                    background: '#ffffff',
-                    cursor: 'pointer',
-                    fontSize: '0.85rem',
+                    flex: 1, padding: '9px', borderRadius: 8, border: '1px solid #e4e4f0',
+                    background: '#fff', color: '#5c5c80', fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer',
                   }}
                 >
                   Cancel
                 </button>
                 <button
-                  type="submit"
-                  disabled={ruleSaving}
+                  type="button"
+                  onClick={handleImport}
+                  disabled={!selected.length || importing}
                   style={{
-                    padding: '8px 20px',
-                    borderRadius: 8,
-                    background: '#1877f2',
-                    color: '#ffffff',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: '0.85rem',
-                    fontWeight: 700,
+                    flex: 2, padding: '9px', borderRadius: 8, border: 'none',
+                    background: '#1877f2', color: '#fff', fontWeight: 700, fontSize: '0.82rem',
+                    cursor: !selected.length || importing ? 'not-allowed' : 'pointer',
+                    opacity: !selected.length || importing ? 0.6 : 1,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                   }}
                 >
-                  {ruleSaving ? 'Saving...' : editingRule ? 'Update Campaign' : 'Create Campaign'}
+                  {importing ? (
+                    <>
+                      <span className="loading-spinner" style={{ width: 14, height: 14, borderColor: 'rgba(255,255,255,0.3)', borderTopColor: '#fff' }} />
+                      Connecting…
+                    </>
+                  ) : (
+                    `Connect ${selected.length} Page${selected.length !== 1 ? 's' : ''}`
+                  )}
                 </button>
               </div>
-            </form>
+            </div>
+          )}
+
+          {/* State: Idle / Done (FB Login Button) */}
+          {(step === 'idle' || step === 'done') && (
+            <div style={{ background: '#ffffff', border: '1px solid #e4e4f0', borderRadius: 12, padding: 20, textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
+              <Facebook size={34} color="#1877f2" style={{ marginBottom: 8 }} />
+              <div style={{ fontWeight: 700, fontSize: '0.96rem', marginBottom: 4, color: '#1a1a2e' }}>
+                Connect via Facebook Login
+              </div>
+              <div style={{ fontSize: '0.8rem', color: '#5c5c80', marginBottom: 16, lineHeight: 1.5 }}>
+                Log in to select and import pages with <code>pages_show_list</code>, <code>pages_messaging</code>, <code>pages_manage_engagement</code>, and <code>pages_manage_posts</code> permissions for full DM and comment automation.
+              </div>
+              <FBLoginButton onClick={handleFBLogin} loading={loginLoading} disabled={loginLoading || !fbReady || !!sdkError} />
+              {!fbReady && !sdkError && (
+                <div style={{ marginTop: 8, fontSize: '0.75rem', color: '#8c8ca1' }}>Initializing Meta SDK…</div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Connect via 1-Click Permanent Token ── */}
+      {pagesView === 'token' && (
+        <div style={{ maxWidth: 480 }}>
+          <button onClick={() => setPagesView('choose_method')} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.8rem', marginBottom: 20, padding: 0 }}>
+            <ArrowLeft size={14} /> Back
+          </button>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(99,102,241,0.1)', color: '#4f46e5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Zap size={18} />
+            </div>
+            <div>
+              <h2 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0f172a' }}>1-Click Permanent Token</h2>
+              <p style={{ margin: 0, fontSize: '0.74rem', color: '#64748b' }}>Paste a Meta token — we upgrade it to a permanent token automatically</p>
+            </div>
+          </div>
+
+          <p style={{ fontSize: '0.8rem', color: '#5c5c80', margin: '0 0 12px 0', lineHeight: 1.5 }}>
+            Paste any token with <code>pages_manage_engagement, pages_manage_posts, pages_messaging</code>. We automatically upgrade it to a <strong>Permanent Never-Expiring Token</strong>.
+          </p>
+          <textarea
+            rows={3}
+            className="form-input w-full"
+            placeholder="Paste Access Token here..."
+            value={quickToken}
+            onChange={e => setQuickToken(e.target.value)}
+            style={{ fontSize: '0.82rem', resize: 'vertical', marginBottom: 14 }}
+          />
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 6, borderTop: '1px solid #f1f5f9' }}>
+            <button type="button" onClick={() => setPagesView('choose_method')} className="btn btn-secondary btn-sm">
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleQuickConnect}
+              disabled={quickConnecting || !quickToken.trim()}
+              className="btn btn-primary btn-sm"
+              style={{ background: '#6366f1', borderColor: '#6366f1', fontWeight: 700, minWidth: 160 }}
+            >
+              {quickConnecting ? 'Connecting...' : (<><Zap size={14} /> Connect & Make Permanent</>)}
+            </button>
           </div>
         </div>
       )}
 
-      {/* ── Toast Notification ── */}
-      {toast && (
-        <div
-          style={{
-            position: 'fixed',
-            bottom: 24,
-            right: 24,
-            zIndex: 9999,
-            padding: '12px 20px',
-            borderRadius: 8,
-            background: toast.type === 'error' ? '#ef4444' : '#10b981',
-            color: '#ffffff',
-            fontWeight: 600,
-            fontSize: '0.85rem',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-          }}
-        >
-          {toast.msg}
-        </div>
-        )}
-      </div>
+    </div>
   );
 
   if (embedded) return pageContent;

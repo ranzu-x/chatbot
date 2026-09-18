@@ -1,7 +1,4 @@
-﻿import "./landing.css";
-import { Link } from "react-router";
-import { MessageSquare, ArrowLeft } from "lucide-react";
-
+﻿
 const sections = [
   {
     title: "1. Agreement to Terms",
@@ -93,30 +90,7 @@ Website: https://nexaaichat.com`,
 
 export default function TermsOfService() {
   return (
-    <div className="lp-wrapper">
-      {/* ─── Navbar ────────────────────────────────────────────── */}
-      <nav className="lp-navbar">
-        <div className="lp-container">
-          <div className="lp-nav-inner">
-            <Link to="/" className="lp-logo">
-              <div className="lp-logo-icon">
-                <MessageSquare size={20} />
-              </div>
-              <span>Nexa AI Chat</span>
-            </Link>
-
-            <div className="lp-nav-actions">
-              <Link to="/" className="lp-btn-secondary" style={{ gap: "6px" }}>
-                <ArrowLeft size={16} /> Back to Home
-              </Link>
-              <Link to="/privacy-policy" className="lp-nav-link" style={{ marginLeft: "12px" }}>
-                Privacy Policy
-              </Link>
-            </div>
-          </div>
-        </div>
-      </nav>
-
+    <>
       {/* ─── Header Hero ───────────────────────────────────────── */}
       <section className="lp-legal-hero" style={{ background: "linear-gradient(135deg, #1e1b4b 0%, #3730a3 50%, #4f46e5 100%)" }}>
         <div className="lp-container-narrow">
@@ -167,31 +141,6 @@ export default function TermsOfService() {
           </div>
         </div>
       </section>
-
-      {/* ─── Footer ────────────────────────────────────────────── */}
-      <footer className="lp-footer">
-        <div className="lp-container">
-          <div className="lp-footer-top">
-            <Link to="/" className="lp-footer-logo">
-              <div className="lp-logo-icon" style={{ width: 32, height: 32 }}>
-                <MessageSquare size={16} />
-              </div>
-              <span>Nexa AI Chat</span>
-            </Link>
-
-            <div className="lp-footer-links">
-              <Link to="/" className="lp-footer-link">Home</Link>
-              <Link to="/privacy-policy" className="lp-footer-link">Privacy Policy</Link>
-              <Link to="/terms-of-service" className="lp-footer-link">Terms of Service</Link>
-              <Link to="/login" className="lp-footer-link">Sign In</Link>
-            </div>
-          </div>
-
-          <div className="lp-footer-bottom">
-            &copy; {new Date().getFullYear()} Nexa AI Chat. All rights reserved.
-          </div>
-        </div>
-      </footer>
-    </div>
+    </>
   );
 }

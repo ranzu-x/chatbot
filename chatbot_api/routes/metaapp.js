@@ -3,7 +3,8 @@ import crypto from "crypto";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
-import { resolveMetaAppSettings } from "../utils/appCredentials.js";
+import { resolveMetaAppSettings, resolveWhatsAppOnboardingAppId } from "../utils/appCredentials.js";
+import { testMetaAppCredentials } from "../utils/metaAppHealth.js";
 
 const router = express.Router();
 // Scoped per-prefix — an unscoped router.use(mw) would run for every
@@ -18,10 +19,27 @@ const router = express.Router();
 // the user's own Instagram accounts to connect) — USER is included here to
 // match the rest of the Connect Account hub (routes/channels.js,
 // Public App ID (no secret exposed) — accessible by RESELLER, ADMIN, and USER (so end users can init FB SDK)
+//
+// Both routes below read/write the ACTIVE row of meta_app_pool for a given
+// platformGroup ('WHATSAPP' | 'MESSENGER_INSTAGRAM') rather than the old
+// single-row meta_app_settings table — WhatsApp and Facebook/Instagram are
+// deliberately separate app slots now (see utils/appCredentials.js). The
+// `?platformGroup=` query/body param defaults to 'MESSENGER_INSTAGRAM' for
+// backward compatibility with any stale frontend build during a rolling
+// deploy. Managing STANDBY slots (adding backups, promoting, health status)
+// lives in routes/metaapppool.js — this file keeps managing only the ACTIVE
+// slot per group, matching its pre-existing single-settings-object contract.
 router.get("/settings/meta-app/app-id", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), async (req, res) => {
   try {
     const agencyId = await resolveAgencyId(req);
-    const appSettings = await resolveMetaAppSettings(agencyId);
+    const platformGroup = req.query.platformGroup === "WHATSAPP" ? "WHATSAPP" : "MESSENGER_INSTAGRAM";
+    // WhatsApp new-connect attempts get silently redirected to a standby app
+    // when the active one is Tech-Provider-blocked for new onboarding —
+    // existing integrations are untouched, only this SDK-init lookup and
+    // the embedded-signup completion call (channels.js) use this variant.
+    const appSettings = platformGroup === "WHATSAPP"
+      ? await resolveWhatsAppOnboardingAppId(agencyId)
+      : await resolveMetaAppSettings(agencyId, platformGroup);
     if (!appSettings?.app_id)
       return res.status(404).json({ success: false, message: "Meta App not configured. Go to Settings → Meta App Setup first." });
     return res.json({
@@ -42,7 +60,8 @@ router.use("/channels/instagram/import-accounts", authMiddleware, roleMiddleware
 // Helper to resolve agencyId cleanly for both AGENCY owners and ADMIN users.
 // SECURITY: Only looks up agency owned by the current user — never picks up
 // another user's agency row (prevents cross-tenant data leakage).
-async function resolveAgencyId(req) {
+// Exported so routes/metaapppool.js can reuse it rather than duplicating it.
+export async function resolveAgencyId(req) {
   if (req.user?.agencyId) return Number(req.user.agencyId);
   const userId = req.user?.id;
   if (!userId) return 1;
@@ -67,12 +86,18 @@ async function resolveAgencyId(req) {
   return 1;
 }
 
-// ─── GET META APP SETTINGS ────────────────────────────────────────
+function normalizePlatformGroup(value) {
+  return value === "WHATSAPP" ? "WHATSAPP" : "MESSENGER_INSTAGRAM";
+}
+
+// ─── GET META APP SETTINGS (ACTIVE slot for one platform group) ──────────
 router.get("/settings/meta-app", async (req, res) => {
   try {
     const agencyId = await resolveAgencyId(req);
+    const platformGroup = normalizePlatformGroup(req.query.platformGroup);
     const [rows] = await pool.query(
-      "SELECT * FROM meta_app_settings WHERE agency_id = ?", [agencyId]
+      "SELECT * FROM meta_app_pool WHERE agency_id = ? AND platform_group = ? AND slot_role = 'ACTIVE'",
+      [agencyId, platformGroup]
     );
     const settings = rows[0] || null;
     let verifyToken = settings?.verify_token;
@@ -85,16 +110,16 @@ router.get("/settings/meta-app", async (req, res) => {
       try {
         if (settings) {
           await pool.query(
-            "UPDATE meta_app_settings SET verify_token = ? WHERE agency_id = ?",
-            [verifyToken, agencyId]
+            "UPDATE meta_app_pool SET verify_token = ? WHERE id = ?",
+            [verifyToken, settings.id]
           );
         } else {
           await pool.query(
-            "INSERT INTO meta_app_settings (agency_id, verify_token, is_configured, is_active) VALUES (?, ?, 0, 1)",
-            [agencyId, verifyToken]
+            "INSERT INTO meta_app_pool (agency_id, platform_group, slot_role, verify_token, is_configured, is_active) VALUES (?, ?, 'ACTIVE', ?, 0, 1)",
+            [agencyId, platformGroup, verifyToken]
           );
         }
-        console.log(`[Meta App] Auto-saved generated verify_token for agency ${agencyId}`);
+        console.log(`[Meta App] Auto-saved generated verify_token for agency ${agencyId} / ${platformGroup}`);
       } catch (saveErr) {
         console.error("[Meta App] Failed to auto-save verify_token:", saveErr.message);
       }
@@ -103,6 +128,7 @@ router.get("/settings/meta-app", async (req, res) => {
     return res.json({
       success: true,
       agencyId,
+      platformGroup,
       settings: settings ? { ...settings, verify_token: verifyToken } : null,
       generatedVerifyToken: verifyToken,
     });
@@ -112,42 +138,45 @@ router.get("/settings/meta-app", async (req, res) => {
   }
 });
 
-// ─── SAVE META APP SETTINGS ───────────────────────────────────────
+// ─── SAVE META APP SETTINGS (ACTIVE slot for one platform group) ─────────
 router.post("/settings/meta-app", async (req, res) => {
   const { appId, appSecret, systemUserToken, whatsappConfigId, whatsappConfigIdCatalog, verifyToken, appName, siteUrl, privacyUrl, tosUrl, isActive, customWebhookUrl } = req.body;
   if (!appId || !appSecret || !verifyToken)
     return res.status(400).json({ success: false, message: "App ID, App Secret and Verify Token are required" });
 
   const agencyId = await resolveAgencyId(req);
+  const platformGroup = normalizePlatformGroup(req.body.platformGroup);
   const webhookUrl = customWebhookUrl || `${process.env.BACKEND_URL || "http://localhost:5000"}/api/v1/webhook/${agencyId}`;
 
   try {
     const [existing] = await pool.query(
-      "SELECT id FROM meta_app_settings WHERE agency_id=?", [agencyId]
+      "SELECT id FROM meta_app_pool WHERE agency_id = ? AND platform_group = ? AND slot_role = 'ACTIVE'",
+      [agencyId, platformGroup]
     );
     if (existing.length) {
       await pool.query(
-        `UPDATE meta_app_settings SET app_id=?, app_secret=?, system_user_token=?, whatsapp_config_id=?, whatsapp_config_id_catalog=?, verify_token=?, webhook_url=?, is_configured=1,
-         app_name=?, site_url=?, privacy_url=?, tos_url=?, is_active=? WHERE agency_id=?`,
-        [appId, appSecret, systemUserToken?.trim() || null, whatsappConfigId || null, whatsappConfigIdCatalog?.trim() || null, verifyToken, webhookUrl, appName || null, siteUrl || null, privacyUrl || null, tosUrl || null, isActive ? 1 : 0, agencyId]
+        `UPDATE meta_app_pool SET app_id=?, app_secret=?, system_user_token=?, whatsapp_config_id=?, whatsapp_config_id_catalog=?, verify_token=?, webhook_url=?, is_configured=1,
+         app_name=?, site_url=?, privacy_url=?, tos_url=?, is_active=? WHERE id=?`,
+        [appId, appSecret, systemUserToken?.trim() || null, whatsappConfigId || null, whatsappConfigIdCatalog?.trim() || null, verifyToken, webhookUrl, appName || null, siteUrl || null, privacyUrl || null, tosUrl || null, isActive ? 1 : 0, existing[0].id]
       );
     } else {
       await pool.query(
-        `INSERT INTO meta_app_settings (agency_id, app_id, app_secret, system_user_token, whatsapp_config_id, whatsapp_config_id_catalog, verify_token, webhook_url, is_configured, app_name, site_url, privacy_url, tos_url, is_active)
-         VALUES (?,?,?,?,?,?,?,?,1,?,?,?,?,?)`,
-        [agencyId, appId, appSecret, systemUserToken?.trim() || null, whatsappConfigId || null, whatsappConfigIdCatalog?.trim() || null, verifyToken, webhookUrl, appName || null, siteUrl || null, privacyUrl || null, tosUrl || null, isActive ? 1 : 0]
+        `INSERT INTO meta_app_pool (agency_id, platform_group, slot_role, label, app_id, app_secret, system_user_token, whatsapp_config_id, whatsapp_config_id_catalog, verify_token, webhook_url, is_configured, app_name, site_url, privacy_url, tos_url, is_active)
+         VALUES (?,?,'ACTIVE','Primary',?,?,?,?,?,?,?,1,?,?,?,?,?)`,
+        [agencyId, platformGroup, appId, appSecret, systemUserToken?.trim() || null, whatsappConfigId || null, whatsappConfigIdCatalog?.trim() || null, verifyToken, webhookUrl, appName || null, siteUrl || null, privacyUrl || null, tosUrl || null, isActive ? 1 : 0]
       );
     }
 
     // If systemUserToken was supplied, also update any placeholder 'embedded_token' in integrations
     if (systemUserToken?.trim()) {
+      const platformFilter = platformGroup === "WHATSAPP" ? "platform = 'WHATSAPP'" : "platform IN ('FACEBOOK','INSTAGRAM')";
       await pool.query(
-        "UPDATE integrations SET access_token = ? WHERE agency_id = ? AND (access_token = 'embedded_token' OR access_token IS NULL OR access_token = '')",
+        `UPDATE integrations SET access_token = ? WHERE agency_id = ? AND ${platformFilter} AND (access_token = 'embedded_token' OR access_token IS NULL OR access_token = '')`,
         [systemUserToken.trim(), agencyId]
       );
     }
 
-    return res.json({ success: true, message: "Meta App settings saved", webhookUrl, agencyId });
+    return res.json({ success: true, message: "Meta App settings saved", webhookUrl, agencyId, platformGroup });
   } catch (err) {
     console.error("Error saving meta-app settings:", err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -163,21 +192,23 @@ router.patch("/settings/meta-app/verify-token", async (req, res) => {
   }
   try {
     const agencyId = await resolveAgencyId(req);
+    const platformGroup = normalizePlatformGroup(req.body.platformGroup);
     const [existing] = await pool.query(
-      "SELECT id FROM meta_app_settings WHERE agency_id = ?", [agencyId]
+      "SELECT id FROM meta_app_pool WHERE agency_id = ? AND platform_group = ? AND slot_role = 'ACTIVE'",
+      [agencyId, platformGroup]
     );
     if (existing.length) {
       await pool.query(
-        "UPDATE meta_app_settings SET verify_token = ? WHERE agency_id = ?",
-        [verifyToken.trim(), agencyId]
+        "UPDATE meta_app_pool SET verify_token = ? WHERE id = ?",
+        [verifyToken.trim(), existing[0].id]
       );
     } else {
       await pool.query(
-        "INSERT INTO meta_app_settings (agency_id, verify_token, is_configured, is_active) VALUES (?, ?, 0, 1)",
-        [agencyId, verifyToken.trim()]
+        "INSERT INTO meta_app_pool (agency_id, platform_group, slot_role, verify_token, is_configured, is_active) VALUES (?, ?, 'ACTIVE', ?, 0, 1)",
+        [agencyId, platformGroup, verifyToken.trim()]
       );
     }
-    console.log(`[Meta App] verify_token updated for agency ${agencyId}`);
+    console.log(`[Meta App] verify_token updated for agency ${agencyId} / ${platformGroup}`);
     return res.json({ success: true });
   } catch (err) {
     console.error("Error saving verify token:", err);
@@ -189,22 +220,23 @@ router.patch("/settings/meta-app/verify-token", async (req, res) => {
 router.post("/settings/meta-app/test", async (req, res) => {
   try {
     const agencyId = await resolveAgencyId(req);
+    const platformGroup = normalizePlatformGroup(req.body.platformGroup);
     let app_id = req.body?.appId?.toString().trim();
     let app_secret = req.body?.appSecret?.toString().trim();
 
     if (!app_id || !app_secret) {
       const [rows] = await pool.query(
-        "SELECT app_id, app_secret FROM meta_app_settings WHERE agency_id=?", [agencyId]
+        "SELECT app_id, app_secret FROM meta_app_pool WHERE agency_id = ? AND platform_group = ? AND slot_role = 'ACTIVE'",
+        [agencyId, platformGroup]
       );
       if (!rows.length) return res.status(404).json({ success: false, message: "Meta App not configured yet. Enter App ID and App Secret." });
       app_id = rows[0].app_id;
       app_secret = rows[0].app_secret;
     }
-    const testRes = await fetch(`https://graph.facebook.com/v21.0/${app_id}?access_token=${app_id}|${app_secret}`);
-    const testData = await testRes.json();
 
-    if (testData.error) return res.status(400).json({ success: false, message: testData.error.message });
-    return res.json({ success: true, message: "Meta App connection successful", appName: testData.name });
+    const result = await testMetaAppCredentials(app_id, app_secret);
+    if (!result.healthy) return res.status(400).json({ success: false, message: result.error?.message || "Connection failed" });
+    return res.json({ success: true, message: "Meta App connection successful", appName: result.appName });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -224,7 +256,7 @@ router.post("/channels/instagram/import-accounts", async (req, res) => {
     let appSecret = null;
     let appId = null;
     try {
-      const appSettings = await resolveMetaAppSettings(agencyId);
+      const appSettings = await resolveMetaAppSettings(agencyId, "MESSENGER_INSTAGRAM");
       if (appSettings) {
         appId = appSettings.app_id;
         appSecret = appSettings.app_secret;

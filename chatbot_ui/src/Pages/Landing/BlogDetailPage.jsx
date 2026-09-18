@@ -1,10 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router';
-import { useAuth } from '../../Provider/AuthContext';
 import { blogAPI } from '../../services/api';
-import { MessageSquare, Clock, Eye, ArrowLeft, ArrowRight, Share2, Twitter, Linkedin, Link2, ChevronDown, ChevronUp, LayoutDashboard } from 'lucide-react';
-import './landing.css';
-import './blog.css';
+import { Clock, Eye, ArrowLeft, ArrowRight, Share2, Twitter, Linkedin, Link2, ChevronDown, ChevronUp } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -180,15 +177,12 @@ function useSEO(post) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 export default function BlogDetailPage() {
-  const { user } = useAuth();
   const { slug } = useParams();
   const [post, setPost]       = useState(null);
   const [related, setRelated] = useState([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const contentRef = useRef(null);
-
-  const dashboardPath = user?.role === 'ADMIN' ? '/admin' : '/agency';
 
   useSEO(post);
 
@@ -218,35 +212,7 @@ export default function BlogDetailPage() {
   const faqs    = (() => { try { return JSON.parse(post?.faqs || '[]'); } catch { return []; } })();
 
   return (
-    <div className="lp-wrapper">
-      {/* ── Navbar ─────────────────────────────────────── */}
-      <nav className="lp-navbar">
-        <div className="lp-container">
-          <div className="lp-nav-inner">
-            <Link to="/" className="lp-logo">
-              <div className="lp-logo-icon"><MessageSquare size={20} /></div>
-              <span>Nexa AI Chat</span>
-            </Link>
-            <div className="lp-nav-links">
-              <Link to="/" className="lp-nav-link">Home</Link>
-              <Link to="/blog" className="lp-nav-link">Blog</Link>
-            </div>
-            <div className="lp-nav-actions">
-              {user ? (
-                <Link to={dashboardPath} className="lp-btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                  <LayoutDashboard size={16} /> Dashboard
-                </Link>
-              ) : (
-                <>
-                  <Link to="/login" className="lp-btn-login">Sign In</Link>
-                  <Link to="/register" className="lp-btn-primary">Get Started <ArrowRight size={16} /></Link>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      </nav>
-
+    <>
       {loading && <div className="blog-loading" style={{ minHeight: '60vh' }}><div className="lp-spinner" /></div>}
 
       {notFound && (
@@ -361,30 +327,6 @@ export default function BlogDetailPage() {
           </div>
         </>
       )}
-
-      {/* ── Footer ───────────────────────────────────────── */}
-      <footer className="lp-footer">
-        <div className="lp-container">
-          <div className="lp-footer-top">
-            <Link to="/" className="lp-footer-logo">
-              <div className="lp-logo-icon" style={{ width: 32, height: 32 }}><MessageSquare size={16} /></div>
-              <span>Nexa AI Chat</span>
-            </Link>
-            <div className="lp-footer-links">
-              <Link to="/" className="lp-footer-link">Home</Link>
-              <Link to="/blog" className="lp-footer-link">Blog</Link>
-              <Link to="/privacy-policy" className="lp-footer-link">Privacy Policy</Link>
-              <Link to="/terms-of-service" className="lp-footer-link">Terms of Service</Link>
-              {user ? (
-                <Link to={dashboardPath} className="lp-footer-link">Dashboard</Link>
-              ) : (
-                <Link to="/login" className="lp-footer-link">Sign In</Link>
-              )}
-            </div>
-          </div>
-          <div className="lp-footer-bottom">&copy; {new Date().getFullYear()} Nexa AI Chat. All rights reserved.</div>
-        </div>
-      </footer>
-    </div>
+    </>
   );
 }

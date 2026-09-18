@@ -16,6 +16,7 @@ import integrationRoutes from "./routes/integrations.js";
 import channelRoutes from "./routes/channels.js";
 import botRoutes from "./routes/bots.js";
 import metaAppRoutes from "./routes/metaapp.js";
+import metaAppPoolRoutes from "./routes/metaapppool.js";
 import tiktokAppRoutes from "./routes/tiktokapp.js";
 import webhookRoutes from "./routes/webhook.js";
 import whatsappFlowEndpointRoutes from "./routes/whatsappFlowEndpoint.js";
@@ -44,6 +45,11 @@ import slotRoutes from "./routes/slots.js";
 import labelsRoutes from "./routes/labels.js";
 import mediaRoutes from "./routes/media.js";
 import agencyPaymentGatewayRoutes from "./routes/agencyPaymentGateways.js";
+import platformPaymentGatewayRoutes from "./routes/platformPaymentGateways.js";
+import apiKeyRoutes from "./routes/apiKeys.js";
+import publicApiRoutes from "./routes/publicApi.js";
+import commerceRoutes from "./routes/commerce.js";
+import httpApiCampaignRoutes from "./routes/httpApiCampaigns.js";
 import aiProviderRoutes from "./routes/aiProviders.js";
 import aiAgentRoutes from "./routes/aiAgents.js";
 import aiReplySettingsRoutes from "./routes/aiReplySettings.js";
@@ -72,10 +78,17 @@ import { startFlowDelayScheduler } from "./utils/flowDelayScheduler.js";
 import { startBotResumeScheduler } from "./utils/botResumeScheduler.js";
 import { startBroadcastScheduler } from "./utils/broadcastScheduler.js";
 import { startSupportDeskScheduler } from "./utils/supportDeskScheduler.js";
+import { startCommerceSyncScheduler } from "./utils/commerceSyncScheduler.js";
+import { startMetaAppHealthScheduler } from "./utils/metaAppHealthScheduler.js";
 
 dotenv.config();
 
 const app = express();
+// Requests arrive via a tunnel/reverse proxy (ngrok, cloudflared, etc. for
+// webhook delivery), which sets X-Forwarded-For — without this, express-
+// rate-limit throws ERR_ERL_UNEXPECTED_X_FORWARDED_FOR on every request and
+// req.ip resolves to the proxy's address instead of the real client's.
+app.set("trust proxy", 1);
 const port = process.env.PORT || 5000;
 const server = http.createServer(app);
 
@@ -88,6 +101,8 @@ startFlowDelayScheduler();
 startBotResumeScheduler();
 startBroadcastScheduler();
 startSupportDeskScheduler();
+startCommerceSyncScheduler();
+startMetaAppHealthScheduler();
 
 // ─── Middleware ────────────────────────────────────────────────────────────────
 app.use(
@@ -194,6 +209,20 @@ app.use("/api/v1", webchatRoutes);
 app.use("/api/v1", authRoutes);
 app.use("/api/v1", mediaRoutes);
 
+// billingRoutes is mounted here, before every router below with a bare
+// (path-unscoped) router.use(authMiddleware, ...) — those intercept EVERY
+// /api/v1 request that reaches them regardless of whether they have a
+// matching route (documented gotcha, see routes/agencyPaymentGateways.js's
+// comment), which was silently 401-ing billing.js's public routes
+// (GET /billing/plans, POST /billing/webhook, and the new guest-checkout
+// endpoints below) since they were mounted after those routers. billing.js
+// protects its own routes individually with inline authMiddleware where
+// needed, so nothing loses protection by moving it earlier.
+app.use("/api/v1", billingRoutes);
+// commerce.js has the exact same shape of public route (Shopify's OAuth
+// callback, hit anonymously by Shopify's redirect) — same fix, same reason.
+app.use("/api/v1", commerceRoutes);
+
 // ─── Protected Application Routes ─────────────────────────────────────────────
 app.use("/api/v1", adminRoutes);
 app.use("/api/v1", agencyRoutes);
@@ -202,6 +231,7 @@ app.use("/api/v1", integrationRoutes);
 app.use("/api/v1", channelRoutes);
 app.use("/api/v1", botRoutes);
 app.use("/api/v1", metaAppRoutes);
+app.use("/api/v1", metaAppPoolRoutes);
 app.use("/api/v1", tiktokAppRoutes);
 app.use("/api/v1", flowRoutes);
 app.use("/api/v1", contactRoutes);
@@ -216,7 +246,6 @@ app.use("/api/v1", sequenceRoutes);
 app.use("/api/v1", domainRoutes);
 app.use("/api/v1", commentRoutes);
 app.use("/api/v1", packageRoutes);
-app.use("/api/v1", billingRoutes);
 app.use("/api/v1", flowWebhookRoutes);
 app.use("/api/v1", chatPaymentRoutes);
 app.use("/api/v1", notificationRoutes);
@@ -226,6 +255,10 @@ app.use("/api/v1", appointmentRoutes);
 app.use("/api/v1", slotRoutes);
 app.use("/api/v1", labelsRoutes);
 app.use("/api/v1", agencyPaymentGatewayRoutes);
+app.use("/api/v1", platformPaymentGatewayRoutes);
+app.use("/api/v1", apiKeyRoutes);
+app.use("/api/v1", publicApiRoutes);
+app.use("/api/v1", httpApiCampaignRoutes);
 app.use("/api/v1", aiProviderRoutes);
 app.use("/api/v1", aiAgentRoutes);
 app.use("/api/v1", aiReplySettingsRoutes);

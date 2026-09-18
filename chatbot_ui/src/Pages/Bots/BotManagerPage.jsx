@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
+import { useAuth } from '../../Provider/AuthContext';
 import { flowAPI, integrationAPI, channelAPI, botAPI, templateAPI } from '../../services/api';
 import WhatsAppTemplateManager from '../../Components/Templates/WhatsAppTemplateManager';
 import FacebookUtilityTemplateManager from '../../Components/Templates/FacebookUtilityTemplateManager';
@@ -8,6 +9,8 @@ import CommentAutomationManager from '../../Components/Comments/CommentAutomatio
 import ChatWidgetManager from '../../Components/Engagement/ChatWidgetManager';
 import SequenceMessageReport from '../../Components/Sequences/SequenceMessageReport';
 import UserInputFlowManagerList from '../../Components/UserInputFlows/UserInputFlowManagerList';
+import HttpApiCampaignManagerList from '../../Components/HttpApi/HttpApiCampaignManagerList';
+import WhatsAppFlowManagerList from '../../Components/WhatsAppFlows/WhatsAppFlowManagerList';
 import AIAgentManagerList from '../../Components/AIAgents/AIAgentManagerList';
 import AIReplySettingsPanel from '../../Components/AIAgents/AIReplySettingsPanel';
 import Swal from 'sweetalert2';
@@ -96,6 +99,7 @@ const SUB_TABS = {
     { id: 'messageTemplates', label: 'Message Templates' },
     { id: 'clickAds',         label: 'Click Ads' },
     { id: 'userInputFlows',   label: 'User Input Flows' },
+    { id: 'httpApiCampaigns', label: 'HTTP API Campaigns' },
     { id: 'followUpSequences',label: 'Sequences' },
     { id: 'quickActions',     label: 'Quick Actions' },
     { id: 'outboundActions',  label: 'Outbound Actions' },
@@ -106,6 +110,7 @@ const SUB_TABS = {
     { id: 'customFields',   label: 'Custom Variables' },
     { id: 'contactLabels',  label: 'Contact Labels' },
     { id: 'segments',       label: 'Subscriber Segments' },
+    { id: 'whatsappFlows',  label: 'WhatsApp Flows' },
   ],
   ai: [
     { id: 'aiReplySettings', label: 'AI Reply Settings' },
@@ -113,7 +118,14 @@ const SUB_TABS = {
     { id: 'agents',          label: 'Agents' },
   ],
   engagement: [
-    { id: 'commentAutomation', label: 'Comment Automation' },
+    // Split into two platform-locked tabs (each renders CommentAutomationManager
+    // with lockPlatform set) instead of one screen with a combined Facebook/
+    // Instagram account dropdown — same label, disambiguated by which one is
+    // visible for the currently selected account's platform (see the filter
+    // bodies below), matching how messageTemplates already disambiguates by
+    // platform while keeping one label.
+    { id: 'facebookCommentAutomation',  label: 'Comment Automation' },
+    { id: 'instagramCommentAutomation', label: 'Comment Automation' },
     { id: 'iceBreakers',       label: 'Ice Breakers & Welcome' },
     { id: 'storyMentions',     label: 'Story Mentions Reply' },
     { id: 'actionMenus',       label: 'Action Buttons & Menus' },
@@ -259,11 +271,11 @@ function formatLogDateTime(dateStr) {
 export default function BotManagerPage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
 
   // Data
   const [integrations, setIntegrations] = useState([]);
   const [flows, setFlows] = useState([]);
-  const [commentRules, setCommentRules] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -319,6 +331,13 @@ export default function BotManagerPage() {
   const [newFlowPlatform, setNewFlowPlatform] = useState('WHATSAPP');
   const [creating, setCreating] = useState(false);
   const [showOptionsDropdown, setShowOptionsDropdown] = useState(false);
+
+  // Clone Flow Modal State
+  const [showCloneModal, setShowCloneModal] = useState(false);
+  const [flowToClone, setFlowToClone] = useState(null);
+  const [cloneName, setCloneName] = useState('');
+  const [cloneTargetIntegId, setCloneTargetIntegId] = useState('');
+  const [cloning, setCloning] = useState(false);
 
   // Error Log Modal State
   const [showErrorLogModal, setShowErrorLogModal] = useState(false);
@@ -467,10 +486,9 @@ export default function BotManagerPage() {
   const loadAllData = useCallback(async () => {
     setLoading(true);
     try {
-      const [integsRes, flowsRes, commentRes, templRes] = await Promise.allSettled([
+      const [integsRes, flowsRes, templRes] = await Promise.allSettled([
         integrationAPI.getAll(),
         flowAPI.getAll(),
-        channelAPI.getFBCommentRules(),
         templateAPI.getWATemplates(),
       ]);
 
@@ -482,10 +500,6 @@ export default function BotManagerPage() {
 
       if (flowsRes.status === 'fulfilled') {
         setFlows(flowsRes.value.data?.flows || []);
-      }
-
-      if (commentRes.status === 'fulfilled') {
-        setCommentRules(commentRes.value.data?.rules || []);
       }
 
       if (templRes.status === 'fulfilled') {
@@ -533,12 +547,25 @@ export default function BotManagerPage() {
         return platform === 'WHATSAPP';
       }
       // Comments / Story mentions ONLY for Facebook / Instagram
-      if (['commentAutomation', 'storyMentions'].includes(sub.id)) {
+      if (sub.id === 'facebookCommentAutomation') {
+        return platform === 'FACEBOOK';
+      }
+      if (sub.id === 'instagramCommentAutomation') {
+        return platform === 'INSTAGRAM';
+      }
+      if (sub.id === 'storyMentions') {
         return ['FACEBOOK', 'INSTAGRAM'].includes(platform);
+      }
+      // WhatsApp Flows management (incl. encryption keys) is ADMIN/RESELLER
+      // only server-side (routes/whatsappFlowRefs.js, routes/whatsappFlowEndpoint.js)
+      // — hide the tab from USER team members rather than show a form whose
+      // every mutating call 403s.
+      if (sub.id === 'whatsappFlows') {
+        return user?.role !== 'USER';
       }
       return true;
     });
-  }, [activeCategory, selectedAccount]);
+  }, [activeCategory, selectedAccount, user?.role]);
 
   // Sync category change to reset subtab
   const handleCategoryChange = (catId) => {
@@ -552,8 +579,17 @@ export default function BotManagerPage() {
       if (['whatsappCalling', 'catalogSync', 'productMessages'].includes(sub.id)) {
         return platform === 'WHATSAPP';
       }
-      if (['commentAutomation', 'storyMentions'].includes(sub.id)) {
+      if (sub.id === 'facebookCommentAutomation') {
+        return platform === 'FACEBOOK';
+      }
+      if (sub.id === 'instagramCommentAutomation') {
+        return platform === 'INSTAGRAM';
+      }
+      if (sub.id === 'storyMentions') {
         return ['FACEBOOK', 'INSTAGRAM'].includes(platform);
+      }
+      if (sub.id === 'whatsappFlows') {
+        return user?.role !== 'USER';
       }
       return true;
     });
@@ -611,8 +647,17 @@ export default function BotManagerPage() {
       if (['whatsappCalling', 'catalogSync', 'productMessages'].includes(sub.id)) {
         return platform === 'WHATSAPP';
       }
-      if (['commentAutomation', 'storyMentions'].includes(sub.id)) {
+      if (sub.id === 'facebookCommentAutomation') {
+        return platform === 'FACEBOOK';
+      }
+      if (sub.id === 'instagramCommentAutomation') {
+        return platform === 'INSTAGRAM';
+      }
+      if (sub.id === 'storyMentions') {
         return ['FACEBOOK', 'INSTAGRAM'].includes(platform);
+      }
+      if (sub.id === 'whatsappFlows') {
+        return user?.role !== 'USER';
       }
       return true;
     });
@@ -621,7 +666,7 @@ export default function BotManagerPage() {
     if (!isCurrentValid && available.length > 0) {
       setActiveSubTab(available[0].id);
     }
-  }, [currentAccountPlatform, activeCategory, activeSubTab]);
+  }, [currentAccountPlatform, activeCategory, activeSubTab, user?.role]);
 
 
 
@@ -656,20 +701,16 @@ export default function BotManagerPage() {
   /* ─── Filter Flows for Selected Account ─── */
   const displayedFlows = useMemo(() => {
     return flows.filter((f) => {
-      // 1. Filter by Selected Account or Channel
+      // Exclude broadcast flows from the keyword bot replies table
+      if (f.trigger_type === 'BROADCAST') {
+        return false;
+      }
+
+      // 1. Filter strictly by Selected Account
       if (selectedAccount && selectedAccount.id !== 'all') {
-        // If flow is bound to a specific integration_id, it must match this selected account
-        if (f.integration_id) {
-          if (String(f.integration_id) !== String(selectedAccount.id)) {
-            return false;
-          }
-        } else {
-          // If flow has no integration_id, it must match the selected account's platform
-          const flowPlat = (f.platform || '').toUpperCase();
-          const accPlat = (selectedAccount.platform || '').toUpperCase();
-          if (flowPlat && accPlat && flowPlat !== accPlat) {
-            return false;
-          }
+        // Flows must belong STRICTLY to this bot account
+        if (String(f.integration_id || '') !== String(selectedAccount.id)) {
+          return false;
         }
       } else if (channelFilter && channelFilter !== 'ALL') {
         const flowPlat = (f.platform || '').toUpperCase();
@@ -699,18 +740,40 @@ export default function BotManagerPage() {
     setCreating(true);
     try {
       const template = STARTER_TEMPLATES.find((t) => t.id === selectedTemplate) || STARTER_TEMPLATES[0];
-      const nodes = template.nodes(newFlowName);
-      const edges = template.edges(newFlowName);
-
       const targetPlatform = selectedAccount?.platform || newFlowPlatform || 'WHATSAPP';
-      const targetIntegId = selectedAccount?.id !== 'all' ? selectedAccount?.id : null;
+      const isWebchat = (targetPlatform || '').toUpperCase() === 'WEBCHAT';
+      const targetIntegId = selectedAccount?.id && selectedAccount?.id !== 'all' ? selectedAccount?.id : null;
+
+      let nodes = template.nodes(newFlowName);
+      let edges = template.edges(newFlowName);
+
+      if (isWebchat) {
+        nodes = [
+          {
+            id: 'start_1',
+            type: 'start',
+            position: { x: 80, y: 120 },
+            data: {
+              label: 'Chat Widget',
+              chatWidgetStart: true,
+              targetPlatform: 'WEBCHAT',
+              widgetName: newFlowName.trim(),
+              displayName: selectedAccount?.name || newFlowName.trim() || 'Support Chat',
+              greetingMessage: 'Hello! How can we help you today?',
+              buttonText: 'Chat with us',
+              buttonBgColor: '#6366f1',
+            },
+          },
+          ...nodes.filter((n) => n.id !== 'start_1'),
+        ];
+      }
 
       const res = await flowAPI.create({
         name: newFlowName.trim(),
         platform: targetPlatform,
         integrationId: targetIntegId,
-        triggerKeyword: 'hi,hello',
-        triggerType: 'KEYWORD',
+        triggerKeyword: isWebchat ? null : 'hi,hello',
+        triggerType: isWebchat ? 'CHAT_WIDGET' : 'KEYWORD',
         nodes_json: JSON.stringify(nodes),
         edges_json: JSON.stringify(edges),
         isActive: 1,
@@ -719,7 +782,18 @@ export default function BotManagerPage() {
       showToast(`Flow "${newFlowName}" created!`);
       setShowCreateModal(false);
       setNewFlowName('');
-      const newId = res.data?.flow?.id || res.data?.id;
+      const newId = res.data?.flowId || res.data?.flow?.id || res.data?.id;
+
+      if (isWebchat && targetIntegId && newId) {
+        try {
+          const wRes = await channelAPI.getWebchat();
+          const matchedWidget = (wRes.data?.widgets || []).find((w) => String(w.integration_id) === String(targetIntegId));
+          if (matchedWidget && !matchedWidget.flow_id) {
+            await channelAPI.updateWebchat(matchedWidget.id, { flowId: newId });
+          }
+        } catch {}
+      }
+
       if (newId) {
         openFlowBuilder(newId);
       } else {
@@ -730,6 +804,47 @@ export default function BotManagerPage() {
       showToast('Failed to create flow', 'error');
     } finally {
       setCreating(false);
+    }
+  };
+
+  /* ─── Clone / Copy Flow to Bot Account ─── */
+  const openCloneModal = (flow) => {
+    setFlowToClone(flow);
+    setCloneName(`${flow.name} (Copy)`);
+    const defaultIntegId = (selectedAccount?.id && selectedAccount.id !== 'all')
+      ? String(selectedAccount.id)
+      : (flow.integration_id ? String(flow.integration_id) : (integrations[0]?.id ? String(integrations[0].id) : ''));
+    setCloneTargetIntegId(defaultIntegId);
+    setShowCloneModal(true);
+  };
+
+  const handleCloneFlow = async (e) => {
+    e?.preventDefault();
+    if (!flowToClone || !cloneName.trim()) {
+      showToast('Please enter a name for the cloned flow', 'error');
+      return;
+    }
+    setCloning(true);
+    try {
+      await flowAPI.clone(flowToClone.id, {
+        name: cloneName.trim(),
+        targetIntegrationId: cloneTargetIntegId ? Number(cloneTargetIntegId) : null,
+      });
+
+      const targetInteg = integrations.find((i) => String(i.id) === String(cloneTargetIntegId));
+      const targetLabel = targetInteg?.name || targetInteg?.wa_display_phone || 'Bot Account';
+      showToast(`Flow cloned successfully to ${targetLabel}!`, 'success');
+
+      setShowCloneModal(false);
+      setFlowToClone(null);
+      setCloneName('');
+
+      await loadAllData();
+    } catch (err) {
+      console.error('Clone flow error:', err);
+      showToast(err?.response?.data?.message || 'Failed to clone flow', 'error');
+    } finally {
+      setCloning(false);
     }
   };
 
@@ -1648,7 +1763,17 @@ export default function BotManagerPage() {
                               </button>
                               <button
                                 className="bm-row-action"
-                                title="Test in Live Chat"
+                                title="Clone / Copy to Bot Account"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openCloneModal(flow);
+                                }}
+                              >
+                                <Copy size={13} />
+                              </button>
+                              <button
+                                className="bm-row-action"
+                                title="Test in Inbox"
                                 onClick={() => navigate('/inbox')}
                               >
                                 <MessageSquare size={13} />
@@ -1721,7 +1846,7 @@ export default function BotManagerPage() {
           {/* ═════════════════════════════════════════════════════════════════
               VIEW 2: COMMENT AUTOMATION (ENGAGEMENT)
               ═════════════════════════════════════════════════════════════════ */}
-          {activeCategory === 'engagement' && activeSubTab === 'commentAutomation' && (
+          {activeCategory === 'engagement' && (activeSubTab === 'facebookCommentAutomation' || activeSubTab === 'instagramCommentAutomation') && (
             // Unlike every other view here, CommentAutomationManager isn't wrapped in
             // `.bm-content-card` (flex:1 + overflow:hidden, which is what keeps the
             // category/sub-tab bars above it from scrolling away) — its own root div
@@ -1731,7 +1856,7 @@ export default function BotManagerPage() {
             // accounts. `minHeight: 0` is the actual fix — required for a flex:1 child
             // to be allowed to scroll internally instead of growing to fit its content.
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
-              <CommentAutomationManager defaultPlatform={selectedAccount?.platform || 'FACEBOOK'} />
+              <CommentAutomationManager lockPlatform={activeSubTab === 'facebookCommentAutomation' ? 'FACEBOOK' : 'INSTAGRAM'} />
             </div>
           )}
 
@@ -1847,6 +1972,22 @@ export default function BotManagerPage() {
             </div>
           )}
 
+          {/* HTTP API Campaigns — reusable outbound-HTTP configs. Called by
+              id from any bot flow with an "HTTP API" node, which fires the
+              request for real when the flow reaches it. */}
+          {activeCategory === 'automation' && activeSubTab === 'httpApiCampaigns' && (
+            <div className="bm-content-card">
+              <div className="bm-card-header">
+                <h3 className="bm-card-title">HTTP API Campaigns</h3>
+                <p className="bm-card-sub">
+                  Send custom field values out to an external API, or pull data back into a contact's
+                  fields — call one from any bot flow with an "HTTP API" node.
+                </p>
+              </div>
+              <HttpApiCampaignManagerList />
+            </div>
+          )}
+
           {/* Sequences — same pattern: full list management here, the
               delivery report (sent / skipped-by-window / failed, with a
               per-subscriber drill-down) right alongside it so a stuck
@@ -1865,7 +2006,24 @@ export default function BotManagerPage() {
             </div>
           )}
 
-          {!['keywordReplies', 'messageTemplates'].includes(activeSubTab) && !(activeCategory === 'automation' && activeSubTab === 'userInputFlows') && !(activeCategory === 'automation' && activeSubTab === 'followUpSequences') && (activeCategory !== 'engagement' || activeSubTab !== 'commentAutomation') && !(activeCategory === 'engagement' && activeSubTab === 'chatWidget') && activeCategory !== 'ai' && (
+          {/* WhatsApp Flows — moved here from the standalone /settings/whatsapp-flows
+              page. ADMIN/RESELLER only, same restriction as before (see the
+              currentSubTabs filter above and routes/whatsappFlowRefs.js /
+              routes/whatsappFlowEndpoint.js on the backend) — a USER team member
+              never reaches this even by direct navigation. */}
+          {activeCategory === 'dataCollection' && activeSubTab === 'whatsappFlows' && user?.role !== 'USER' && (
+            <div className="bm-content-card">
+              <div className="bm-card-header">
+                <h3 className="bm-card-title">WhatsApp Flows</h3>
+                <p className="bm-card-sub">
+                  Reference Flows you've already built and published in Meta Business Manager — agents can then send them from the Live Inbox's "+" menu. This app doesn't author or publish Flow screen JSON itself, but it does handle Meta's encrypted data-exchange traffic once a Flow is sent, relaying each screen's request to your own server if you wire one up below.
+                </p>
+              </div>
+              <WhatsAppFlowManagerList />
+            </div>
+          )}
+
+          {!['keywordReplies', 'messageTemplates'].includes(activeSubTab) && !(activeCategory === 'automation' && activeSubTab === 'userInputFlows') && !(activeCategory === 'automation' && activeSubTab === 'httpApiCampaigns') && !(activeCategory === 'automation' && activeSubTab === 'followUpSequences') && !(activeCategory === 'dataCollection' && activeSubTab === 'whatsappFlows') && (activeCategory !== 'engagement' || (activeSubTab !== 'facebookCommentAutomation' && activeSubTab !== 'instagramCommentAutomation')) && !(activeCategory === 'engagement' && activeSubTab === 'chatWidget') && activeCategory !== 'ai' && (
             <div className="bm-content-card">
               <div className="bm-card-header">
                 <h3 className="bm-card-title">{activeSubTab.replace(/([A-Z])/g, ' $1').trim()}</h3>
@@ -1966,6 +2124,16 @@ export default function BotManagerPage() {
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 5 }}>
+                  Target Bot Account
+                </label>
+                <div style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #e2e8f0', background: '#f8fafc', fontSize: '0.82rem', color: '#334155', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e' }} />
+                  <strong>{selectedAccount?.name || 'Selected Bot'}</strong> ({getPlatformInfo(selectedAccount?.platform).label} — {selectedAccount?.wa_display_phone || selectedAccount?.wa_phone_number_id || selectedAccount?.fb_page_name || 'Channel Account'})
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 5 }}>
                   Starter Template
                 </label>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -2023,6 +2191,132 @@ export default function BotManagerPage() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Clone Flow Modal ── */}
+      {showCloneModal && flowToClone && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+          onClick={() => setShowCloneModal(false)}
+        >
+          <div
+            style={{
+              width: 520,
+              maxWidth: '92vw',
+              background: '#ffffff',
+              borderRadius: 16,
+              padding: 24,
+              boxShadow: '0 16px 40px rgba(0,0,0,0.15)',
+              border: '1px solid #e4e4f0',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+              <h3 style={{ fontSize: '1.15rem', fontWeight: 800, margin: 0, color: '#1a1a2e', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Copy size={18} color="var(--primary)" /> Clone Bot Flow
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowCloneModal(false)}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: '50%',
+                  border: '1px solid #e4e4f0',
+                  background: '#f8f8fc',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#5c5c80',
+                }}
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <form onSubmit={handleCloneFlow} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ padding: '10px 14px', background: '#f8f8fc', borderRadius: 8, border: '1px solid #e4e4f0', fontSize: '0.8rem', color: '#5c5c80' }}>
+                Cloning source flow: <strong style={{ color: '#1a1a2e' }}>{flowToClone.name}</strong> ({flowToClone.platform})
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 5, color: '#1a1a2e' }}>
+                  New Flow Name <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <input
+                  required
+                  className="form-input w-full"
+                  value={cloneName}
+                  onChange={(e) => setCloneName(e.target.value)}
+                  placeholder="e.g. Sales Bot (Copy)"
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 5, color: '#1a1a2e' }}>
+                  Target Bot Account <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <select
+                  required
+                  className="form-input w-full"
+                  value={cloneTargetIntegId}
+                  onChange={(e) => setCloneTargetIntegId(e.target.value)}
+                  style={{ height: 38, fontSize: '0.84rem' }}
+                >
+                  {integrations
+                    .filter((acc) => !flowToClone.platform || (acc.platform || '').toUpperCase() === (flowToClone.platform || '').toUpperCase())
+                    .map((acc) => {
+                      const pInfo = getPlatformInfo(acc.platform);
+                      const identifier = acc.wa_display_phone || acc.wa_phone_number_id || acc.fb_page_name || acc.ig_username || (acc.tiktok_username ? `@${acc.tiktok_username}` : acc.tiktok_open_id) || `${pInfo.label} Account`;
+                      return (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.name || identifier} ({pInfo.label} — {identifier})
+                        </option>
+                      );
+                    })}
+                </select>
+                <p style={{ margin: '4px 0 0', fontSize: '0.72rem', color: '#94a3b8' }}>
+                  The cloned flow will be strictly isolated and attached only to this bot account.
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => setShowCloneModal(false)}
+                  style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid #e4e4f0', background: '#ffffff', cursor: 'pointer', fontSize: '0.85rem' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={cloning}
+                  style={{
+                    padding: '8px 22px',
+                    borderRadius: 8,
+                    background: 'var(--primary)',
+                    color: '#ffffff',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '0.85rem',
+                    fontWeight: 700,
+                  }}
+                >
+                  {cloning ? 'Cloning...' : 'Clone Flow'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

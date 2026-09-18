@@ -385,7 +385,7 @@ tr:hover td { background: var(--bg-hover); }
   margin-left: 68px;
 }
 
-/* ─── Inbox / Live Chat Full Width Mode ─────────────────────────── */
+/* ─── Inbox Full Width Mode ─────────────────────────────────────── */
 .app-layout.inbox-mode .sidebar:not(.popup-nav-drawer) {
   display: none !important;
 }
@@ -511,7 +511,7 @@ tr:hover td { background: var(--bg-hover); }
 .trigger-arrow { color: var(--text-muted); display: inline-block; transition: transform 0.15s; }
 .trigger-arrow.open { transform: rotate(180deg); }
 
-/* ─── Live Chat / Inbox (Embedded in AppLayout) ──────────────────── */
+/* ─── Inbox (Embedded in AppLayout) ──────────────────────────────── */
 .inbox-layout {
   display: flex;
   flex: 1;

@@ -1,0 +1,221 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f8fafc; color: #0f172a; font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; -webkit-font-smoothing: antialiased; }
+    a { color: #2563eb; } a:hover { color: #1d4ed8; }
+    .mk { position: absolute; left: -34px; top: 7px; width: 22px; height: 22px; border-radius: 50%; background: #fee2e2; border: 1px solid #fca5a5; color: #b91c1c; font-size: 0.68rem; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+    .blk { position: relative; }
+  </style>
+</helmet>
+
+<div style="padding: 16px 20px 16px 54px; min-height: 100%; background: #f8fafc;">
+
+  <!-- Header -->
+  <div class="blk" style="display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 16px;">
+    <div>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="width: 36px; height: 36px; border-radius: 9px; background: rgba(37, 99, 235, 0.08); color: #2563eb; display: flex; align-items: center; justify-content: center;">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"></circle><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"></path></svg>
+        </div>
+        <h1 style="font-size: 1.3rem; font-weight: 800; color: #0f172a; margin: 0; letter-spacing: -0.3px;">Connect Account</h1>
+      </div>
+      <p style="font-size: 0.8rem; color: #64748b; margin: 2px 0 0 46px;">Connect and manage all your messaging channels in one centralized hub</p>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <button style="display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; font-size: 0.82rem; font-weight: 600; color: #0f172a; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; font-family: inherit;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+        Refresh
+      </button>
+      <div style="position: relative;">
+        <span class="mk" style="left: -30px;">1</span>
+        <button style="display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; font-size: 0.82rem; font-weight: 600; color: #ffffff; background: #2563eb; border: 1px solid #2563eb; border-radius: 6px; box-shadow: 0 1px 2px 0 rgba(0,0,0,0.04); font-family: inherit;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          + Connect New Account
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Metric cards -->
+  <div class="blk" style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px;">
+    <span class="mk">2</span>
+    <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 1px 2px rgba(0,0,0,0.02);">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="width: 36px; height: 36px; border-radius: 8px; background: rgba(37, 211, 102, 0.1); color: #25d366; display: flex; align-items: center; justify-content: center;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"></path></svg>
+        </div>
+        <div>
+          <div style="font-size: 0.72rem; font-weight: 700; color: #64748b; text-transform: uppercase;">WhatsApp</div>
+          <div style="font-size: 1.15rem; font-weight: 800; color: #0f172a;">2 Active</div>
+        </div>
+      </div>
+    </div>
+    <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 1px 2px rgba(0,0,0,0.02);">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="width: 36px; height: 36px; border-radius: 8px; background: rgba(24, 119, 242, 0.1); color: #1877f2; display: flex; align-items: center; justify-content: center;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"></path></svg>
+        </div>
+        <div>
+          <div style="font-size: 0.72rem; font-weight: 700; color: #64748b; text-transform: uppercase;">Facebook</div>
+          <div style="font-size: 1.15rem; font-weight: 800; color: #0f172a;">1 Pages</div>
+        </div>
+      </div>
+    </div>
+    <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 1px 2px rgba(0,0,0,0.02);">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="width: 36px; height: 36px; border-radius: 8px; background: rgba(225, 48, 108, 0.1); color: #e1306c; display: flex; align-items: center; justify-content: center;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>
+        </div>
+        <div>
+          <div style="font-size: 0.72rem; font-weight: 700; color: #64748b; text-transform: uppercase;">Instagram</div>
+          <div style="font-size: 1.15rem; font-weight: 800; color: #0f172a;">1 Accounts</div>
+        </div>
+      </div>
+    </div>
+    <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 1px 2px rgba(0,0,0,0.02);">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="width: 36px; height: 36px; border-radius: 8px; background: rgba(34, 158, 217, 0.1); color: #229ed9; display: flex; align-items: center; justify-content: center;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+        </div>
+        <div>
+          <div style="font-size: 0.72rem; font-weight: 700; color: #64748b; text-transform: uppercase;">Telegram</div>
+          <div style="font-size: 1.15rem; font-weight: 800; color: #0f172a;">1 Bots</div>
+        </div>
+      </div>
+    </div>
+    <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 1px 2px rgba(0,0,0,0.02);">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="width: 36px; height: 36px; border-radius: 8px; background: rgba(37, 99, 235, 0.1); color: #2563eb; display: flex; align-items: center; justify-content: center;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+        </div>
+        <div>
+          <div style="font-size: 0.72rem; font-weight: 700; color: #64748b; text-transform: uppercase;">Webchat</div>
+          <div style="font-size: 1.15rem; font-weight: 800; color: #0f172a;">1 Widgets</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab bar -->
+  <div class="blk" style="display: flex; align-items: center; gap: 4px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 4px 6px; margin-bottom: 14px;">
+    <span class="mk">3</span>
+    <div style="display: flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 7px; font-size: 0.82rem; font-weight: 500; color: #475569;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="12 2 2 7 12 12 22 7 12 2"></polyline><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+      All Connected Accounts
+    </div>
+    <div style="display: flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 7px; font-size: 0.82rem; font-weight: 700; color: #ffffff; background: #2563eb;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"></path></svg>
+      WhatsApp
+    </div>
+    <div style="display: flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 7px; font-size: 0.82rem; font-weight: 500; color: #475569;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#1877f2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"></path></svg>
+      Facebook Messenger
+    </div>
+    <div style="display: flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 7px; font-size: 0.82rem; font-weight: 500; color: #475569;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#e1306c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>
+      Instagram DM
+    </div>
+    <div style="display: flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 7px; font-size: 0.82rem; font-weight: 500; color: #475569;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#229ed9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+      Telegram Bot
+    </div>
+    <div style="display: flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 7px; font-size: 0.82rem; font-weight: 500; color: #475569;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#FE2C55" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>
+      TikTok DM &amp; Comments
+    </div>
+  </div>
+
+  <!-- Embedded sub-page header -->
+  <div class="blk" style="display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; padding-top: 4px;">
+    <span class="mk" style="top: 11px;">4</span>
+    <div>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="width: 36px; height: 36px; border-radius: 9px; background: rgba(37,211,102,0.1); color: #25d366; display: flex; align-items: center; justify-content: center;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"></path></svg>
+        </div>
+        <h1 style="font-size: 1.3rem; font-weight: 800; color: #0f172a; margin: 0;">WhatsApp</h1>
+      </div>
+      <p style="font-size: 0.8rem; color: #64748b; margin: 2px 0 0 46px;">Connect WhatsApp Business numbers to receive and send messages via this workspace.</p>
+    </div>
+    <div style="display: flex; gap: 8px;">
+      <button style="display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; font-size: 0.82rem; font-weight: 600; color: #0f172a; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; font-family: inherit;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+        Refresh
+      </button>
+      <button style="display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 14px; font-size: 0.84rem; font-weight: 700; background: #25d366; color: #ffffff; border: none; border-radius: 8px; box-shadow: 0 2px 8px rgba(37,211,102,0.25); font-family: inherit;">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        Connect Number
+      </button>
+    </div>
+  </div>
+
+  <!-- WhatsApp numbers table -->
+  <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 2px rgba(0,0,0,0.02); margin-bottom: 22px;">
+    <div style="padding: 12px 16px; border-bottom: 1px solid #e2e8f0;">
+      <h2 style="font-size: 0.92rem; font-weight: 800; color: #0f172a; margin: 0;">Connected WhatsApp Numbers</h2>
+    </div>
+    <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.84rem;">
+      <thead>
+        <tr style="background: #f8fafc; border-bottom: 1px solid #e2e8f0; color: #64748b; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.5px;">
+          <th style="padding: 10px 14px; font-weight: 700;">Number</th>
+          <th style="padding: 10px 14px; font-weight: 700;">Display Name</th>
+          <th style="padding: 10px 14px; font-weight: 700;">Status</th>
+          <th style="padding: 10px 14px; font-weight: 700; text-align: right;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom: 1px solid #f1f5f9;">
+          <td style="padding: 12px 14px; font-family: ui-monospace, Menlo, monospace; color: #0f172a;">+880 1346-190169</td>
+          <td style="padding: 12px 14px; font-weight: 700; color: #0f172a;">The River</td>
+          <td style="padding: 12px 14px;"><span style="display: inline-flex; align-items: center; gap: 5px; font-size: 0.75rem; font-weight: 600; color: #10b981;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #10b981;"></span>Connected</span></td>
+          <td style="padding: 12px 14px; text-align: right; color: #94a3b8; font-size: 0.78rem;">Manage · Disconnect</td>
+        </tr>
+        <tr>
+          <td style="padding: 12px 14px; font-family: ui-monospace, Menlo, monospace; color: #0f172a;">+880 1577-402426</td>
+          <td style="padding: 12px 14px; font-weight: 700; color: #0f172a;">Dynasty Ventures</td>
+          <td style="padding: 12px 14px;"><span style="display: inline-flex; align-items: center; gap: 5px; font-size: 0.75rem; font-weight: 600; color: #10b981;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #10b981;"></span>Connected</span></td>
+          <td style="padding: 12px 14px; text-align: right; color: #94a3b8; font-size: 0.78rem;">Manage · Disconnect</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Legend -->
+  <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 18px 20px;">
+    <div style="font-size: 0.74rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 14px;">What's duplicated</div>
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; gap: 11px; align-items: flex-start;">
+        <span style="flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; background: #fee2e2; border: 1px solid #fca5a5; color: #b91c1c; font-size: 0.68rem; font-weight: 800; display: flex; align-items: center; justify-content: center;">1</span>
+        <div style="font-size: 0.84rem; color: #475569; line-height: 1.5;"><strong style="color: #0f172a;">"+ Connect New Account" doesn't connect anything.</strong> It opens a modal whose seven options each only switch tabs — you still press a second Connect button on the channel page. Both WhatsApp entries ("With Catalog" / "Without Catalog") run the identical action.</div>
+      </div>
+      <div style="display: flex; gap: 11px; align-items: flex-start;">
+        <span style="flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; background: #fee2e2; border: 1px solid #fca5a5; color: #b91c1c; font-size: 0.68rem; font-weight: 800; display: flex; align-items: center; justify-content: center;">2</span>
+        <div style="font-size: 0.84rem; color: #475569; line-height: 1.5;"><strong style="color: #0f172a;">Five metric cards, one job.</strong> Each card click does exactly what the tab beneath it does. TikTok is missing here and from the "All" filter chips, although it has a tab and a modal entry.</div>
+      </div>
+      <div style="display: flex; gap: 11px; align-items: flex-start;">
+        <span style="flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; background: #fee2e2; border: 1px solid #fca5a5; color: #b91c1c; font-size: 0.68rem; font-weight: 800; display: flex; align-items: center; justify-content: center;">3</span>
+        <div style="font-size: 0.84rem; color: #475569; line-height: 1.5;"><strong style="color: #0f172a;">A third route to the same place.</strong> Cards, tabs and the modal all call the same <code style="font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem;">setTab()</code> — three affordances, one function.</div>
+      </div>
+      <div style="display: flex; gap: 11px; align-items: flex-start;">
+        <span style="flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; background: #fee2e2; border: 1px solid #fca5a5; color: #b91c1c; font-size: 0.68rem; font-weight: 800; display: flex; align-items: center; justify-content: center;">4</span>
+        <div style="font-size: 0.84rem; color: #475569; line-height: 1.5;"><strong style="color: #0f172a;">A second page header inside the first.</strong> All six channel pages render their own <code style="font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem;">&lt;h1&gt;</code>, subtitle and Refresh even when embedded — and carry the Connect button that actually works.</div>
+      </div>
+    </div>
+    <div style="margin-top: 16px; padding-top: 14px; border-top: 1px solid #f1f5f9; font-size: 0.84rem; color: #0f172a; font-weight: 600;">
+      Connecting a WhatsApp number today: 3 clicks, 2 Connect buttons, 2 page headers, ~240px of chrome before any content.
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

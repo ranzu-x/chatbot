@@ -1,17 +1,47 @@
 import { useState, useEffect, useMemo } from 'react';
 import { flowAPI, templateAPI, whatsappFlowRefAPI, conversationAPI } from '../../services/api';
-import { X, Bot, FileText, Workflow, Search, ChevronLeft, Send } from 'lucide-react';
+import { X, Bot, FileText, Workflow, Search, ChevronLeft, Send, Layers, MessageCircle, Plus } from 'lucide-react';
+import CreateCannedModal from './CreateCannedModal';
+
+// Top-level "+" menu is 2 options: Flows & Templates (Bot Flow / Message
+// Template / WhatsApp Flow, nested one level in) and Canned Response. Back
+// button target per section — everything under Flows & Templates returns
+// there, everything else returns straight to the top-level menu.
+const BACK_TARGET = {
+  flowsTemplates: 'menu',
+  flow: 'flowsTemplates',
+  template: 'flowsTemplates',
+  whatsappFlow: 'flowsTemplates',
+  cannedResponse: 'menu',
+};
+
+const SECTION_TITLE = {
+  menu: 'Send',
+  flowsTemplates: 'Flows & Templates',
+  flow: 'Bot Flow',
+  template: 'Message Template',
+  whatsappFlow: 'WhatsApp Flow',
+  cannedResponse: 'Canned Response',
+};
 
 /**
- * Live Inbox composer → "Send" menu — a right-side panel offering Bot Flow /
- * Message Template / WhatsApp Flow, each searchable, each channel-aware.
+ * Live Inbox composer → "Send" menu — a right-side panel offering two
+ * top-level options: Flows & Templates (Bot Flow / Message Template /
+ * WhatsApp Flow, each searchable, each channel-aware) and Canned Response.
  * Bot Flow reuses the existing POST /conversations/:id/trigger-flow (already
- * built, just newly reachable from here). Message Template and WhatsApp Flow
- * both go through the normal POST /conversations/:id/messages send path
- * (extended to accept templateId/variableValues or whatsappFlowRefId).
+ * built, just newly reachable from here). Message Template, WhatsApp Flow,
+ * and Canned Response all go through the normal POST /conversations/:id/
+ * messages send path (extended to accept templateId/variableValues,
+ * whatsappFlowRefId, or a plain body for canned responses).
+ *
+ * `cannedResponses` and `onCannedCreated` are lifted up to the parent
+ * (InboxPage) rather than fetched/held here — InboxPage's own "/" picker and
+ * quick-reply dropdown need the exact same list, and a second independent
+ * copy previously meant a response created from this panel never appeared
+ * in those until a full page reload re-fetched everywhere.
  */
-export default function SendMenuPanel({ open, onClose, conversationId, integrationId, platform, onSent, initialSection = 'menu' }) {
-  const [section, setSection] = useState(initialSection); // 'menu' | 'flow' | 'template' | 'whatsappFlow'
+export default function SendMenuPanel({ open, onClose, conversationId, integrationId, platform, onSent, initialSection = 'menu', cannedResponses = [], onCannedCreated }) {
+  const [section, setSection] = useState(initialSection); // 'menu' | 'flowsTemplates' | 'flow' | 'template' | 'whatsappFlow' | 'cannedResponse'
   const [search, setSearch] = useState('');
   const [flows, setFlows] = useState([]);
   const [templates, setTemplates] = useState([]);
@@ -20,6 +50,7 @@ export default function SendMenuPanel({ open, onClose, conversationId, integrati
   const [busy, setBusy] = useState(false);
   const [pendingTemplate, setPendingTemplate] = useState(null); // template needing a variable-fill form
   const [variableValues, setVariableValues] = useState({});
+  const [showCreateCanned, setShowCreateCanned] = useState(false);
 
   const isWhatsApp = platform === 'WHATSAPP';
 
@@ -34,14 +65,16 @@ export default function SendMenuPanel({ open, onClose, conversationId, integrati
   }, [open, initialSection]);
 
   useEffect(() => {
-    if (!open || section === 'menu') return;
+    if (!open || section === 'menu' || section === 'flowsTemplates') return;
     setLoading(true);
     if (section === 'flow') {
-      flowAPI.getAll().then((res) => setFlows(res.data?.flows || [])).catch(() => setFlows([])).finally(() => setLoading(false));
+      flowAPI.getAll({ integrationId }).then((res) => setFlows(res.data?.flows || [])).catch(() => setFlows([])).finally(() => setLoading(false));
     } else if (section === 'template') {
       templateAPI.getWATemplates({ status: 'APPROVED', integrationId }).then((res) => setTemplates(res.data?.templates || [])).catch(() => setTemplates([])).finally(() => setLoading(false));
     } else if (section === 'whatsappFlow') {
       whatsappFlowRefAPI.getAll({ integrationId }).then((res) => setFlowRefs(res.data?.flowRefs || [])).catch(() => setFlowRefs([])).finally(() => setLoading(false));
+    } else {
+      setLoading(false); // cannedResponse — list comes from the parent (InboxPage), nothing to fetch here
     }
   }, [open, section, integrationId]);
 
@@ -49,8 +82,9 @@ export default function SendMenuPanel({ open, onClose, conversationId, integrati
     const q = search.toLowerCase().trim();
     return flows
       .filter((f) => !f.platform || f.platform === platform || f.platform === 'ALL')
+      .filter((f) => !f.integration_id || String(f.integration_id) === String(integrationId))
       .filter((f) => !q || f.name?.toLowerCase().includes(q));
-  }, [flows, search, platform]);
+  }, [flows, search, platform, integrationId]);
 
   const filteredTemplates = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -61,6 +95,11 @@ export default function SendMenuPanel({ open, onClose, conversationId, integrati
     const q = search.toLowerCase().trim();
     return flowRefs.filter((f) => !q || f.name?.toLowerCase().includes(q));
   }, [flowRefs, search]);
+
+  const filteredCanned = useMemo(() => {
+    const q = search.toLowerCase().trim();
+    return cannedResponses.filter((c) => !q || c.title?.toLowerCase().includes(q) || c.shortcut?.toLowerCase().includes(q) || c.body?.toLowerCase().includes(q));
+  }, [cannedResponses, search]);
 
   const handlePickFlow = async (flow) => {
     if (busy) return;
@@ -117,6 +156,20 @@ export default function SendMenuPanel({ open, onClose, conversationId, integrati
     }
   };
 
+  const handlePickCanned = async (canned) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await conversationAPI.sendMessage(conversationId, { body: canned.body });
+      onSent?.({ kind: 'cannedResponse', message: res.data?.message });
+      onClose?.();
+    } catch (err) {
+      console.error('Failed to send canned response', err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!open) return null;
 
   const panelStyle = {
@@ -129,7 +182,7 @@ export default function SendMenuPanel({ open, onClose, conversationId, integrati
     <div style={panelStyle}>
       <div style={{ padding: '14px 16px', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 8 }}>
         {section !== 'menu' && !pendingTemplate && (
-          <button onClick={() => setSection('menu')} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#64748b' }}>
+          <button onClick={() => setSection(BACK_TARGET[section] || 'menu')} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#64748b' }}>
             <ChevronLeft size={18} />
           </button>
         )}
@@ -139,7 +192,7 @@ export default function SendMenuPanel({ open, onClose, conversationId, integrati
           </button>
         )}
         <div style={{ fontWeight: 800, fontSize: '0.9rem', color: '#0f172a', flex: 1 }}>
-          {pendingTemplate ? 'Fill in template' : section === 'menu' ? 'Send' : section === 'flow' ? 'Bot Flow' : section === 'template' ? 'Message Template' : 'WhatsApp Flow'}
+          {pendingTemplate ? 'Fill in template' : SECTION_TITLE[section]}
         </div>
         <button onClick={onClose} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#94a3b8' }}>
           <X size={18} />
@@ -175,6 +228,15 @@ export default function SendMenuPanel({ open, onClose, conversationId, integrati
         </div>
       ) : section === 'menu' ? (
         <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <button onClick={() => setSection('flowsTemplates')} style={menuItemStyle}>
+            <Layers size={18} color="#6366f1" /> <span>Flows & Templates</span>
+          </button>
+          <button onClick={() => setSection('cannedResponse')} style={menuItemStyle}>
+            <MessageCircle size={18} color="#0ea5e9" /> <span>Canned Response</span>
+          </button>
+        </div>
+      ) : section === 'flowsTemplates' ? (
+        <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
           <button onClick={() => setSection('flow')} style={menuItemStyle}>
             <Bot size={18} color="#6366f1" /> <span>Bot Flow</span>
           </button>
@@ -191,17 +253,31 @@ export default function SendMenuPanel({ open, onClose, conversationId, integrati
         </div>
       ) : (
         <>
-          <div style={{ padding: '10px 14px', borderBottom: '1px solid #f1f5f9' }}>
-            <div style={{ position: 'relative' }}>
+          <div style={{ padding: '10px 14px', borderBottom: '1px solid #f1f5f9', display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div style={{ position: 'relative', flex: 1 }}>
               <Search size={13} color="#94a3b8" style={{ position: 'absolute', left: 9, top: 9 }} />
               <input
                 autoFocus
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search..."
-                style={{ width: '100%', padding: '7px 10px 7px 28px', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: '0.8rem' }}
+                style={{ width: '100%', padding: '7px 10px 7px 28px', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: '0.8rem', boxSizing: 'border-box' }}
               />
             </div>
+            {section === 'cannedResponse' && (
+              <button
+                type="button"
+                onClick={() => setShowCreateCanned(true)}
+                title="Create a new canned response"
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
+                  padding: '7px 10px', borderRadius: 8, border: '1px solid #bfdbfe',
+                  background: '#eff6ff', color: '#2563eb', fontSize: '0.76rem', fontWeight: 700, cursor: 'pointer',
+                }}
+              >
+                <Plus size={13} /> Create
+              </button>
+            )}
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: 10 }}>
             {loading ? (
@@ -214,14 +290,24 @@ export default function SendMenuPanel({ open, onClose, conversationId, integrati
               filteredTemplates.length === 0 ? <EmptyState text="No approved templates for this bot." /> : filteredTemplates.map((t) => (
                 <ListRow key={t.id} title={t.template_name} subtitle={t.body_text} onClick={() => handlePickTemplate(t)} disabled={busy} />
               ))
-            ) : (
-              filteredFlowRefs.length === 0 ? <EmptyState text="No WhatsApp Flows configured yet. Add one under Settings → WhatsApp Flows." /> : filteredFlowRefs.map((f) => (
+            ) : section === 'whatsappFlow' ? (
+              filteredFlowRefs.length === 0 ? <EmptyState text="No WhatsApp Flows configured yet. Add one under Automation → Data Collection → WhatsApp Flows." /> : filteredFlowRefs.map((f) => (
                 <ListRow key={f.id} title={f.name} subtitle={f.flow_id} onClick={() => handlePickFlowRef(f)} disabled={busy} />
+              ))
+            ) : (
+              filteredCanned.length === 0 ? <EmptyState text="No canned responses saved yet." /> : filteredCanned.map((c) => (
+                <ListRow key={c.id} title={c.title || c.shortcut} subtitle={c.body} onClick={() => handlePickCanned(c)} disabled={busy} />
               ))
             )}
           </div>
         </>
       )}
+
+      <CreateCannedModal
+        open={showCreateCanned}
+        onClose={() => setShowCreateCanned(false)}
+        onCreated={(newCanned) => onCannedCreated?.(newCanned)}
+      />
     </div>
   );
 }

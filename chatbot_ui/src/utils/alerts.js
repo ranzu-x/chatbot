@@ -67,8 +67,83 @@ export const showAlert = {
     });
     return res.isConfirmed;
   },
+
+  limit: (title, text = '', options = {}) => {
+    return showLimitModal({ title, message: text, ...options });
+  },
 };
 
+/**
+ * Interactive SweetAlert modal for plan quota / limit reached boundaries.
+ * Provides clear information and direct action (e.g. Upgrade Plan) rather than an auto-dismissing toast.
+ */
+export const showLimitModal = ({
+  title = 'Account Limit Reached',
+  message,
+  currentUsage,
+  maxLimit,
+  userRole,
+  onUpgrade,
+} = {}) => {
+  const isReseller = userRole === 'RESELLER';
+  const displayMsg =
+    message ||
+    (maxLimit !== undefined && maxLimit !== null
+      ? `You have reached the maximum of ${maxLimit} connected account(s) allowed by your current plan${
+          currentUsage !== undefined ? ` (currently using ${currentUsage})` : ''
+        }. Please upgrade your package to connect more accounts.`
+      : 'You have reached the connected account limit for your current package. Please upgrade your plan to connect additional accounts.');
+
+  return Swal.fire({
+    title: `<span style="font-weight:800; font-size:1.25rem; color:#0f172a;">${title}</span>`,
+    html: `
+      <div style="font-size:0.92rem; color:#475569; line-height:1.55; margin-top:8px;">
+        ${displayMsg}
+      </div>
+    `,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#2563eb',
+    cancelButtonColor: '#94a3b8',
+    confirmButtonText: isReseller ? 'Upgrade Plan' : 'View Plans',
+    cancelButtonText: 'Dismiss',
+    reverseButtons: true,
+  }).then((result) => {
+    if (result.isConfirmed) {
+      if (typeof onUpgrade === 'function') {
+        onUpgrade();
+      } else if (typeof window !== 'undefined') {
+        window.location.href = isReseller ? '/account?tab=billing' : '/account';
+      }
+    }
+    return result;
+  });
+};
+
+/**
+ * Inspects an API error: if it represents a capacity limit error (403 LIMIT_EXCEEDED),
+ * shows the SweetAlert limit modal and returns true. Otherwise returns false.
+ */
+export const handleLimitError = (err, { userRole, onUpgrade } = {}) => {
+  const res = err?.response;
+  const data = res?.data;
+  const isLimit =
+    res?.status === 403 &&
+    (data?.code === 'LIMIT_EXCEEDED' ||
+      data?.code === 'RESELLER_POOL_LIMIT_EXCEEDED' ||
+      (data?.message && /limit/i.test(data.message)));
+
+  if (isLimit) {
+    showLimitModal({
+      title: 'Account Limit Reached',
+      message: data.message,
+      userRole,
+      onUpgrade,
+    });
+    return true;
+  }
+  return false;
+};
 
 export const notify = {
   success: (msg) =>
@@ -86,7 +161,7 @@ export const notify = {
   info: (msg) =>
     toast(msg, {
       duration: 4000,
-      icon: 'K︎',
+      icon: 'ℹ️',
       style: { background: '#0f172a', color: '#ffffff', fontSize: '0.85rem', borderRadius: '10px' },
     }),
 
@@ -98,4 +173,4 @@ export const notify = {
   dismiss: (id) => toast.dismiss(id),
 };
 
-export default { showAlert, notify };
+export default { showAlert, notify, showLimitModal, handleLimitError };

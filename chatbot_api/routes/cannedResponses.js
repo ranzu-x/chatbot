@@ -2,6 +2,7 @@ import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
+import { emitToAgency } from "../utils/socket.js";
 
 const router = express.Router();
 router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
@@ -42,6 +43,7 @@ router.post("/canned-responses", async (req, res) => {
     );
 
     const [saved] = await pool.query("SELECT * FROM quick_replies WHERE id = ?", [result.insertId]);
+    emitToAgency(agencyId, "canned_response_updated", { reason: "created" });
     return res.status(201).json({ success: true, cannedResponse: saved[0] });
   } catch (err) {
     console.error("Create canned response error:", err);
@@ -72,6 +74,7 @@ router.put("/canned-responses/:id", async (req, res) => {
     );
 
     const [updated] = await pool.query("SELECT * FROM quick_replies WHERE id = ?", [req.params.id]);
+    emitToAgency(agencyId, "canned_response_updated", { reason: "updated" });
     return res.json({ success: true, cannedResponse: updated[0] });
   } catch (err) {
     console.error("Update canned response error:", err);
@@ -84,6 +87,7 @@ router.delete("/canned-responses/:id", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
     await pool.query("DELETE FROM quick_replies WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
+    emitToAgency(agencyId, "canned_response_updated", { reason: "deleted" });
     return res.json({ success: true, message: "Canned response deleted" });
   } catch (err) {
     console.error("Delete canned response error:", err);

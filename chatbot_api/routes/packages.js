@@ -433,6 +433,10 @@ router.post("/packages/assign", authMiddleware, roleMiddleware("ADMIN"), async (
     if (!pkg.length) return res.status(404).json({ success: false, message: "Package not found" });
 
     if (agencyId) {
+      const [[targetAg]] = await pool.query("SELECT account_type FROM agencies WHERE id = ?", [agencyId]);
+      if (targetAg?.account_type === "PLATFORM") {
+        return res.status(400).json({ success: false, message: "The Super Admin / Platform workspace is permanently unlimited and does not need any package." });
+      }
       await pool.query("UPDATE agencies SET package_id = ? WHERE id = ?", [packageId, agencyId]);
       await pool.query("UPDATE subscriptions SET status = 'CANCELLED' WHERE agency_id = ? AND status = 'ACTIVE'", [agencyId]);
       await pool.query(
@@ -442,6 +446,10 @@ router.post("/packages/assign", authMiddleware, roleMiddleware("ADMIN"), async (
     }
 
     if (userId) {
+      const [[targetUser]] = await pool.query("SELECT role FROM users WHERE id = ?", [userId]);
+      if (targetUser?.role === "ADMIN") {
+        return res.status(400).json({ success: false, message: "Super Admin users are permanently unlimited and do not need any package." });
+      }
       await pool.query("UPDATE users SET package_id = ? WHERE id = ?", [packageId, userId]);
       await pool.query("UPDATE subscriptions SET status = 'CANCELLED' WHERE user_id = ? AND status = 'ACTIVE'", [userId]);
       await pool.query(

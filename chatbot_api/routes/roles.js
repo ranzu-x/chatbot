@@ -32,9 +32,12 @@ async function resolveCallerScope(req) {
 router.get("/permissions", async (req, res) => {
   try {
     const scope = await resolveCallerScope(req);
+    const allowedScopes = scope === "PLATFORM"
+      ? ["PLATFORM", "AGENCY", "RESELLER"]
+      : (scope === "RESELLER" ? ["RESELLER", "AGENCY"] : ["AGENCY"]);
     const [rows] = await pool.query(
-      "SELECT permission_key, label, category, scope_type FROM permissions WHERE scope_type = ? ORDER BY category, label",
-      [scope]
+      "SELECT permission_key, label, category, scope_type FROM permissions WHERE scope_type IN (?) ORDER BY category, label",
+      [allowedScopes]
     );
     return res.json({ success: true, permissions: rows });
   } catch (err) {
@@ -97,7 +100,10 @@ router.post("/roles", requireRoleManage, async (req, res) => {
       finalKeys = cloneRows.map((r) => r.permission_key);
     }
     // Only allow granting keys that exist for this scope (no cross-scope escalation)
-    const [validRows] = await pool.query("SELECT permission_key FROM permissions WHERE scope_type = ?", [scope]);
+    const allowedScopes = scope === "PLATFORM"
+      ? ["PLATFORM", "AGENCY", "RESELLER"]
+      : (scope === "RESELLER" ? ["RESELLER", "AGENCY"] : ["AGENCY"]);
+    const [validRows] = await pool.query("SELECT permission_key FROM permissions WHERE scope_type IN (?)", [allowedScopes]);
     const validSet = new Set(validRows.map((r) => r.permission_key));
     finalKeys = finalKeys.filter((k) => validSet.has(k));
 
@@ -133,7 +139,10 @@ router.put("/roles/:id", requireRoleManage, async (req, res) => {
     const { name, permissionKeys } = req.body;
     if (name) await pool.query("UPDATE roles SET name = ? WHERE id = ?", [name, req.params.id]);
     if (Array.isArray(permissionKeys)) {
-      const [validRows] = await pool.query("SELECT permission_key FROM permissions WHERE scope_type = ?", [scope]);
+      const allowedScopes = scope === "PLATFORM"
+        ? ["PLATFORM", "AGENCY", "RESELLER"]
+        : (scope === "RESELLER" ? ["RESELLER", "AGENCY"] : ["AGENCY"]);
+      const [validRows] = await pool.query("SELECT permission_key FROM permissions WHERE scope_type IN (?)", [allowedScopes]);
       const validSet = new Set(validRows.map((r) => r.permission_key));
       const filtered = permissionKeys.filter((k) => validSet.has(k));
       await pool.query("DELETE FROM role_permissions WHERE role_id = ?", [req.params.id]);

@@ -1,8 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { X, Upload, Loader2, MessageCircle, Facebook, Instagram, Send as TelegramIcon } from 'lucide-react';
 import { channelAPI, uploadAPI } from '../../services/api';
-
-const BACKEND_URL = import.meta.env.VITE_API_URL?.replace('/api/v1', '') || 'http://localhost:5000';
+import { resolveAssetUrl } from '../../utils/assetUrl';
 
 const PLATFORM_META = {
   WHATSAPP: { label: 'WhatsApp', color: '#25D366', icon: MessageCircle },
@@ -16,10 +15,6 @@ function accountLabel(integ) {
   return `${integ.name || integ.platform}${extra ? ` (${extra})` : ''}`;
 }
 
-function resolveAssetUrl(url) {
-  if (!url) return '';
-  return url.startsWith('http') || url.startsWith('data:') ? url : `${BACKEND_URL}${url.startsWith('/') ? '' : '/'}${url}`;
-}
 
 // Same visual recipe as the Flow Builder's own field styling (rounded,
 // #f8fafc background, subtle border, dark focus ring) — reimplemented here
@@ -286,7 +281,12 @@ export default function DeepLinkWidgetEditor({ open, onClose, widget, integratio
             <Field label="Logo">
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 {form.logoUrl ? (
-                  <img src={resolveAssetUrl(form.logoUrl)} alt="" style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', border: '1px solid #e2e8f0' }} />
+                  <img
+                    src={resolveAssetUrl(form.logoUrl)}
+                    alt=""
+                    style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', border: '1px solid #e2e8f0' }}
+                    onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}
+                  />
                 ) : (
                   <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#f1f5f9', flexShrink: 0 }} />
                 )}
@@ -373,7 +373,12 @@ export default function DeepLinkWidgetEditor({ open, onClose, widget, integratio
             <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 4px 14px rgba(0,0,0,0.06)' }}>
               <div style={{ padding: 14, background: form.headerBgColor, color: form.headerTextColor, display: 'flex', alignItems: 'center', gap: 8 }}>
                 {form.logoUrl ? (
-                  <img src={resolveAssetUrl(form.logoUrl)} alt="" style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }} />
+                  <img
+                    src={resolveAssetUrl(form.logoUrl)}
+                    alt=""
+                    style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }}
+                    onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}
+                  />
                 ) : meta ? <meta.icon size={18} /> : null}
                 <span style={{ fontWeight: 700, fontSize: 13 }}>{form.displayName || meta?.label || 'Chat'}</span>
               </div>

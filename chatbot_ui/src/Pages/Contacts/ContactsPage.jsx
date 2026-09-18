@@ -585,7 +585,7 @@ export default function ContactsPage() {
 
                       <td style={{ padding: '12px 16px', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
                         <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                          <button className="btn btn-secondary btn-sm" title="Open Live Chat" onClick={() => navigate('/inbox')} style={{ padding: '4px 8px', fontSize: '0.76rem' }}>
+                          <button className="btn btn-secondary btn-sm" title="Open Inbox" onClick={() => navigate('/inbox')} style={{ padding: '4px 8px', fontSize: '0.76rem' }}>
                             <MessageSquare size={13} />
                           </button>
                           <button

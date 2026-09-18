@@ -159,7 +159,7 @@ export default function SubscriberDetailDrawer({ contact, availableLabels, onClo
               </div>
             </div>
             <button onClick={() => onNavigateInbox?.(contact)} className="btn btn-primary" style={{ padding: '8px 14px', borderRadius: 8, fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-              <MessageSquare size={14} /> Live Chat
+              <MessageSquare size={14} /> Inbox
             </button>
           </div>
         </div>

@@ -1,5 +1,6 @@
 ﻿import express from "express";
 import pool from "../db.js";
+import { buildSearch } from "../utils/searchQuery.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { requireModule } from "../utils/entitlements.js";
 
@@ -172,10 +173,20 @@ router.get("/appointments", async (req, res) => {
     let whereSql = "WHERE a.agency_id = ?";
     const params = [agencyId];
 
-    if (search && search.trim()) {
-      whereSql += " AND (a.customer_name LIKE ? OR a.customer_phone LIKE ? OR a.service_name LIKE ?)";
-      const term = `%${search.trim()}%`;
-      params.push(term, term, term);
+    const searchClause = await buildSearch({
+      term: search,
+      fulltext: [{
+        table: "appointments",
+        columns: ["customer_name", "service_name"],
+        expr: "a.customer_name, a.service_name",
+        weight: 4,
+      }],
+      like: ["a.customer_name", "a.customer_phone", "a.service_name"],
+      boost: { expr: "a.customer_name" },
+    });
+    if (searchClause.active) {
+      whereSql += ` AND ${searchClause.where}`;
+      params.push(...searchClause.whereParams);
     }
 
     if (status && status !== "all") {

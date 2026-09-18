@@ -169,6 +169,18 @@ export async function matchBotRules(agencyId, platform, conversation, contact, i
       return false;
     }
 
+    // Message credit limit — checked once here, before any auto-reply is
+    // dispatched, rather than at every individual sendPlatformMessage call
+    // site below (fallback reply, keyword match, AI reply). Same silent
+    // skip-and-log posture as the subscriber-limit check above (a bot reply
+    // being skipped must never crash inbound message ingestion).
+    try {
+      await assertLimit(agencyId, "max_monthly_messages", 1, null);
+    } catch {
+      console.warn(`[Message Credit Limit] Agency ${agencyId} is over its monthly message limit — skipping bot auto-reply.`);
+      return false;
+    }
+
     const textBody = (incomingMsgBody || "").trim().toLowerCase();
     const upperMsgType = (msgType || "TEXT").toUpperCase();
     const isMedia = ["IMAGE", "VIDEO", "AUDIO", "VOICE", "DOCUMENT", "FILE"].includes(upperMsgType);

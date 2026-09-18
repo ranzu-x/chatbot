@@ -4,6 +4,7 @@ import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { requirePermission } from "../middleware/permissionMiddleware.js";
 import { assertLimit, getAgencyEntitlements } from "../utils/entitlements.js";
+import { buildSearch } from "../utils/searchQuery.js";
 import { getAccessibleIntegrationIds, setIntegrationAccess } from "../utils/teamAccess.js";
 
 const router = express.Router();
@@ -142,11 +143,17 @@ router.get("/team-members", requireTeamView, async (req, res) => {
     whereClauses.push("u.id != ?");
     queryParams.push(userId);
 
-    // Search filter
-    if (search) {
-      const q = `%${search}%`;
-      whereClauses.push("(u.name LIKE ? OR u.email LIKE ? OR COALESCE(ap.phone, u.phone) LIKE ?)");
-      queryParams.push(q, q, q);
+    // Ranked, multi-word search across name / email / phone — see
+    // utils/searchQuery.js.
+    const searchClause = await buildSearch({
+      term: search,
+      fulltext: [{ table: "users", columns: ["name", "email"], expr: "u.name, u.email", weight: 4 }],
+      like: ["u.name", "u.email", "COALESCE(ap.phone, u.phone)"],
+      boost: { expr: "u.name" },
+    });
+    if (searchClause.active) {
+      whereClauses.push(searchClause.where);
+      queryParams.push(...searchClause.whereParams);
     }
 
     // Team Role filter (matches either the legacy free-text team_role or the new role slug)
@@ -197,6 +204,7 @@ router.get("/team-members", requireTeamView, async (req, res) => {
         r.id as role_id,
         r.slug as role_slug,
         r.name as role_name
+        ${searchClause.active ? `, ${searchClause.relevance} AS _relevance` : ""}
       FROM agent_profiles ap
       JOIN users u ON u.id = ap.user_id
       LEFT JOIN agencies a ON a.id = ap.agency_id
@@ -204,9 +212,9 @@ router.get("/team-members", requireTeamView, async (req, res) => {
       LEFT JOIN organization_members om ON om.user_id = ap.user_id AND om.agency_id = ap.agency_id
       LEFT JOIN roles r ON r.id = om.role_id
       ${whereSql}
-      ORDER BY u.created_at DESC
+      ORDER BY ${searchClause.active ? "_relevance DESC, " : ""}u.created_at DESC
       LIMIT ? OFFSET ?
-    `, [...queryParams, limit, offset]);
+    `, [...(searchClause.active ? searchClause.relevanceParams : []), ...queryParams, limit, offset]);
 
     // Attach channel access (null = unrestricted) without an N+1 query
     for (const member of rows) {

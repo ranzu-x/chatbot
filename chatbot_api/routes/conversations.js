@@ -6,15 +6,18 @@ import { sendPlatformMessage } from "../utils/platformSender.js";
 import { emitToAgency, emitToConversation } from "../utils/socket.js";
 import { getOrgMember, integrationAccessClause } from "../utils/teamAccess.js";
 import { unsubscribeContactFromSequence } from "./sequences.js";
+import { requireModule, assertLimit } from "../utils/entitlements.js";
+import { translateText } from "../utils/translateMessage.js";
+import { buildSearch } from "../utils/searchQuery.js";
 
 const router = express.Router();
 
-router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
+router.use("/conversations", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_live_chat"));
 
 // ─── GET ALL CONVERSATIONS (for inbox) ───────────────────────────────────────
 router.get("/conversations", async (req, res) => {
   try {
-    const { status, platform, search, labelId, assignedToId } = req.query;
+    const { status, platform, search, labelId, assignedToId, unread, important, archived, blocked } = req.query;
     const agencyId = req.user.agencyId;
     const role = req.user.role;
     // Pagination — required at scale (see the approved Live Inbox
@@ -100,9 +103,17 @@ router.get("/conversations", async (req, res) => {
       query += " AND (i.platform = ? OR c.platform = ?)";
       params.push(platform, platform);
     }
-    if (search) {
-      query += " AND (c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR i.name LIKE ?)";
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    // Multi-word/prefix matching via utils/searchQuery.js. Ordering stays
+    // recency-first on purpose: in an inbox you want the matched person's
+    // latest thread, not the highest-scoring one.
+    const searchClause = await buildSearch({
+      term: search,
+      fulltext: [{ table: "contacts", columns: ["name", "email"], expr: "c.name, c.email", weight: 4 }],
+      like: ["c.name", "c.phone", "c.email", "i.name"],
+    });
+    if (searchClause.active) {
+      query += ` AND ${searchClause.where}`;
+      params.push(...searchClause.whereParams);
     }
     if (labelId) {
       query += " AND cv.contact_id IN (SELECT contact_id FROM contact_labels WHERE label_id = ?)";
@@ -113,6 +124,21 @@ router.get("/conversations", async (req, res) => {
     } else if (assignedToId) {
       query += " AND cv.assigned_to_id = ?";
       params.push(assignedToId);
+    }
+    if (unread === "true" || unread === "1") {
+      query += " AND cv.unread_count > 0";
+    }
+    if (important === "true" || important === "1") {
+      query += " AND cv.is_important = 1";
+    }
+    if (archived === "true" || archived === "1") {
+      query += " AND cv.is_archived = 1";
+    } else {
+      // Exclude archived conversations from active inbox views unless viewing archived
+      query += " AND cv.is_archived = 0";
+    }
+    if (blocked === "true" || blocked === "1") {
+      query += " AND c.is_blocked = 1";
     }
 
     // Count first (same WHERE clause, no ORDER BY/LIMIT needed) so the
@@ -310,9 +336,10 @@ router.patch("/conversations/:id/assign", async (req, res) => {
   try {
     const { agentProfileId } = req.body;
     const agencyId = req.user.agencyId;
+    const newStatus = agentProfileId ? 'ASSIGNED' : 'OPEN';
     await pool.query(
-      "UPDATE conversations SET assigned_to_id = ?, status = 'ASSIGNED' WHERE id = ? AND agency_id = ?",
-      [agentProfileId || null, req.params.id, agencyId]
+      "UPDATE conversations SET assigned_to_id = ?, status = ? WHERE id = ? AND agency_id = ?",
+      [agentProfileId || null, newStatus, req.params.id, agencyId]
     );
     let assignedAgentName = null;
     if (agentProfileId) {
@@ -326,11 +353,11 @@ router.patch("/conversations/:id/assign", async (req, res) => {
       conversationId: parseInt(req.params.id),
       assignedToId: agentProfileId || null,
       assignedAgentName,
-      status: 'ASSIGNED'
+      status: newStatus
     };
     emitToAgency(agencyId, "conversation_updated", payload);
     emitToConversation(req.params.id, "conversation_updated", payload);
-    return res.json({ success: true, message: "Conversation assigned", ...payload });
+    return res.json({ success: true, message: agentProfileId ? "Conversation assigned" : "Conversation unassigned", ...payload });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -345,17 +372,137 @@ router.patch("/conversations/:id/status", async (req, res) => {
     if (!validStatuses.includes(status))
       return res.status(400).json({ success: false, message: "Invalid status" });
 
-    await pool.query(
-      "UPDATE conversations SET status = ? WHERE id = ? AND agency_id = ?",
-      [status, req.params.id, req.user.agencyId]
-    );
-    emitToAgency(req.user.agencyId, "conversation_updated", {
-      conversationId: parseInt(req.params.id),
-      status
-    });
-    return res.json({ success: true, message: "Status updated" });
+    if (status === "OPEN") {
+      await pool.query(
+        "UPDATE conversations SET status = ?, assigned_to_id = NULL WHERE id = ? AND agency_id = ?",
+        [status, req.params.id, req.user.agencyId]
+      );
+      const payload = {
+        conversationId: parseInt(req.params.id),
+        status,
+        assignedToId: null,
+        assignedAgentName: null,
+      };
+      emitToAgency(req.user.agencyId, "conversation_updated", payload);
+      emitToConversation(req.params.id, "conversation_updated", payload);
+      return res.json({ success: true, message: "Status updated", ...payload });
+    } else {
+      await pool.query(
+        "UPDATE conversations SET status = ? WHERE id = ? AND agency_id = ?",
+        [status, req.params.id, req.user.agencyId]
+      );
+      const payload = {
+        conversationId: parseInt(req.params.id),
+        status,
+      };
+      emitToAgency(req.user.agencyId, "conversation_updated", payload);
+      emitToConversation(req.params.id, "conversation_updated", payload);
+      return res.json({ success: true, message: "Status updated", ...payload });
+    }
   } catch (err) {
     console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── MARK CONVERSATION AS READ ───────────────────────────────────────────────
+router.patch("/conversations/:id/read", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const [rows] = await pool.query(
+      "SELECT id FROM conversations WHERE id = ? AND agency_id = ?",
+      [req.params.id, agencyId]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, message: "Conversation not found" });
+
+    await pool.query("UPDATE conversations SET unread_count = 0 WHERE id = ?", [req.params.id]);
+    await pool.query("UPDATE messages SET is_read = 1 WHERE conversation_id = ? AND direction = 'INBOUND'", [req.params.id]);
+
+    emitToAgency(agencyId, "conversation_updated", {
+      conversationId: parseInt(req.params.id),
+      unread_count: 0
+    });
+    return res.json({ success: true, unread_count: 0 });
+  } catch (err) {
+    console.error("Mark read error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── MARK CONVERSATION AS UNREAD ─────────────────────────────────────────────
+router.patch("/conversations/:id/unread", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const [rows] = await pool.query(
+      "SELECT id, unread_count FROM conversations WHERE id = ? AND agency_id = ?",
+      [req.params.id, agencyId]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, message: "Conversation not found" });
+
+    const newUnread = Math.max(1, (rows[0].unread_count || 0) + 1);
+    await pool.query("UPDATE conversations SET unread_count = ? WHERE id = ?", [newUnread, req.params.id]);
+    await pool.query(
+      "UPDATE messages SET is_read = 0 WHERE id = (SELECT id FROM (SELECT id FROM messages WHERE conversation_id = ? AND direction = 'INBOUND' ORDER BY created_at DESC LIMIT 1) as t)",
+      [req.params.id]
+    );
+
+    emitToAgency(agencyId, "conversation_updated", {
+      conversationId: parseInt(req.params.id),
+      unread_count: newUnread
+    });
+    return res.json({ success: true, unread_count: newUnread });
+  } catch (err) {
+    console.error("Mark unread error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── MARK CONVERSATION AS IMPORTANT (TOGGLE OR SET) ──────────────────────────
+router.patch("/conversations/:id/important", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const [rows] = await pool.query(
+      "SELECT id, is_important FROM conversations WHERE id = ? AND agency_id = ?",
+      [req.params.id, agencyId]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, message: "Conversation not found" });
+
+    const current = Boolean(rows[0].is_important);
+    const isImportant = req.body?.is_important !== undefined ? (req.body.is_important ? 1 : 0) : (current ? 0 : 1);
+
+    await pool.query("UPDATE conversations SET is_important = ? WHERE id = ?", [isImportant, req.params.id]);
+    emitToAgency(agencyId, "conversation_updated", {
+      conversationId: parseInt(req.params.id),
+      is_important: isImportant === 1
+    });
+    return res.json({ success: true, is_important: isImportant === 1 });
+  } catch (err) {
+    console.error("Mark important error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── MARK CONVERSATION AS ARCHIVED (TOGGLE OR SET) ───────────────────────────
+router.patch("/conversations/:id/archive", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const [rows] = await pool.query(
+      "SELECT id, is_archived FROM conversations WHERE id = ? AND agency_id = ?",
+      [req.params.id, agencyId]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, message: "Conversation not found" });
+
+    const current = Boolean(rows[0].is_archived);
+    const isArchived = req.body?.is_archived !== undefined ? (req.body.is_archived ? 1 : 0) : (current ? 0 : 1);
+
+    await pool.query("UPDATE conversations SET is_archived = ? WHERE id = ?", [isArchived, req.params.id]);
+    emitToAgency(agencyId, "conversation_updated", {
+      conversationId: parseInt(req.params.id),
+      is_archived: isArchived === 1
+    });
+    return res.json({ success: true, is_archived: isArchived === 1 });
+  } catch (err) {
+    console.error("Mark archive error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
@@ -492,6 +639,13 @@ router.post("/conversations/:id/messages", async (req, res) => {
       messagePayload.type = "TEXT";
       messagePayload.body = body || `Please complete: ${flowRef.name}`;
       messagePayload.whatsappFlow = { flowId: flowRef.flow_id, cta: "Open" };
+    }
+
+    // ─── Message Credit Limit ───
+    try {
+      await assertLimit(req.user.agencyId, "max_monthly_messages", 1, req.user?.id);
+    } catch (limitErr) {
+      return res.status(limitErr.status || 403).json({ success: false, message: limitErr.message, code: limitErr.code });
     }
 
     // ─── WhatsApp 24-Hour Messaging Window Enforcement ───
@@ -646,6 +800,65 @@ router.patch("/conversations/:id/toggle-bot", async (req, res) => {
   }
 });
 
+// ─── LIVE CHAT TRANSLATOR ─────────────────────────────────────────────────────
+// Per-conversation toggle + target language. Translation itself is on-demand
+// (see .../messages/:messageId/translate below), not eager on every inbound
+// message — cheaper on AI tokens, and matches the "See Translation" pattern
+// most chat UIs already use rather than always-on background translation.
+router.patch("/conversations/:id/translate", requireModule("feature_live_chat_translator"), async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const { enabled, targetLang } = req.body || {};
+    const [rows] = await pool.query("SELECT id FROM conversations WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
+    if (!rows.length) return res.status(404).json({ success: false, message: "Conversation not found" });
+
+    await pool.query(
+      "UPDATE conversations SET translate_enabled = ?, translate_target_lang = ? WHERE id = ? AND agency_id = ?",
+      [enabled ? 1 : 0, enabled ? (targetLang || "en") : null, req.params.id, agencyId]
+    );
+
+    return res.json({ success: true, translateEnabled: Boolean(enabled), translateTargetLang: enabled ? (targetLang || "en") : null });
+  } catch (err) {
+    console.error(err);
+    return res.status(err.status || 500).json({ success: false, message: err.message || "Server error", code: err.code });
+  }
+});
+
+// Translates one message to the conversation's translate_target_lang,
+// caching the result on the message row so it's only ever computed once.
+router.post("/conversations/:id/messages/:messageId/translate", requireModule("feature_live_chat_translator"), async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const [[conv]] = await pool.query(
+      "SELECT id, translate_target_lang FROM conversations WHERE id = ? AND agency_id = ?",
+      [req.params.id, agencyId]
+    );
+    if (!conv) return res.status(404).json({ success: false, message: "Conversation not found" });
+
+    const targetLang = req.body?.targetLang || conv.translate_target_lang || "en";
+
+    const [[msg]] = await pool.query(
+      "SELECT id, body, translated_text, translated_lang FROM messages WHERE id = ? AND conversation_id = ?",
+      [req.params.messageId, req.params.id]
+    );
+    if (!msg) return res.status(404).json({ success: false, message: "Message not found" });
+
+    if (msg.translated_text && msg.translated_lang === targetLang) {
+      return res.json({ success: true, translatedText: msg.translated_text, cached: true });
+    }
+
+    await assertLimit(agencyId, "max_ai_tokens_per_month", 0, req.user?.id);
+
+    const translated = await translateText(agencyId, msg.body || "", targetLang);
+    await pool.query("UPDATE messages SET translated_text = ?, translated_lang = ? WHERE id = ?", [translated, targetLang, msg.id]);
+
+    return res.json({ success: true, translatedText: translated, cached: false });
+  } catch (err) {
+    console.error(err);
+    return res.status(err.status || 500).json({ success: false, message: err.message || "Server error", code: err.code });
+  }
+});
+
 // ─── HUMAN AGENT TAKEOVER ("Join Chat") ──────────────────────────────────────
 // Pauses bot + AI (same bot_paused flags every existing check already
 // enforces — flowEngine.js:174, messageProcessor.js:125, aiReplyEngine.js:106),
@@ -714,18 +927,13 @@ router.post("/conversations/:id/join", async (req, res) => {
   }
 });
 
-// ─── LEAVE CHAT (resumes bot, preserves assigned agent) ───────────────────────
-// Hands the conversation back to Bot/AI: resumes bot_paused, clears the
-// takeover metadata, and allows bot to reply.
-// IMPORTANT: Retains assigned_to_id so the agent who last handled the chat remains assigned.
+// ─── LEAVE CHAT (resumes bot, unassigns agent and marks OPEN) ───────────────────────
 router.post("/conversations/:id/leave", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
     const [rows] = await pool.query(
-      `SELECT cv.id, cv.contact_id, cv.assigned_to_id, u.name as assignedAgentName
+      `SELECT cv.id, cv.contact_id
        FROM conversations cv
-       LEFT JOIN agent_profiles ap ON ap.id = cv.assigned_to_id
-       LEFT JOIN users u ON u.id = ap.user_id
        WHERE cv.id = ? AND cv.agency_id = ?`,
       [req.params.id, agencyId]
     );
@@ -734,21 +942,18 @@ router.post("/conversations/:id/leave", async (req, res) => {
     await pool.query(
       `UPDATE conversations
        SET bot_paused = 0, paused_by_user_id = NULL, paused_at = NULL, pause_reason = NULL, auto_resume_at = NULL,
-           status = 'OPEN'
+           assigned_to_id = NULL, status = 'OPEN'
        WHERE id = ? AND agency_id = ?`,
       [req.params.id, agencyId]
     );
     await pool.query("UPDATE contacts SET bot_paused = 0 WHERE id = ? AND agency_id = ?", [rows[0].contact_id, agencyId]);
 
-    const assignedToId = rows[0].assigned_to_id;
-    const assignedAgentName = rows[0].assignedAgentName;
-
     const payload = {
       conversationId: parseInt(req.params.id),
       botPaused: false,
       pauseReason: null,
-      assignedToId,
-      assignedAgentName,
+      assignedToId: null,
+      assignedAgentName: null,
       status: "OPEN"
     };
     emitToAgency(agencyId, "conversation_updated", payload);

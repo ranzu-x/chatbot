@@ -3,9 +3,10 @@ import axios from "axios";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
+import { requireModule } from "../utils/entitlements.js";
 
 const router = express.Router();
-router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
+router.use("/comments", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_comment_automation"));
 
 const META_API_VERSION = process.env.META_API_VERSION || "v21.0";
 
@@ -96,7 +97,7 @@ router.get("/comments/posts", async (req, res) => {
 
     // Fetch existing comment automation rules for this integration
     const [rules] = await pool.query(
-      `SELECT * FROM comment_automation_rules WHERE agency_id = ? AND (integration_id = ? OR integration_id IS NULL)`,
+      `SELECT * FROM comment_automation_rules WHERE agency_id = ? AND integration_id = ?`,
       [agencyId, integration.id]
     );
 
@@ -200,6 +201,10 @@ router.post("/comments/campaigns", async (req, res) => {
 
     if (!campaignName) {
       return res.status(400).json({ success: false, message: "Campaign name is required" });
+    }
+
+    if (!integrationId || integrationId === "all") {
+      return res.status(400).json({ success: false, message: "An account must be selected before creating a comment automation rule." });
     }
 
     if (!autoReplyComment && !autoReplyPrivateMessage && !flowId && offensiveAction === "NONE") {

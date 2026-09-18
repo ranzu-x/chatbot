@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { Eye, EyeOff, Copy, Check, Info, AlertCircle, RefreshCw, Key, Sparkles, Save, Radio, Sliders } from 'lucide-react';
 import AppLayout from '../../Layout/AppLayout';
 import { metaAppAPI } from '../../services/api';
+import StandbyAppsSection from '../../Components/Settings/StandbyAppsSection';
 import { useAuth } from '../../Provider/AuthContext';
 import { showAlert, notify } from '../../utils/alerts';
 
@@ -66,12 +67,23 @@ function generateRandomToken() {
   return random;
 }
 
+const PLATFORM_TABS = [
+  { key: 'WHATSAPP', label: 'WhatsApp App' },
+  { key: 'MESSENGER_INSTAGRAM', label: 'Messenger + Instagram App' },
+];
+
 export default function MetaAppPage({ embedded = false }) {
   const { user } = useAuth();
-  
+
+  // WhatsApp and Facebook/Instagram are deliberately separate Meta app
+  // slots — a ban on one doesn't take down the other. Each tab manages its
+  // own ACTIVE meta_app_pool row independently.
+  const [platformGroup, setPlatformGroup] = useState('WHATSAPP');
+  const isWhatsAppTab = platformGroup === 'WHATSAPP';
+
   // Real numeric agency ID from backend or user context
   const [agencyId, setAgencyId] = useState(user?.agencyId || 1);
-  
+
   // Public domain / host configuration
   const defaultPublicUrl = useMemo(() => {
     // If current location is https (like ngrok or production domain), use origin
@@ -141,12 +153,20 @@ export default function MetaAppPage({ embedded = false }) {
 
   useEffect(() => {
     fetchSettings();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [platformGroup]);
 
   const fetchSettings = async () => {
     setLoading(true);
+    lastFetchedCreds.current = '';
+    setForm(f => ({
+      appName: '', appId: '', appSecret: '', systemUserToken: '',
+      whatsappConfigId: '', whatsappConfigIdCatalog: '',
+      verifyToken: generateRandomToken(),
+      siteUrl: f.siteUrl, privacyUrl: f.privacyUrl, tosUrl: f.tosUrl, isActive: true,
+    }));
     try {
-      const res = await metaAppAPI.get();
+      const res = await metaAppAPI.get(platformGroup);
       if (res.data) {
         if (res.data.agencyId) {
           setAgencyId(res.data.agencyId);
@@ -197,7 +217,7 @@ export default function MetaAppPage({ embedded = false }) {
 
     setFetchingAppName(true);
     try {
-      const res = await metaAppAPI.test({ appId: cleanId, appSecret: cleanSecret });
+      const res = await metaAppAPI.test({ appId: cleanId, appSecret: cleanSecret }, platformGroup);
       if (res.data?.appName) {
         lastFetchedCreds.current = credKey;
         setForm(f => ({ ...f, appName: res.data.appName }));
@@ -239,7 +259,7 @@ export default function MetaAppPage({ embedded = false }) {
         privacyUrl: dynamicPrivacyUrl,
         tosUrl: dynamicTosUrl,
         customWebhookUrl: webhookCallbackUrl,
-      });
+      }, platformGroup);
       showAlert.success('Meta App Settings Saved!', 'Your Meta credentials, system user token, and webhook configuration were successfully updated.');
     } catch (err) {
       showAlert.error('Save Failed', err.response?.data?.message || 'Failed to save settings');
@@ -253,7 +273,7 @@ export default function MetaAppPage({ embedded = false }) {
     try {
       const cleanId = form.appId?.trim();
       const cleanSecret = form.appSecret?.trim();
-      const res = await metaAppAPI.test({ appId: cleanId, appSecret: cleanSecret });
+      const res = await metaAppAPI.test({ appId: cleanId, appSecret: cleanSecret }, platformGroup);
       if (res.data?.appName) {
         setForm(f => ({ ...f, appName: res.data.appName }));
         if (cleanId && cleanSecret) {
@@ -294,11 +314,36 @@ export default function MetaAppPage({ embedded = false }) {
             </div>
             <div>
               <h1 className="page-title">Meta Developer App Setup</h1>
-              <p className="page-subtitle">Configure your Meta Developer App credentials, Webhooks, and Domain settings</p>
+              <p className="page-subtitle">
+                WhatsApp and Facebook/Instagram use separate Meta apps, on purpose — a ban on one won't take down the other.
+              </p>
             </div>
           </div>
         </div>
       )}
+
+      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--border)' }}>
+        {PLATFORM_TABS.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setPlatformGroup(tab.key)}
+            style={{
+              padding: '10px 18px',
+              border: 'none',
+              borderBottom: platformGroup === tab.key ? '2px solid var(--primary, #2563eb)' : '2px solid transparent',
+              background: 'transparent',
+              color: platformGroup === tab.key ? 'var(--primary, #2563eb)' : 'var(--text-secondary)',
+              fontWeight: platformGroup === tab.key ? 700 : 500,
+              fontSize: '0.88rem',
+              cursor: 'pointer',
+              marginBottom: -1,
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
       <div className={embedded ? "" : "page-body"}>
         {loading ? (
@@ -547,7 +592,7 @@ export default function MetaAppPage({ embedded = false }) {
               <div style={{ marginBottom: 20 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                   <label className="form-label" style={{ margin: 0 }}>
-                    Meta Permanent System User Access Token (WhatsApp Cloud API)
+                    Meta Permanent System User Access Token{isWhatsAppTab ? ' (WhatsApp Cloud API)' : ' (Facebook/Instagram)'}
                     <span style={{ marginLeft: 8, fontSize: '0.72rem', fontWeight: 700, color: '#16a34a', background: 'rgba(22,163,74,0.08)', border: '1px solid rgba(22,163,74,0.2)', borderRadius: 6, padding: '1px 7px' }}>
                       Recommended
                     </span>
@@ -582,7 +627,8 @@ export default function MetaAppPage({ embedded = false }) {
                 </p>
               </div>
 
-              {/* WhatsApp Embedded Signup Configuration ID(s) */}
+              {/* WhatsApp Embedded Signup Configuration ID(s) — WhatsApp slot only */}
+              {isWhatsAppTab && (
               <div style={{ marginBottom: 20 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                   <label className="form-label" style={{ margin: 0 }}>
@@ -660,6 +706,7 @@ export default function MetaAppPage({ embedded = false }) {
                   </div>
                 </div>
               </div>
+              )}
 
               {/* Active Toggle */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
@@ -691,6 +738,8 @@ export default function MetaAppPage({ embedded = false }) {
             </div>
           </form>
         )}
+
+        {!loading && <StandbyAppsSection platformGroup={platformGroup} isWhatsAppTab={isWhatsAppTab} />}
       </div>
     </LayoutWrapper>
   );

@@ -25,7 +25,7 @@ router.get("/templates/whatsapp", async (req, res) => {
     const params = [agencyId];
 
     if (integrationId && integrationId !== "all") {
-      query += " AND (t.integration_id = ? OR t.integration_id IS NULL)";
+      query += " AND t.integration_id = ?";
       params.push(integrationId);
     }
 
@@ -252,6 +252,10 @@ router.post("/templates/whatsapp", async (req, res) => {
 
     if (!templateName || !bodyText) {
       return res.status(400).json({ success: false, message: "Template name and body text are required" });
+    }
+
+    if (!integrationId || integrationId === "all") {
+      return res.status(400).json({ success: false, message: "An account must be selected before creating a template." });
     }
 
     const isCarousel = templateType === "CAROUSEL";

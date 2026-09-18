@@ -51,6 +51,29 @@ export const domainAPI = {
   verifyDomain: () => api.post("/agency/domain/verify"),
 };
 
+// ─── API Developer (agency's own API keys for the public REST surface) ────
+export const apiKeyAPI = {
+  getAll: () => api.get("/api-keys"),
+  create: (data) => api.post("/api-keys", data),
+  revoke: (id) => api.delete(`/api-keys/${id}`),
+};
+
+// ─── WhatsApp Shopify/WooCommerce integration ──────────────────────
+export const commerceAPI = {
+  getConnections: () => api.get("/commerce/connections"),
+  getShopifyAuthUrl: (storeDomain) => api.get("/commerce/shopify/auth-url", { params: { storeDomain } }),
+  connectWooCommerce: (data) => api.post("/commerce/woocommerce/connect", data),
+  syncConnection: (id) => api.post(`/commerce/connections/${id}/sync`),
+  disconnect: (id) => api.delete(`/commerce/connections/${id}`),
+  getProducts: (params) => api.get("/commerce/products", { params }),
+};
+
+// ─── Admin: platform Shopify Partner app credentials ───────────────
+export const platformCommerceAPI = {
+  getShopifyApp: () => api.get("/admin/commerce/shopify-app"),
+  saveShopifyApp: (data) => api.put("/admin/commerce/shopify-app", data),
+};
+
 // ─── Packages & Module Entitlements ──────────────────────────────
 export const packageAPI = {
   getMyEntitlements: () => api.get("/packages/my-entitlements"),
@@ -70,6 +93,16 @@ export const billingAPI = {
   createCheckout: (data) => api.post("/billing/create-checkout", data),
   openCustomerPortal: (data) => api.post("/billing/customer-portal", data),
   getInvoices: () => api.get("/billing/invoices"),
+  // Public — no auth. Pricing page's "Buy Now" -> guest checkout.
+  guestCheckout: (data) => api.post("/billing/guest-checkout", data),
+};
+
+// ─── Platform Payment Gateways (Admin — Stripe/SSLCommerz/PortWallet/AamarPay) ──
+export const platformPaymentGatewayAPI = {
+  getAll: () => api.get("/admin/payment-gateways"),
+  save: (provider, data) => api.put(`/admin/payment-gateways/${provider}`, data),
+  toggle: (provider, isActive) => api.patch(`/admin/payment-gateways/${provider}`, { isActive }),
+  remove: (provider) => api.delete(`/admin/payment-gateways/${provider}`),
 };
 
 // ─── AI Providers (Settings → AI Providers, agency-wide BYOK) ─────
@@ -227,6 +260,12 @@ export const conversationAPI = {
   sendMessage: (id, data) => api.post(`/conversations/${id}/messages`, data),
   bulkAssign: (conversationIds, agentProfileId) => api.patch('/conversations/bulk-assign', { conversationIds, agentProfileId }),
   bulkUpdateStatus: (conversationIds, status) => api.patch('/conversations/bulk-status', { conversationIds, status }),
+  toggleTranslate: (id, enabled, targetLang) => api.patch(`/conversations/${id}/translate`, { enabled, targetLang }),
+  translateMessage: (id, messageId, targetLang) => api.post(`/conversations/${id}/messages/${messageId}/translate`, targetLang ? { targetLang } : undefined),
+  markRead: (id) => api.patch(`/conversations/${id}/read`),
+  markUnread: (id) => api.patch(`/conversations/${id}/unread`),
+  markImportant: (id, isImportant) => api.patch(`/conversations/${id}/important`, isImportant !== undefined ? { is_important: isImportant } : undefined),
+  markArchived: (id, isArchived) => api.patch(`/conversations/${id}/archive`, isArchived !== undefined ? { is_archived: isArchived } : undefined),
 };
 
 // ─── Channels ─────────────────────────────────────────────────────
@@ -238,6 +277,8 @@ export const channelAPI = {
   addWhatsAppEmbedded: (data) => api.post('/channels/whatsapp/embedded-signup', data),
   registerWhatsApp: (id, pin, accessToken) => api.post(`/channels/whatsapp/${id}/register`, { pin, accessToken }),
   discoverWhatsAppAccounts: (token) => api.post('/channels/whatsapp/discover-accounts', { userAccessToken: token }),
+  syncWhatsApp: (id) => api.post(`/channels/whatsapp/${id}/sync`),
+  updateWhatsAppCredentials: (id, data) => api.patch(`/channels/whatsapp/${id}/credentials`, data),
   deleteWhatsApp: (id) => api.delete(`/channels/whatsapp/${id}`),
   // Facebook
   getFacebook: () => api.get('/channels/facebook'),
@@ -246,12 +287,6 @@ export const channelAPI = {
   quickConnectFacebook: (token) => api.post('/channels/facebook/quick-connect', { token }),
   syncFBSubscriptions: () => api.post('/channels/facebook/sync-subscriptions'),
   deleteFacebook: (id) => api.delete(`/channels/facebook/${id}`),
-  // Facebook Comment Automation
-  getFBCommentRules: () => api.get('/channels/facebook/comment-rules'),
-  createFBCommentRule: (data) => api.post('/channels/facebook/comment-rules', data),
-  updateFBCommentRule: (id, data) => api.put(`/channels/facebook/comment-rules/${id}`, data),
-  toggleFBCommentRule: (id) => api.patch(`/channels/facebook/comment-rules/${id}/toggle`),
-  deleteFBCommentRule: (id) => api.delete(`/channels/facebook/comment-rules/${id}`),
   // Facebook Utility Messaging
   getFBUtilityTemplates: (integrationId) => api.get(`/channels/facebook/${integrationId}/utility-templates`),
   sendFBUtilityMessage: (integrationId, data) => api.post(`/channels/facebook/${integrationId}/send-utility`, data),
@@ -271,7 +306,7 @@ export const channelAPI = {
   addTikTok: (data) => api.post('/channels/tiktok', data),
   deleteTikTok: (id) => api.delete(`/channels/tiktok/${id}`),
   // Webchat
-  getWebchat: () => api.get('/channels/webchat'),
+  getWebchat: (params) => api.get('/channels/webchat', { params }),
   getWebchatByFlow: (flowId) => api.get(`/channels/webchat/by-flow/${flowId}`),
   addWebchat: (data) => api.post('/channels/webchat', data),
   updateWebchat: (id, data) => api.put(`/channels/webchat/${id}`, data),
@@ -323,15 +358,32 @@ export const botAPI = {
 };
 
 // ─── Meta App Settings ─────────────────────────────────────────────
+// WhatsApp and Facebook/Instagram are deliberately separate Meta app slots
+// (platformGroup: 'WHATSAPP' | 'MESSENGER_INSTAGRAM') — every call here
+// scopes to one slot's ACTIVE row.
 export const metaAppAPI = {
-  get: () => api.get('/settings/meta-app'),
-  save: (data) => api.post('/settings/meta-app', data),
-  test: (data) => api.post('/settings/meta-app/test', data),
-  getAppId: () => api.get('/settings/meta-app/app-id'),
+  get: (platformGroup) => api.get('/settings/meta-app', { params: { platformGroup } }),
+  save: (data, platformGroup) => api.post('/settings/meta-app', { ...data, platformGroup }),
+  test: (data, platformGroup) => api.post('/settings/meta-app/test', { ...data, platformGroup }),
+  getAppId: (platformGroup) => api.get('/settings/meta-app/app-id', { params: { platformGroup } }),
   // Persists only the verify token immediately (no App ID/Secret needed).
   // Called silently whenever a token is generated or regenerated so that
   // Meta's webhook challenge passes before the full form is submitted.
-  saveVerifyToken: (verifyToken) => api.patch('/settings/meta-app/verify-token', { verifyToken }),
+  saveVerifyToken: (verifyToken, platformGroup) => api.patch('/settings/meta-app/verify-token', { verifyToken, platformGroup }),
+};
+
+// Standby app pool per platform slot — add/edit/promote/delete backup apps,
+// check credential health, and (WhatsApp only) toggle the new-onboarding
+// redirect used when Meta suspends Tech Provider status but existing
+// numbers keep working fine.
+export const metaAppPoolAPI = {
+  list: (platformGroup) => api.get('/settings/meta-app-pool', { params: { platformGroup } }),
+  create: (data) => api.post('/settings/meta-app-pool', data),
+  update: (id, data) => api.patch(`/settings/meta-app-pool/${id}`, data),
+  remove: (id) => api.delete(`/settings/meta-app-pool/${id}`),
+  promote: (id) => api.post(`/settings/meta-app-pool/${id}/promote`),
+  test: (id) => api.post(`/settings/meta-app-pool/${id}/test`),
+  setOnboardingBlock: (id, blocked, reason) => api.patch(`/settings/meta-app-pool/${id}/onboarding-block`, { blocked, reason }),
 };
 
 // ─── Blog ──────────────────────────────────────────────────────────
@@ -373,6 +425,17 @@ export const userInputFlowAPI = {
   getResponses: (id, params) => api.get(`/user-input-flows/${id}/responses`, { params }),
 };
 
+// ─── HTTP API Campaigns (Automation module) ────────────────────────
+export const httpApiCampaignAPI = {
+  getAll: () => api.get('/http-api-campaigns'),
+  getOne: (id) => api.get(`/http-api-campaigns/${id}`),
+  create: (data) => api.post('/http-api-campaigns', data),
+  update: (id, data) => api.put(`/http-api-campaigns/${id}`, data),
+  delete: (id) => api.delete(`/http-api-campaigns/${id}`),
+  test: (id, contactId) => api.post(`/http-api-campaigns/${id}/test`, contactId ? { contactId } : {}),
+  getLogs: (id) => api.get(`/http-api-campaigns/${id}/logs`),
+};
+
 // ─── Sequence Messages (scheduled drip messages) ──
 // ─── Follow-ups (per-subscriber/conversation reminders) ───────────
 export const followupAPI = {
@@ -404,12 +467,13 @@ export const googleSheetsAPI = {
 };
 
 export const flowAPI = {
-  getAll: () => api.get('/flows'),
+  getAll: (params) => api.get('/flows', { params }),
   getOne: (id) => api.get(`/flows/${id}`),
   create: (data) => api.post('/flows', data),
   update: (id, data) => api.put(`/flows/${id}`, data),
   toggle: (id) => api.patch(`/flows/${id}/toggle`),
   delete: (id) => api.delete(`/flows/${id}`),
+  clone: (id, data) => api.post(`/flows/${id}/clone`, data),
 };
 
 // ─── Contacts ───────────────────────────────────────────────────────

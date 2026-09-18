@@ -1,12 +1,9 @@
-import "./landing.css";
-import "./blog.css";
 import { Link } from "react-router";
 import {
   MessageSquare, Bot, Users, Zap, BarChart3, Shield,
-  CheckCircle, ArrowRight, Globe, Clock, Layers, Send, Menu, X, Sparkles, LayoutDashboard
+  CheckCircle, ArrowRight, Globe, Clock, Layers, Send, Sparkles
 } from "lucide-react";
 import { useState, useEffect } from "react";
-import { useAuth } from "../../Provider/AuthContext";
 import { blogAPI } from "../../services/api";
 
 const features = [
@@ -90,11 +87,7 @@ const steps = [
 ];
 
 export default function LandingPage() {
-  const { user } = useAuth();
-  const [menuOpen, setMenuOpen] = useState(false);
   const [latestPosts, setLatestPosts] = useState([]);
-
-  const dashboardPath = user?.role === 'ADMIN' ? '/admin' : '/agency';
 
   useEffect(() => {
     blogAPI.list({ limit: 3, page: 1 })
@@ -103,76 +96,7 @@ export default function LandingPage() {
   }, []);
 
   return (
-    <div className="lp-wrapper">
-      {/* ─── Navbar ────────────────────────────────────────────── */}
-      <nav className="lp-navbar">
-        <div className="lp-container">
-          <div className="lp-nav-inner">
-            <Link to="/" className="lp-logo">
-              <div className="lp-logo-icon">
-                <MessageSquare size={20} />
-              </div>
-              <span>Nexa AI Chat</span>
-            </Link>
-
-            <div className="lp-nav-links">
-              <a href="#features" className="lp-nav-link">Features</a>
-              <a href="#benefits" className="lp-nav-link">Benefits</a>
-              <a href="#how-it-works" className="lp-nav-link">How It Works</a>
-              <Link to="/blog" className="lp-nav-link">Blog</Link>
-              <Link to="/privacy-policy" className="lp-nav-link">Privacy Policy</Link>
-              <Link to="/terms-of-service" className="lp-nav-link">Terms</Link>
-            </div>
-
-            <div className="lp-nav-actions">
-              {user ? (
-                <Link to={dashboardPath} className="lp-btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                  <LayoutDashboard size={16} /> Dashboard
-                </Link>
-              ) : (
-                <>
-                  <Link to="/login" className="lp-btn-login">Sign In</Link>
-                  <Link to="/register" className="lp-btn-primary">
-                    Get Started Free <ArrowRight size={16} />
-                  </Link>
-                </>
-              )}
-            </div>
-
-            <button
-              className="lp-mobile-toggle"
-              onClick={() => setMenuOpen(!menuOpen)}
-              aria-label="Toggle menu"
-            >
-              {menuOpen ? <X size={24} /> : <Menu size={24} />}
-            </button>
-          </div>
-        </div>
-
-        {menuOpen && (
-          <div className="lp-mobile-menu">
-            <a href="#features" className="lp-nav-link" onClick={() => setMenuOpen(false)}>Features</a>
-            <a href="#benefits" className="lp-nav-link" onClick={() => setMenuOpen(false)}>Benefits</a>
-            <a href="#how-it-works" className="lp-nav-link" onClick={() => setMenuOpen(false)}>How It Works</a>
-            <Link to="/blog" className="lp-nav-link" onClick={() => setMenuOpen(false)}>Blog</Link>
-            <Link to="/privacy-policy" className="lp-nav-link" onClick={() => setMenuOpen(false)}>Privacy Policy</Link>
-            <Link to="/terms-of-service" className="lp-nav-link" onClick={() => setMenuOpen(false)}>Terms of Service</Link>
-            {user ? (
-              <div style={{ marginTop: "8px" }}>
-                <Link to={dashboardPath} className="lp-btn-primary" style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 8 }} onClick={() => setMenuOpen(false)}>
-                  <LayoutDashboard size={16} /> Dashboard
-                </Link>
-              </div>
-            ) : (
-              <div style={{ display: "flex", gap: "12px", marginTop: "8px" }}>
-                <Link to="/login" className="lp-btn-login" style={{ flex: 1, textAlign: "center" }} onClick={() => setMenuOpen(false)}>Sign In</Link>
-                <Link to="/register" className="lp-btn-primary" style={{ flex: 1, textAlign: "center" }} onClick={() => setMenuOpen(false)}>Get Started</Link>
-              </div>
-            )}
-          </div>
-        )}
-      </nav>
-
+    <>
       {/* ─── Hero Section ──────────────────────────────────────── */}
       <section className="lp-hero">
         <div className="lp-container">
@@ -361,37 +285,6 @@ export default function LandingPage() {
           </div>
         </div>
       </section>
-
-      {/* ─── Footer ────────────────────────────────────────────── */}
-      <footer className="lp-footer">
-        <div className="lp-container">
-          <div className="lp-footer-top">
-            <Link to="/" className="lp-footer-logo">
-              <div className="lp-logo-icon" style={{ width: 32, height: 32 }}>
-                <MessageSquare size={16} />
-              </div>
-              <span>Nexa AI Chat</span>
-            </Link>
-
-            <div className="lp-footer-links">
-              <a href="#features" className="lp-footer-link">Features</a>
-              <a href="#benefits" className="lp-footer-link">Benefits</a>
-              <Link to="/blog" className="lp-footer-link">Blog</Link>
-              <Link to="/privacy-policy" className="lp-footer-link">Privacy Policy</Link>
-              <Link to="/terms-of-service" className="lp-footer-link">Terms of Service</Link>
-              {user ? (
-                <Link to={dashboardPath} className="lp-footer-link">Dashboard</Link>
-              ) : (
-                <Link to="/login" className="lp-footer-link">Sign In</Link>
-              )}
-            </div>
-          </div>
-
-          <div className="lp-footer-bottom">
-            &copy; {new Date().getFullYear()} Nexa AI Chat. All rights reserved. Omnichannel AI Chatbot & Marketing Platform for Modern Businesses.
-          </div>
-        </div>
-      </footer>
-    </div>
+    </>
   );
 }

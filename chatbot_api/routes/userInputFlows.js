@@ -11,9 +11,10 @@ import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
+import { requireModule, assertLimit } from "../utils/entitlements.js";
 
 const router = express.Router();
-router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
+router.use("/user-input-flows", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_user_input_flows"));
 
 // ── LIST ──────────────────────────────────────────────────────────
 // A User Input Flow is locked to the channel it was created for (set once,
@@ -65,12 +66,13 @@ router.post("/user-input-flows", async (req, res) => {
   const edgesStr = typeof edges === "string" ? edges : JSON.stringify(edges || []);
 
   try {
+    await assertLimit(req.user.agencyId, "max_user_input_flows", 1, req.user?.id);
     const [result] = await pool.query(
       "INSERT INTO user_input_flows (agency_id, name, platform, nodes_json, edges_json) VALUES (?, ?, ?, ?, ?)",
       [req.user.agencyId, name, platform, nodesStr, edgesStr]
     );
     return res.status(201).json({ success: true, message: "User Input Flow created", userInputFlowId: result.insertId });
-  } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
+  } catch (err) { console.error(err); return res.status(err.status || 500).json({ success: false, message: err.message || "Server error", code: err.code }); }
 });
 
 // ── SAVE (update nodes+edges / rename) ────────────────────────────

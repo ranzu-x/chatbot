@@ -5,6 +5,12 @@ import { metaAppAPI } from '../services/api';
  * Loads the Facebook JS SDK dynamically and initialises it with the
  * agency's App ID fetched from the backend.
  *
+ * @param {'WHATSAPP'|'MESSENGER_INSTAGRAM'} platformGroup - WhatsApp and
+ *   Facebook/Instagram are deliberately separate Meta app slots (see
+ *   utils/appCredentials.js on the backend) so a ban on one doesn't take
+ *   down the other. Required — pass 'WHATSAPP' from WhatsAppPage.jsx,
+ *   'MESSENGER_INSTAGRAM' from FacebookPage.jsx/InstagramPage.jsx.
+ *
  * Returns:
  *   fbReady         – true once window.FB is available and initialised
  *   appId           – the Meta App ID (or null if not configured)
@@ -17,7 +23,7 @@ import { metaAppAPI } from '../services/api';
  *   sdkError        – error message if App ID is missing / SDK fails
  *   login           – function(scope, callback) — wraps FB.login
  */
-export default function useFacebookSDK() {
+export default function useFacebookSDK(platformGroup) {
   const [fbReady, setFbReady]   = useState(false);
   const [appId, setAppId]       = useState(null);
   const [configId, setConfigId] = useState(null);
@@ -30,7 +36,7 @@ export default function useFacebookSDK() {
     (async () => {
       try {
         // 1. Fetch App ID & Config ID from backend
-        const res = await metaAppAPI.getAppId();
+        const res = await metaAppAPI.getAppId(platformGroup);
         if (cancelled) return;
         const id = res.data.appId;
         const cfgId = res.data.configId || null;
@@ -98,7 +104,7 @@ export default function useFacebookSDK() {
     })();
 
     return () => { cancelled = true; };
-  }, []);
+  }, [platformGroup]);
 
   const login = useCallback((scope, callback) => {
     if (!window.FB) {

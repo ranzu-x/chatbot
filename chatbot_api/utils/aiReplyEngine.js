@@ -22,6 +22,7 @@ import { retrieveRelevantChunks } from "./aiKnowledge.js";
 import { buildToolsForAgent, executeAction } from "./aiActions.js";
 import { fetchMessageMediaBytes } from "./mediaFetcher.js";
 import { extractTextFromFile } from "./fileTextExtractor.js";
+import { assertLimit } from "./entitlements.js";
 
 async function fetchLastInboundMedia(conversationId) {
   const [[lastInbound]] = await pool.query(
@@ -111,6 +112,18 @@ export async function runAIReply(agencyId, platform, conversation, contact, msgB
 
   const wantsStage = settings.trigger_mode === "ALWAYS" ? "always" : "fallback";
   if (wantsStage !== stage) return false;
+
+  // AI token limit — checked once here, before any provider call actually
+  // spends tokens, mirroring matchBotRules's message-credit guard in
+  // messageProcessor.js. Silently declines rather than throwing, since this
+  // runs inline in inbound message processing which must never crash on a
+  // plan-limit condition.
+  try {
+    await assertLimit(agencyId, "max_ai_tokens_per_month", 0, null);
+  } catch {
+    console.warn(`[AI Token Limit] Agency ${agencyId} is over its monthly AI token limit — skipping AI reply.`);
+    return false;
+  }
 
   // Multimodal: TEXT/IMAGE/AUDIO/DOCUMENT/VIDEO all work now.
   const upperMsgType = (msgType || "TEXT").toUpperCase();

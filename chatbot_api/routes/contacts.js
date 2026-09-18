@@ -3,6 +3,8 @@ import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { assertLimit } from "../utils/entitlements.js";
+import { buildSearch } from "../utils/searchQuery.js";
+import { emitToAgency } from "../utils/socket.js";
 
 const router = express.Router();
 router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
@@ -97,10 +99,18 @@ router.get("/contacts", async (req, res) => {
     } else if (retained === "NOT_RETAINED") {
       where += ` AND NOT ${retainedExpr}`;
     }
-    if (search) {
-      where += " AND (c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR c.external_id LIKE ?)";
-      const searchPattern = `%${search}%`;
-      params.push(searchPattern, searchPattern, searchPattern, searchPattern);
+    // Ranked, multi-word search (see utils/searchQuery.js) — matches on any
+    // combination of name/email/phone/external id and orders best-match first
+    // rather than by last-updated.
+    const searchClause = await buildSearch({
+      term: search,
+      fulltext: [{ table: "contacts", columns: ["name", "email"], expr: "c.name, c.email", weight: 4 }],
+      like: ["c.name", "c.phone", "c.email", "c.external_id"],
+      boost: { expr: "c.name" },
+    });
+    if (searchClause.active) {
+      where += ` AND ${searchClause.where}`;
+      params.push(...searchClause.whereParams);
     }
 
     const [[{ total }]] = await pool.query(`SELECT COUNT(*) as total FROM contacts c${where}`, params);
@@ -112,9 +122,12 @@ router.get("/contacts", async (req, res) => {
              (SELECT i.wa_display_phone FROM conversations cv2 JOIN integrations i ON i.id = cv2.integration_id
               WHERE cv2.contact_id = c.id ORDER BY cv2.last_message_at DESC LIMIT 1) as accountLabel,
              ${retainedExpr} as retained
+             ${searchClause.active ? `, ${searchClause.relevance} AS _relevance` : ""}
       FROM contacts c${where}
-      ORDER BY c.updated_at DESC LIMIT ? OFFSET ?`;
-    const pageParams = [...params, parseInt(limit), parseInt(offset)];
+      ORDER BY ${searchClause.active ? "_relevance DESC, " : ""}c.updated_at DESC LIMIT ? OFFSET ?`;
+    const pageParams = searchClause.active
+      ? [...searchClause.relevanceParams, ...params, parseInt(limit), parseInt(offset)]
+      : [...params, parseInt(limit), parseInt(offset)];
 
     const [contacts] = await pool.query(query, pageParams);
     for (const c of contacts) c.retained = !!c.retained;
@@ -194,28 +207,29 @@ router.get("/contacts/search", async (req, res) => {
         [agencyId, `${q}%`, limit]
       );
     } else {
-      // Natural-language FULLTEXT match on name, falling back to a prefix
-      // LIKE for very short queries (MySQL's FULLTEXT ignores words shorter
-      // than its minimum word length, typically 3-4 chars, by default).
-      if (q.length >= 3) {
+      // Ranked match across name + email. Previously this was a single
+      // NATURAL LANGUAGE match with no ordering, so results came back in
+      // whatever order the index produced and a two-word query ("john dhaka")
+      // matched rows containing either word.
+      const searchClause = await buildSearch({
+        term: q,
+        fulltext: [{ table: "contacts", columns: ["name", "email"], expr: "c.name, c.email", weight: 4 }],
+        like: ["c.name", "c.email"],
+        boost: { expr: "c.name" },
+      });
+      if (searchClause.active) {
         [rows] = await pool.query(
-          `SELECT c.id, c.name, c.phone, c.avatar, c.platform, ${convSubquery} FROM contacts c
-           WHERE c.agency_id = ? AND MATCH(c.name) AGAINST (? IN NATURAL LANGUAGE MODE)
-           LIMIT ?`,
-          [agencyId, q, limit]
-        );
-      }
-      if (!rows || rows.length === 0) {
-        [rows] = await pool.query(
-          `SELECT c.id, c.name, c.phone, c.avatar, c.platform, ${convSubquery} FROM contacts c
-           WHERE c.agency_id = ? AND c.name LIKE ?
-           ORDER BY c.name ASC LIMIT ?`,
-          [agencyId, `${q}%`, limit]
+          `SELECT c.id, c.name, c.phone, c.avatar, c.platform, ${convSubquery},
+                  ${searchClause.relevance} AS _relevance
+             FROM contacts c
+            WHERE c.agency_id = ? AND ${searchClause.where}
+            ORDER BY _relevance DESC, c.name ASC LIMIT ?`,
+          [...searchClause.relevanceParams, agencyId, ...searchClause.whereParams, limit]
         );
       }
     }
 
-    return res.json({ success: true, contacts: rows });
+    return res.json({ success: true, contacts: rows || [] });
   } catch (err) {
     console.error("GET /contacts/search error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -493,6 +507,7 @@ router.patch("/contacts/:id/block", async (req, res) => {
       [reason?.trim() || null, req.user.id, req.params.id, agencyId]
     );
     if (!result.affectedRows) return res.status(404).json({ success: false, message: "Contact not found" });
+    emitToAgency(agencyId, "contact_updated", { contactId: Number(req.params.id), isBlocked: true });
     return res.json({ success: true, isBlocked: true });
   } catch (err) {
     console.error("Block contact error:", err);
@@ -508,6 +523,7 @@ router.patch("/contacts/:id/unblock", async (req, res) => {
       [req.params.id, agencyId]
     );
     if (!result.affectedRows) return res.status(404).json({ success: false, message: "Contact not found" });
+    emitToAgency(agencyId, "contact_updated", { contactId: Number(req.params.id), isBlocked: false });
     return res.json({ success: true, isBlocked: false });
   } catch (err) {
     console.error("Unblock contact error:", err);
@@ -523,7 +539,7 @@ router.patch("/contacts/:id/unblock", async (req, res) => {
  * whatsapp_calls*) is already ON DELETE CASCADE; appointments.contact_id is
  * ON DELETE SET NULL. Runs on one connection so a failure partway through
  * rolls back instead of leaving a contact half-deleted. */
-async function deleteContactCascade(conn, contactId, agencyId) {
+export async function deleteContactCascade(conn, contactId, agencyId) {
   await conn.query("DELETE FROM conversations WHERE contact_id = ? AND agency_id = ?", [contactId, agencyId]);
   await conn.query("DELETE FROM contact_labels WHERE contact_id = ?", [contactId]);
   const [result] = await conn.query("DELETE FROM contacts WHERE id = ? AND agency_id = ?", [contactId, agencyId]);
@@ -541,6 +557,7 @@ router.delete("/contacts/:id", async (req, res) => {
       return res.status(404).json({ success: false, message: "Contact not found" });
     }
     await conn.commit();
+    emitToAgency(req.user.agencyId, "contact_deleted", { contactId: Number(req.params.id) });
     return res.json({ success: true, message: "Subscriber deleted" });
   } catch (err) {
     await conn.rollback();
@@ -562,10 +579,12 @@ router.post("/contacts/bulk-delete", async (req, res) => {
   try {
     await conn.beginTransaction();
     let deletedCount = 0;
+    const deletedIds = [];
     for (const id of contactIds) {
-      if (await deleteContactCascade(conn, id, agencyId)) deletedCount++;
+      if (await deleteContactCascade(conn, id, agencyId)) { deletedCount++; deletedIds.push(Number(id)); }
     }
     await conn.commit();
+    if (deletedIds.length) emitToAgency(agencyId, "contacts_bulk_deleted", { contactIds: deletedIds });
     return res.json({ success: true, message: `Deleted ${deletedCount} subscriber(s)`, deletedCount });
   } catch (err) {
     await conn.rollback();

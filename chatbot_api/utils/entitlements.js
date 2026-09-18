@@ -32,6 +32,45 @@ async function getUsageForAgency(agencyId) {
   return { usedBotAccounts, usedSubscribers, usedTeamMembers, channelCounts };
 }
 
+// Monthly-reset usage counters for limits that measure "this calendar
+// month" activity rather than a standing total (outbound messages sent, AI
+// tokens spent, social posts published/scheduled). Kept separate from
+// getUsageForAgency's all-time counters since they're queried on demand only
+// when the corresponding limitType is actually checked, not on every
+// entitlements resolution.
+async function getOutboundMessageCountThisMonth(agencyId) {
+  const [[{ c }]] = await pool.query(
+    `SELECT COUNT(*) as c FROM messages m
+     JOIN conversations conv ON conv.id = m.conversation_id
+     WHERE conv.agency_id = ? AND m.direction = 'OUTBOUND' AND m.created_at >= DATE_FORMAT(NOW(), '%Y-%m-01')`,
+    [agencyId]
+  );
+  return Number(c || 0);
+}
+
+async function getAiTokensUsedThisMonth(agencyId) {
+  const [[{ s }]] = await pool.query(
+    `SELECT COALESCE(SUM(tokens_used), 0) as s FROM ai_message_logs
+     WHERE agency_id = ? AND created_at >= DATE_FORMAT(NOW(), '%Y-%m-01')`,
+    [agencyId]
+  );
+  return Number(s || 0);
+}
+
+async function getSocialPostCountThisMonth(agencyId) {
+  const [[{ c }]] = await pool.query(
+    `SELECT COUNT(*) as c FROM social_posts
+     WHERE agency_id = ? AND status != 'DRAFT' AND created_at >= DATE_FORMAT(NOW(), '%Y-%m-01')`,
+    [agencyId]
+  );
+  return Number(c || 0);
+}
+
+async function getUserInputFlowCount(agencyId) {
+  const [[{ c }]] = await pool.query(`SELECT COUNT(*) as c FROM user_input_flows WHERE agency_id = ?`, [agencyId]);
+  return Number(c || 0);
+}
+
 // Sums the same usage counters across a whole set of agency ids in one pass
 // (used for reseller-pool usage — self + every RESELLER_CUSTOMER child).
 async function getUsageAcrossAgencies(agencyIds) {
@@ -97,6 +136,63 @@ async function getResellerCustomerEntitlements(agencyId) {
 }
 
 // ─── GET COMPREHENSIVE AGENCY / USER ENTITLEMENTS & USAGE ───────────────────
+export async function getSuperAdminUnlimitedEntitlements(agencyId = null, userId = null) {
+  let usage = { usedBotAccounts: 0, usedSubscribers: 0, usedTeamMembers: 0, channelCounts: {} };
+  if (agencyId) {
+    usage = await getUsageForAgency(agencyId);
+  } else if (userId) {
+    const [[{ totalAgents }]] = await pool.query(
+      "SELECT COUNT(*) as totalAgents FROM agent_profiles WHERE owner_user_id = ?",
+      [userId]
+    );
+    usage.usedTeamMembers = Number(totalAgents || 0);
+  }
+
+  let allModules = [];
+  try {
+    const [rows] = await pool.query("SELECT * FROM modules WHERE is_active = 1 ORDER BY sort_order ASC, id ASC");
+    allModules = rows;
+  } catch (err) {
+    console.error("Failed to load modules for super admin entitlements:", err);
+  }
+
+  const enabledModules = [];
+  const modulesMap = {};
+  for (const m of allModules) {
+    enabledModules.push(m.key);
+    modulesMap[m.key] = {
+      key: m.key,
+      displayName: m.display_name,
+      moduleType: m.module_type,
+      category: m.category,
+      isEnabled: true,
+      limits: {},
+    };
+  }
+
+  return {
+    package: {
+      id: null,
+      name: "Super Admin (Unlimited)",
+      slug: "super-admin-unlimited",
+      type: "PLATFORM",
+      price: 0,
+      billingCycle: "lifetime",
+      isUnlimited: true,
+    },
+    limits: {
+      maxBotAccounts: null,
+      maxSubscribers: null,
+      maxTeamMembers: null,
+      maxMonthlyMessages: null,
+    },
+    usage,
+    enabledModules,
+    modulesMap,
+    isUnlimited: true,
+  };
+}
+
 export async function getAgencyEntitlements(agencyId, userId = null) {
   try {
     if (!agencyId && !userId) {
@@ -105,8 +201,18 @@ export async function getAgencyEntitlements(agencyId, userId = null) {
 
     if (agencyId) {
       const [[agencyRow]] = await pool.query("SELECT account_type FROM agencies WHERE id = ?", [agencyId]);
+      if (agencyRow?.account_type === "PLATFORM") {
+        return await getSuperAdminUnlimitedEntitlements(agencyId, userId);
+      }
       if (agencyRow?.account_type === "RESELLER_CUSTOMER") {
         return await getResellerCustomerEntitlements(agencyId);
+      }
+    }
+
+    if (userId) {
+      const [[userRow]] = await pool.query("SELECT role FROM users WHERE id = ?", [userId]);
+      if (userRow?.role === "ADMIN") {
+        return await getSuperAdminUnlimitedEntitlements(agencyId, userId);
       }
     }
 
@@ -243,7 +349,10 @@ function getFallbackUnlimitedEntitlements() {
       "channel_whatsapp", "channel_facebook", "channel_instagram", "channel_telegram", "channel_webchat", "channel_tiktok",
       "feature_live_chat", "feature_subscribers", "feature_bot_manager", "feature_comment_automation",
       "feature_broadcasts", "feature_sequences", "feature_ai_agent", "feature_custom_domain",
-      "feature_appointments"
+      "feature_appointments", "feature_message_credits", "feature_ai_tokens", "feature_user_input_flows",
+      "feature_live_chat_translator", "feature_social_posting", "feature_whatsapp_flows",
+      "feature_whatsapp_calling", "feature_whatsapp_webhook_workflow", "feature_whatsapp_commerce",
+      "feature_google_sheets", "feature_api_developer"
     ],
     modulesMap: {},
   };
@@ -299,6 +408,15 @@ async function assertResellerPoolLimit(resellerAgencyId, limitType, increment) {
 
 // ─── ASSERTION: CHECK MODULE ACCESS ──────────────────────────────────────────
 export async function assertModuleAccess(agencyId, moduleKey, userId = null) {
+  if (agencyId) {
+    const [[agencyRow]] = await pool.query("SELECT account_type FROM agencies WHERE id = ?", [agencyId]);
+    if (agencyRow?.account_type === "PLATFORM") return true;
+  }
+  if (userId) {
+    const [[userRow]] = await pool.query("SELECT role FROM users WHERE id = ?", [userId]);
+    if (userRow?.role === "ADMIN") return true;
+  }
+
   const entitlements = await getAgencyEntitlements(agencyId, userId);
   const isEnabled = entitlements.enabledModules.includes(moduleKey);
 
@@ -316,6 +434,16 @@ export async function assertModuleAccess(agencyId, moduleKey, userId = null) {
 
 // ─── ASSERTION: CHECK USAGE CAPACITY LIMITS ──────────────────────────────────
 export async function assertLimit(agencyId, limitType, increment = 1, userId = null) {
+  // Super Admin / Platform accounts have zero limitations ever
+  if (agencyId) {
+    const [[agencyRow]] = await pool.query("SELECT account_type FROM agencies WHERE id = ?", [agencyId]);
+    if (agencyRow?.account_type === "PLATFORM") return true;
+  }
+  if (userId) {
+    const [[userRow]] = await pool.query("SELECT role FROM users WHERE id = ?", [userId]);
+    if (userRow?.role === "ADMIN") return true;
+  }
+
   // "How many customers can a reseller create" is checked entirely against
   // the reseller's OWN platform package's reseller_management module limit
   // — it has no individual/pool split (a reseller doesn't have a "parent"
@@ -375,6 +503,108 @@ export async function assertLimit(agencyId, limitType, increment = 1, userId = n
       err.status = 403;
       err.code = "LIMIT_EXCEEDED";
       throw err;
+    }
+  }
+
+  if (limitType === "max_monthly_messages" && limits.maxMonthlyMessages !== null) {
+    const used = await getOutboundMessageCountThisMonth(agencyId);
+    if (used + increment > limits.maxMonthlyMessages) {
+      const err = new Error(
+        `Message credit limit reached: Your current plan (${pkg.name}) allows ${limits.maxMonthlyMessages} outbound messages per month. Used ${used} so far this month. Please upgrade your package.`
+      );
+      err.status = 403;
+      err.code = "LIMIT_EXCEEDED";
+      throw err;
+    }
+  }
+
+  if (limitType === "max_ai_tokens_per_month") {
+    const maxTokens = entitlements.modulesMap?.feature_ai_tokens?.limits?.maxAiTokensPerMonth;
+    if (maxTokens !== undefined && maxTokens !== null) {
+      const used = await getAiTokensUsedThisMonth(agencyId);
+      if (used + increment > Number(maxTokens)) {
+        const err = new Error(
+          `AI token limit reached: Your current plan (${pkg.name}) allows ${maxTokens} AI tokens per month. Used ${used} so far this month. Please upgrade your package.`
+        );
+        err.status = 403;
+        err.code = "LIMIT_EXCEEDED";
+        throw err;
+      }
+    }
+  }
+
+  if (limitType === "max_user_input_flows") {
+    const maxFlows = entitlements.modulesMap?.feature_user_input_flows?.limits?.maxUserInputFlows;
+    if (maxFlows !== undefined && maxFlows !== null) {
+      const used = await getUserInputFlowCount(agencyId);
+      if (used + increment > Number(maxFlows)) {
+        const err = new Error(
+          `User input flow limit reached: Your current plan (${pkg.name}) allows up to ${maxFlows} flows. Currently at ${used}. Please upgrade your package.`
+        );
+        err.status = 403;
+        err.code = "LIMIT_EXCEEDED";
+        throw err;
+      }
+    }
+  }
+
+  if (limitType === "max_api_keys") {
+    const maxKeys = entitlements.modulesMap?.feature_api_developer?.limits?.maxApiKeys;
+    if (maxKeys !== undefined && maxKeys !== null) {
+      const [[{ c }]] = await pool.query("SELECT COUNT(*) as c FROM api_keys WHERE agency_id = ? AND is_active = 1", [agencyId]);
+      if (Number(c) + increment > Number(maxKeys)) {
+        const err = new Error(
+          `API key limit reached: Your current plan (${pkg.name}) allows up to ${maxKeys} active API keys. Currently at ${c}. Please upgrade your package or revoke an existing key.`
+        );
+        err.status = 403;
+        err.code = "LIMIT_EXCEEDED";
+        throw err;
+      }
+    }
+  }
+
+  if (limitType === "max_shopify_woo_stores") {
+    const maxStores = entitlements.modulesMap?.feature_whatsapp_commerce?.limits?.maxShopifyWooStores;
+    if (maxStores !== undefined && maxStores !== null) {
+      const [[{ c }]] = await pool.query("SELECT COUNT(*) as c FROM commerce_connections WHERE agency_id = ? AND is_active = 1", [agencyId]);
+      if (Number(c) + increment > Number(maxStores)) {
+        const err = new Error(
+          `Store connection limit reached: Your current plan (${pkg.name}) allows up to ${maxStores} connected Shopify/WooCommerce stores. Currently at ${c}. Please upgrade your package.`
+        );
+        err.status = 403;
+        err.code = "LIMIT_EXCEEDED";
+        throw err;
+      }
+    }
+  }
+
+  if (limitType === "max_http_api_campaigns") {
+    const maxCampaigns = entitlements.modulesMap?.feature_http_api?.limits?.maxHttpApiCampaigns;
+    if (maxCampaigns !== undefined && maxCampaigns !== null) {
+      const [[{ c }]] = await pool.query("SELECT COUNT(*) as c FROM http_api_campaigns WHERE agency_id = ?", [agencyId]);
+      if (Number(c) + increment > Number(maxCampaigns)) {
+        const err = new Error(
+          `HTTP API campaign limit reached: Your current plan (${pkg.name}) allows up to ${maxCampaigns} campaigns. Currently at ${c}. Please upgrade your package.`
+        );
+        err.status = 403;
+        err.code = "LIMIT_EXCEEDED";
+        throw err;
+      }
+    }
+  }
+
+  if (limitType === "max_posts_per_month") {
+    const maxPosts = entitlements.modulesMap?.feature_social_posting?.limits?.maxPostsPerMonth;
+    if (maxPosts !== undefined && maxPosts !== null) {
+      const used = await getSocialPostCountThisMonth(agencyId);
+      if (used + increment > Number(maxPosts)) {
+        const err = new Error(
+          `Social post limit reached: Your current plan (${pkg.name}) allows ${maxPosts} posts per month. Used ${used} so far this month. Please upgrade your package.`
+        );
+        err.status = 403;
+        err.code = "LIMIT_EXCEEDED";
+        throw err;
+      }
     }
   }
 

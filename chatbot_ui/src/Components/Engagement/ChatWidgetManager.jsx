@@ -1,13 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router';
-import { channelAPI, flowAPI, integrationAPI } from '../../services/api';
+import { channelAPI, integrationAPI } from '../../services/api';
+import { notify } from '../../utils/alerts';
+import { getBackendOrigin, resolveAssetUrl } from '../../utils/assetUrl';
+import {
+  getWidgetPlatform, validateWebsiteUrl, createChatWidgetAndFlow,
+  createReplyFlowForWidget, confirmAndDeleteWidget,
+} from '../../utils/chatWidgetHelpers';
 import DeepLinkWidgetEditor from './DeepLinkWidgetEditor';
 import {
   MessageCircle, Copy, Check, Info, ExternalLink, Plus, Pencil, Trash2, Code2, Circle,
-  Facebook, Instagram, Send as TelegramIcon, Globe, ChevronDown,
+  Facebook, Instagram, Send as TelegramIcon, Globe, ChevronDown, AlertTriangle, X,
 } from 'lucide-react';
-
-const BACKEND_URL = import.meta.env.VITE_API_URL?.replace('/api/v1', '') || 'http://localhost:5000';
 
 const PLATFORM_META = {
   WEBCHAT: { label: 'Webchat', color: '#2563eb', icon: Globe },
@@ -173,7 +177,7 @@ export default function ChatWidgetManager({ selectedAccount }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
-      <ChatWidgetList />
+      <ChatWidgetList selectedAccount={selectedAccount} />
 
       {showChannelSection && (
         <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 20 }}>
@@ -192,31 +196,18 @@ export default function ChatWidgetManager({ selectedAccount }) {
 
 // ─── Chat Widget list (Webchat + WhatsApp/Messenger/Telegram/Instagram) ──
 function getEmbedCode(widgetKey) {
-  return `<script src="${BACKEND_URL}/widget.js" data-key="${widgetKey}"></script>`;
-}
-
-// Same "Blank Canvas" shape BotManagerPage.jsx's STARTER_TEMPLATES uses for
-// a brand-new flow — one Start node feeding one Text reply node — since
-// FlowBuilderPage.jsx itself never seeds nodes for a new flow (it only
-// fetches an existing one by :id), the caller has to build & POST them.
-function buildDefaultWidgetFlowGraph(widgetName) {
-  const nodes = [
-    { id: 'start_1', type: 'start', position: { x: 80, y: 120 }, data: { label: 'Start Trigger', trigger_type: 'keyword', keywords: [], match_type: 'contains' } },
-    { id: 'text_1', type: 'text', position: { x: 440, y: 120 }, data: { label: 'Welcome Reply', message: `Hi! Thanks for reaching out to ${widgetName || 'us'} 👋 How can we help?`, buttons: [] } },
-  ];
-  const edges = [{ id: 'e1', source: 'start_1', target: 'text_1', type: 'default', animated: false }];
-  return { nodes, edges };
+  return `<script src="${getBackendOrigin()}/widget.js" data-key="${widgetKey}"></script>`;
 }
 
 const CREATE_TYPE_OPTIONS = [
-  { type: 'WEBCHAT', label: 'Webchat', sub: 'Full in-page chat window, built with the Flow Builder' },
-  { type: 'WHATSAPP', label: 'WhatsApp', sub: 'Button → hands off to wa.me' },
-  { type: 'FACEBOOK', label: 'Messenger', sub: 'Button → hands off to m.me' },
-  { type: 'TELEGRAM', label: 'Telegram', sub: 'Button → hands off to t.me' },
-  { type: 'INSTAGRAM', label: 'Instagram', sub: 'Button → hands off to ig.me' },
+  { type: 'WHATSAPP', label: 'WhatsApp', sub: 'Interactive WhatsApp widget + bot reply flow' },
+  { type: 'WEBCHAT', label: 'Webchat', sub: 'Full in-page chat window + bot reply flow' },
+  { type: 'FACEBOOK', label: 'Messenger', sub: 'Messenger chat widget + bot reply flow' },
+  { type: 'TELEGRAM', label: 'Telegram', sub: 'Telegram bot widget + bot reply flow' },
+  { type: 'INSTAGRAM', label: 'Instagram', sub: 'Instagram DM widget + bot reply flow' },
 ];
 
-function ChatWidgetList() {
+function ChatWidgetList({ selectedAccount }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [widgets, setWidgets] = useState([]);
@@ -227,10 +218,29 @@ function ChatWidgetList() {
   const [embedModal, setEmbedModal] = useState(null);
   const [copied, setCopied] = useState(false);
   const [showCreateMenu, setShowCreateMenu] = useState(false);
-  const [deepLinkEditor, setDeepLinkEditor] = useState(null); // { widget: null | existingWidget }
   const createMenuRef = useRef(null);
+  // Website-URL-at-creation flow (Req #3) — selecting a platform from the
+  // create menu no longer creates the widget immediately, it first opens
+  // this prompt; the widget is only created once a real website URL is
+  // validated (see validateWebsiteUrl in utils/chatWidgetHelpers.js).
+  const [pendingPlatform, setPendingPlatform] = useState(null);
+  const [websiteUrlInput, setWebsiteUrlInput] = useState('');
+  const [websiteUrlError, setWebsiteUrlError] = useState('');
+  // A widget with no website configured is currently rejected by the
+  // backend on every public request (see routes/webchat.js) — this lets an
+  // existing widget's website be set/fixed from the list without going
+  // through the create flow again.
+  const [fixDomainWidget, setFixDomainWidget] = useState(null);
+  const [fixDomainInput, setFixDomainInput] = useState('');
+  const [fixDomainError, setFixDomainError] = useState('');
+  const [fixDomainSaving, setFixDomainSaving] = useState(false);
 
-  useEffect(() => { fetchAll(); }, []);
+  // Only ever the platform to filter by, never "webchat vs not webchat" —
+  // "All Accounts" (selectedAccount null/'all') means no filter at all,
+  // matching the same convention used elsewhere in BotManagerPage.
+  const platformFilter = selectedAccount && selectedAccount !== 'all' ? (selectedAccount.platform || '').toUpperCase() : null;
+
+  useEffect(() => { fetchAll(); }, [platformFilter]);
 
   useEffect(() => {
     if (!showCreateMenu) return;
@@ -242,8 +252,15 @@ function ChatWidgetList() {
   const fetchAll = async () => {
     setLoading(true);
     try {
-      const [wRes, iRes] = await Promise.all([channelAPI.getWebchat(), integrationAPI.getAll()]);
-      setWidgets(wRes.data?.widgets || []);
+      const [wRes, iRes] = await Promise.all([
+        channelAPI.getWebchat(platformFilter ? { platform: platformFilter } : undefined),
+        integrationAPI.getAll(),
+      ]);
+      // Server-side filtering already applies — this re-filter is cheap
+      // defense-in-depth, matching this file's existing local-filter pattern.
+      let list = wRes.data?.widgets || [];
+      if (platformFilter) list = list.filter((w) => getWidgetPlatform(w) === platformFilter);
+      setWidgets(list);
       setIntegrations(iRes.data?.integrations || []);
     } catch (err) {
       console.error('Failed to load chat widgets', err);
@@ -256,37 +273,38 @@ function ChatWidgetList() {
     navigate(`/flows/${flowId}`, { state: { from: location.pathname + location.search, label: 'Engagement' } });
   };
 
-  // Webchat — creates the widget record (and its own dedicated WEBCHAT
-  // integration) and a starter reply flow together, links them, then drops
-  // the agent straight into the Flow Builder — where the "Widget Appearance"
-  // panel (WidgetAppearancePanel.jsx, opened from the toolbar next to
-  // Preview) configures logo/colors/behavior, and the canvas is where the
-  // reply node(s) get built. Saving there returns here via the builder's
-  // own back button.
-  const handleCreateWebchat = async () => {
+  // Creates the chat widget record + flow record and drops the agent straight
+  // into Flow Builder. `websiteHostname` is already validated (see
+  // validateWebsiteUrl) by the time this runs — it becomes the widget's
+  // allowed_domains, so the widget is server-side domain-restricted from the
+  // moment it exists.
+  const handleCreateWidget = async (platformType, websiteHostname) => {
     if (creating) return;
     setCreating(true);
     try {
-      const name = `Webchat Widget ${widgets.filter((w) => w.widget_type !== 'DEEPLINK').length + 1}`;
-      const widgetRes = await channelAPI.addWebchat({ name });
-      const widgetId = widgetRes.data?.id;
-      const integrationId = widgetRes.data?.integrationId;
+      const isWebchat = platformType === 'WEBCHAT';
+      const normPlat = platformType.toUpperCase();
+      const firstMatch = integrations.find((i) => (i.platform || '').toUpperCase() === normPlat);
+      const integrationId = isWebchat ? null : (firstMatch?.id || null);
 
-      const { nodes, edges } = buildDefaultWidgetFlowGraph(name);
-      const flowRes = await flowAPI.create({
+      const count = widgets.filter((w) => getWidgetPlatform(w) === normPlat).length + 1;
+      const name = `${platformType.charAt(0) + platformType.slice(1).toLowerCase()} Widget ${count}`;
+      const platColor = normPlat === 'WHATSAPP' ? '#25D366' : normPlat === 'FACEBOOK' ? '#0084FF' : normPlat === 'TELEGRAM' ? '#26A5E4' : normPlat === 'INSTAGRAM' ? '#E1306C' : '#6366f1';
+
+      const { flowId } = await createChatWidgetAndFlow({
+        platformType: normPlat,
         name,
-        platform: 'WEBCHAT',
+        websiteHostname,
         integrationId,
-        triggerType: 'ANY',
-        nodes_json: JSON.stringify(nodes),
-        edges_json: JSON.stringify(edges),
+        extraWidgetFields: {
+          primaryColor: platColor,
+          buttonBgColor: platColor,
+          buttonText: 'Chat with us',
+          greetingMessage: `Hello! Thanks for reaching out to us on ${platformType}. How can we help?`,
+        },
       });
-      const flowId = flowRes.data?.flowId || flowRes.data?.flow?.id || flowRes.data?.id;
 
-      if (widgetId && flowId) {
-        await channelAPI.updateWebchat(widgetId, { flowId });
-      }
-
+      // Navigate directly into Flow Builder!
       if (flowId) {
         openInFlowBuilder(flowId);
       } else {
@@ -294,68 +312,83 @@ function ChatWidgetList() {
       }
     } catch (err) {
       console.error('Failed to create chat widget', err);
-      alert(err?.response?.data?.message || 'Failed to create chat widget');
+      notify.error(err?.response?.data?.message || 'Failed to create chat widget');
     } finally {
       setCreating(false);
     }
   };
 
-  // Webchat widgets created before this redesign (or ones whose flow was
-  // deleted) have no flow_id yet — lazily create+link one on first Edit
-  // instead of leaving the agent stuck with nowhere to configure replies.
-  const handleEditWebchat = async (widget) => {
+  // Edits any widget by opening its linked flow in Flow Builder
+  const handleEditWidget = async (widget) => {
     if (widget.flow_id) {
       openInFlowBuilder(widget.flow_id);
       return;
     }
     setBusyId(widget.id);
     try {
-      const { nodes, edges } = buildDefaultWidgetFlowGraph(widget.name);
-      const flowRes = await flowAPI.create({
-        name: widget.name,
-        platform: 'WEBCHAT',
-        integrationId: widget.integration_id,
-        triggerType: 'ANY',
-        nodes_json: JSON.stringify(nodes),
-        edges_json: JSON.stringify(edges),
-      });
-      const flowId = flowRes.data?.flowId || flowRes.data?.flow?.id || flowRes.data?.id;
-      if (flowId) {
-        await channelAPI.updateWebchat(widget.id, { flowId });
-        openInFlowBuilder(flowId);
-      }
+      const flowId = await createReplyFlowForWidget(widget);
+      if (flowId) openInFlowBuilder(flowId);
     } catch (err) {
       console.error('Failed to set up reply flow', err);
-      alert('Failed to set up a reply flow for this widget');
+      notify.error('Failed to open Flow Builder for this widget');
     } finally {
       setBusyId(null);
     }
   };
 
-  const handleCreateDeepLink = (platformType) => {
+  // Opens the website-URL prompt instead of creating the widget immediately.
+  const handleCreateMenuSelect = (opt) => {
     setShowCreateMenu(false);
-    const firstMatch = integrations.find((i) => (i.platform || '').toUpperCase() === platformType);
-    setDeepLinkEditor({ widget: firstMatch ? { integration_id: firstMatch.id } : null });
+    setPendingPlatform(opt.type);
+    setWebsiteUrlInput('');
+    setWebsiteUrlError('');
   };
 
-  const handleCreateMenuSelect = (opt) => {
-    if (opt.type === 'WEBCHAT') {
-      setShowCreateMenu(false);
-      handleCreateWebchat();
-    } else {
-      handleCreateDeepLink(opt.type);
+  const handleWebsiteUrlContinue = () => {
+    const result = validateWebsiteUrl(websiteUrlInput);
+    if (!result.ok) {
+      setWebsiteUrlError(result.error);
+      return;
+    }
+    const platform = pendingPlatform;
+    setPendingPlatform(null);
+    handleCreateWidget(platform, result.hostname);
+  };
+
+  const openFixDomainModal = (widget) => {
+    setFixDomainWidget(widget);
+    setFixDomainInput('');
+    setFixDomainError('');
+  };
+
+  const handleFixDomainSave = async () => {
+    const result = validateWebsiteUrl(fixDomainInput);
+    if (!result.ok) {
+      setFixDomainError(result.error);
+      return;
+    }
+    setFixDomainSaving(true);
+    try {
+      await channelAPI.updateWebchat(fixDomainWidget.id, { allowedDomains: result.hostname });
+      setWidgets((prev) => prev.map((w) => (w.id === fixDomainWidget.id ? { ...w, allowed_domains: result.hostname } : w)));
+      setFixDomainWidget(null);
+      notify.success('Website saved — this widget is now active.');
+    } catch (err) {
+      console.error('Failed to save widget website', err);
+      setFixDomainError(err?.response?.data?.message || 'Failed to save. Please try again.');
+    } finally {
+      setFixDomainSaving(false);
     }
   };
 
   const handleDelete = async (widget) => {
-    if (!window.confirm(`Delete "${widget.name}"? The embed code will stop working immediately.`)) return;
     setBusyId(widget.id);
     try {
-      await channelAPI.deleteWebchat(widget.id);
-      setWidgets((prev) => prev.filter((w) => w.id !== widget.id));
+      const deleted = await confirmAndDeleteWidget(widget);
+      if (deleted) setWidgets((prev) => prev.filter((w) => w.id !== widget.id));
     } catch (err) {
       console.error('Failed to delete widget', err);
-      alert('Failed to delete widget');
+      notify.error('Failed to delete widget');
     } finally {
       setBusyId(null);
     }
@@ -409,16 +442,6 @@ function ChatWidgetList() {
         </div>
       </div>
 
-      {deepLinkEditor && (
-        <DeepLinkWidgetEditor
-          open={Boolean(deepLinkEditor)}
-          widget={deepLinkEditor.widget}
-          integrations={integrations}
-          onClose={() => setDeepLinkEditor(null)}
-          onSaved={fetchAll}
-        />
-      )}
-
       {embedModal && (
         <div className="modal-overlay" onClick={() => setEmbedModal(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -444,6 +467,72 @@ function ChatWidgetList() {
         </div>
       )}
 
+      {/* Website URL prompt — Req #3: Create -> Enter Website URL -> Flow Builder */}
+      {pendingPlatform && (
+        <div className="modal-overlay" onClick={() => setPendingPlatform(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
+            <div className="modal-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              Where will you use this Chat Widget?
+              <button type="button" onClick={() => setPendingPlatform(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 2 }}>
+                <X size={16} />
+              </button>
+            </div>
+            <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '0 0 14px' }}>
+              This Chat Widget can only be used on the website you specify — including its subdomains. You can add more websites later.
+            </p>
+            <input
+              type="text"
+              autoFocus
+              placeholder="https://example.com"
+              value={websiteUrlInput}
+              onChange={(e) => { setWebsiteUrlInput(e.target.value); setWebsiteUrlError(''); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleWebsiteUrlContinue(); }}
+              style={{ width: '100%', height: 38, padding: '0 12px', borderRadius: 8, border: `1px solid ${websiteUrlError ? '#fca5a5' : '#e2e8f0'}`, fontSize: '0.86rem', fontFamily: 'monospace', boxSizing: 'border-box' }}
+            />
+            {websiteUrlError && <p style={{ fontSize: '0.76rem', color: '#dc2626', margin: '6px 0 0' }}>{websiteUrlError}</p>}
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setPendingPlatform(null)}>Cancel</button>
+              <button className="btn btn-primary" disabled={creating} onClick={handleWebsiteUrlContinue}>
+                {creating ? 'Creating…' : 'Continue'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fix-domain prompt — for an existing widget with no website set yet */}
+      {fixDomainWidget && (
+        <div className="modal-overlay" onClick={() => setFixDomainWidget(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
+            <div className="modal-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              Set Website — {fixDomainWidget.name}
+              <button type="button" onClick={() => setFixDomainWidget(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 2 }}>
+                <X size={16} />
+              </button>
+            </div>
+            <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '0 0 14px' }}>
+              This widget is currently disabled — it has no authorized website yet. Set one to reactivate it.
+            </p>
+            <input
+              type="text"
+              autoFocus
+              placeholder="https://example.com"
+              value={fixDomainInput}
+              onChange={(e) => { setFixDomainInput(e.target.value); setFixDomainError(''); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleFixDomainSave(); }}
+              style={{ width: '100%', height: 38, padding: '0 12px', borderRadius: 8, border: `1px solid ${fixDomainError ? '#fca5a5' : '#e2e8f0'}`, fontSize: '0.86rem', fontFamily: 'monospace', boxSizing: 'border-box' }}
+            />
+            {fixDomainError && <p style={{ fontSize: '0.76rem', color: '#dc2626', margin: '6px 0 0' }}>{fixDomainError}</p>}
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setFixDomainWidget(null)}>Cancel</button>
+              <button className="btn btn-primary" disabled={fixDomainSaving} onClick={handleFixDomainSave}>
+                {fixDomainSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div style={{ padding: 40, textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem' }}>Loading…</div>
       ) : widgets.length === 0 ? (
@@ -463,10 +552,14 @@ function ChatWidgetList() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <div style={{ width: 34, height: 34, borderRadius: '50%', background: w.button_bg_color || w.primary_color || meta.color, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                     {w.logo_url ? (
-                      <img src={w.logo_url.startsWith('http') ? w.logo_url : `${BACKEND_URL}${w.logo_url}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    ) : (
-                      <meta.icon size={16} color="#fff" />
-                    )}
+                      <img
+                        src={resolveAssetUrl(w.logo_url)}
+                        alt=""
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextSibling.style.display = 'flex'; }}
+                      />
+                    ) : null}
+                    <meta.icon size={16} color="#fff" style={{ display: w.logo_url ? 'none' : 'flex' }} />
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</div>
@@ -480,15 +573,38 @@ function ChatWidgetList() {
                   </div>
                 </div>
 
+                {/* Website (Req #8) — always the widget's own allowed_domains,
+                    never localhost/ngrok/this SaaS app's own URL. An unset
+                    website means the widget is currently rejected on every
+                    public request (see routes/webchat.js), so this state is
+                    surfaced as a warning with a direct fix, not left blank. */}
+                {w.allowed_domains && w.allowed_domains.trim() ? (
+                  <div style={{ fontSize: '0.76rem', color: '#475569', display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <Globe size={12} color="#94a3b8" />
+                    {w.allowed_domains.split(',')[0].trim()}
+                    {w.allowed_domains.split(',').length > 1 && (
+                      <span style={{ color: '#94a3b8' }}>+{w.allowed_domains.split(',').length - 1} more</span>
+                    )}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => openFixDomainModal(w)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.76rem', color: '#b45309', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', width: 'fit-content' }}
+                  >
+                    <AlertTriangle size={12} /> Not configured — disabled until a website is set
+                  </button>
+                )}
+
                 <div style={{ display: 'flex', gap: 6, marginTop: 'auto' }}>
                   <button
                     type="button"
-                    onClick={() => (isDeepLink ? setDeepLinkEditor({ widget: w }) : handleEditWebchat(w))}
+                    onClick={() => handleEditWidget(w)}
                     disabled={busyId === w.id}
                     className="btn btn-secondary btn-sm"
                     style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
                   >
-                    <Pencil size={12} /> Edit
+                    <Pencil size={12} /> Edit Flow
                   </button>
                   <button
                     type="button"

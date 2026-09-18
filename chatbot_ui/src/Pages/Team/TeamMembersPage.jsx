@@ -39,7 +39,7 @@ export const TEAM_ROLES = [
     badgeClass: 'bg-emerald-100 text-emerald-700 border-emerald-200',
     icon: MessageSquare,
     color: '#10b981',
-    description: 'Handles customer conversations in Live Chat Inbox, manages assigned contacts & tickets.',
+    description: 'Handles customer conversations in the Inbox, manages assigned contacts & tickets.',
   },
   {
     id: 'BOT_BUILDER',
@@ -140,8 +140,13 @@ export default function TeamMembersPage() {
   }, []);
 
   const roleIdForSlug = (teamRoleId) => {
+    const num = Number(teamRoleId);
+    if (!isNaN(num) && num > 0) {
+      const match = agencyRoles.find((r) => r.id === num);
+      if (match) return match.id;
+    }
     const slug = String(teamRoleId || 'AGENT').toLowerCase();
-    return agencyRoles.find((r) => r.slug === slug)?.id || agencyRoles.find((r) => r.slug === 'agent')?.id || null;
+    return agencyRoles.find((r) => r.slug === slug)?.id || agencyRoles.find((r) => r.id === teamRoleId)?.id || agencyRoles.find((r) => r.slug === 'agent')?.id || null;
   };
 
   const integrationLabel = (i) => i.wa_display_phone || i.wa_phone_number_id || i.fb_page_name || i.ig_username || (i.tiktok_username ? `@${i.tiktok_username}` : i.tiktok_open_id) || i.name || `Integration #${i.id}`;
@@ -1282,6 +1287,40 @@ export default function TeamMembersPage() {
                       </div>
                     );
                   })}
+
+                  {agencyRoles.filter((r) => !r.is_system).length > 0 && (
+                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #e2e8f0' }}>
+                      <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#4f46e5', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <Shield size={12} /> Custom Workspace Roles (Team Rules)
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {agencyRoles.filter((r) => !r.is_system).map((cr) => {
+                          const isSelected = form.teamRole === cr.id || form.teamRole === cr.slug;
+                          return (
+                            <div
+                              key={cr.id}
+                              onClick={() => setForm((f) => ({ ...f, teamRole: cr.id }))}
+                              style={{
+                                padding: '8px 12px',
+                                borderRadius: 8,
+                                border: `1.5px solid ${isSelected ? '#6366f1' : '#e2e8f0'}`,
+                                background: isSelected ? '#f5f7ff' : '#ffffff',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 10,
+                              }}
+                            >
+                              <Shield size={15} color="#4f46e5" />
+                              <div style={{ fontSize: '0.84rem', fontWeight: 700, color: isSelected ? '#4338ca' : '#0f172a' }}>
+                                {cr.name}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1579,6 +1618,40 @@ export default function TeamMembersPage() {
                       </div>
                     );
                   })}
+
+                  {agencyRoles.filter((r) => !r.is_system).length > 0 && (
+                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #e2e8f0' }}>
+                      <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#4f46e5', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <Shield size={12} /> Custom Workspace Roles (Team Rules)
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {agencyRoles.filter((r) => !r.is_system).map((cr) => {
+                          const isSel = editingMember.team_role === cr.id || editingMember.team_role === cr.slug;
+                          return (
+                            <div
+                              key={cr.id}
+                              onClick={() => setEditingMember((m) => ({ ...m, team_role: cr.id }))}
+                              style={{
+                                padding: '8px 12px',
+                                borderRadius: 8,
+                                border: `1.5px solid ${isSel ? '#6366f1' : '#e2e8f0'}`,
+                                background: isSel ? '#f5f7ff' : '#ffffff',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 10,
+                              }}
+                            >
+                              <Shield size={15} color="#4f46e5" />
+                              <div style={{ fontSize: '0.84rem', fontWeight: 700, color: isSel ? '#4338ca' : '#0f172a' }}>
+                                {cr.name}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 

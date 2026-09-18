@@ -156,11 +156,17 @@ router.post("/admin/agencies", requirePermission("admin.agencies.manage"), async
     }
 
     // Auto-generate an unbranded random verify token for webhooks (no company/branding names)
-    const initialVerifyToken = crypto.randomBytes(16).toString("hex");
-    await conn.query(
-      "INSERT INTO meta_app_settings (agency_id, verify_token, is_configured, is_active) VALUES (?, ?, 0, 1)",
-      [agencyId, initialVerifyToken]
-    );
+    // — one placeholder ACTIVE slot per platform group (WhatsApp and
+    // Messenger+Instagram are separate Meta apps), so the webhook GET
+    // verification handshake has something to match even before the agency
+    // configures real app credentials.
+    for (const group of ["WHATSAPP", "MESSENGER_INSTAGRAM"]) {
+      const initialVerifyToken = crypto.randomBytes(16).toString("hex");
+      await conn.query(
+        "INSERT INTO meta_app_pool (agency_id, platform_group, slot_role, verify_token, is_configured, is_active) VALUES (?, ?, 'ACTIVE', ?, 0, 1)",
+        [agencyId, group, initialVerifyToken]
+      );
+    }
 
     await conn.commit();
 
@@ -263,7 +269,7 @@ router.patch("/admin/agencies/:id", requirePermission("admin.agencies.manage"), 
       }
     }
 
-    if (packageId) {
+    if (packageId && agency.account_type !== "PLATFORM") {
       await conn.query("UPDATE agencies SET package_id = ? WHERE id = ?", [packageId, req.params.id]);
       await conn.query("UPDATE subscriptions SET status='CANCELLED' WHERE agency_id = ? AND status='ACTIVE'", [req.params.id]);
       await conn.query(
@@ -495,7 +501,7 @@ router.put("/admin/users/:id", requirePermission("admin.users.manage"), async (r
     }
 
     let packageChange = null;
-    if (packageId && Number(packageId) !== Number(existing.package_id)) {
+    if (packageId && existing.role !== "ADMIN" && Number(packageId) !== Number(existing.package_id)) {
       const [[targetPkg]] = await pool.query("SELECT * FROM packages WHERE id = ?", [packageId]);
       if (!targetPkg) return res.status(400).json({ success: false, message: "Package not found" });
       await assignPackageLocally({ userId: req.params.id, packageId, notes: "Reassigned by Super Admin" });

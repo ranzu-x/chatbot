@@ -2,6 +2,7 @@ import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
+import { buildSearch } from "../utils/searchQuery.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -105,22 +106,41 @@ router.get("/blog", async (req, res) => {
     const params = [];
 
     if (category) { where += " AND category = ?"; params.push(category); }
-    if (search)   {
-      where += " AND (title LIKE ? OR excerpt LIKE ?)";
-      params.push(`%${search}%`, `%${search}%`);
+
+    // Ranked search over title/excerpt/body and tags — a title hit outranks a
+    // body mention, and multi-word queries match posts containing all the
+    // words anywhere, not just as one adjacent phrase in one column.
+    const searchClause = await buildSearch({
+      term: search,
+      fulltext: [{
+        table: "blog_posts",
+        columns: ["title", "excerpt", "content"],
+        expr: "title, excerpt, content",
+        weight: 3,
+      }],
+      like: ["title", "excerpt", "content", "tags", "category"],
+      boost: { expr: "title", exact: 20, prefix: 10, contains: 4 },
+    });
+    if (searchClause.active) {
+      where += ` AND ${searchClause.where}`;
+      params.push(...searchClause.whereParams);
     }
+
     if (featured !== null) { where += " AND is_featured = ?"; params.push(featured); }
 
     const [[{ total }]] = await pool.query(
       `SELECT COUNT(*) AS total FROM blog_posts ${where}`, params
     );
+    // While searching, relevance leads — pinning featured posts to the top of
+    // a search would bury the post the reader actually asked for.
     const [posts] = await pool.query(
       `SELECT id, title, slug, excerpt, cover_image, author_name, author_avatar,
               category, tags, is_featured, published_at, views, read_time, created_at
+              ${searchClause.active ? `, ${searchClause.relevance} AS _relevance` : ""}
        FROM blog_posts ${where}
-       ORDER BY is_featured DESC, published_at DESC
+       ORDER BY ${searchClause.active ? "_relevance DESC, published_at DESC" : "is_featured DESC, published_at DESC"}
        LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+      [...(searchClause.active ? searchClause.relevanceParams : []), ...params, limit, offset]
     );
 
     return res.json({

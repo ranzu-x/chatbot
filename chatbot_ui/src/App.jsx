@@ -8,8 +8,12 @@ import PublicRoute from './Router/PublicRoute';
 import RootRedirect from './Router/RootRedirect';
 
 // Public landing pages
+import PublicLayout   from './Pages/Landing/PublicLayout';
 import LandingPage    from './Pages/Landing/LandingPage';
 import PrivacyPolicy  from './Pages/Landing/PrivacyPolicy';
+import PricingPage from './Pages/Landing/PricingPage';
+import GuestCheckoutPage from './Pages/Landing/GuestCheckoutPage';
+import CheckoutCompletePage from './Pages/Landing/CheckoutCompletePage';
 import TermsOfService from './Pages/Landing/TermsOfService';
 import BlogListPage   from './Pages/Landing/BlogListPage';
 import BlogDetailPage from './Pages/Landing/BlogDetailPage';
@@ -31,12 +35,15 @@ const AuditLogPage         = lazy(() => import('./Pages/SuperAdmin/AuditLogPage'
 const BlogManagerPage      = lazy(() => import('./Pages/SuperAdmin/BlogManagerPage'));
 const BlogEditorPage       = lazy(() => import('./Pages/SuperAdmin/BlogEditorPage'));
 const PackagesPage         = lazy(() => import('./Pages/SuperAdmin/PackagesPage'));
+const PaymentGatewaysPage  = lazy(() => import('./Pages/SuperAdmin/PaymentGatewaysPage'));
 import TeamMembersPage  from './Pages/Team/TeamMembersPage';
 import RolesPage        from './Pages/Roles/RolesPage';
 import ResellerCustomersPage from './Pages/Agency/ResellerCustomersPage';
 import AgencyPackagesPage    from './Pages/Agency/AgencyPackagesPage';
 import IntegrationsPage from './Pages/Agency/IntegrationsPage';
 import DomainSettingsPage from './Pages/Agency/DomainSettingsPage';
+import ApiKeysPage from './Pages/Agency/ApiKeysPage';
+import CommercePage from './Pages/Agency/CommercePage';
 import MyAccountPage    from './Pages/Account/MyAccountPage';
 import BillingSuccessPage from './Pages/Billing/BillingSuccessPage';
 import WebhooksManagerPage from './Pages/Integrations/WebhooksManagerPage';
@@ -61,7 +68,6 @@ import AppSettingsHubPage    from './Pages/Settings/AppSettingsHubPage';
 import MetaAppPage           from './Pages/Settings/MetaAppPage';
 import TikTokAppPage         from './Pages/Settings/TikTokAppPage';
 import AIProvidersPage       from './Pages/Settings/AIProvidersPage';
-import WhatsAppFlowRefsPage  from './Pages/Settings/WhatsAppFlowRefsPage';
 import CannedResponsesPage   from './Pages/Settings/CannedResponsesPage';
 
 // Flow Builder — by far the single biggest file in the app (10k+ lines: the
@@ -138,6 +144,10 @@ export default function App() {
             <Route path="/team-members" element={<ProtectedRoute roles={ALL_ROLES}><TeamMembersPage /></ProtectedRoute>} />
             <Route path="/agency/domain-settings" element={<ProtectedRoute roles={ADMIN_AGENCY}><DomainSettingsPage /></ProtectedRoute>} />
             <Route path="/domain-settings" element={<ProtectedRoute roles={ADMIN_AGENCY}><DomainSettingsPage /></ProtectedRoute>} />
+            <Route path="/agency/api-keys" element={<ProtectedRoute roles={ADMIN_AGENCY}><ApiKeysPage /></ProtectedRoute>} />
+            <Route path="/api-keys" element={<ProtectedRoute roles={ADMIN_AGENCY}><ApiKeysPage /></ProtectedRoute>} />
+            <Route path="/agency/commerce" element={<ProtectedRoute roles={ADMIN_AGENCY}><CommercePage /></ProtectedRoute>} />
+            <Route path="/commerce" element={<ProtectedRoute roles={ADMIN_AGENCY}><CommercePage /></ProtectedRoute>} />
 
 
             {/* ── Connect Account Central Hub (Admin + Reseller + User) ──
@@ -200,11 +210,14 @@ export default function App() {
             <Route path="/settings/meta-app" element={<ProtectedRoute roles={ADMIN_AGENCY}><MetaAppPage /></ProtectedRoute>} />
             <Route path="/settings/tiktok-app" element={<ProtectedRoute roles={ADMIN_AGENCY}><TikTokAppPage /></ProtectedRoute>} />
             <Route path="/settings/ai-providers" element={<ProtectedRoute roles={ADMIN_AGENCY}><AIProvidersPage /></ProtectedRoute>} />
-            <Route path="/settings/whatsapp-flows" element={<ProtectedRoute roles={ADMIN_AGENCY}><WhatsAppFlowRefsPage /></ProtectedRoute>} />
+            {/* WhatsApp Flows — list lives in Bot Manager → Data Collection now,
+                not a standalone page — same pattern as /user-input-flows and
+                /sequences above redirecting to /bots. */}
+            <Route path="/settings/whatsapp-flows" element={<Navigate to="/bots" state={{ activeCategory: 'dataCollection', activeSubTab: 'whatsappFlows' }} replace />} />
             <Route path="/settings/appearance" element={<ProtectedRoute roles={ALL_ROLES}><AppearancePage /></ProtectedRoute>} />
             <Route path="/settings/canned-responses" element={<ProtectedRoute roles={ALL_ROLES}><CannedResponsesPage /></ProtectedRoute>} />
 
-            {/* ── Live Chat Inbox & Contacts ── */}
+            {/* ── Inbox & Contacts ── */}
             <Route path="/inbox" element={<ProtectedRoute roles={ALL_ROLES}><InboxPage /></ProtectedRoute>} />
             <Route path="/contacts" element={<ProtectedRoute roles={ALL_ROLES}><ContactsPage /></ProtectedRoute>} />
 
@@ -213,13 +226,23 @@ export default function App() {
                  under /support/* is self-contained inside SupportDeskApp. ── */}
             <Route path="/support/*" element={<SupportDeskApp />} />
 
-            {/* ── Public Pages ── */}
-            <Route path="/landing"          element={<LandingPage />} />
+            {/* ── Public Pages — Landing/Pricing/Blog/Privacy/Terms share one
+                 persistent navbar+footer via PublicLayout, so navigating
+                 between them only swaps the inner content, not the menu. ── */}
+            <Route element={<PublicLayout />}>
+              <Route path="/landing"          element={<LandingPage />} />
+              <Route path="/privacy-policy"   element={<PrivacyPolicy />} />
+              <Route path="/terms-of-service" element={<TermsOfService />} />
+              <Route path="/blog"             element={<BlogListPage />} />
+              <Route path="/blog/:slug"       element={<BlogDetailPage />} />
+              <Route path="/pricing"          element={<PricingPage />} />
+            </Route>
             <Route path="/payments/pay/:orderId" element={<InChatPaymentCheckoutPage />} />
-            <Route path="/privacy-policy"   element={<PrivacyPolicy />} />
-            <Route path="/terms-of-service" element={<TermsOfService />} />
-            <Route path="/blog"             element={<BlogListPage />} />
-            <Route path="/blog/:slug"       element={<BlogDetailPage />} />
+            <Route path="/checkout"         element={<GuestCheckoutPage />} />
+            <Route path="/checkout/complete" element={<CheckoutCompletePage />} />
+
+            {/* ── Admin Payment Gateways ── */}
+            <Route path="/admin/payment-gateways" element={<ProtectedRoute roles={['ADMIN']}><PaymentGatewaysPage /></ProtectedRoute>} />
 
             {/* ── Admin Blog Management ── */}
             <Route path="/admin/blog"           element={<ProtectedRoute roles={['ADMIN']}><BlogManagerPage /></ProtectedRoute>} />

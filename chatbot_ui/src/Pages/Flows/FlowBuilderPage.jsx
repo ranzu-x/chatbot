@@ -9,19 +9,21 @@ import {
 import '@xyflow/react/dist/style.css';
 import {
   ArrowLeft, Save, Loader2, Check, AlertTriangle,
-  MessageSquare, ListOrdered, LayoutGrid, CreditCard,
+  MessageSquare, MessageCircle, ListOrdered, LayoutGrid, CreditCard,
   Layers, Keyboard, GitBranch, Clock, Headphones,
   CircleStop, Play, Type, GripVertical, X, Plus, Trash2,
   ChevronRight, Zap, MousePointerClick, Mail, Phone,
   User, Settings2, CornerDownRight, Image, Upload,
   Video, Music, FileText, Globe, ExternalLink,
   Smartphone, RotateCcw, Undo2, Redo2, ThumbsUp, Sparkles, MoreVertical,
-  Copy, ShoppingBag, HelpCircle, Flag, ClipboardList, Workflow, Tag, Timer, Palette, Megaphone
+  Copy, ShoppingBag, HelpCircle, Flag, ClipboardList, Workflow, Tag, Timer, Palette, Megaphone, Network
 } from 'lucide-react';
 import FlowPhonePreview from './FlowPhonePreview';
 import PlatformIcon, { getPlatformMeta } from '../../Components/Common/PlatformIcon';
 import BroadcastStartNodeProperties from '../../Components/Broadcast/BroadcastStartNodeProperties';
-import { flowAPI, uploadAPI, integrationAPI, customFieldAPI, userInputFlowAPI, sequenceAPI, labelAPI, googleSheetsAPI, channelAPI } from '../../services/api';
+import ChatWidgetStartNodeProperties from '../../Components/Engagement/ChatWidgetStartNodeProperties';
+import { buildDefaultWidgetFlowGraph } from '../../utils/chatWidgetHelpers';
+import { flowAPI, uploadAPI, integrationAPI, customFieldAPI, userInputFlowAPI, sequenceAPI, labelAPI, googleSheetsAPI, channelAPI, httpApiCampaignAPI } from '../../services/api';
 import WidgetAppearancePanel from '../../Components/Engagement/WidgetAppearancePanel';
 import Swal from 'sweetalert2';
 
@@ -60,6 +62,7 @@ const PLATFORM_RULES = {
     condition: true,
     delay: true,
     webhook: true,
+    httpApi: true,
     payment: true,     // WhatsApp In-Chat Payment / Catalog Orders
     handoff: true,
     end: true,
@@ -94,6 +97,7 @@ const PLATFORM_RULES = {
     condition: true,
     delay: true,
     webhook: true,
+    httpApi: true,
     payment: true,
     handoff: true,
     end: true,
@@ -128,6 +132,7 @@ const PLATFORM_RULES = {
     condition: true,
     delay: true,
     webhook: true,
+    httpApi: true,
     payment: false,
     handoff: true,
     end: true,
@@ -162,6 +167,7 @@ const PLATFORM_RULES = {
     condition: true,
     delay: true,
     webhook: true,
+    httpApi: true,
     payment: true,
     handoff: true,
     end: true,
@@ -196,6 +202,7 @@ const PLATFORM_RULES = {
     condition: true,
     delay: true,
     webhook: true,
+    httpApi: true,
     payment: false,
     handoff: true,
     end: true,
@@ -230,6 +237,7 @@ const PLATFORM_RULES = {
     condition: true,
     delay: true,
     webhook: true,
+    httpApi: true,
     payment: true,
     handoff: true,
     end: true,
@@ -253,6 +261,7 @@ const NODE_COLORS = {
   condition: '#ea580c',    // Warm orange
   delay: '#64748b',        // Slate
   webhook: '#2563eb',      // Royal blue
+  httpApi: '#7c3aed',      // Violet (distinct from webhook's blue, matches Automation module's purple elsewhere)
   payment: '#16a34a',      // Green
   handoff: '#6366f1',      // Indigo
   end: '#dc2626',          // Soft red
@@ -351,6 +360,7 @@ const NODE_ICONS = {
   condition: GitBranch,
   delay: Clock,
   webhook: Globe,
+  httpApi: Network,
   payment: ShoppingBag,
   handoff: Headphones,
   end: CircleStop,
@@ -391,6 +401,7 @@ const PALETTE_CATEGORIES = [
       { type: 'condition', label: 'Condition' },
       { type: 'delay', label: 'Delay' },
       { type: 'webhook', label: 'Webhook / Zapier' },
+      { type: 'httpApi', label: 'HTTP API' },
       { type: 'payment', label: 'Catalog / Payment' },
     ],
   },
@@ -485,6 +496,7 @@ const DEFAULT_NODE_DATA = {
   condition:    { label: 'Condition', variable: '', operator: 'equals', value: '' },
   delay:        { label: 'Delay', seconds: 3 },
   webhook:      { label: 'Webhook / Zapier Action', url: '', method: 'POST', payloadMode: 'ALL_VARIABLES', customPayload: '', customHeaders: '' },
+  httpApi:      { label: 'HTTP API', campaignId: '' },
   payment:      { label: 'Catalog / Payment', productName: 'Order Product / Catalog', amount: 49.99, currency: 'USD', buttonLabel: '🛍️ View Catalog / Pay', successMessage: '🎉 Order received! We will process it shortly.' },
   handoff:      { label: 'Agent Handoff', message: '' },
   end:          { label: 'End', message: '' },
@@ -1866,13 +1878,28 @@ function validateNodeData(node) {
 
   switch (node.type) {
     case 'start': {
-      // A User Input Flow's / Sequence's Start node has no trigger of its own —
-      // a UIF is invoked by a bot Flow's "Run User Input Flow" node, a Sequence
-      // by a Start Sequence action — so neither has a keyword to require.
-      if (data.uifStart || data.sequenceStart) return null;
+      // User Input Flows, Sequences, Broadcasts, and Chat Widgets don't use keyword triggers:
+      // - UIF is invoked by a bot Flow's "Run User Input Flow" node
+      // - Sequence is enrolled via Start Sequence actions
+      // - Broadcast is dispatched via the broadcast engine
+      // - Chat Widget is launched via the website embed widget
+      if (
+        data.uifStart ||
+        data.sequenceStart ||
+        data.broadcastStart ||
+        data.chatWidgetStart ||
+        data.trigger_type === 'CHAT_WIDGET' ||
+        data.trigger_type === 'chat_widget'
+      ) return null;
       if (data.triggers && data.triggers.length > 0) {
         for (const trg of data.triggers) {
-          if (trg.match_type !== 'thumbs_up' && trg.type !== 'first_contact' && trg.type !== 'any') {
+          if (
+            trg.match_type !== 'thumbs_up' &&
+            trg.type !== 'first_contact' &&
+            trg.type !== 'any' &&
+            trg.type !== 'chat_widget' &&
+            trg.type !== 'CHAT_WIDGET'
+          ) {
             const raw = trg.keywords || (trg.trigger_keyword ? trg.trigger_keyword.split(',') : []);
             const kwList = Array.isArray(raw) ? raw.filter((k) => k && String(k).trim()) : [];
             if (kwList.length === 0) return 'Please set at least one trigger keyword';
@@ -1880,7 +1907,7 @@ function validateNodeData(node) {
         }
         return null;
       }
-      if (data.trigger_type === 'keyword' || !data.trigger_type) {
+      if (data.trigger_type === 'keyword' || (!data.trigger_type && !data.chatWidgetStart && !data.broadcastStart && !data.uifStart && !data.sequenceStart)) {
         if (data.match_type === 'thumbs_up') return null;
         const rawKw = data.keywords || (data.trigger_keyword ? data.trigger_keyword.split(',') : []);
         const kwList = Array.isArray(rawKw) ? rawKw.filter((k) => k && String(k).trim()) : [];
@@ -2096,6 +2123,12 @@ function validateNodeData(node) {
       }
       return null;
 
+    case 'httpApi':
+      if (!data.campaignId) {
+        return 'Select an HTTP API Campaign';
+      }
+      return null;
+
     case 'payment':
       if (!data.productName || !data.productName.trim()) {
         return 'Product or service name is required';
@@ -2161,6 +2194,8 @@ function getNodeDimensions(node) {
       return { width, height: 185 };
     case 'condition':
       return { width, height: 145 };
+    case 'httpApi':
+      return { width, height: 135 };
     case 'collectInput':
     case 'question':
     case 'payment':
@@ -2579,8 +2614,8 @@ function NodeWrapper({ children, color, label, icon: Icon, selected, data, type,
 }
 
 /* ── Start Node ("When...") ──────────────────────────────────── */
-function StartNode({ id, data, selected }) {
-  const { onSelectNode } = useContext(FlowNodeActionsContext);
+function StartNode({ id, data = {}, selected }) {
+  const { onSelectNode, currentPlatform, isChatWidgetFlow: ctxIsChatWidget } = useContext(FlowNodeActionsContext);
   const connectedHandles = useConnectedHandles(id);
 
   // A User Input Flow's Start node has no keyword trigger at all (it's invoked
@@ -2713,6 +2748,75 @@ function StartNode({ id, data, selected }) {
         </div>
         <div className="fb-next-step-row" style={{ marginTop: 14, marginRight: -16, marginLeft: -16, paddingLeft: 16 }}>
           <span>Message</span>
+          <Handle type="source" position={Position.Right} id="next-step" className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`} />
+        </div>
+      </div>
+    );
+  }
+
+  // A Chat Widget flow's Start node configures the website floating chat widget
+  // (appearance, branding, colors, logo, greeting, prefill message, offsets, domains)
+  // and routes directly into the flow's bot reply nodes.
+  const isWidgetStart = Boolean(
+    data.chatWidgetStart ||
+    ctxIsChatWidget ||
+    (currentPlatform && currentPlatform.toUpperCase() === 'WEBCHAT') ||
+    (data.targetPlatform && data.targetPlatform.toUpperCase() === 'WEBCHAT')
+  );
+
+  if (isWidgetStart) {
+    const plat = (data.targetPlatform || currentPlatform || 'WEBCHAT').toUpperCase();
+    const isWc = plat === 'WEBCHAT';
+    const platColor = plat === 'WHATSAPP' ? '#25D366' : plat === 'FACEBOOK' ? '#0084FF' : plat === 'TELEGRAM' ? '#26A5E4' : plat === 'INSTAGRAM' ? '#E1306C' : '#6366f1';
+    const WidgetIcon = isWc ? Globe : MessageCircle;
+    return (
+      <div
+        className={`fb-node${selected ? ' selected' : ''}`}
+        style={{
+          borderColor: selected ? platColor : '#e2e8f0', background: '#ffffff',
+          minWidth: 265, maxWidth: 295, width: 280, borderRadius: 20,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.06)', padding: '16px 16px 14px 16px',
+          position: 'relative',
+        }}
+      >
+        <NodeHoverActions nodeId={id} nodeType="start" />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, paddingLeft: 2 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 26, height: 26, borderRadius: 7, background: `${platColor}15`, color: platColor, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <WidgetIcon size={15} />
+            </div>
+            <span style={{ fontWeight: 800, fontSize: 14, color: '#0f172a' }}>{isWc ? 'Live Webchat' : 'Chat Widget'}</span>
+          </div>
+          <span style={{ fontSize: 10, fontWeight: 800, color: platColor, background: `${platColor}15`, padding: '2px 7px', borderRadius: 999 }}>
+            {plat}
+          </span>
+        </div>
+        <div style={{
+          padding: '9px 11px', borderRadius: 12, background: '#f8fafc', border: '1px solid #e2e8f0',
+          display: 'flex', flexDirection: 'column', gap: 5,
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {data.displayName || data.widgetName || (isWc ? 'Live Webchat Widget' : 'Website Chat Widget')}
+          </div>
+          {data.greetingMessage && (
+            <div style={{ fontSize: 11, color: '#64748b', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              "{data.greetingMessage}"
+            </div>
+          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 3 }}>
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999,
+              background: data.buttonBgColor || platColor, color: '#ffffff', fontSize: 10, fontWeight: 700,
+            }}>
+              <MessageCircle size={10} /> {data.buttonText || 'Chat with us'}
+            </span>
+          </div>
+        </div>
+        <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 8, textAlign: 'center' }}>
+          Click to configure widget styling & behavior
+        </div>
+        <div className="fb-next-step-row" style={{ marginTop: 12, marginRight: -16, marginLeft: -16, paddingLeft: 16 }}>
+          <span>Next Step (Bot Reply)</span>
           <Handle type="source" position={Position.Right} id="next-step" className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`} />
         </div>
       </div>
@@ -4810,6 +4914,85 @@ function WebhookNode({ id, data, selected }) {
   );
 }
 
+/* ── HTTP API Node — calls a saved HTTP API Campaign, branches on whether
+   the request succeeded, same two-handle shape as ConditionNode ─────── */
+function HttpApiNode({ id, data, selected }) {
+  const unsupported = data?._unsupported;
+  const validationError = data?._validationError;
+  const connectedHandles = useConnectedHandles(id);
+
+  return (
+    <div
+      className={`fb-node-condition${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
+      style={{
+        background: '#ffffff',
+        borderRadius: 20,
+        borderColor: validationError ? '#ef4444' : selected ? NODE_COLORS.httpApi : '#e2e8f0',
+      }}
+    >
+      <NodeHoverActions nodeId={id} nodeType="httpApi" />
+      {validationError ? (
+        <div className="fb-node-warning" style={{ background: '#ef4444' }} title={`Missing Data: ${validationError}`}>
+          <AlertTriangle size={12} color="#fff" />
+        </div>
+      ) : unsupported ? (
+        <div className="fb-node-warning" title="Not permitted on current channel">
+          <AlertTriangle size={12} color="#fff" />
+        </div>
+      ) : null}
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
+      <div
+        className="fb-node-header"
+        style={{
+          background: validationError ? '#fef2f2' : `${NODE_COLORS.httpApi}12`,
+          borderBottom: `1px solid ${validationError ? '#fecaca' : `${NODE_COLORS.httpApi}22`}`,
+          borderRadius: '19px 19px 0 0',
+        }}
+      >
+        <div
+          style={{
+            width: 22, height: 22, borderRadius: 6,
+            background: validationError ? '#fee2e2' : `${NODE_COLORS.httpApi}1e`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          }}
+        >
+          <Network size={13} style={{ color: validationError ? '#ef4444' : NODE_COLORS.httpApi }} />
+        </div>
+        <span style={{ fontWeight: 700, fontSize: '11.5px', color: validationError ? '#b91c1c' : '#1e293b' }}>HTTP API</span>
+      </div>
+      <div className="fb-node-body">
+        {data.campaignName ? (
+          <span style={{ fontSize: 11, fontWeight: 600, color: '#1e293b' }}>{data.campaignName}</span>
+        ) : (
+          <span style={{ opacity: 0.5, fontStyle: 'italic', fontSize: 11, color: '#64748b' }}>No campaign selected</span>
+        )}
+      </div>
+      <div className="fb-condition-outputs" style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 12px 10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
+          <span className="fb-condition-label fb-condition-yes">Success</span>
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="success"
+            className={`btn-handle${connectedHandles.has('success') ? ' connected' : ''}`}
+            style={{ right: 8, top: '50%', transform: 'translateY(-50%)', position: 'absolute' }}
+          />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
+          <span className="fb-condition-label fb-condition-no">Fail</span>
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="fail"
+            className={`btn-handle${connectedHandles.has('fail') ? ' connected' : ''}`}
+            style={{ right: 8, top: '50%', transform: 'translateY(-50%)', position: 'absolute' }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Collect Payment Node ────────────────────────────────────── */
 function PaymentNode({ id, data, selected }) {
   return (
@@ -6741,7 +6924,7 @@ function UserInputFlowStartProperties({ data, updateField, platform, flowName, o
   );
 }
 
-function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFields = [], onCustomFieldCreated, userInputFlows = [], onUserInputFlowCreated, isUserInputFlow = false, sequences = [], onSequenceCreated, isSequence = false, isBroadcastFlow = false, flows = [], currentFlowId = null, flowName, onFlowNameChange, onDrillIn, onAttachSequence, attachedSequenceNode, onSelectSequenceNode }) {
+function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFields = [], onCustomFieldCreated, userInputFlows = [], onUserInputFlowCreated, isUserInputFlow = false, sequences = [], onSequenceCreated, isSequence = false, isBroadcastFlow = false, isChatWidgetFlow = false, linkedWidget = null, widgetAppearanceForm = null, onWidgetAppearanceChange = null, onAddReplyNode = null, flows = [], httpApiCampaigns = [], currentFlowId = null, flowName, onFlowNameChange, onDrillIn, onAttachSequence, attachedSequenceNode, onSelectSequenceNode }) {
   if (!node) return null;
 
   const { data, type } = node;
@@ -6763,6 +6946,45 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
   const renderFields = () => {
     switch (type) {
       case 'start':
+        // A Chat Widget flow's Start node configures the website floating chat widget
+        // (appearance, branding, colors, logo, greeting, prefill message, offsets, domains)
+        if (isChatWidgetFlow || linkedWidget || data.chatWidgetStart || (platform || '').toUpperCase() === 'WEBCHAT') {
+          const effectiveForm = widgetAppearanceForm || {
+            name: data.widgetName || flowName || 'Chat Widget',
+            displayName: data.displayName || data.widgetName || flowName || 'Support Chat',
+            greetingMessage: data.greetingMessage || '',
+            buttonText: data.buttonText || 'Chat with us',
+            buttonBgColor: data.buttonBgColor || (platform === 'WHATSAPP' ? '#25D366' : '#6366f1'),
+            targetPlatform: data.targetPlatform || platform,
+            inputPlaceholder: data.inputPlaceholder || 'Type a message…',
+            allowedDomains: data.allowedDomains || '',
+            prefillMessage: data.prefillMessage || '',
+          };
+          return (
+            <ChatWidgetStartNodeProperties
+              form={effectiveForm}
+              onChange={(updated) => {
+                onWidgetAppearanceChange?.(updated);
+                onUpdate(node.id, {
+                  ...data,
+                  chatWidgetStart: true,
+                  widgetName: updated.name,
+                  displayName: updated.displayName,
+                  buttonText: updated.buttonText,
+                  buttonBgColor: updated.buttonBgColor,
+                  greetingMessage: updated.greetingMessage,
+                  prefillMessage: updated.prefillMessage,
+                  targetPlatform: updated.targetPlatform,
+                });
+              }}
+              platform={platform}
+              flowName={flowName}
+              onFlowNameChange={onFlowNameChange}
+              widgetKey={linkedWidget?.widget_key}
+              onAddReplyNode={onAddReplyNode}
+            />
+          );
+        }
         // A Broadcast campaign's / User Input Flow's / Sequence's Start node
         // configures the campaign/form/sequence itself, not a trigger — none
         // of the three is ever keyword-triggered.
@@ -8049,6 +8271,45 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
           </div>
         );
 
+      case 'httpApi':
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div className="fb-field">
+              <label>HTTP API Campaign *</label>
+              <select
+                value={data.campaignId || ''}
+                onChange={(e) => {
+                  const id = e.target.value ? Number(e.target.value) : '';
+                  const campaign = httpApiCampaigns.find((c) => c.id === id);
+                  updateFields({ campaignId: id, campaignName: campaign?.name || '' });
+                }}
+              >
+                <option value="">Select a campaign…</option>
+                {httpApiCampaigns.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name} ({c.method})</option>
+                ))}
+              </select>
+            </div>
+
+            {data.campaignId && (
+              <button
+                type="button"
+                className="fb-link-btn"
+                onClick={() => window.open('/bots?category=automation&subTab=httpApiCampaigns', '_blank')}
+                style={{ fontSize: 11, color: '#7c3aed', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0, textDecoration: 'underline' }}
+              >
+                Manage HTTP API Campaigns
+              </button>
+            )}
+
+            <div style={{ padding: '10px 12px', borderRadius: 8, background: '#f8fafc', border: '1px solid #e2e8f0', fontSize: 11, color: '#64748b', lineHeight: 1.4 }}>
+              💡 When this step is reached, the selected campaign's request fires for real — including any
+              {'{{field_key}}'} template values from this subscriber. The flow then continues down the
+              <strong> Success</strong> or <strong>Fail</strong> branch depending on the response.
+            </div>
+          </div>
+        );
+
       case 'payment':
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -8377,6 +8638,7 @@ const nodeTypes = {
   condition: ConditionNode,
   delay: DelayNode,
   webhook: WebhookNode,
+  httpApi: HttpApiNode,
   payment: PaymentNode,
   handoff: HandoffNode,
   end: EndNode,
@@ -8909,18 +9171,21 @@ function FlowBuilderInner() {
     if (dest.startsWith('/webhooks')) return 'Webhooks';
     if (dest.startsWith('/orders')) return 'Orders';
     if (dest.startsWith('/appointments')) return 'Appointments';
-    if (dest.startsWith('/inbox')) return 'Live Chat';
+    if (dest.startsWith('/inbox')) return 'Inbox';
     return 'Automations';
   }, [referrerState, returnUrl]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const nodesRef = useRef(nodes);
+  const edgesRef = useRef(edges);
+  nodesRef.current = nodes;
+  edgesRef.current = edges;
+
   const [flowData, setFlowData] = useState(null);
-  // Derived, not route-based like isUserInputFlow/isSequence — a Broadcast
-  // flow lives at the same /flows/:id URL as any other flow, so this is
-  // only knowable once the flow itself has loaded (routes/broadcasts.js's
-  // start-with-flow is what actually sets trigger_type='BROADCAST').
-  const isBroadcastFlow = flowData?.trigger_type === 'BROADCAST';
+  const [linkedWidget, setLinkedWidget] = useState(null);
+  const [widgetAppearanceOpen, setWidgetAppearanceOpen] = useState(false);
+  const [widgetAppearanceForm, setWidgetAppearanceForm] = useState(null);
   const [flowName, setFlowName] = useState('');
   const [platform, setPlatform] = useState(() => {
     const q = searchParams.get('platform');
@@ -8933,6 +9198,54 @@ function FlowBuilderInner() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [selectedNode, setSelectedNode] = useState(null);
+
+  // Derived, not route-based like isUserInputFlow/isSequence — a Broadcast
+  // flow lives at the same /flows/:id URL as any other flow, so this is
+  // only knowable once the flow itself has loaded (routes/broadcasts.js's
+  // start-with-flow is what actually sets trigger_type='BROADCAST').
+  const isBroadcastFlow = flowData?.trigger_type === 'BROADCAST';
+  const isChatWidgetFlow = Boolean(
+    flowData?.trigger_type === 'CHAT_WIDGET' ||
+    (flowData ? (flowData.platform || '').toUpperCase() === 'WEBCHAT' : (platform || '').toUpperCase() === 'WEBCHAT') ||
+    linkedWidget ||
+    nodes.some((n) => n.type === 'start' && n.data?.chatWidgetStart)
+  );
+
+  // Quick-add bot reply action for Chat Widget start node
+  const handleAddReplyNode = useCallback((type) => {
+    const startNode = nodesRef.current.find((n) => n.type === 'start');
+    const startPos = startNode ? startNode.position : { x: 80, y: 120 };
+    const existingReplies = nodesRef.current.filter((n) => n.type !== 'start');
+    const xOffset = 360 + (existingReplies.length * 40);
+    const yOffset = (existingReplies.length * 70);
+
+    const newId = generateNodeId(type);
+    const newNode = {
+      id: newId,
+      type,
+      position: { x: startPos.x + xOffset, y: startPos.y + yOffset },
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
+      data: {
+        ...(DEFAULT_NODE_DATA[type] || {}),
+        _unsupported: !isNodeSupportedOnPlatform(type, platform),
+      },
+    };
+
+    setNodes((nds) => [...nds, newNode]);
+
+    if (startNode) {
+      const hasStartEdge = edgesRef.current.some((e) => e.source === startNode.id && e.sourceHandle === 'next-step');
+      if (!hasStartEdge) {
+        setEdges((eds) => [
+          ...eds,
+          { id: `e-${startNode.id}-${newId}`, source: startNode.id, sourceHandle: 'next-step', target: newId, targetHandle: 'target', type: 'default', animated: false }
+        ]);
+      }
+    }
+
+    setSelectedNode(newNode);
+  }, [setNodes, setEdges, platform]);
 
   // Re-fetched whenever the channel changes, so the "Run User Input Flow" picker
   // only ever offers same-channel flows (see the userInputFlows note above).
@@ -8962,19 +9275,17 @@ function FlowBuilderInner() {
     if (isUserInputFlow || isSequence) return;
     flowAPI.getAll().then((res) => setFlowsList(res.data?.flows || [])).catch(() => {});
   }, [isUserInputFlow, isSequence]);
+
+  // HTTP API Campaigns (Automation module) — offered on an "HTTP API" node,
+  // same reasoning as flowsList/sequencesList above.
+  const [httpApiCampaigns, setHttpApiCampaigns] = useState([]);
+  useEffect(() => {
+    if (isUserInputFlow || isSequence) return;
+    httpApiCampaignAPI.getAll().then((res) => setHttpApiCampaigns(res.data?.campaigns || [])).catch(() => {});
+  }, [isUserInputFlow, isSequence]);
   const [autoSaveStatus, setAutoSaveStatus] = useState('');
   const [previewOpen, setPreviewOpen] = useState(false);
   const [isLive, setIsLive] = useState(false);
-
-  // Chat Widget appearance — only meaningful for a WEBCHAT flow that's the
-  // reply logic of a Bot Manager → Engagement → Chat Widget entry (see
-  // ChatWidgetManager.jsx, which creates the two together). `linkedWidget`
-  // is fetched alongside the flow below (GET /channels/webchat/by-flow/:id)
-  // and stays null for every ordinary flow, which is what gates the new
-  // toolbar button/panel — see WidgetAppearancePanel.jsx.
-  const [linkedWidget, setLinkedWidget] = useState(null);
-  const [widgetAppearanceOpen, setWidgetAppearanceOpen] = useState(false);
-  const [widgetAppearanceForm, setWidgetAppearanceForm] = useState(null);
 
   // Undo / Redo history tracking
   const historyRef = useRef([]);
@@ -9034,8 +9345,6 @@ function FlowBuilderInner() {
   }, [setNodes, setEdges]);
 
   const autoSaveTimerRef = useRef(null);
-  const nodesRef = useRef(nodes);
-  const edgesRef = useRef(edges);
   nodesRef.current = nodes;
   edgesRef.current = edges;
 
@@ -9093,7 +9402,9 @@ function FlowBuilderInner() {
       try {
         setLoading(true);
         const [res, intRes] = await Promise.allSettled([
-          isSequence ? sequenceAPI.getOne(id) : (isUserInputFlow ? userInputFlowAPI.getOne(id) : flowAPI.getOne(id)),
+          (id && id !== 'new')
+            ? (isSequence ? sequenceAPI.getOne(id) : (isUserInputFlow ? userInputFlowAPI.getOne(id) : flowAPI.getOne(id)))
+            : Promise.resolve({ data: null }),
           integrationAPI.getAll(),
         ]);
         if (intRes.status === 'fulfilled') {
@@ -9115,12 +9426,19 @@ function FlowBuilderInner() {
           : null;
         if (!flow) {
           // Initialize empty flow with start node
-          setNodes([{
-            id: generateNodeId('start'),
-            type: 'start',
-            position: { x: 400, y: 100 },
-            data: { ...DEFAULT_NODE_DATA.start },
-          }]);
+          const isWebchatFallback = (platform || '').toUpperCase() === 'WEBCHAT' || location.state?.label === 'Webchat';
+          if (isWebchatFallback) {
+            const seeded = buildDefaultWidgetFlowGraph('Live Webchat', 'WEBCHAT');
+            setNodes(seeded.nodes);
+            setEdges(seeded.edges);
+          } else {
+            setNodes([{
+              id: generateNodeId('start'),
+              type: 'start',
+              position: { x: 400, y: 100 },
+              data: { ...DEFAULT_NODE_DATA.start },
+            }]);
+          }
           setLoading(false);
           return;
         }
@@ -9140,37 +9458,50 @@ function FlowBuilderInner() {
         setPlatform(resolvedPlatform);
         setIntegrationId(flow.integration_id || null);
 
-        // If this flow is a Webchat Chat Widget's reply logic (created
-        // together by ChatWidgetManager.jsx), load its appearance fields so
-        // the new Widget Appearance panel/button can appear — ordinary
-        // flows (and Sequences/User Input Flows) simply never match here.
-        if (!isSequence && !isUserInputFlow && resolvedPlatform === 'WEBCHAT') {
+        // If this flow is a Chat Widget's reply logic (created
+        // by ChatWidgetManager.jsx), load its appearance fields so
+        // the Chat Widget start node and properties panel have full data.
+        if (!isSequence && !isUserInputFlow) {
           channelAPI.getWebchatByFlow(id).then((res) => {
             const widget = res.data?.widget;
             if (widget) {
               setLinkedWidget(widget);
               setWidgetAppearanceForm({
                 name: widget.name,
+                integrationId: widget.integration_id ? String(widget.integration_id) : '',
+                targetPlatform: widget.target_platform || resolvedPlatform,
                 logoUrl: widget.logo_url || '',
                 displayName: widget.display_name || widget.name || '',
-                headerBgColor: widget.header_bg_color || widget.primary_color || '#6366f1',
+                headerBgColor: widget.header_bg_color || widget.primary_color || '#111827',
                 headerTextColor: widget.header_text_color || '#ffffff',
                 greetingMessage: widget.greeting_message || '',
                 placeholderText: widget.placeholder_text || '',
                 prefillMessage: widget.prefill_message || '',
                 position: widget.position || 'BOTTOM_RIGHT',
                 openOnStartup: Boolean(widget.open_on_startup),
-                buttonText: widget.button_text || '',
-                buttonBgColor: widget.button_bg_color || widget.primary_color || '#6366f1',
+                offsetX: widget.offset_x ?? 20,
+                offsetY: widget.offset_y ?? 20,
+                buttonText: widget.button_text || 'Chat with us',
+                buttonBgColor: widget.button_bg_color || widget.primary_color || (resolvedPlatform === 'WHATSAPP' ? '#25D366' : '#6366f1'),
                 buttonTextColor: widget.button_text_color || '#ffffff',
                 buttonSize: widget.button_size || 'MEDIUM',
+                allowedDomains: widget.allowed_domains || '',
               });
+              setNodes((nds) => nds.map((n) => n.type === 'start' ? {
+                ...n,
+                data: {
+                  ...n.data,
+                  chatWidgetStart: true,
+                  targetPlatform: widget.target_platform || resolvedPlatform,
+                  widgetName: widget.name,
+                  displayName: widget.display_name || widget.name,
+                  greetingMessage: widget.greeting_message,
+                  buttonText: widget.button_text,
+                  buttonBgColor: widget.button_bg_color,
+                }
+              } : n));
             }
-          }).catch(() => {
-            // No widget linked to this flow (an ordinary WEBCHAT flow, or a
-            // widget-link that's been removed) — leave linkedWidget null,
-            // which keeps the new panel/button hidden entirely.
-          });
+          }).catch(() => {});
         }
 
         let loadedNodes = [];
@@ -9188,12 +9519,18 @@ function FlowBuilderInner() {
             : (flow.edges_json || []);
         } catch { loadedEdges = []; }
 
+        const isChatWidgetFlowLoaded = flow.trigger_type === 'CHAT_WIDGET' || (flow.platform || '').toUpperCase() === 'WEBCHAT';
+
         // Auto-add start node if empty. A brand-new User Input Flow starts with its
         // Start node plus one Question, so it opens ready to fill in rather than
         // as a bare canvas.
         if (!loadedNodes.length) {
           if (isUserInputFlow) {
             const seeded = buildDefaultUifNodesEdges();
+            loadedNodes = seeded.nodes;
+            loadedEdges = seeded.edges;
+          } else if (isChatWidgetFlowLoaded) {
+            const seeded = buildDefaultWidgetFlowGraph(flow.name, flow.platform || 'WEBCHAT');
             loadedNodes = seeded.nodes;
             loadedEdges = seeded.edges;
           } else {
@@ -9217,13 +9554,21 @@ function FlowBuilderInner() {
             ...(isUserInputFlow && n.type === 'start' ? { uifStart: true } : {}),
             ...(isSequence && n.type === 'start' ? { sequenceStart: true } : {}),
             ...(isBroadcastFlowLoaded && n.type === 'start' ? { broadcastStart: true } : {}),
+            ...((isChatWidgetFlowLoaded || flow.trigger_type === 'CHAT_WIDGET' || (flow.platform || '').toUpperCase() === 'WEBCHAT' || Boolean(n.data?.chatWidgetStart)) && n.type === 'start' ? {
+              chatWidgetStart: true,
+              targetPlatform: (flow.platform || 'WEBCHAT').toUpperCase(),
+              widgetName: n.data?.widgetName || flow.name || 'Chat Widget',
+              displayName: n.data?.displayName || flow.name || 'Support Chat',
+              greetingMessage: n.data?.greetingMessage || 'Hello! How can we help you today?',
+              buttonText: n.data?.buttonText || 'Chat with us',
+              buttonBgColor: n.data?.buttonBgColor || ((flow.platform || '').toUpperCase() === 'WHATSAPP' ? '#25D366' : '#6366f1'),
+            } : {}),
             _unsupported: !isNodeSupportedOnPlatform(n.type, flow.platform || 'WEBCHAT'),
           };
 
-          // Skipped for a User Input Flow's / Sequence's / Broadcast's Start
-          // node — none of the three has a keyword trigger to backfill, and
-          // injecting placeholder keywords there would be misleading.
-          if (n.type === 'start' && !isUserInputFlow && !isSequence && !isBroadcastFlowLoaded) {
+          // Skipped for a User Input Flow's / Sequence's / Broadcast's / Chat Widget's Start
+          // node — none of them has a keyword trigger to backfill.
+          if (n.type === 'start' && !isUserInputFlow && !isSequence && !isBroadcastFlowLoaded && !isChatWidgetFlowLoaded && flow.trigger_type !== 'CHAT_WIDGET' && (flow.platform || '').toUpperCase() !== 'WEBCHAT' && !nodeData.chatWidgetStart) {
             if (!nodeData.triggers || !Array.isArray(nodeData.triggers) || nodeData.triggers.length === 0) {
               const kws = nodeData.keywords !== undefined
                 ? (Array.isArray(nodeData.keywords) ? nodeData.keywords : [nodeData.keywords])
@@ -9278,7 +9623,11 @@ function FlowBuilderInner() {
       }
     }
 
-    if (id) loadFlow();
+    if (id) {
+      loadFlow();
+    } else {
+      setLoading(false);
+    }
   }, [id, setNodes, setEdges]);
 
   /* ── Auto-save disabled on user request ─────────────────── */
@@ -9302,9 +9651,12 @@ function FlowBuilderInner() {
         if (hasErrors) return;
 
         const startNode = currentNodes.find((n) => n.type === 'start');
-        const triggerType = (startNode?.data?.trigger_type || 'KEYWORD').toUpperCase();
-        let triggerKeyword = flowData?.trigger_keyword || '';
-        if (startNode?.data?.keywords) {
+        const isWidget = Boolean(startNode?.data?.chatWidgetStart || isChatWidgetFlow);
+        const triggerType = isWidget
+          ? 'CHAT_WIDGET'
+          : (startNode?.data?.trigger_type || 'KEYWORD').toUpperCase();
+        let triggerKeyword = isWidget ? '' : (flowData?.trigger_keyword || '');
+        if (!isWidget && startNode?.data?.keywords) {
           triggerKeyword = Array.isArray(startNode.data.keywords)
             ? startNode.data.keywords.join(',')
             : startNode.data.keywords;
@@ -9476,8 +9828,13 @@ function FlowBuilderInner() {
 
       let triggerKeyword = flowData?.trigger_keyword || '';
       const startNode = currentNodes.find((n) => n.type === 'start');
-      const triggerType = (startNode?.data?.trigger_type || 'KEYWORD').toUpperCase();
-      if (startNode?.data?.keywords) {
+      const isWidget = Boolean(startNode?.data?.chatWidgetStart || isChatWidgetFlow || (platform || '').toUpperCase() === 'WEBCHAT');
+      const triggerType = isWidget
+        ? 'CHAT_WIDGET'
+        : (startNode?.data?.trigger_type || 'KEYWORD').toUpperCase();
+      if (isWidget) {
+        triggerKeyword = '';
+      } else if (startNode?.data?.keywords) {
         triggerKeyword = Array.isArray(startNode.data.keywords)
           ? startNode.data.keywords.join(',')
           : startNode.data.keywords;
@@ -10184,6 +10541,8 @@ function FlowBuilderInner() {
       buttonTargetNodes,
       emptySourceNodes,
       sequencesList,
+      currentPlatform: platform,
+      isChatWidgetFlow,
     }}>
       <div className="flow-builder-root">
       {/* ── Flow Top Bar ────────────────────────────────── */}
@@ -10594,7 +10953,13 @@ function FlowBuilderInner() {
             onSequenceCreated={(seq) => setSequencesList((prev) => [...prev, seq])}
             isSequence={isSequence}
             isBroadcastFlow={isBroadcastFlow}
+            isChatWidgetFlow={isChatWidgetFlow || Boolean(linkedWidget)}
+            linkedWidget={linkedWidget}
+            widgetAppearanceForm={widgetAppearanceForm}
+            onWidgetAppearanceChange={setWidgetAppearanceForm}
+            onAddReplyNode={handleAddReplyNode}
             flows={flowsList}
+            httpApiCampaigns={httpApiCampaigns}
             currentFlowId={(!isUserInputFlow && !isSequence) ? Number(id) : null}
             flowName={flowName}
             onFlowNameChange={setFlowName}

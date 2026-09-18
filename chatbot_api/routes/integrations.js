@@ -3,6 +3,7 @@ import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { resolveMetaAppSettings } from "../utils/appCredentials.js";
+import { deleteIntegrationCascade } from "../utils/integrationCascade.js";
 
 const router = express.Router();
 
@@ -27,7 +28,7 @@ router.use("/integrations", authMiddleware, roleMiddleware("RESELLER", "ADMIN", 
 // separate small copy rather than a shared import so this file's role gate
 // can evolve independently without silently changing channels.js's
 // behavior (and vice versa).
-const SECRET_FIELDS = ["access_token", "user_access_token", "verify_token", "bot_token"];
+const SECRET_FIELDS = ["access_token", "user_access_token", "verify_token", "bot_token", "app_secret"];
 function stripSecrets(rowOrRows, req) {
   if (req.user?.role !== "USER") return rowOrRows;
   const redact = (row) => {
@@ -62,7 +63,7 @@ router.get("/integrations", async (req, res) => {
       // Get agency-level system token as fallback
       let systemToken = null;
       try {
-        const appSettings = await resolveMetaAppSettings(req.user.agencyId);
+        const appSettings = await resolveMetaAppSettings(req.user.agencyId, "WHATSAPP");
         if (appSettings?.system_user_token?.startsWith('EAA')) {
           systemToken = appSettings.system_user_token;
         }
@@ -175,15 +176,46 @@ router.put("/integrations/:id", async (req, res) => {
 
 // ─── DELETE INTEGRATION ───────────────────────────────────────────────────────
 router.delete("/integrations/:id", async (req, res) => {
+  const conn = await pool.getConnection();
   try {
-    await pool.query(
+    const [integ] = await conn.query(
+      "SELECT platform FROM integrations WHERE id = ? AND agency_id = ?",
+      [req.params.id, req.user.agencyId]
+    );
+    if (!integ.length) {
+      return res.status(404).json({ success: false, message: "Integration not found" });
+    }
+
+    if (integ[0].platform === "TELEGRAM") {
+      const [tg] = await conn.query(
+        "SELECT bot_token FROM telegram_bots WHERE integration_id = ? AND agency_id = ?",
+        [req.params.id, req.user.agencyId]
+      );
+      if (tg.length && tg[0].bot_token) {
+        await fetch(`https://api.telegram.org/bot${tg[0].bot_token}/deleteWebhook`).catch(() => {});
+      }
+    }
+
+    await conn.beginTransaction();
+    if (integ[0].platform === "TELEGRAM") {
+      await conn.query(
+        "DELETE FROM telegram_bots WHERE integration_id = ? AND agency_id = ?",
+        [req.params.id, req.user.agencyId]
+      );
+    }
+    await deleteIntegrationCascade(conn, req.params.id, req.user.agencyId);
+    await conn.query(
       "DELETE FROM integrations WHERE id = ? AND agency_id = ?",
       [req.params.id, req.user.agencyId]
     );
+    await conn.commit();
     return res.json({ success: true, message: "Integration deleted" });
   } catch (err) {
+    await conn.rollback();
     console.error(err);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 });
 

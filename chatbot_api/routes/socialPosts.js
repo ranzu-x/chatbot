@@ -2,11 +2,12 @@ import express from "express";
 import pool from "../db.js";
 import axios from "axios";
 import { authMiddleware } from "../middleware/authmiddleware.js";
+import { requireModule, assertLimit } from "../utils/entitlements.js";
 
 const router = express.Router();
 const META_API_VERSION = "v21.0";
 
-router.use(authMiddleware);
+router.use("/social-posts", authMiddleware, requireModule("feature_social_posting"));
 
 // ─── HELPER: PUBLISH TO FACEBOOK PAGE ─────────────────────────────────────────
 async function publishToFacebook({ pageId, pageToken, userToken, postType, message, mediaUrls = [], linkUrl }) {
@@ -198,7 +199,7 @@ async function publishToInstagram({ igAccountId, token, userToken, postType, mes
 router.get("/social-posts", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    const { status, platform, limit = 50 } = req.query;
+    const { status, platform, integrationId, limit = 50 } = req.query;
 
     let query = `
       SELECT p.*, i.name as account_name, i.fb_page_id, i.ig_account_id
@@ -216,6 +217,11 @@ router.get("/social-posts", async (req, res) => {
     if (platform && platform !== "ALL") {
       query += " AND p.platform = ?";
       params.push(platform.toUpperCase());
+    }
+
+    if (integrationId && integrationId !== "all") {
+      query += " AND p.integration_id = ?";
+      params.push(integrationId);
     }
 
     query += " ORDER BY p.created_at DESC LIMIT ?";
@@ -254,6 +260,8 @@ router.post("/social-posts/publish", async (req, res) => {
     if (!message.trim() && (!mediaUrls || !mediaUrls.length) && !linkUrl) {
       return res.status(400).json({ success: false, message: "Please provide a caption, media, or link for your post" });
     }
+
+    await assertLimit(agencyId, "max_posts_per_month", integrationIds.length, req.user?.id);
 
     const [integrations] = await pool.query(
       "SELECT * FROM integrations WHERE agency_id = ? AND id IN (?) AND is_active = 1",
@@ -360,7 +368,7 @@ router.post("/social-posts/publish", async (req, res) => {
     });
   } catch (err) {
     console.error("Publish post error:", err);
-    return res.status(500).json({ success: false, message: err.message || "Server error publishing post" });
+    return res.status(err.status || 500).json({ success: false, message: err.message || "Server error publishing post", code: err.code });
   }
 });
 
@@ -390,6 +398,8 @@ router.post("/social-posts/schedule", async (req, res) => {
       return res.status(400).json({ success: false, message: "Please select a valid future date and time" });
     }
 
+    await assertLimit(agencyId, "max_posts_per_month", integrationIds.length, req.user?.id);
+
     for (const integId of integrationIds) {
       const [integ] = await pool.query("SELECT platform FROM integrations WHERE id = ? AND agency_id = ?", [integId, agencyId]);
       const platform = integ[0]?.platform || "FACEBOOK";
@@ -418,7 +428,7 @@ router.post("/social-posts/schedule", async (req, res) => {
     });
   } catch (err) {
     console.error("Schedule post error:", err);
-    return res.status(500).json({ success: false, message: err.message || "Server error scheduling post" });
+    return res.status(err.status || 500).json({ success: false, message: err.message || "Server error scheduling post", code: err.code });
   }
 });
 

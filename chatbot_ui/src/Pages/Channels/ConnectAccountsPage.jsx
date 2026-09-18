@@ -1,84 +1,220 @@
-import { useState, useEffect, useMemo } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
-import { integrationAPI, channelAPI, botAPI } from '../../services/api';
+import { integrationAPI } from '../../services/api';
 import { useAuth } from '../../Provider/AuthContext';
-import WhatsAppPage from './WhatsAppPage';
-import FacebookPage from './FacebookPage';
-import InstagramPage from './InstagramPage';
-import TelegramPage from './TelegramPage';
-import TikTokPage from './TikTokPage';
-import WebchatPage from './WebchatPage';
+import { showAlert, showLimitModal, notify } from '../../utils/alerts';
 import {
-  Radio,
-  MessageCircle,
-  Facebook,
-  Instagram,
-  Send,
-  Globe,
-  Plus,
-  Search,
-  CheckCircle2,
-  AlertCircle,
-  Trash2,
-  ExternalLink,
-  Copy,
-  Check,
-  RefreshCw,
-  Sliders,
-  Shield,
-  Layers,
-  ArrowUpRight,
-  Zap,
-  Activity,
-  X,
-  Lock,
-  Video,
-  ShoppingBag,
+  Radio, MessageCircle, Facebook, Instagram, Send, Globe, Video,
+  Plus, Search, RefreshCw, Trash2, Copy, Check, SlidersHorizontal, ShieldCheck,
 } from 'lucide-react';
 
+/**
+ * Connect Account — "Channel Hub" layout.
+ *
+ * Each channel has exactly ONE connect affordance — the card's own button —
+ * replacing the old page's three routes to the same place (header modal,
+ * metric card, tab) plus a fourth, real Connect button on the embedded
+ * channel page. Deep management opens the channel's own standalone route
+ * rather than embedding that page here, so its header is the page header
+ * rather than a second one stacked under this page's.
+ */
+
 const CHANNELS = [
-  { id: 'all',       label: 'All Connected Accounts', icon: Layers,        color: '#2563eb', bg: 'rgba(37, 99, 235, 0.08)' },
-  { id: 'whatsapp',  label: 'WhatsApp',               icon: MessageCircle, color: '#25d366', bg: 'rgba(37, 211, 102, 0.08)' },
-  { id: 'facebook',  label: 'Facebook Messenger',     icon: Facebook,      color: '#1877f2', bg: 'rgba(24, 119, 242, 0.08)' },
-  { id: 'instagram', label: 'Instagram DM',           icon: Instagram,     color: '#e1306c', bg: 'rgba(225, 48, 108, 0.08)' },
-  { id: 'telegram',  label: 'Telegram Bot',           icon: Send,          color: '#229ed9', bg: 'rgba(34, 158, 217, 0.08)' },
-  { id: 'tiktok',    label: 'TikTok DM & Comments',   icon: Video,         color: '#FE2C55', bg: 'rgba(254, 44, 85, 0.08)' },
-  { id: 'webchat',   label: 'Live Webchat',           icon: Globe,         color: '#6366f1', bg: 'rgba(99, 102, 241, 0.08)' },
+  {
+    id: 'WHATSAPP', label: 'WhatsApp', route: '/channels/whatsapp',
+    color: '#25d366', tint: 'rgba(37, 211, 102, 0.1)', Icon: MessageCircle,
+    one: 'number', many: 'numbers', manage: 'Manage numbers', connect: 'Connect WhatsApp',
+    blurb: 'Business numbers, approved templates and catalog.',
+  },
+  {
+    id: 'FACEBOOK', label: 'Facebook Messenger', route: '/channels/facebook',
+    color: '#1877f2', tint: 'rgba(24, 119, 242, 0.1)', Icon: Facebook,
+    one: 'page', many: 'pages', manage: 'Manage pages', connect: 'Connect Messenger',
+    blurb: 'Page inbox, comment automation and private replies.',
+  },
+  {
+    id: 'INSTAGRAM', label: 'Instagram Direct', route: '/channels/instagram',
+    color: '#e1306c', tint: 'rgba(225, 48, 108, 0.1)', Icon: Instagram,
+    one: 'account', many: 'accounts', manage: 'Manage accounts', connect: 'Connect Instagram',
+    blurb: 'Business profile DMs and story replies.',
+  },
+  {
+    id: 'TELEGRAM', label: 'Telegram Bot', route: '/channels/telegram',
+    color: '#229ed9', tint: 'rgba(34, 158, 217, 0.1)', Icon: Send,
+    one: 'bot', many: 'bots', manage: 'Manage bots', connect: 'Connect Telegram',
+    blurb: 'BotFather tokens. No time-window limit.',
+  },
+  {
+    id: 'TIKTOK', label: 'TikTok', route: '/channels/tiktok',
+    color: '#FE2C55', tint: 'rgba(254, 44, 85, 0.1)', Icon: Video,
+    one: 'account', many: 'accounts', manage: 'Manage accounts', connect: 'Connect TikTok',
+    blurb: 'DMs and comment automation. Reply-only, 48 hours.',
+  },
+  {
+    id: 'WEBCHAT', label: 'Live Webchat', route: '/channels/webchat',
+    color: '#6366f1', tint: 'rgba(99, 102, 241, 0.1)', Icon: Globe,
+    one: 'widget', many: 'widgets', manage: 'Manage widgets', connect: 'Create a widget',
+    blurb: 'Embeddable website chat widget.',
+  },
 ];
 
-function getPlatformBadge(platform = '') {
-  const p = (platform || '').toUpperCase();
-  if (p === 'WHATSAPP')  return { label: 'WhatsApp',  color: '#25d366', bg: 'rgba(37, 211, 102, 0.1)',  icon: MessageCircle };
-  if (p === 'FACEBOOK')  return { label: 'Facebook',  color: '#1877f2', bg: 'rgba(24, 119, 242, 0.1)',  icon: Facebook };
-  if (p === 'INSTAGRAM') return { label: 'Instagram', color: '#e1306c', bg: 'rgba(225, 48, 108, 0.1)', icon: Instagram };
-  if (p === 'TELEGRAM')  return { label: 'Telegram',  color: '#229ed9', bg: 'rgba(34, 158, 217, 0.1)', icon: Send };
-  if (p === 'TIKTOK')    return { label: 'TikTok',    color: '#FE2C55', bg: 'rgba(254, 44, 85, 0.1)',   icon: Video };
-  if (p === 'WEBCHAT')   return { label: 'Webchat',   color: '#2563eb', bg: 'rgba(37, 99, 235, 0.1)',  icon: Globe };
-  return { label: p || 'Channel', color: '#64748b', bg: 'rgba(100, 116, 139, 0.1)', icon: Radio };
+const CHANNEL_BY_ID = Object.fromEntries(CHANNELS.map((c) => [c.id, c]));
+
+function channelOf(platform) {
+  return CHANNEL_BY_ID[(platform || '').toUpperCase()] || {
+    id: 'OTHER', label: platform || 'Channel', route: '/connect-accounts',
+    color: '#64748b', tint: 'rgba(100, 116, 139, 0.1)', Icon: Radio,
+    one: 'account', many: 'accounts', manage: 'Manage', connect: 'Connect',
+  };
+}
+
+/** The human name for one connected account — `integrations.name` is
+ * populated for every channel, with the per-platform field as a fallback. */
+function displayName(item) {
+  const p = (item.platform || '').toUpperCase();
+  if (item.name) return item.name;
+  if (p === 'WHATSAPP') return item.wa_display_phone || `Number #${item.id}`;
+  if (p === 'FACEBOOK') return item.fb_page_name || `Page #${item.id}`;
+  if (p === 'INSTAGRAM') return item.ig_username ? `@${item.ig_username}` : `Account #${item.id}`;
+  if (p === 'TELEGRAM') return item.tg_bot_username ? `@${item.tg_bot_username}` : `Bot #${item.id}`;
+  if (p === 'TIKTOK') return item.tiktok_username ? `@${item.tiktok_username}` : `Account #${item.id}`;
+  return `${channelOf(p).label} #${item.id}`;
+}
+
+/** The platform-side id an operator would recognise this account by. */
+function identifier(item) {
+  const p = (item.platform || '').toUpperCase();
+  if (p === 'WHATSAPP') return item.wa_display_phone || item.wa_phone_number_id || `ID ${item.id}`;
+  if (p === 'FACEBOOK') return item.fb_page_id || `ID ${item.id}`;
+  if (p === 'INSTAGRAM') return item.ig_username ? `@${item.ig_username}` : (item.ig_account_id || `ID ${item.id}`);
+  if (p === 'TELEGRAM') return item.tg_bot_username ? `@${item.tg_bot_username}` : `ID ${item.id}`;
+  if (p === 'TIKTOK') return item.tiktok_username ? `@${item.tiktok_username}` : (item.tiktok_open_id || `ID ${item.id}`);
+  return `ID ${item.id}`;
+}
+
+/** Only the Meta channels actually receive inbound traffic on the
+ * per-integration webhook URL. Telegram runs on polling (see
+ * utils/telegramPoller.js, which calls deleteWebhook on start) and Webchat
+ * arrives over the widget's own socket — showing them a webhook URL, as the
+ * original page does for every row, is misleading. */
+const WEBHOOK_CHANNELS = new Set(['WHATSAPP', 'FACEBOOK', 'INSTAGRAM']);
+
+function webhookUrl(item) {
+  const base = import.meta.env.VITE_API_URL || 'http://localhost:5000/api/v1';
+  return `${base}/webhook/${item.agency_id}/${item.id}`;
+}
+
+const cardStyle = {
+  background: 'var(--bg-card)',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius)',
+  padding: 16,
+  boxShadow: 'var(--shadow)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 11,
+};
+
+const labelStyle = {
+  fontSize: '0.74rem', fontWeight: 700, color: 'var(--text-muted)',
+  textTransform: 'uppercase', letterSpacing: '0.5px',
+};
+
+function StatusPill({ active }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.75rem', fontWeight: 600, color: active ? 'var(--success)' : 'var(--warning)' }}>
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: active ? 'var(--success)' : 'var(--warning)' }} />
+      {active ? 'Connected' : 'Inactive'}
+    </span>
+  );
+}
+
+function ChannelCard({ channel, accounts, onGo, onMore }) {
+  const { Icon } = channel;
+  const count = accounts.length;
+  const connected = count > 0;
+  const shown = accounts.slice(0, 2);
+  const extra = count - shown.length;
+
+  return (
+    <div style={cardStyle}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+        <div style={{ width: 38, height: 38, borderRadius: 9, background: channel.tint, color: channel.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <Icon size={20} />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)' }}>{channel.label}</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+            {connected ? `${count} ${count === 1 ? channel.one : channel.many} connected` : 'Not connected'}
+          </div>
+        </div>
+      </div>
+
+      {connected ? (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {shown.map((a) => (
+            <span
+              key={a.id}
+              title={displayName(a)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.72rem', fontWeight: 500, color: 'var(--text-secondary)', background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', maxWidth: '100%' }}
+            >
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: a.is_active ? 'var(--success)' : 'var(--warning)', flexShrink: 0 }} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayName(a)}</span>
+            </span>
+          ))}
+          {extra > 0 && (
+            <button
+              type="button"
+              onClick={() => onMore(channel)}
+              style={{
+                fontSize: '0.72rem', fontWeight: 600, color: 'var(--primary)', alignSelf: 'center',
+                background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >
+              +{extra} more
+            </button>
+          )}
+        </div>
+      ) : (
+        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.45 }}>{channel.blurb}</div>
+      )}
+
+      <button
+        type="button"
+        onClick={() => onGo(channel.route)}
+        style={{
+          height: 32, borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', fontWeight: 600,
+          fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          gap: 6, width: '100%', cursor: 'pointer',
+          background: connected ? 'var(--bg-surface)' : channel.color,
+          color: connected ? 'var(--text-primary)' : '#ffffff',
+          border: connected ? '1px solid var(--border)' : `1px solid ${channel.color}`,
+          marginTop: 'auto',
+        }}
+      >
+        {connected ? <SlidersHorizontal size={13} /> : <Plus size={14} />}
+        {connected ? channel.manage : channel.connect}
+      </button>
+    </div>
+  );
 }
 
 export default function ConnectAccountsPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState(() => searchParams.get('tab') || 'all');
-
-  // Synchronize activeTab if URL query params change (e.g. back/forward navigation)
-  useEffect(() => {
-    const tabFromUrl = searchParams.get('tab') || 'all';
-    if (tabFromUrl !== activeTab) {
-      setActiveTab(tabFromUrl);
-    }
-  }, [searchParams]);
-
+  const navigate = useNavigate();
+  const { user, entitlements } = useAuth();
   const [integrations, setIntegrations] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterPlatform, setFilterPlatform] = useState('ALL');
-  const [showConnectModal, setShowConnectModal] = useState(false);
+  const [search, setSearch] = useState('');
   const [copiedId, setCopiedId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
+  const tableRef = useRef(null);
 
-  const fetchIntegrations = async () => {
+  const isSuperAdmin = user?.role === 'ADMIN';
+  const maxBotAccounts = isSuperAdmin ? null : (entitlements?.limits?.maxBotAccounts ?? null);
+  const isAtLimit = !isSuperAdmin && maxBotAccounts !== null && integrations.length >= maxBotAccounts;
+
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const res = await integrationAPI.getAll();
@@ -88,772 +224,293 @@ export default function ConnectAccountsPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchIntegrations();
   }, []);
 
-  const setTab = (tabId) => {
-    setActiveTab(tabId);
-    setSearchParams({ tab: tabId }, { replace: true });
+  useEffect(() => { load(); }, [load]);
+
+  const byChannel = useMemo(() => {
+    const map = Object.fromEntries(CHANNELS.map((c) => [c.id, []]));
+    integrations.forEach((item) => {
+      const p = (item.platform || '').toUpperCase();
+      if (map[p]) map[p].push(item);
+    });
+    return map;
+  }, [integrations]);
+
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return integrations;
+    return integrations.filter((item) =>
+      `${displayName(item)} ${identifier(item)} ${channelOf(item.platform).label}`.toLowerCase().includes(q)
+    );
+  }, [integrations, search]);
+
+  const handleMore = (channel) => {
+    setSearch(channel.label);
+    tableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  const handleCopyWebhook = (id, url) => {
+  const handleChannelAction = (channel, hasConnected) => {
+    if (!hasConnected && isAtLimit) {
+      showLimitModal({
+        currentUsage: integrations.length,
+        maxLimit: maxBotAccounts,
+        userRole: user?.role,
+      });
+      return;
+    }
+    navigate(channel.route);
+  };
+
+  const handleCopy = (id, url) => {
     navigator.clipboard.writeText(url);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const handleDeleteIntegration = async (id) => {
-    if (!window.confirm('Are you sure you want to disconnect this channel account?')) return;
-    setDeletingId(id);
+  const handleDisconnect = async (item) => {
+    const ok = await showAlert.confirm({
+      title: `Disconnect ${displayName(item)}?`,
+      text: 'Conversations stay intact, but this account will stop sending and receiving messages.',
+      confirmButtonText: 'Yes, Disconnect',
+    });
+    if (!ok) return;
+
+    setDeletingId(item.id);
     try {
-      await integrationAPI.delete(id);
-      setIntegrations((prev) => prev.filter((item) => item.id !== id));
+      await integrationAPI.delete(item.id);
+      setIntegrations((prev) => prev.filter((i) => i.id !== item.id));
+      notify.success(`Disconnected "${displayName(item)}"`);
     } catch (err) {
-      console.error('Failed to delete integration', err);
-      alert('Failed to disconnect account.');
+      console.error('Failed to disconnect', err);
+      notify.error(err?.response?.data?.message || 'Failed to disconnect this account.');
     } finally {
       setDeletingId(null);
     }
   };
 
-  // Metrics summary
-  const metrics = useMemo(() => {
-    const counts = { WHATSAPP: 0, FACEBOOK: 0, INSTAGRAM: 0, TELEGRAM: 0, WEBCHAT: 0 };
-    integrations.forEach((item) => {
-      const p = (item.platform || '').toUpperCase();
-      if (counts[p] !== undefined) counts[p]++;
-    });
-    return counts;
-  }, [integrations]);
-
-  const filteredIntegrations = useMemo(() => {
-    return integrations.filter((item) => {
-      const matchesPlatform = filterPlatform === 'ALL' || (item.platform || '').toUpperCase() === filterPlatform;
-      const q = searchQuery.toLowerCase();
-      const matchesSearch =
-        !q ||
-        (item.name || '').toLowerCase().includes(q) ||
-        (item.wa_phone_number_id || '').toLowerCase().includes(q) ||
-        (item.fb_page_name || item.fb_page_id || '').toLowerCase().includes(q) ||
-        (item.ig_username || item.ig_account_id || '').toLowerCase().includes(q);
-      return matchesPlatform && matchesSearch;
-    });
-  }, [integrations, filterPlatform, searchQuery]);
-
   return (
     <AppLayout>
       <div style={{ width: '100%', padding: '16px 20px' }}>
-        {/* ── Top Header ── */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+
+        {/* Header — with quota / unlimited status indicator */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18, flexWrap: 'wrap', gap: 10 }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div
-                style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 9,
-                  background: 'rgba(37, 99, 235, 0.08)',
-                  color: '#2563eb',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
+              <div style={{ width: 36, height: 36, borderRadius: 9, background: 'var(--primary-soft)', color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <Radio size={19} />
               </div>
-              <h1 style={{ fontSize: '1.3rem', fontWeight: 800, color: '#0f172a', margin: 0, letterSpacing: '-0.3px' }}>
+              <h1 style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.3px' }}>
                 Connect Account
               </h1>
+
+              {isSuperAdmin ? (
+                <span
+                  title="Super Admin has permanent unlimited channel accounts and features"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                    background: 'rgba(37,99,235,0.08)', color: '#2563eb',
+                    border: '1px solid rgba(37,99,235,0.2)',
+                    borderRadius: 20, padding: '3px 10px', fontSize: '0.75rem', fontWeight: 700,
+                  }}
+                >
+                  <ShieldCheck size={13} /> Unlimited (Super Admin)
+                </span>
+              ) : maxBotAccounts !== null ? (
+                <span
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    background: isAtLimit ? 'rgba(239,68,68,0.1)' : 'var(--bg-surface)',
+                    color: isAtLimit ? '#ef4444' : 'var(--text-secondary)',
+                    border: `1px solid ${isAtLimit ? 'rgba(239,68,68,0.3)' : 'var(--border)'}`,
+                    borderRadius: 20, padding: '3px 10px', fontSize: '0.75rem', fontWeight: 700,
+                  }}
+                >
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: isAtLimit ? '#ef4444' : 'var(--success)' }} />
+                  {integrations.length} / {maxBotAccounts} Accounts Connected{isAtLimit ? ' (Plan Limit)' : ''}
+                </span>
+              ) : (
+                <span
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                    background: 'rgba(37,211,102,0.1)', color: '#16a34a',
+                    border: '1px solid rgba(37,211,102,0.25)',
+                    borderRadius: 20, padding: '3px 10px', fontSize: '0.75rem', fontWeight: 700,
+                  }}
+                >
+                  Unlimited Accounts
+                </span>
+              )}
             </div>
-            <p style={{ fontSize: '0.8rem', color: '#64748b', marginTop: 2, marginLeft: 46 }}>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: 2, marginLeft: 46 }}>
               Connect and manage all your messaging channels in one centralized hub
             </p>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button
-              onClick={fetchIntegrations}
-              className="btn btn-secondary btn-sm"
-              style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.82rem', height: 34, padding: '0 12px' }}
-            >
-              <RefreshCw size={13} className={loading ? 'spin' : ''} /> Refresh
-            </button>
-
-            <button
-              onClick={() => setShowConnectModal(true)}
-              className="btn btn-primary"
-              style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.82rem', height: 34, padding: '0 14px' }}
-            >
-              <Plus size={15} /> + Connect New Account
-            </button>
-          </div>
+          <button
+            onClick={load}
+            className="btn btn-secondary"
+            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.82rem', height: 34, padding: '0 12px' }}
+          >
+            <RefreshCw size={13} className={loading ? 'spin' : ''} /> Refresh
+          </button>
         </div>
 
-        {/* ── Channel Metrics Overview Cards ── */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-            gap: 12,
-            marginBottom: 14,
-          }}
-        >
-          <div
-            onClick={() => setTab('whatsapp')}
-            style={{
-              background: '#ffffff',
-              border: '1px solid #e2e8f0',
-              borderRadius: 10,
-              padding: '12px 14px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              cursor: 'pointer',
-              transition: 'all 0.12s',
-              boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(37, 211, 102, 0.1)', color: '#25d366', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <MessageCircle size={18} />
-              </div>
-              <div>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>WhatsApp</div>
-                <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0f172a' }}>{metrics.WHATSAPP} Active</div>
-              </div>
-            </div>
-            <ArrowUpRight size={15} color="#94a3b8" />
-          </div>
-
-          <div
-            onClick={() => setTab('facebook')}
-            style={{
-              background: '#ffffff',
-              border: '1px solid #e2e8f0',
-              borderRadius: 10,
-              padding: '12px 14px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              cursor: 'pointer',
-              transition: 'all 0.12s',
-              boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(24, 119, 242, 0.1)', color: '#1877f2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Facebook size={18} />
-              </div>
-              <div>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Facebook</div>
-                <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0f172a' }}>{metrics.FACEBOOK} Pages</div>
-              </div>
-            </div>
-            <ArrowUpRight size={15} color="#94a3b8" />
-          </div>
-
-          <div
-            onClick={() => setTab('instagram')}
-            style={{
-              background: '#ffffff',
-              border: '1px solid #e2e8f0',
-              borderRadius: 10,
-              padding: '12px 14px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              cursor: 'pointer',
-              transition: 'all 0.12s',
-              boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(225, 48, 108, 0.1)', color: '#e1306c', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Instagram size={18} />
-              </div>
-              <div>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Instagram</div>
-                <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0f172a' }}>{metrics.INSTAGRAM} Accounts</div>
-              </div>
-            </div>
-            <ArrowUpRight size={15} color="#94a3b8" />
-          </div>
-
-          <div
-            onClick={() => setTab('telegram')}
-            style={{
-              background: '#ffffff',
-              border: '1px solid #e2e8f0',
-              borderRadius: 10,
-              padding: '12px 14px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              cursor: 'pointer',
-              transition: 'all 0.12s',
-              boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(34, 158, 217, 0.1)', color: '#229ed9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Send size={18} />
-              </div>
-              <div>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Telegram</div>
-                <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0f172a' }}>{metrics.TELEGRAM} Bots</div>
-              </div>
-            </div>
-            <ArrowUpRight size={15} color="#94a3b8" />
-          </div>
-
-          <div
-            onClick={() => setTab('webchat')}
-            style={{
-              background: '#ffffff',
-              border: '1px solid #e2e8f0',
-              borderRadius: 10,
-              padding: '12px 14px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              cursor: 'pointer',
-              transition: 'all 0.12s',
-              boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(37, 99, 235, 0.1)', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Globe size={18} />
-              </div>
-              <div>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Webchat</div>
-                <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0f172a' }}>{metrics.WEBCHAT} Widgets</div>
-              </div>
-            </div>
-            <ArrowUpRight size={15} color="#94a3b8" />
-          </div>
-        </div>
-
-        {/* ── Navigation Tab Bar ── */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 4,
-            background: '#ffffff',
-            border: '1px solid #e2e8f0',
-            borderRadius: 10,
-            padding: '4px 6px',
-            marginBottom: 14,
-            overflowX: 'auto',
-          }}
-        >
-          {CHANNELS.map((ch) => {
-            const Icon = ch.icon;
-            const isSelected = activeTab === ch.id;
+        {/* Channels */}
+        <div style={{ ...labelStyle, marginBottom: 10 }}>Channels</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12, marginBottom: 24 }}>
+          {CHANNELS.map((channel) => {
+            const channelAccounts = byChannel[channel.id] || [];
             return (
-              <button
-                key={ch.id}
-                onClick={() => setTab(ch.id)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '7px 14px',
-                  borderRadius: 7,
-                  fontSize: '0.82rem',
-                  fontWeight: isSelected ? 700 : 500,
-                  color: isSelected ? '#ffffff' : '#475569',
-                  background: isSelected ? '#2563eb' : 'transparent',
-                  border: 'none',
-                  cursor: 'pointer',
-                  transition: 'all 0.12s ease',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                <Icon size={15} color={isSelected ? '#ffffff' : ch.color} />
-                <span>{ch.label}</span>
-              </button>
+              <ChannelCard
+                key={channel.id}
+                channel={channel}
+                accounts={channelAccounts}
+                onGo={() => handleChannelAction(channel, channelAccounts.length > 0)}
+                onMore={handleMore}
+              />
             );
           })}
         </div>
 
-        {/* ── Tab Contents ── */}
-        {activeTab === 'all' && (
-          <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
-            {/* Search & Channel Filter Bar */}
-            <div style={{ padding: '10px 14px', borderBottom: '1px solid #e2e8f0', display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                {['ALL', 'WHATSAPP', 'FACEBOOK', 'INSTAGRAM', 'TELEGRAM', 'WEBCHAT'].map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => setFilterPlatform(p)}
-                    style={{
-                      padding: '4px 10px',
-                      borderRadius: 6,
-                      fontSize: '0.74rem',
-                      fontWeight: 600,
-                      border: '1px solid',
-                      borderColor: filterPlatform === p ? '#2563eb' : '#e2e8f0',
-                      background: filterPlatform === p ? 'rgba(37, 99, 235, 0.08)' : '#ffffff',
-                      color: filterPlatform === p ? '#2563eb' : '#64748b',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {p === 'ALL' ? 'All Channels' : p}
-                  </button>
-                ))}
-              </div>
-
-              <div style={{ position: 'relative', width: 240 }}>
-                <Search size={14} color="#94a3b8" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
-                <input
-                  type="text"
-                  placeholder="Search accounts..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="form-input"
-                  style={{ paddingLeft: 30, height: 32, fontSize: '0.82rem' }}
-                />
-              </div>
-            </div>
-
-            {/* Master Connected Accounts Table */}
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.84rem' }}>
-                <thead>
-                  <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', color: '#64748b', fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    <th style={{ padding: '10px 14px', fontWeight: 700 }}>Channel</th>
-                    <th style={{ padding: '10px 14px', fontWeight: 700 }}>Account Name</th>
-                    <th style={{ padding: '10px 14px', fontWeight: 700 }}>Identifier / ID</th>
-                    <th style={{ padding: '10px 14px', fontWeight: 700 }}>Webhook URL</th>
-                    <th style={{ padding: '10px 14px', fontWeight: 700 }}>Status</th>
-                    <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? (
-                    <tr>
-                      <td colSpan={6} style={{ padding: 40, textAlign: 'center', color: '#64748b' }}>
-                        <div className="loading-spinner" style={{ margin: '0 auto 8px' }} />
-                        Loading connected accounts...
-                      </td>
-                    </tr>
-                  ) : filteredIntegrations.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} style={{ padding: 40, textAlign: 'center', color: '#94a3b8' }}>
-                        No connected accounts found. Click <strong>"+ Connect New Account"</strong> to get started.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredIntegrations.map((item) => {
-                      const badge = getPlatformBadge(item.platform);
-                      const BadgeIcon = badge.icon;
-                      const identifier =
-                        item.wa_display_phone ||
-                        item.wa_phone_number_id ||
-                        item.fb_page_id ||
-                        item.ig_account_id ||
-                        item.external_id ||
-                        `ID: ${item.id}`;
-
-                      const webhookUrl = `${import.meta.env.VITE_API_URL || 'http://localhost:5000/api/v1'}/webhook/${item.agency_id}/${item.id}`;
-
-                      return (
-                        <tr
-                          key={item.id}
-                          style={{ borderBottom: '1px solid #f1f5f9', transition: 'background 0.12s' }}
-                          onMouseEnter={(e) => (e.currentTarget.style.background = '#fafbfe')}
-                          onMouseLeave={(e) => (e.currentTarget.style.background = '#ffffff')}
-                        >
-                          <td style={{ padding: '12px 14px' }}>
-                            <span
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 5,
-                                fontSize: '0.75rem',
-                                fontWeight: 700,
-                                padding: '3px 8px',
-                                borderRadius: 10,
-                                background: badge.bg,
-                                color: badge.color,
-                              }}
-                            >
-                              <BadgeIcon size={12} /> {badge.label}
-                            </span>
-                          </td>
-                          <td style={{ padding: '12px 14px', fontWeight: 700, color: '#0f172a' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                              {item.profile_picture_url ? (
-                                <img
-                                  src={item.profile_picture_url}
-                                  alt=""
-                                  style={{ width: 34, height: 34, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1px solid #e2e8f0' }}
-                                  onError={e => { e.currentTarget.style.display = 'none'; }}
-                                />
-                              ) : (
-                                <div style={{ width: 34, height: 34, borderRadius: '50%', background: badge.bg, color: badge.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.78rem', flexShrink: 0 }}>
-                                  <BadgeIcon size={16} />
-                                </div>
-                              )}
-                              <div>
-                                <div>{item.account_name || `${badge.label} Integration`}</div>
-                                {item.ig_username && <div style={{ fontSize: '0.74rem', color: '#e1306c', fontWeight: 500 }}>@{item.ig_username}</div>}
-                                {item.fb_page_name && item.fb_page_name !== item.account_name && <div style={{ fontSize: '0.74rem', color: '#64748b', fontWeight: 500 }}>{item.fb_page_name}</div>}
-                              </div>
-                            </div>
-                          </td>
-                          <td style={{ padding: '12px 14px', color: '#64748b', fontSize: '0.8rem', fontFamily: 'monospace' }}>
-                            {identifier}
-                          </td>
-                          <td style={{ padding: '12px 14px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <span style={{ fontSize: '0.74rem', color: '#64748b', fontFamily: 'monospace', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {webhookUrl}
-                              </span>
-                              <button
-                                onClick={() => handleCopyWebhook(item.id, webhookUrl)}
-                                title="Copy Webhook URL"
-                                className="btn btn-secondary btn-sm"
-                                style={{ padding: '3px 7px', fontSize: '0.72rem' }}
-                              >
-                                {copiedId === item.id ? <Check size={11} color="#10b981" /> : <Copy size={11} />}
-                              </button>
-                            </div>
-                          </td>
-                          <td style={{ padding: '12px 14px' }}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.75rem', fontWeight: 600, color: item.status === 'CONNECTED' ? '#10b981' : '#f59e0b' }}>
-                              <span style={{ width: 6, height: 6, borderRadius: '50%', background: item.status === 'CONNECTED' ? '#10b981' : '#f59e0b' }} />
-                              {item.status || 'Active'}
-                            </span>
-                          </td>
-                          <td style={{ padding: '12px 14px', textAlign: 'right' }}>
-                            <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                              <button
-                                onClick={() => setTab(item.platform?.toLowerCase())}
-                                className="btn btn-secondary btn-sm"
-                                style={{ padding: '4px 8px', fontSize: '0.75rem' }}
-                              >
-                                Configure
-                              </button>
-                              <button
-                                onClick={() => handleDeleteIntegration(item.id)}
-                                disabled={deletingId === item.id}
-                                style={{
-                                  padding: '4px 8px',
-                                  borderRadius: 6,
-                                  border: '1px solid #fee2e2',
-                                  background: '#fef2f2',
-                                  color: '#ef4444',
-                                  cursor: 'pointer',
-                                  fontSize: '0.75rem',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                }}
-                                title="Disconnect Account"
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* ── Sub Channel Dedicated Pages ── */}
-        {activeTab === 'whatsapp' && (
-          <div style={{ marginTop: 10 }}>
-            <WhatsAppPage embedded />
-          </div>
-        )}
-
-        {activeTab === 'facebook' && (
-          <div style={{ marginTop: 10 }}>
-            <FacebookPage embedded />
-          </div>
-        )}
-
-        {activeTab === 'instagram' && (
-          <div style={{ marginTop: 10 }}>
-            <InstagramPage embedded />
-          </div>
-        )}
-
-        {activeTab === 'telegram' && (
-          <div style={{ marginTop: 10 }}>
-            <TelegramPage embedded />
-          </div>
-        )}
-
-        {activeTab === 'tiktok' && (
-          <div style={{ marginTop: 10 }}>
-            <TikTokPage embedded />
-          </div>
-        )}
-
-        {activeTab === 'webchat' && (
-          <div style={{ marginTop: 10 }}>
-            <WebchatPage embedded />
-          </div>
-        )}
-      </div>
-
-      {/* ── "+ Connect New Account" Selection Modal ── */}
-      {showConnectModal && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(15, 23, 42, 0.5)',
-            zIndex: 9999,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 20,
-          }}
-          onClick={() => setShowConnectModal(false)}
-        >
-          <div
-            style={{
-              background: '#ffffff',
-              borderRadius: 16,
-              maxWidth: 580,
-              width: '100%',
-              padding: '24px 26px',
-              boxShadow: '0 20px 40px rgba(0,0,0,0.15)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <div>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>
-                  Connect a Channel Account
-                </h3>
-                <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '4px 0 0' }}>
-                  Select the platform you would like to integrate
-                </p>
-              </div>
-              <button
-                onClick={() => setShowConnectModal(false)}
-                style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16 }}>
-              {/* WhatsApp Without Catalog */}
-              <div
-                onClick={() => { setShowConnectModal(false); setTab('whatsapp'); }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '14px 16px',
-                  borderRadius: 10,
-                  border: '1px solid #e2e8f0',
-                  background: '#ffffff',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s',
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
-                onMouseLeave={(e) => e.currentTarget.style.background = '#ffffff'}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <div style={{ width: 38, height: 38, borderRadius: 10, background: 'rgba(37, 211, 102, 0.1)', color: '#25d366', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <MessageCircle size={20} />
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#0f172a' }}>WhatsApp (Without Catalog)</div>
-                    <div style={{ fontSize: '0.74rem', color: '#64748b' }}>Standard messaging, chatbot bot flows & live chat support</div>
-                  </div>
-                </div>
-                <ArrowUpRight size={16} color="#94a3b8" />
-              </div>
-
-              {/* WhatsApp With Catalog */}
-              <div
-                onClick={() => { setShowConnectModal(false); setTab('whatsapp'); }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '14px 16px',
-                  borderRadius: 10,
-                  border: '1px solid #e2e8f0',
-                  background: '#ffffff',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s',
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
-                onMouseLeave={(e) => e.currentTarget.style.background = '#ffffff'}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <div style={{ width: 38, height: 38, borderRadius: 10, background: 'rgba(99, 102, 241, 0.1)', color: '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <ShoppingBag size={20} />
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#0f172a' }}>WhatsApp (With Catalog)</div>
-                    <div style={{ fontSize: '0.74rem', color: '#64748b' }}>Meta commerce & product catalog sync for in-chat store sales</div>
-                  </div>
-                </div>
-                <ArrowUpRight size={16} color="#94a3b8" />
-              </div>
-
-              <div
-                onClick={() => { setShowConnectModal(false); setTab('facebook'); }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '14px 16px',
-                  borderRadius: 10,
-                  border: '1px solid #e2e8f0',
-                  background: '#ffffff',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s',
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
-                onMouseLeave={(e) => e.currentTarget.style.background = '#ffffff'}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <div style={{ width: 38, height: 38, borderRadius: 10, background: 'rgba(24, 119, 242, 0.1)', color: '#1877f2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Facebook size={20} />
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#0f172a' }}>Facebook Messenger</div>
-                    <div style={{ fontSize: '0.74rem', color: '#64748b' }}>Connect Facebook Pages for automated messages & comments</div>
-                  </div>
-                </div>
-                <ArrowUpRight size={16} color="#94a3b8" />
-              </div>
-
-              <div
-                onClick={() => { setShowConnectModal(false); setTab('instagram'); }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '14px 16px',
-                  borderRadius: 10,
-                  border: '1px solid #e2e8f0',
-                  background: '#ffffff',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s',
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
-                onMouseLeave={(e) => e.currentTarget.style.background = '#ffffff'}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <div style={{ width: 38, height: 38, borderRadius: 10, background: 'rgba(225, 48, 108, 0.1)', color: '#e1306c', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Instagram size={20} />
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#0f172a' }}>Instagram Direct</div>
-                    <div style={{ fontSize: '0.74rem', color: '#64748b' }}>Connect Instagram Business Profiles & handle DMs</div>
-                  </div>
-                </div>
-                <ArrowUpRight size={16} color="#94a3b8" />
-              </div>
-
-              <div
-                onClick={() => { setShowConnectModal(false); setTab('telegram'); }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '14px 16px',
-                  borderRadius: 10,
-                  border: '1px solid #e2e8f0',
-                  background: '#ffffff',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s',
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
-                onMouseLeave={(e) => e.currentTarget.style.background = '#ffffff'}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <div style={{ width: 38, height: 38, borderRadius: 10, background: 'rgba(34, 158, 217, 0.1)', color: '#229ed9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Send size={20} />
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#0f172a' }}>Telegram Bot</div>
-                    <div style={{ fontSize: '0.74rem', color: '#64748b' }}>Connect Telegram bots using BotFather API tokens</div>
-                  </div>
-                </div>
-                <ArrowUpRight size={16} color="#94a3b8" />
-              </div>
-
-              <div
-                onClick={() => { setShowConnectModal(false); setTab('tiktok'); }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '14px 16px',
-                  borderRadius: 10,
-                  border: '1px solid #e2e8f0',
-                  background: '#ffffff',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s',
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
-                onMouseLeave={(e) => e.currentTarget.style.background = '#ffffff'}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <div style={{ width: 38, height: 38, borderRadius: 10, background: 'rgba(254, 44, 85, 0.1)', color: '#FE2C55', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Video size={20} />
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#0f172a' }}>TikTok Channel</div>
-                    <div style={{ fontSize: '0.74rem', color: '#64748b' }}>Connect TikTok Business accounts for DMs & comment automation</div>
-                  </div>
-                </div>
-                <ArrowUpRight size={16} color="#94a3b8" />
-              </div>
-
-              <div
-                onClick={() => { setShowConnectModal(false); setTab('webchat'); }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '14px 16px',
-                  borderRadius: 10,
-                  border: '1px solid #e2e8f0',
-                  background: '#ffffff',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s',
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
-                onMouseLeave={(e) => e.currentTarget.style.background = '#ffffff'}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <div style={{ width: 38, height: 38, borderRadius: 10, background: 'rgba(37, 99, 235, 0.1)', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Globe size={20} />
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#0f172a' }}>Live Webchat Widget</div>
-                    <div style={{ fontSize: '0.74rem', color: '#64748b' }}>Create embedded website chat widgets with custom styling</div>
-                  </div>
-                </div>
-                <ArrowUpRight size={16} color="#94a3b8" />
-              </div>
-            </div>
+        {/* All connected accounts */}
+        <div ref={tableRef} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
+          <div style={labelStyle}>All connected accounts · {integrations.length}</div>
+          <div style={{ position: 'relative', width: 260, maxWidth: '100%' }}>
+            <Search size={14} color="var(--text-muted)" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+            <input
+              type="text"
+              placeholder="Search accounts…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="form-input"
+              style={{ paddingLeft: 30, height: 32, fontSize: '0.82rem' }}
+            />
           </div>
         </div>
-      )}
+
+        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden', boxShadow: 'var(--shadow-sm)' }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.84rem' }}>
+              <thead>
+                <tr style={{ background: 'var(--bg-base)', borderBottom: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                  <th style={{ padding: '10px 14px', fontWeight: 700 }}>Channel</th>
+                  <th style={{ padding: '10px 14px', fontWeight: 700 }}>Account name</th>
+                  <th style={{ padding: '10px 14px', fontWeight: 700 }}>Identifier</th>
+                  <th style={{ padding: '10px 14px', fontWeight: 700 }}>Inbound</th>
+                  <th style={{ padding: '10px 14px', fontWeight: 700 }}>Status</th>
+                  <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan={6} style={{ padding: 40, textAlign: 'center', color: 'var(--text-secondary)' }}>
+                      <div className="loading-spinner" style={{ margin: '0 auto 8px' }} />
+                      Loading connected accounts…
+                    </td>
+                  </tr>
+                ) : visible.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+                      {integrations.length === 0
+                        ? 'No accounts connected yet — pick a channel above to connect your first one.'
+                        : 'No accounts match that search.'}
+                    </td>
+                  </tr>
+                ) : visible.map((item) => {
+                  const channel = channelOf(item.platform);
+                  const { Icon } = channel;
+                  const hasWebhook = WEBHOOK_CHANNELS.has((item.platform || '').toUpperCase());
+                  const url = webhookUrl(item);
+
+                  return (
+                    <tr key={item.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '12px 14px' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.75rem', fontWeight: 700, padding: '3px 8px', borderRadius: 10, background: channel.tint, color: channel.color }}>
+                          <Icon size={12} /> {channel.label}
+                        </span>
+                      </td>
+
+                      <td style={{ padding: '12px 14px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          {item.profile_picture_url ? (
+                            <img
+                              src={item.profile_picture_url}
+                              alt=""
+                              style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1px solid var(--border)' }}
+                              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                            />
+                          ) : (
+                            <div style={{ width: 30, height: 30, borderRadius: '50%', background: channel.tint, color: channel.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              <Icon size={14} />
+                            </div>
+                          )}
+                          <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{displayName(item)}</span>
+                        </div>
+                      </td>
+
+                      <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', fontSize: '0.8rem', fontFamily: 'var(--font-mono)' }}>
+                        {identifier(item)}
+                      </td>
+
+                      <td style={{ padding: '12px 14px' }}>
+                        {hasWebhook ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', maxWidth: 170, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {url}
+                            </span>
+                            <button
+                              onClick={() => handleCopy(item.id, url)}
+                              title="Copy webhook URL"
+                              className="btn btn-secondary btn-sm"
+                              style={{ padding: '3px 7px', fontSize: '0.72rem' }}
+                            >
+                              {copiedId === item.id ? <Check size={11} color="var(--success)" /> : <Copy size={11} />}
+                            </button>
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                            {(item.platform || '').toUpperCase() === 'TELEGRAM' ? 'Polling — no webhook' : 'Widget embed'}
+                          </span>
+                        )}
+                      </td>
+
+                      <td style={{ padding: '12px 14px' }}><StatusPill active={!!item.is_active} /></td>
+
+                      <td style={{ padding: '12px 14px', textAlign: 'right' }}>
+                        <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                          <button
+                            onClick={() => navigate(channel.route)}
+                            className="btn btn-secondary btn-sm"
+                            style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+                          >
+                            Manage
+                          </button>
+                          <button
+                            onClick={() => handleDisconnect(item)}
+                            disabled={deletingId === item.id}
+                            title="Disconnect account"
+                            style={{
+                              padding: '4px 8px', borderRadius: 'var(--radius-sm)',
+                              border: '1px solid rgba(239,68,68,0.25)', background: 'rgba(239,68,68,0.06)',
+                              color: '#b91c1c', cursor: 'pointer', display: 'flex',
+                              alignItems: 'center', justifyContent: 'center',
+                            }}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
     </AppLayout>
   );
 }

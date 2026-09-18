@@ -26,7 +26,6 @@ import {
   Video,
   Blocks,
   KeyRound,
-  Workflow,
   ScrollText,
 } from 'lucide-react';
 
@@ -34,7 +33,7 @@ const NAV_CONFIG = {
   ADMIN: [
     { section: 'Main', items: [
       { label: 'Dashboard',        icon: LayoutDashboard, path: '/admin' },
-      { label: 'Conversations',    icon: MessageSquare,   path: '/inbox',        moduleKey: 'feature_live_chat' },
+      { label: 'Inbox',             icon: MessageSquare,   path: '/inbox',        moduleKey: 'feature_live_chat' },
       { label: 'Subscribers',      icon: Users,           path: '/contacts',     moduleKey: 'feature_subscribers' },
       { label: 'Automation',      icon: Bot,             path: '/bots',         moduleKey: 'feature_bot_manager' },
       { label: 'Post Publishing',  icon: FileText,        path: '/social-posting' },
@@ -43,26 +42,33 @@ const NAV_CONFIG = {
       { label: 'In-Chat Orders',   icon: ShoppingBag,     path: '/orders' },
       { label: 'Appointments',     icon: Calendar,        path: '/appointments', moduleKey: 'feature_appointments' },
     ]},
-    { section: 'Control Panel', items: [
+    { section: 'Automation & Messaging', items: [
       { label: 'App Integrations',    icon: Blocks,    path: '/settings/apps' },
       { label: 'AI Providers',        icon: KeyRound,  path: '/settings/ai-providers', moduleKey: 'feature_ai_agent' },
-      { label: 'WhatsApp Flows',      icon: Workflow,  path: '/settings/whatsapp-flows' },
-      { label: 'Canned Responses',    icon: FileText,  path: '/settings/canned-responses' },
-      { label: 'Packages & Modules',  icon: Package,   path: '/admin/packages' },
+    ]},
+    { section: 'Developer & Connections', items: [
       { label: 'Webhooks & Zapier',   icon: Globe,     path: '/webhooks' },
+      { label: 'API Keys',            icon: KeyRound,  path: '/agency/api-keys', moduleKey: 'feature_api_developer' },
       { label: 'Custom Domain',       icon: Globe,     path: '/agency/domain-settings', moduleKey: 'feature_custom_domain' },
-      { label: 'Resellers',           icon: Building2, path: '/admin/agencies' },
-      { label: 'User Manager',        icon: Users,     path: '/admin/users' },
+      { label: 'Shopify & WooCommerce', icon: ShoppingBag, path: '/agency/commerce', moduleKey: 'feature_whatsapp_commerce' },
+    ]},
+    { section: 'Team & Access', items: [
       { label: 'Team Members',        icon: Users,     path: '/team' },
+      { label: 'User Manager',        icon: Users,     path: '/admin/users' },
       { label: 'Roles & Permissions', icon: KeyRound,  path: '/roles' },
       { label: 'Audit Log',           icon: ScrollText, path: '/admin/audit-log' },
+    ]},
+    { section: 'Billing & Platform', items: [
+      { label: 'Packages & Modules',  icon: Package,   path: '/admin/packages' },
+      { label: 'Payment Gateways',    icon: Zap,       path: '/admin/payment-gateways' },
+      { label: 'Resellers',           icon: Building2, path: '/admin/agencies' },
       { label: 'Platform Settings',   icon: Settings,  path: '/admin/platform-settings' },
     ]},
   ],
   RESELLER: [
     { section: 'Main', items: [
       { label: 'Dashboard',        icon: LayoutDashboard, path: '/agency' },
-      { label: 'Conversations',    icon: MessageSquare,   path: '/inbox',        moduleKey: 'feature_live_chat' },
+      { label: 'Inbox',             icon: MessageSquare,   path: '/inbox',        moduleKey: 'feature_live_chat' },
       { label: 'Subscribers',      icon: Users,           path: '/contacts',     moduleKey: 'feature_subscribers' },
       { label: 'Automation',      icon: Bot,             path: '/bots',         moduleKey: 'feature_bot_manager' },
       { label: 'Post Publishing',  icon: FileText,        path: '/social-posting' },
@@ -71,17 +77,21 @@ const NAV_CONFIG = {
       { label: 'In-Chat Orders',   icon: ShoppingBag,     path: '/orders' },
       { label: 'Appointments',     icon: Calendar,        path: '/appointments', moduleKey: 'feature_appointments' },
     ]},
-    { section: 'Control Panel', items: [
+    { section: 'Automation & Messaging', items: [
       { label: 'App Integrations',    icon: Blocks,   path: '/settings/apps' },
       { label: 'AI Providers',        icon: KeyRound, path: '/settings/ai-providers', moduleKey: 'feature_ai_agent' },
-      { label: 'WhatsApp Flows',      icon: Workflow, path: '/settings/whatsapp-flows' },
-      { label: 'Canned Responses',    icon: FileText, path: '/settings/canned-responses' },
-      { label: 'Packages & Modules',  icon: Package,  path: '/agency/packages' },
+    ]},
+    { section: 'Developer & Connections', items: [
       { label: 'Webhooks & Zapier',   icon: Globe,    path: '/webhooks' },
+      { label: 'API Keys',            icon: KeyRound, path: '/agency/api-keys', moduleKey: 'feature_api_developer' },
       { label: 'Custom Domain',       icon: Globe,    path: '/agency/domain-settings', moduleKey: 'feature_custom_domain' },
+      { label: 'Shopify & WooCommerce', icon: ShoppingBag, path: '/agency/commerce', moduleKey: 'feature_whatsapp_commerce' },
+    ]},
+    { section: 'Team & Billing', items: [
       { label: 'User Manager',        icon: Users,    path: '/agency/team' },
       { label: 'Team Roles & Permissions', icon: KeyRound, path: '/roles' },
       { label: 'Audit Log',                icon: ScrollText, path: '/admin/audit-log' },
+      { label: 'Packages & Modules',  icon: Package,  path: '/agency/packages' },
     ]},
   ],
   // User (a Reseller's team member) gets every day-to-day operational menu
@@ -99,7 +109,7 @@ const NAV_CONFIG = {
   USER: [
     { section: 'Main', items: [
       { label: 'Dashboard',        icon: LayoutDashboard, path: '/agency' },
-      { label: 'Conversations',    icon: MessageSquare, path: '/inbox',          moduleKey: 'feature_live_chat' },
+      { label: 'Inbox',             icon: MessageSquare, path: '/inbox',          moduleKey: 'feature_live_chat' },
       { label: 'Subscribers',      icon: Users,         path: '/contacts',       moduleKey: 'feature_subscribers' },
       { label: 'Automation',      icon: Bot,           path: '/bots',           moduleKey: 'feature_bot_manager' },
       { label: 'Post Publishing',  icon: FileText,      path: '/social-posting' },
@@ -109,7 +119,6 @@ const NAV_CONFIG = {
       { label: 'Appointments',     icon: Calendar,      path: '/appointments',   moduleKey: 'feature_appointments' },
     ]},
     { section: 'Control Panel', items: [
-      { label: 'Canned Responses', icon: FileText, path: '/settings/canned-responses' },
       { label: 'Team Members',     icon: Users,    path: '/team' },
     ]},
   ],
@@ -151,7 +160,7 @@ export default function Sidebar() {
     return location.pathname.startsWith(path);
   };
 
-  // ── 1. Pop Bar Overlay Drawer (When in Live Chat or when pop bar triggered) ──
+  // ── 1. Pop Bar Overlay Drawer (When in Inbox or when pop bar triggered) ──
   if (isInbox || popupNavOpen) {
     if (!popupNavOpen) return null; // In live chat, hide standard sidebar completely
 

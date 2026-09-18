@@ -1,0 +1,47 @@
+{
+  "artboards": [
+    { "file": "Today.dc.html", "x": 0, "y": 0, "w": 1180, "h": 920, "title": "Today · what's duplicated" },
+    { "file": "Main.dc.html", "x": 1300, "y": 0, "w": 1180, "h": 960, "title": "B · Channel hub (recommended)" },
+    { "file": "DirectionA.dc.html", "x": 0, "y": 1140, "w": 1180, "h": 740, "title": "A · Single surface" },
+    { "file": "DirectionC.dc.html", "x": 1300, "y": 1140, "w": 1180, "h": 580, "title": "C · Rail + detail" },
+    { "file": "DirectionD.dc.html", "x": 2600, "y": 1140, "w": 1180, "h": 660, "title": "D · Surgical fix" }
+  ],
+  "annotations": [
+    {
+      "id": "note-today",
+      "x": 0,
+      "y": -140,
+      "w": 540,
+      "text": "TODAY\nThe page as it stands, with the four duplications marked 1–4. The legend at the bottom of the board explains each one."
+    },
+    {
+      "id": "note-b",
+      "x": 1300,
+      "y": -140,
+      "w": 560,
+      "text": "B · CHANNEL HUB — recommended\nOne card per channel. The card's own button is either Connect or Manage, so there is exactly one connect affordance per channel and no global one.\nKills: metric cards, tab bar, dead-end modal, both duplicate headers.\nTradeoff: Manage navigates to that channel's own page — returning is one back-click."
+    },
+    {
+      "id": "note-a",
+      "x": 0,
+      "y": 990,
+      "w": 540,
+      "text": "A · SINGLE SURFACE\nNo tabs. Six channel buttons open each connect flow in place; Manage opens a slide-over instead of a page.\nKills: every duplicate path and header; shortest click path.\nTradeoff: biggest refactor — all six channel pages must work inside a drawer."
+    },
+    {
+      "id": "note-c",
+      "x": 1300,
+      "y": 990,
+      "w": 540,
+      "text": "C · RAIL + DETAIL\nA left channel rail replaces both the metric cards and the tab bar. The rail selection is the title, so the embedded page's own header is suppressed.\nKills: metric/tab duplication and the second header.\nTradeoff: keeps the page-inside-a-page pattern; narrower content area."
+    },
+    {
+      "id": "note-d",
+      "x": 2600,
+      "y": 990,
+      "w": 540,
+      "text": "D · SURGICAL FIX\nKeep the tabs. Delete the metric cards, fold counts into the tabs, drop the dead-end modal, hide embedded sub-headers, add TikTok everywhere it is missing.\nKills: the duplication, with the smallest diff.\nTradeoff: information architecture unchanged — still a page inside a page, and the tab bar crowds as channels grow."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

@@ -43,14 +43,89 @@ async function verifyMetaSignature(req) {
   }
   if (!req.rawBody) return false;
 
-  const appSettings = await resolveMetaAppSettings(Number(agencyId)).catch(() => null);
-  const appSecret = appSettings?.app_secret;
-  if (!appSecret) {
+  // An agency's Meta channels do not all have to come from the same Meta
+  // app — WhatsApp and Facebook/Instagram are deliberately separate app
+  // slots (meta_app_pool, platform_group WHATSAPP vs MESSENGER_INSTAGRAM —
+  // see utils/appCredentials.js), and a WhatsApp number connected manually
+  // via Cloud API can additionally carry its own per-integration override.
+  // Meta signs each webhook with the app secret of whichever app owns that
+  // subscription, and the raw body isn't parsed yet at this point, so which
+  // platform (and therefore which slot) this payload belongs to isn't known
+  // ahead of verification. So every secret the agency legitimately holds
+  // across BOTH slots is a candidate. Matching ANY of them proves the
+  // payload came from Meta signed by an app this agency owns.
+  const candidates = [];
+
+  const [waSettings, msgSettings] = await Promise.all([
+    resolveMetaAppSettings(Number(agencyId), "WHATSAPP").catch(() => null),
+    resolveMetaAppSettings(Number(agencyId), "MESSENGER_INSTAGRAM").catch(() => null),
+  ]);
+  if (waSettings?.app_secret) candidates.push(waSettings.app_secret);
+  if (msgSettings?.app_secret) candidates.push(msgSettings.app_secret);
+  if (process.env.META_APP_SECRET) candidates.push(process.env.META_APP_SECRET);
+
+  try {
+    const [rows] = await pool.query(
+      "SELECT DISTINCT app_secret FROM integrations WHERE agency_id = ? AND app_secret IS NOT NULL AND app_secret <> ''",
+      [agencyId]
+    );
+    for (const r of rows) candidates.push(r.app_secret);
+  } catch (err) {
+    console.error("[Webhook Signature] failed to load integration app secrets:", err.message);
+  }
+
+  if (candidates.length === 0) {
     console.warn(`[Webhook Signature] No app_secret resolvable for agency ${agencyId} — rejecting signed request`);
     return false;
   }
 
-  return isValidMetaSignature(req.rawBody, header, appSecret);
+  const match = candidates.some((secret) => isValidMetaSignature(req.rawBody, header, secret));
+  if (!match) {
+    // Check if this is a WhatsApp webhook for an active manually-connected number in this agency.
+    // Like BotSailor and other providers, Meta's payload signature validation is optional on the
+    // receiver's end. If a manual WhatsApp number was connected without an App Secret, we don't
+    // reject it just because the agency's primary Facebook/Instagram App Secret didn't match.
+    const body = req.body;
+    const isWhatsApp =
+      body?.object === "whatsapp_business_account" ||
+      !!body?.entry?.[0]?.changes?.[0]?.value?.messaging_product ||
+      !!body?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
+
+    if (isWhatsApp) {
+      let waPhoneId = null;
+      for (const entry of (body?.entry || [])) {
+        for (const change of (entry?.changes || [])) {
+          if (change?.value?.metadata?.phone_number_id) {
+            waPhoneId = change.value.metadata.phone_number_id;
+            break;
+          }
+        }
+        if (waPhoneId) break;
+      }
+
+      if (waPhoneId) {
+        try {
+          const [[manualInteg]] = await pool.query(
+            "SELECT id, app_secret FROM integrations WHERE agency_id = ? AND platform = 'WHATSAPP' AND wa_phone_number_id = ? AND is_active = 1 LIMIT 1",
+            [agencyId, waPhoneId]
+          );
+          if (manualInteg && !manualInteg.app_secret) {
+            console.log(`[Webhook Signature] Accepted manual WhatsApp webhook for phone ${waPhoneId} (agency ${agencyId}) without dedicated app_secret`);
+            return true;
+          }
+        } catch (dbErr) {
+          console.error("[Webhook Signature] Error checking manual integration:", dbErr.message);
+        }
+      }
+    }
+
+    console.warn(
+      `[Webhook Signature] Verification failed for agency ${agencyId}. Tested ${candidates.length} candidate secret(s). ` +
+      `If this channel belongs to a different Meta App, ensure that app's 32-character App Secret ` +
+      `(from Meta App Dashboard → App Settings → Basic → App Secret) is configured on the integration.`
+    );
+  }
+  return match;
 }
 
 /**
@@ -173,15 +248,19 @@ router.get("/webhook/:agencyId", async (req, res) => {
   }
 
   try {
-    // 1. Check in meta_app_settings for this agency
-    const [metaRows] = await pool.query(
-      "SELECT verify_token FROM meta_app_settings WHERE agency_id = ? ORDER BY id DESC LIMIT 1",
+    // 1. Check meta_app_pool for this agency — WhatsApp and Messenger+
+    // Instagram are separate app slots (and each can have standbys), and
+    // this handshake doesn't know which slot/platform it's for yet, so
+    // every verify_token the agency holds across every slot is a candidate.
+    const [poolRows] = await pool.query(
+      "SELECT verify_token FROM meta_app_pool WHERE agency_id = ? AND verify_token IS NOT NULL",
       [req.params.agencyId]
     );
 
-    // 2. Check if token matches ANY verify_token in meta_app_settings
+    // 2. Check if token matches ANY verify_token in meta_app_pool (any agency —
+    // covers a token pasted from the wrong agency's dashboard by mistake)
     const [allMeta] = await pool.query(
-      "SELECT verify_token FROM meta_app_settings WHERE verify_token = ? LIMIT 1",
+      "SELECT verify_token FROM meta_app_pool WHERE verify_token = ? LIMIT 1",
       [token]
     );
 
@@ -197,7 +276,7 @@ router.get("/webhook/:agencyId", async (req, res) => {
     ].filter(Boolean);
 
     const validTokens = [
-      metaRows[0]?.verify_token,
+      ...poolRows.map((r) => r.verify_token),
       allMeta[0]?.verify_token,
       allInteg[0]?.verify_token,
       ...envTokens,
@@ -241,14 +320,14 @@ router.get("/webhook/:agencyId/:integrationId", async (req, res) => {
       [req.params.integrationId, req.params.agencyId]
     );
 
-    const [metaRows] = await pool.query(
-      "SELECT verify_token FROM meta_app_settings WHERE agency_id = ? ORDER BY id DESC LIMIT 1",
+    const [poolRows] = await pool.query(
+      "SELECT verify_token FROM meta_app_pool WHERE agency_id = ? AND verify_token IS NOT NULL",
       [req.params.agencyId]
     );
 
     const validTokens = [
       rows[0]?.verify_token,
-      metaRows[0]?.verify_token,
+      ...poolRows.map((r) => r.verify_token),
       process.env.META_WEBHOOK_VERIFY_TOKEN,
       process.env.META_VERIFY_TOKEN,
     ].filter(Boolean);

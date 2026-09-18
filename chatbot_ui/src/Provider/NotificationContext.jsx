@@ -34,8 +34,11 @@ export function NotificationProvider({ children }) {
   useEffect(() => {
     loadSettings();
 
+    const apiUrl = import.meta.env.VITE_API_URL || '';
+    const socketUrl = import.meta.env.VITE_SOCKET_URL || (apiUrl.startsWith('http') ? apiUrl.replace('/api/v1', '') : undefined);
+
     // Connect WebSocket
-    const socket = io('http://localhost:5000', {
+    const socket = io(socketUrl || 'http://localhost:5000', {
       transports: ['websocket', 'polling'],
     });
 
@@ -179,7 +182,7 @@ export function NotificationProvider({ children }) {
               {activeAlert.body}
             </div>
             <span style={{ fontSize: '0.68rem', color: '#38bdf8', fontWeight: 700, marginTop: 4, display: 'inline-block' }}>
-              Click to view in Live Chat →
+              Click to view in Inbox →
             </span>
           </div>
 

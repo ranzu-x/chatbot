@@ -741,19 +741,21 @@ export default function WhatsAppTemplateManager({ selectedAccount, showToast }) 
           <div style={{ position: 'relative' }}>
             <button
               onClick={() => setShowTypeMenu(!showTypeMenu)}
+              disabled={!selectedAccount?.id || selectedAccount.id === 'all'}
+              title={(!selectedAccount?.id || selectedAccount.id === 'all') ? 'Select a WhatsApp account first' : undefined}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 6,
                 padding: '8px 16px',
                 borderRadius: 8,
-                background: '#25d366',
+                background: (!selectedAccount?.id || selectedAccount.id === 'all') ? '#94a3b8' : '#25d366',
                 color: '#ffffff',
                 border: 'none',
                 fontWeight: 700,
                 fontSize: '0.82rem',
-                cursor: 'pointer',
-                boxShadow: '0 2px 6px rgba(37, 211, 102, 0.25)',
+                cursor: (!selectedAccount?.id || selectedAccount.id === 'all') ? 'not-allowed' : 'pointer',
+                boxShadow: (!selectedAccount?.id || selectedAccount.id === 'all') ? 'none' : '0 2px 6px rgba(37, 211, 102, 0.25)',
               }}
             >
               <Plus size={15} /> Create Message Template <ChevronDown size={14} />
@@ -958,13 +960,17 @@ export default function WhatsAppTemplateManager({ selectedAccount, showToast }) 
               </button>
               <button
                 onClick={() => setShowCreateModal(true)}
-                style={{ padding: '8px 18px', borderRadius: 8, background: '#25d366', color: '#fff', border: 'none', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}
+                disabled={!selectedAccount?.id || selectedAccount.id === 'all'}
+                title={(!selectedAccount?.id || selectedAccount.id === 'all') ? 'Select a WhatsApp account first' : undefined}
+                style={{ padding: '8px 18px', borderRadius: 8, background: (!selectedAccount?.id || selectedAccount.id === 'all') ? '#94a3b8' : '#25d366', color: '#fff', border: 'none', fontWeight: 700, fontSize: '0.82rem', cursor: (!selectedAccount?.id || selectedAccount.id === 'all') ? 'not-allowed' : 'pointer' }}
               >
                 + Create Standard
               </button>
               <button
                 onClick={() => setShowCarouselModal(true)}
-                style={{ padding: '8px 18px', borderRadius: 8, background: '#db2777', color: '#fff', border: 'none', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}
+                disabled={!selectedAccount?.id || selectedAccount.id === 'all'}
+                title={(!selectedAccount?.id || selectedAccount.id === 'all') ? 'Select a WhatsApp account first' : undefined}
+                style={{ padding: '8px 18px', borderRadius: 8, background: (!selectedAccount?.id || selectedAccount.id === 'all') ? '#94a3b8' : '#db2777', color: '#fff', border: 'none', fontWeight: 700, fontSize: '0.82rem', cursor: (!selectedAccount?.id || selectedAccount.id === 'all') ? 'not-allowed' : 'pointer' }}
               >
                 + Create Carousel
               </button>
@@ -1327,7 +1333,7 @@ export default function WhatsAppTemplateManager({ selectedAccount, showToast }) 
                         style={{ fontSize: '0.78rem', padding: '6px 10px', borderRadius: 6, border: '1px solid #cbd5e1', width: '100%' }}
                       />
                       <span style={{ fontSize: '0.68rem', color: '#64748b' }}>
-                        📸 Actual media asset is uploaded/attached when sending the template in Campaigns or Live Chat.
+                        📸 Actual media asset is uploaded/attached when sending the template in Campaigns or the Inbox.
                       </span>
                     </div>
                   )}

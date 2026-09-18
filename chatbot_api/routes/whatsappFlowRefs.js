@@ -8,9 +8,10 @@ import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
+import { requireModule } from "../utils/entitlements.js";
 
 const router = express.Router();
-router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
+router.use("/whatsapp-flow-refs", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_whatsapp_flows"));
 
 router.get("/whatsapp-flow-refs", async (req, res) => {
   try {

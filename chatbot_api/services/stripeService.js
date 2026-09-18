@@ -52,13 +52,15 @@ export async function ensureStripePrice(pkg) {
   });
 
   let interval = "month";
+  let intervalCount = 1;
   if (pkg.billing_cycle === "yearly") interval = "year";
+  else if (pkg.billing_cycle === "quarterly") intervalCount = 3; // Stripe has no native "quarterly" interval — month x3
 
   const price = await stripe.prices.create({
     product: product.id,
     unit_amount: Math.round(Number(pkg.price) * 100), // in cents
     currency: "usd",
-    recurring: pkg.billing_cycle === "lifetime" || pkg.billing_cycle === "free" ? undefined : { interval },
+    recurring: pkg.billing_cycle === "lifetime" || pkg.billing_cycle === "free" ? undefined : { interval, interval_count: intervalCount },
     metadata: {
       packageId: String(pkg.id),
     },

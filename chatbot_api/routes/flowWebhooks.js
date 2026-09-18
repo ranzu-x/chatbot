@@ -4,6 +4,7 @@ import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { executeOutboundWebhook } from "../services/webhookExecutor.js";
 import { webhookQueue } from "../services/webhookQueue.js";
+import { requireModule } from "../utils/entitlements.js";
 
 const router = express.Router();
 
@@ -11,8 +12,8 @@ const router = express.Router();
 // an "app related" menu, owner-level), not day-to-day agent work — were
 // only gated by authMiddleware (any logged-in user, any role). /webhooks/inbound/:flowId
 // below stays public on purpose (it's the actual inbound receiver external
-// services call).
-router.use(["/queue/stats", "/queue/enqueue-test", "/webhooks/test-dispatch", "/webhooks/logs"], authMiddleware, roleMiddleware("RESELLER", "ADMIN"));
+// services call, and gating it would silently break third-party triggers).
+router.use(["/queue/stats", "/queue/enqueue-test", "/webhooks/test-dispatch", "/webhooks/logs"], authMiddleware, roleMiddleware("RESELLER", "ADMIN"), requireModule("feature_whatsapp_webhook_workflow"));
 
 // ─── GET WEBHOOK QUEUE & BACKGROUND WORKER STATS ────────────────────────────
 router.get("/queue/stats", authMiddleware, async (req, res) => {

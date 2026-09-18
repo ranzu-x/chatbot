@@ -2,10 +2,11 @@ import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
+import { requireModule } from "../utils/entitlements.js";
 import { executeBroadcast, computeAudience } from "../utils/broadcastRunner.js";
 
 const router = express.Router();
-router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
+router.use("/broadcasts", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_broadcasts"));
 
 function toIdArray(v) {
   if (!v) return [];
@@ -41,7 +42,7 @@ async function validateIntegration(agencyId, platform, integrationId) {
 router.get("/broadcasts", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    const { platform } = req.query;
+    const { platform, integrationId } = req.query;
     const params = [agencyId];
     let sql = `SELECT bc.*, f.name AS flow_name, wt.template_name, l.name AS tag_label_name, l.color AS tag_label_color,
                       i.name AS integration_name, i.wa_display_phone
@@ -52,6 +53,7 @@ router.get("/broadcasts", async (req, res) => {
                LEFT JOIN integrations i ON i.id = bc.integration_id
                WHERE bc.agency_id = ?`;
     if (platform) { sql += " AND bc.platform = ?"; params.push(platform); }
+    if (integrationId && integrationId !== "all") { sql += " AND bc.integration_id = ?"; params.push(integrationId); }
     sql += " ORDER BY bc.created_at DESC";
     const [rows] = await pool.query(sql, params);
     return res.json({ success: true, campaigns: rows });

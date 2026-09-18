@@ -2,14 +2,16 @@ import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
+import { requireModule } from "../utils/entitlements.js";
 
 const router = express.Router();
-router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
+router.use("/flows", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_bot_manager"));
 
 // ── LIST ──────────────────────────────────────────────────────────
 router.get("/flows", async (req, res) => {
   try {
-    const [rows] = await pool.query(`
+    const { integrationId } = req.query;
+    let sql = `
       SELECT f.*, b.name AS botName,
              i.name AS integration_name, i.fb_page_name, i.wa_phone_number_id, i.ig_username,
              tb.bot_username AS tg_bot_username,
@@ -19,8 +21,14 @@ router.get("/flows", async (req, res) => {
       LEFT JOIN integrations i ON i.id = f.integration_id
       LEFT JOIN telegram_bots tb ON tb.integration_id = i.id
       WHERE f.agency_id = ?
-      ORDER BY f.updated_at DESC
-    `, [req.user.agencyId]);
+    `;
+    const params = [req.user.agencyId];
+    if (integrationId && integrationId !== "all") {
+      sql += " AND f.integration_id = ?";
+      params.push(integrationId);
+    }
+    sql += " ORDER BY f.updated_at DESC";
+    const [rows] = await pool.query(sql, params);
     return res.json({ success: true, flows: rows });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
@@ -52,7 +60,7 @@ router.post("/flows", async (req, res) => {
   const integrationId = req.body.integrationId || req.body.integration_id || null;
   const botId = req.body.botId || req.body.bot_id || null;
   const triggerKeyword = req.body.triggerKeyword || req.body.trigger_keyword || null;
-  const triggerType = req.body.triggerType || req.body.trigger_type || 'KEYWORD';
+  const triggerType = req.body.triggerType || req.body.trigger_type || ((platform || '').toUpperCase() === 'WEBCHAT' ? 'CHAT_WIDGET' : 'KEYWORD');
   const nodes = req.body.nodesJson !== undefined ? req.body.nodesJson : req.body.nodes_json;
   const edges = req.body.edgesJson !== undefined ? req.body.edgesJson : req.body.edges_json;
 
@@ -69,7 +77,13 @@ router.post("/flows", async (req, res) => {
         triggerKeyword, triggerType,
         nodesStr, edgesStr]
     );
-    return res.status(201).json({ success: true, message: "Flow created", flowId: result.insertId });
+    return res.status(201).json({
+      success: true,
+      message: "Flow created",
+      flowId: result.insertId,
+      id: result.insertId,
+      flow: { id: result.insertId },
+    });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
@@ -115,6 +129,70 @@ router.patch("/flows/:id/toggle", async (req, res) => {
     await pool.query("UPDATE flows SET is_active=? WHERE id=?", [!flow.is_active, req.params.id]);
     return res.json({ success: true, isActive: !flow.is_active });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
+});
+
+// ── CLONE / DUPLICATE ──────────────────────────────────────────────
+router.post("/flows/:id/clone", async (req, res) => {
+  try {
+    const [[source]] = await pool.query(
+      "SELECT * FROM flows WHERE id = ? AND agency_id = ?",
+      [req.params.id, req.user.agencyId]
+    );
+    if (!source) return res.status(404).json({ success: false, message: "Flow not found" });
+
+    const targetIntegrationId = req.body.targetIntegrationId !== undefined 
+      ? req.body.targetIntegrationId 
+      : source.integration_id;
+
+    let targetPlatform = source.platform;
+    if (targetIntegrationId) {
+      const [[targetInteg]] = await pool.query(
+        "SELECT id, platform, name FROM integrations WHERE id = ? AND agency_id = ?",
+        [targetIntegrationId, req.user.agencyId]
+      );
+      if (!targetInteg) {
+        return res.status(400).json({ success: false, message: "Target bot account not found" });
+      }
+      targetPlatform = targetInteg.platform;
+    }
+
+    const newName = req.body.name?.trim() || `${source.name} (Copy)`;
+
+    const [result] = await pool.query(
+      `INSERT INTO flows (agency_id, bot_id, integration_id, name, platform, trigger_keyword, trigger_type, nodes_json, edges_json, is_active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        req.user.agencyId,
+        source.bot_id,
+        targetIntegrationId,
+        newName,
+        targetPlatform,
+        source.trigger_keyword,
+        source.trigger_type,
+        source.nodes_json,
+        source.edges_json,
+        1,
+      ]
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: "Flow cloned successfully",
+      flowId: result.insertId,
+      flow: {
+        id: result.insertId,
+        name: newName,
+        platform: targetPlatform,
+        integration_id: targetIntegrationId,
+        trigger_keyword: source.trigger_keyword,
+        trigger_type: source.trigger_type,
+        is_active: 1,
+      },
+    });
+  } catch (err) {
+    console.error("Clone flow error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
 });
 
 // ── DELETE ────────────────────────────────────────────────────────

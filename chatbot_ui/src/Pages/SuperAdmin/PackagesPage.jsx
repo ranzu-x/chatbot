@@ -4,37 +4,34 @@ import { packageAPI, adminAPI } from '../../services/api';
 import {
   Package,
   Plus,
-  Edit3,
   Copy,
   Trash2,
   CheckCircle2,
   AlertCircle,
   Users,
-  Building2,
-  Shield,
   Layers,
-  Sparkles,
   Sliders,
-  DollarSign,
   Search,
   RefreshCw,
   X,
-  Check,
-  Zap,
-  Radio,
-  ArrowRight,
-  Info,
-  ChevronRight,
-  Lock,
   Save,
-  MessageSquare,
-  Facebook,
-  Instagram,
-  Send,
-  Globe,
-  Video,
-  Clock,
 } from 'lucide-react';
+
+// Feature modules that carry a numeric usage limit (in addition to their
+// on/off toggle). "feature_message_credits" is a special case — its limit
+// is the existing packages.max_monthly_messages column (entitlements.js
+// reads it from there for backward compatibility), not limits_json, so it
+// writes to the top-level form field instead of a module's limits object.
+const FEATURE_LIMIT_FIELDS = {
+  feature_message_credits: { field: 'maxMonthlyMessages', label: 'Messages / month', onPackageField: true },
+  feature_ai_tokens: { field: 'maxAiTokensPerMonth', label: 'AI tokens / month' },
+  feature_user_input_flows: { field: 'maxUserInputFlows', label: 'Flows' },
+  feature_social_posting: { field: 'maxPostsPerMonth', label: 'Posts / month' },
+  feature_whatsapp_flows: { field: 'maxWhatsappFlows', label: 'WhatsApp flows' },
+  feature_whatsapp_commerce: { field: 'maxShopifyWooStores', label: 'Connected stores' },
+  feature_api_developer: { field: 'maxApiKeys', label: 'API keys' },
+  feature_http_api: { field: 'maxHttpApiCampaigns', label: 'HTTP API campaigns' },
+};
 
 export default function PackagesPage() {
   const [packages, setPackages] = useState([]);
@@ -257,6 +254,13 @@ export default function PackagesPage() {
     }));
   };
 
+  // feature_message_credits' limit lives on the package row itself
+  // (maxMonthlyMessages), not in a module's limits_json — see
+  // FEATURE_LIMIT_FIELDS' onPackageField flag.
+  const handlePackageFieldLimitChange = (field, val) => {
+    setForm((prev) => ({ ...prev, [field]: val }));
+  };
+
   const handleOpenAssignModal = () => {
     setSelectedAgencyId(agencies[0]?.id || '');
     setAssignNotes(`Assigned ${form.name}`);
@@ -325,15 +329,13 @@ export default function PackagesPage() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 18 }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(37, 99, 235, 0.1)', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Package size={20} />
-              </div>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>
-                Package & Module Management System
+              <Package size={20} color="#334155" />
+              <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#0f172a', margin: 0 }}>
+                Packages
               </h2>
             </div>
             <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '3px 0 0 0' }}>
-              Select a package from the list to configure its details, subscriber limits, connect account quotas, and modular features.
+              Configure pricing, quotas, and which features each package includes.
             </p>
           </div>
 
@@ -342,14 +344,14 @@ export default function PackagesPage() {
               type="button"
               onClick={() => loadData(selectedPkgId)}
               disabled={loading}
-              style={{ padding: '7px 12px', borderRadius: 8, border: '1px solid #cbd5e1', background: '#ffffff', color: '#475569', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', fontWeight: 700 }}
+              style={{ padding: '7px 12px', borderRadius: 8, border: '1px solid #e2e8f0', background: '#ffffff', color: '#475569', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', fontWeight: 600 }}
             >
               <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> Refresh
             </button>
             <button
               type="button"
               onClick={handleCreateNewPackage}
-              style={{ padding: '8px 16px', borderRadius: 8, background: '#2563eb', color: '#ffffff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.82rem', fontWeight: 800, boxShadow: '0 4px 12px rgba(37, 99, 235, 0.25)' }}
+              style={{ padding: '8px 16px', borderRadius: 8, background: '#0f172a', color: '#ffffff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.82rem', fontWeight: 700 }}
             >
               <Plus size={15} /> Create Package
             </button>
@@ -389,12 +391,13 @@ export default function PackagesPage() {
                   onClick={() => setFilterType(f.id)}
                   style={{
                     padding: '4px 10px',
-                    borderRadius: 14,
+                    borderRadius: 6,
                     fontSize: '0.72rem',
-                    fontWeight: 700,
-                    border: 'none',
+                    fontWeight: 600,
+                    border: '1px solid',
+                    borderColor: filterType === f.id ? '#0f172a' : '#e2e8f0',
                     cursor: 'pointer',
-                    background: filterType === f.id ? '#0f172a' : '#f1f5f9',
+                    background: filterType === f.id ? '#0f172a' : '#ffffff',
                     color: filterType === f.id ? '#ffffff' : '#64748b',
                     whiteSpace: 'nowrap',
                   }}
@@ -424,36 +427,35 @@ export default function PackagesPage() {
                       onClick={() => handleSelectPackage(pkg.id)}
                       style={{
                         padding: '12px 14px',
-                        borderRadius: 10,
-                        border: isSelected ? '2px solid #2563eb' : '1px solid #e2e8f0',
-                        background: isSelected ? '#eff6ff' : '#ffffff',
+                        borderRadius: 8,
+                        border: isSelected ? '1px solid #0f172a' : '1px solid #e2e8f0',
+                        background: isSelected ? '#f8fafc' : '#ffffff',
                         cursor: 'pointer',
                         transition: 'all 0.15s ease',
                         display: 'flex',
                         flexDirection: 'column',
                         gap: 6,
-                        boxShadow: isSelected ? '0 2px 8px rgba(37, 99, 235, 0.12)' : 'none',
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                         <div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                            <span style={{ fontSize: '0.65rem', fontWeight: 800, padding: '2px 6px', borderRadius: 6, background: pkg.type === 'AGENCY' ? '#dbeafe' : (pkg.type === 'END_USER' ? '#dcfce7' : '#f3e8ff'), color: pkg.type === 'AGENCY' ? '#1d4ed8' : (pkg.type === 'END_USER' ? '#15803d' : '#7e22ce') }}>
+                            <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: '#f1f5f9', color: '#475569' }}>
                               {pkg.type}
                             </span>
                             {pkg.is_default === 1 && (
-                              <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#059669' }}>
-                                ★ Default
+                              <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#64748b' }}>
+                                Default
                               </span>
                             )}
                           </div>
-                          <div style={{ fontSize: '0.86rem', fontWeight: 800, color: '#0f172a' }}>
+                          <div style={{ fontSize: '0.86rem', fontWeight: 700, color: '#0f172a' }}>
                             {pkg.name}
                           </div>
                         </div>
 
                         <div style={{ textAlign: 'right' }}>
-                          <span style={{ fontSize: '0.95rem', fontWeight: 900, color: '#0f172a' }}>
+                          <span style={{ fontSize: '0.95rem', fontWeight: 700, color: '#0f172a' }}>
                             {pkg.price > 0 ? `$${pkg.price}` : 'Free'}
                           </span>
                           <span style={{ fontSize: '0.68rem', color: '#94a3b8', display: 'block' }}>
@@ -463,10 +465,10 @@ export default function PackagesPage() {
                       </div>
 
                       {/* Quick Limits Tags */}
-                      <div style={{ display: 'flex', gap: 8, fontSize: '0.7rem', color: '#64748b', marginTop: 2 }}>
-                        <span>🤖 {pkg.max_bot_accounts === null ? '∞' : pkg.max_bot_accounts} Bots</span>
-                        <span>👥 {pkg.max_subscribers === null ? '∞' : Number(pkg.max_subscribers).toLocaleString()} Subs</span>
-                        <span>🧑‍💼 {pkg.max_team_members === null ? '∞' : pkg.max_team_members} Seats</span>
+                      <div style={{ display: 'flex', gap: 10, fontSize: '0.7rem', color: '#64748b', marginTop: 2 }}>
+                        <span>{pkg.max_bot_accounts === null ? '∞' : pkg.max_bot_accounts} bots</span>
+                        <span>{pkg.max_subscribers === null ? '∞' : Number(pkg.max_subscribers).toLocaleString()} subs</span>
+                        <span>{pkg.max_team_members === null ? '∞' : pkg.max_team_members} seats</span>
                       </div>
                     </div>
                   );
@@ -483,14 +485,14 @@ export default function PackagesPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, paddingBottom: 16, borderBottom: '1px solid #e2e8f0' }}>
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-                  <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '2px 8px', borderRadius: 6, background: '#eff6ff', color: '#2563eb' }}>
-                    {form.type} PACKAGE
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 4, background: '#f1f5f9', color: '#475569' }}>
+                    {form.type}
                   </span>
-                  <span style={{ fontSize: '0.74rem', color: '#64748b' }}>
-                    {form.id ? `ID: #${form.id}` : 'Draft / New'}
+                  <span style={{ fontSize: '0.74rem', color: '#94a3b8' }}>
+                    {form.id ? `#${form.id}` : 'Draft'}
                   </span>
                 </div>
-                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>
+                <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#0f172a', margin: 0 }}>
                   {form.name || 'Untitled Package'}
                 </h3>
               </div>
@@ -501,7 +503,7 @@ export default function PackagesPage() {
                     <button
                       type="button"
                       onClick={handleOpenAssignModal}
-                      style={{ padding: '7px 12px', borderRadius: 8, background: '#f8fafc', border: '1px solid #cbd5e1', fontSize: '0.78rem', fontWeight: 700, color: '#1e293b', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                      style={{ padding: '7px 12px', borderRadius: 8, background: '#ffffff', border: '1px solid #e2e8f0', fontSize: '0.78rem', fontWeight: 600, color: '#334155', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
                     >
                       <Users size={13} /> Assign to Agency
                     </button>
@@ -510,7 +512,7 @@ export default function PackagesPage() {
                       type="button"
                       onClick={() => handleClone(form.id)}
                       title="Clone Package"
-                      style={{ padding: '7px 10px', borderRadius: 8, background: '#f8fafc', border: '1px solid #cbd5e1', fontSize: '0.78rem', color: '#64748b', cursor: 'pointer' }}
+                      style={{ padding: '7px 10px', borderRadius: 8, background: '#ffffff', border: '1px solid #e2e8f0', fontSize: '0.78rem', color: '#64748b', cursor: 'pointer' }}
                     >
                       <Copy size={13} /> Clone
                     </button>
@@ -519,7 +521,7 @@ export default function PackagesPage() {
                       type="button"
                       onClick={() => handleDelete(form.id, form.isDefault)}
                       title="Delete Package"
-                      style={{ padding: '7px 10px', borderRadius: 8, background: '#fee2e2', border: '1px solid #fecaca', fontSize: '0.78rem', color: '#dc2626', cursor: 'pointer' }}
+                      style={{ padding: '7px 10px', borderRadius: 8, background: '#ffffff', border: '1px solid #e2e8f0', fontSize: '0.78rem', color: '#b91c1c', cursor: 'pointer' }}
                     >
                       <Trash2 size={13} />
                     </button>
@@ -533,28 +535,27 @@ export default function PackagesPage() {
                   style={{
                     padding: '8px 20px',
                     borderRadius: 8,
-                    background: '#2563eb',
+                    background: '#0f172a',
                     color: '#ffffff',
                     border: 'none',
                     fontSize: '0.82rem',
-                    fontWeight: 800,
+                    fontWeight: 700,
                     cursor: saving ? 'not-allowed' : 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     gap: 6,
-                    boxShadow: '0 4px 12px rgba(37, 99, 235, 0.25)',
                   }}
                 >
                   <Save size={14} />
-                  {saving ? 'Saving...' : 'Save Package & Limits'}
+                  {saving ? 'Saving...' : 'Save Package'}
                 </button>
               </div>
             </div>
 
             {/* ── Section 1: General Info & Default Numeric Limits ── */}
-            <div style={{ background: '#f8fafc', padding: 18, borderRadius: 12, border: '1px solid #e2e8f0' }}>
-              <h4 style={{ fontSize: '0.88rem', fontWeight: 800, color: '#0f172a', margin: '0 0 14px 0', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Sliders size={15} color="#2563eb" /> 1. Package Information & Numeric Limits
+            <div style={{ background: '#f8fafc', padding: 18, borderRadius: 10, border: '1px solid #e2e8f0' }}>
+              <h4 style={{ fontSize: '0.85rem', fontWeight: 700, color: '#0f172a', margin: '0 0 14px 0', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Sliders size={15} color="#64748b" /> Package Information & Quotas
               </h4>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
@@ -608,6 +609,7 @@ export default function PackagesPage() {
                       onChange={(e) => setForm({ ...form, billingCycle: e.target.value })}
                     >
                       <option value="monthly">Monthly</option>
+                      <option value="quarterly">Quarterly</option>
                       <option value="yearly">Yearly</option>
                       <option value="lifetime">Lifetime</option>
                       <option value="free">Free</option>
@@ -620,7 +622,7 @@ export default function PackagesPage() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 12 }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: 700, color: '#334155', marginBottom: 4 }}>
-                    🤖 Connect Accounts Limit (blank = unlimited)
+                    Connect Accounts Limit (blank = unlimited)
                   </label>
                   <input
                     type="number"
@@ -635,7 +637,7 @@ export default function PackagesPage() {
 
                 <div>
                   <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: 700, color: '#334155', marginBottom: 4 }}>
-                    👥 Subscribers Limit (blank = unlimited)
+                    Subscribers Limit (blank = unlimited)
                   </label>
                   <input
                     type="number"
@@ -650,7 +652,7 @@ export default function PackagesPage() {
 
                 <div>
                   <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: 700, color: '#334155', marginBottom: 4 }}>
-                    🧑‍💼 Team Members / Seats (blank = unlimited)
+                    Team Members / Seats (blank = unlimited)
                   </label>
                   <input
                     type="number"
@@ -680,11 +682,11 @@ export default function PackagesPage() {
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
                 <div>
-                  <h4 style={{ fontSize: '0.92rem', fontWeight: 800, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <Layers size={16} color="#2563eb" /> 2. Modules & Feature Availability Matrix
+                  <h4 style={{ fontSize: '0.9rem', fontWeight: 700, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Layers size={16} color="#64748b" /> Modules & Feature Availability
                   </h4>
                   <p style={{ fontSize: '0.74rem', color: '#64748b', margin: '2px 0 0 0' }}>
-                    Enable/disable any module for this package. Disabled modules are automatically hidden in menus and blocked by the API.
+                    Disabled modules are hidden in menus and blocked by the API.
                   </p>
                 </div>
 
@@ -692,24 +694,24 @@ export default function PackagesPage() {
                   <button
                     type="button"
                     onClick={() => setForm((prev) => ({ ...prev, modules: prev.modules.map((m) => ({ ...m, isEnabled: true })) }))}
-                    style={{ padding: '4px 10px', borderRadius: 6, background: '#eff6ff', border: '1px solid #bfdbfe', color: '#2563eb', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer' }}
+                    style={{ padding: '4px 10px', borderRadius: 6, background: '#ffffff', border: '1px solid #e2e8f0', color: '#475569', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}
                   >
                     Enable All
                   </button>
                   <button
                     type="button"
                     onClick={() => setForm((prev) => ({ ...prev, modules: prev.modules.map((m) => ({ ...m, isEnabled: false })) }))}
-                    style={{ padding: '4px 10px', borderRadius: 6, background: '#f8fafc', border: '1px solid #cbd5e1', color: '#64748b', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer' }}
+                    style={{ padding: '4px 10px', borderRadius: 6, background: '#ffffff', border: '1px solid #e2e8f0', color: '#64748b', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}
                   >
                     Disable All
                   </button>
                 </div>
               </div>
 
-              {/* 📡 2A. Messaging Channels */}
+              {/* Messaging Channels */}
               <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: '0.74rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#94a3b8', marginBottom: 10 }}>
-                  📡 Messaging Channels ({channelsModules.length})
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#94a3b8', marginBottom: 10 }}>
+                  Messaging Channels ({channelsModules.length})
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 12 }}>
@@ -723,10 +725,9 @@ export default function PackagesPage() {
                         key={mod.key}
                         style={{
                           padding: '14px',
-                          borderRadius: 12,
-                          border: `1px solid ${isEnabled ? '#93c5fd' : '#e2e8f0'}`,
+                          borderRadius: 10,
+                          border: `1px solid ${isEnabled ? '#cbd5e1' : '#e2e8f0'}`,
                           background: isEnabled ? '#ffffff' : '#fafafa',
-                          boxShadow: isEnabled ? '0 1px 4px rgba(37, 99, 235, 0.06)' : 'none',
                           display: 'flex',
                           flexDirection: 'column',
                           gap: 10,
@@ -734,22 +735,17 @@ export default function PackagesPage() {
                       >
                         {/* Module Top Row */}
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <div style={{ width: 34, height: 34, borderRadius: 8, background: isEnabled ? '#2563eb' : '#cbd5e1', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                              <Radio size={16} />
+                          <div>
+                            <div style={{ fontSize: '0.84rem', fontWeight: 700, color: isEnabled ? '#0f172a' : '#94a3b8' }}>
+                              {mod.display_name}
                             </div>
-                            <div>
-                              <div style={{ fontSize: '0.84rem', fontWeight: 800, color: isEnabled ? '#0f172a' : '#94a3b8' }}>
-                                {mod.display_name}
-                              </div>
-                              <span style={{ fontSize: '0.68rem', color: isEnabled ? '#059669' : '#94a3b8', fontWeight: 700 }}>
-                                {isEnabled ? '🟢 Active Module' : '⚪ Disabled'}
-                              </span>
-                            </div>
+                            <span style={{ fontSize: '0.68rem', color: '#94a3b8', fontWeight: 600 }}>
+                              {isEnabled ? 'Enabled' : 'Disabled'}
+                            </span>
                           </div>
 
                           {/* Toggle Switch */}
-                          <label style={{ position: 'relative', display: 'inline-block', width: 40, height: 22, cursor: 'pointer' }}>
+                          <label style={{ position: 'relative', display: 'inline-block', width: 38, height: 20, cursor: 'pointer' }}>
                             <input
                               type="checkbox"
                               checked={isEnabled}
@@ -760,7 +756,7 @@ export default function PackagesPage() {
                               style={{
                                 position: 'absolute',
                                 inset: 0,
-                                background: isEnabled ? '#2563eb' : '#cbd5e1',
+                                background: isEnabled ? '#0f172a' : '#cbd5e1',
                                 borderRadius: 20,
                                 transition: '0.2s',
                               }}
@@ -768,8 +764,8 @@ export default function PackagesPage() {
                               <span
                                 style={{
                                   position: 'absolute',
-                                  height: 16,
-                                  width: 16,
+                                  height: 14,
+                                  width: 14,
                                   left: isEnabled ? 20 : 3,
                                   bottom: 3,
                                   background: '#ffffff',
@@ -785,16 +781,16 @@ export default function PackagesPage() {
                         {isEnabled && (
                           <div style={{ background: '#f8fafc', padding: '8px 10px', borderRadius: 8, border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                             <span style={{ fontSize: '0.72rem', color: '#475569', fontWeight: 600 }}>
-                              Max Accounts for this channel:
+                              Max accounts for this channel
                             </span>
                             <input
                               type="number"
                               min="0"
                               className="form-input"
-                              placeholder="Default (Package limit)"
+                              placeholder="Default"
                               value={customBotLimit}
                               onChange={(e) => handleModuleLimitChange(mod.key, 'max_bot_accounts', e.target.value)}
-                              style={{ width: 130, height: 28, fontSize: '0.72rem', background: '#ffffff' }}
+                              style={{ width: 110, height: 28, fontSize: '0.72rem', background: '#ffffff' }}
                             />
                           </div>
                         )}
@@ -804,77 +800,98 @@ export default function PackagesPage() {
                 </div>
               </div>
 
-              {/* ⚡ 2B. Platform Features & Automations */}
+              {/* Platform Features & Automations */}
               <div>
-                <div style={{ fontSize: '0.74rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#94a3b8', marginBottom: 10 }}>
-                  ⚡ Platform Features & Automations ({featureModules.length})
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#94a3b8', marginBottom: 10 }}>
+                  Platform Features & Automations ({featureModules.length})
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 12 }}>
                   {featureModules.map((mod) => {
                     const pkgMod = form.modules.find((m) => m.key === mod.key);
                     const isEnabled = pkgMod ? pkgMod.isEnabled : true;
+                    const limitConfig = FEATURE_LIMIT_FIELDS[mod.key];
+                    const limitValue = limitConfig
+                      ? (limitConfig.onPackageField ? form[limitConfig.field] : (pkgMod?.limits?.[limitConfig.field] ?? ''))
+                      : null;
 
                     return (
                       <div
                         key={mod.key}
                         style={{
                           padding: '14px',
-                          borderRadius: 12,
-                          border: `1px solid ${isEnabled ? '#93c5fd' : '#e2e8f0'}`,
+                          borderRadius: 10,
+                          border: `1px solid ${isEnabled ? '#cbd5e1' : '#e2e8f0'}`,
                           background: isEnabled ? '#ffffff' : '#fafafa',
-                          boxShadow: isEnabled ? '0 1px 4px rgba(37, 99, 235, 0.06)' : 'none',
                           display: 'flex',
-                          alignItems: 'flex-start',
-                          justifyContent: 'space-between',
+                          flexDirection: 'column',
                           gap: 10,
                         }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                          <div style={{ width: 34, height: 34, borderRadius: 8, background: isEnabled ? '#2563eb' : '#cbd5e1', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 2 }}>
-                            <Sparkles size={16} />
-                          </div>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
                           <div>
-                            <div style={{ fontSize: '0.84rem', fontWeight: 800, color: isEnabled ? '#0f172a' : '#94a3b8' }}>
+                            <div style={{ fontSize: '0.84rem', fontWeight: 700, color: isEnabled ? '#0f172a' : '#94a3b8' }}>
                               {mod.display_name}
                             </div>
-                            <p style={{ fontSize: '0.72rem', color: '#64748b', margin: '2px 0 0 0', lineHeight: 1.3 }}>
+                            <p style={{ fontSize: '0.72rem', color: '#94a3b8', margin: '2px 0 0 0', lineHeight: 1.3 }}>
                               {mod.description}
                             </p>
                           </div>
-                        </div>
 
-                        {/* Toggle Switch */}
-                        <label style={{ position: 'relative', display: 'inline-block', width: 40, height: 22, cursor: 'pointer', flexShrink: 0 }}>
-                          <input
-                            type="checkbox"
-                            checked={isEnabled}
-                            onChange={() => handleModuleToggle(mod.key)}
-                            style={{ opacity: 0, width: 0, height: 0 }}
-                          />
-                          <span
-                            style={{
-                              position: 'absolute',
-                              inset: 0,
-                              background: isEnabled ? '#2563eb' : '#cbd5e1',
-                              borderRadius: 20,
-                              transition: '0.2s',
-                            }}
-                          >
+                          {/* Toggle Switch */}
+                          <label style={{ position: 'relative', display: 'inline-block', width: 38, height: 20, cursor: 'pointer', flexShrink: 0 }}>
+                            <input
+                              type="checkbox"
+                              checked={isEnabled}
+                              onChange={() => handleModuleToggle(mod.key)}
+                              style={{ opacity: 0, width: 0, height: 0 }}
+                            />
                             <span
                               style={{
                                 position: 'absolute',
-                                height: 16,
-                                width: 16,
-                                left: isEnabled ? 20 : 3,
-                                bottom: 3,
-                                background: '#ffffff',
-                                borderRadius: '50%',
+                                inset: 0,
+                                background: isEnabled ? '#0f172a' : '#cbd5e1',
+                                borderRadius: 20,
                                 transition: '0.2s',
                               }}
+                            >
+                              <span
+                                style={{
+                                  position: 'absolute',
+                                  height: 14,
+                                  width: 14,
+                                  left: isEnabled ? 20 : 3,
+                                  bottom: 3,
+                                  background: '#ffffff',
+                                  borderRadius: '50%',
+                                  transition: '0.2s',
+                                }}
+                              />
+                            </span>
+                          </label>
+                        </div>
+
+                        {/* Numeric limit input, for features that have one */}
+                        {isEnabled && limitConfig && (
+                          <div style={{ background: '#f8fafc', padding: '8px 10px', borderRadius: 8, border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                            <span style={{ fontSize: '0.72rem', color: '#475569', fontWeight: 600 }}>
+                              {limitConfig.label} (blank = unlimited)
+                            </span>
+                            <input
+                              type="number"
+                              min="0"
+                              className="form-input"
+                              placeholder="Unlimited"
+                              value={limitValue === null ? '' : limitValue}
+                              onChange={(e) =>
+                                limitConfig.onPackageField
+                                  ? handlePackageFieldLimitChange(limitConfig.field, e.target.value)
+                                  : handleModuleLimitChange(mod.key, limitConfig.field, e.target.value)
+                              }
+                              style={{ width: 110, height: 28, fontSize: '0.72rem', background: '#ffffff' }}
                             />
-                          </span>
-                        </label>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -891,20 +908,19 @@ export default function PackagesPage() {
                 style={{
                   padding: '9px 24px',
                   borderRadius: 8,
-                  background: '#2563eb',
+                  background: '#0f172a',
                   color: '#ffffff',
                   border: 'none',
                   fontSize: '0.84rem',
-                  fontWeight: 800,
+                  fontWeight: 700,
                   cursor: saving ? 'not-allowed' : 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 6,
-                  boxShadow: '0 4px 12px rgba(37, 99, 235, 0.25)',
                 }}
               >
                 <Save size={15} />
-                {saving ? 'Saving Changes...' : 'Save Package & Modules Matrix'}
+                {saving ? 'Saving Changes...' : 'Save Package'}
               </button>
             </div>
           </div>
@@ -916,8 +932,8 @@ export default function PackagesPage() {
             <div style={{ background: '#ffffff', borderRadius: 14, width: '100%', maxWidth: 480, overflow: 'hidden', boxShadow: '0 20px 40px rgba(0,0,0,0.25)' }}>
               <div style={{ padding: '16px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Users size={16} color="#2563eb" />
-                  <h3 style={{ fontSize: '0.98rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>
+                  <Users size={16} color="#64748b" />
+                  <h3 style={{ fontSize: '0.98rem', fontWeight: 700, color: '#0f172a', margin: 0 }}>
                     Assign Package: {form.name}
                   </h3>
                 </div>
@@ -973,7 +989,7 @@ export default function PackagesPage() {
                   <button
                     type="submit"
                     disabled={assigning}
-                    style={{ padding: '8px 18px', borderRadius: 8, background: '#2563eb', color: '#ffffff', border: 'none', fontSize: '0.8rem', fontWeight: 800, cursor: assigning ? 'not-allowed' : 'pointer' }}
+                    style={{ padding: '8px 18px', borderRadius: 8, background: '#0f172a', color: '#ffffff', border: 'none', fontSize: '0.8rem', fontWeight: 700, cursor: assigning ? 'not-allowed' : 'pointer' }}
                   >
                     {assigning ? 'Assigning...' : 'Confirm Assignment'}
                   </button>

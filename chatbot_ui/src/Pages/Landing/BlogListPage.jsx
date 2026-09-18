@@ -1,10 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router';
-import { useAuth } from '../../Provider/AuthContext';
 import { blogAPI } from '../../services/api';
-import { MessageSquare, Search, Clock, Eye, ChevronLeft, ChevronRight, ArrowRight, Star, LayoutDashboard } from 'lucide-react';
-import './landing.css';
-import './blog.css';
+import { MessageSquare, Search, Clock, Eye, ChevronLeft, ChevronRight, Star } from 'lucide-react';
 
 function formatDate(str) {
   if (!str) return '';
@@ -51,7 +48,6 @@ function PostCard({ post, featured }) {
 }
 
 export default function BlogListPage() {
-  const { user } = useAuth();
   const [posts, setPosts]           = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading]       = useState(true);
@@ -60,8 +56,6 @@ export default function BlogListPage() {
   const [category, setCategory]     = useState('');
   const [page, setPage]             = useState(1);
   const [pagination, setPagination] = useState({ total: 0, pages: 1 });
-
-  const dashboardPath = user?.role === 'ADMIN' ? '/admin' : '/agency';
 
   useEffect(() => {
     blogAPI.categories().then((r) => setCategories(r.data?.categories || [])).catch(() => {});
@@ -88,36 +82,7 @@ export default function BlogListPage() {
   const regularPosts  = posts.filter((p) => !p.is_featured);
 
   return (
-    <div className="lp-wrapper">
-      {/* ── Navbar ─────────────────────────────────────── */}
-      <nav className="lp-navbar">
-        <div className="lp-container">
-          <div className="lp-nav-inner">
-            <Link to="/" className="lp-logo">
-              <div className="lp-logo-icon"><MessageSquare size={20} /></div>
-              <span>Nexa AI Chat</span>
-            </Link>
-            <div className="lp-nav-links">
-              <Link to="/" className="lp-nav-link">Home</Link>
-              <a href="/#features" className="lp-nav-link">Features</a>
-              <Link to="/blog" className="lp-nav-link" style={{ color: '#6366f1', fontWeight: 700 }}>Blog</Link>
-            </div>
-            <div className="lp-nav-actions">
-              {user ? (
-                <Link to={dashboardPath} className="lp-btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                  <LayoutDashboard size={16} /> Dashboard
-                </Link>
-              ) : (
-                <>
-                  <Link to="/login" className="lp-btn-login">Sign In</Link>
-                  <Link to="/register" className="lp-btn-primary">Get Started <ArrowRight size={16} /></Link>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      </nav>
-
+    <>
       {/* ── Hero ──────────────────────────────────────── */}
       <section className="blog-list-hero">
         <div className="lp-container">
@@ -192,30 +157,6 @@ export default function BlogListPage() {
           )}
         </div>
       </section>
-
-      {/* ── Footer ──────────────────────────────────────── */}
-      <footer className="lp-footer">
-        <div className="lp-container">
-          <div className="lp-footer-top">
-            <Link to="/" className="lp-footer-logo">
-              <div className="lp-logo-icon" style={{ width: 32, height: 32 }}><MessageSquare size={16} /></div>
-              <span>Nexa AI Chat</span>
-            </Link>
-            <div className="lp-footer-links">
-              <Link to="/" className="lp-footer-link">Home</Link>
-              <Link to="/blog" className="lp-footer-link">Blog</Link>
-              <Link to="/privacy-policy" className="lp-footer-link">Privacy Policy</Link>
-              <Link to="/terms-of-service" className="lp-footer-link">Terms of Service</Link>
-              {user ? (
-                <Link to={dashboardPath} className="lp-footer-link">Dashboard</Link>
-              ) : (
-                <Link to="/login" className="lp-footer-link">Sign In</Link>
-              )}
-            </div>
-          </div>
-          <div className="lp-footer-bottom">&copy; {new Date().getFullYear()} Nexa AI Chat. All rights reserved.</div>
-        </div>
-      </footer>
-    </div>
+    </>
   );
 }

@@ -1,13 +1,7 @@
 import { useRef, useState } from 'react';
 import { X, Upload, Loader2, Palette } from 'lucide-react';
 import { uploadAPI } from '../../services/api';
-
-const backendUrl = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace('/api/v1', '') : 'http://localhost:5000';
-
-function resolveAssetUrl(url) {
-  if (!url) return '';
-  return url.startsWith('http') || url.startsWith('data:') ? url : `${backendUrl}${url.startsWith('/') ? '' : '/'}${url}`;
-}
+import { resolveAssetUrl } from '../../utils/assetUrl';
 
 // A color swatch + hex text field, built out of Flow Builder's own `.fb-field`
 // input styling (no color-picker component exists anywhere else in this
@@ -139,7 +133,12 @@ export default function WidgetAppearancePanel({ open, onClose, form, onChange })
           <label>Logo</label>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             {form.logoUrl ? (
-              <img src={resolveAssetUrl(form.logoUrl)} alt="" style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', border: '1px solid #e2e8f0' }} />
+              <img
+                src={resolveAssetUrl(form.logoUrl)}
+                alt=""
+                style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', border: '1px solid #e2e8f0' }}
+                onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}
+              />
             ) : (
               <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#f1f5f9', flexShrink: 0 }} />
             )}
@@ -209,6 +208,19 @@ export default function WidgetAppearancePanel({ open, onClose, form, onChange })
         <div className="fb-field">
           <label>Button Size</label>
           <PillGroup options={SIZE_OPTIONS} value={form.buttonSize} onChange={set('buttonSize')} />
+        </div>
+
+        <div className="fb-field">
+          <label>Website</label>
+          <input
+            type="text"
+            value={form.allowedDomains || ''}
+            onChange={(e) => set('allowedDomains')(e.target.value)}
+            placeholder="example.com"
+          />
+          <span className="fb-hint">
+            {form.allowedDomains ? 'Comma-separate to allow more than one site. Subdomains are always included.' : '⚠ No website set — this widget is currently disabled everywhere until one is added.'}
+          </span>
         </div>
 
         <span className="fb-hint">Changes here save together with the flow — use the Save button in the top bar.</span>

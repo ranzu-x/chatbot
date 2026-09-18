@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import AppLayout from '../../Layout/AppLayout';
-import { channelAPI } from '../../services/api';
+import ChannelBreadcrumb from '../../Components/Common/ChannelBreadcrumb';
+import { channelAPI, metaAppAPI } from '../../services/api';
 import { useAuth } from '../../Provider/AuthContext';
 import useFacebookSDK from '../../hooks/useFacebookSDK';
-import { showAlert, notify } from '../../utils/alerts';
+import { showAlert, notify, handleLimitError } from '../../utils/alerts';
+import { getBackendOrigin } from '../../utils/assetUrl';
 import {
   MessageCircle,
   Plus,
@@ -12,7 +14,6 @@ import {
   Zap,
   Key,
   RefreshCw,
-  Shield,
   Copy,
   Check,
   Eye,
@@ -26,9 +27,15 @@ import {
   Repeat,
   ShoppingBag,
   ExternalLink,
+  Star,
+  X,
+  BookOpen,
 } from 'lucide-react';
 
-const BACKEND_URL = import.meta.env.VITE_API_URL?.replace('/api/v1', '') || 'http://localhost:5000';
+// Target of the "Tutorial" button on the Connect WhatsApp screen. Point this
+// at the specific post (e.g. '/blog/connect-whatsapp-cloud-api') once it's
+// written — until then it lands on the blog index.
+const WHATSAPP_TUTORIAL_URL = '/blog';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Small helper: copy-to-clipboard button
@@ -83,8 +90,30 @@ function ReadonlyField({ label, value, hint }) {
   );
 }
 
+// Numbered heading for the two halves of manual setup — the order matters
+// (credentials first, then the webhook that points Meta back at them), so
+// the steps are numbered rather than decorated with icons.
+function StepHeading({ step, title, subtitle }) {
+  return (
+    <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 18, paddingBottom: 14, borderBottom: '1px solid #f1f5f9' }}>
+      <span style={{
+        flexShrink: 0, width: 22, height: 22, borderRadius: '50%',
+        background: '#0f172a', color: '#fff', fontSize: '0.72rem', fontWeight: 700,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginTop: 1,
+      }}>
+        {step}
+      </span>
+      <div>
+        <h3 style={{ margin: 0, fontSize: '0.92rem', fontWeight: 700, color: '#0f172a' }}>{title}</h3>
+        <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: '#64748b', lineHeight: 1.45 }}>{subtitle}</p>
+      </div>
+    </div>
+  );
+}
+
+
 // ─────────────────────────────────────────────────────────────────────────────
-// StatusBadge
+// StatusBadge & WA Metric Formatters
 // ─────────────────────────────────────────────────────────────────────────────
 function StatusBadge({ label, color = '#10b981', bg = 'rgba(16,185,129,0.1)' }) {
   return (
@@ -99,16 +128,69 @@ function StatusBadge({ label, color = '#10b981', bg = 'rgba(16,185,129,0.1)' }) 
   );
 }
 
+function formatQuality(rating) {
+  const r = (rating || '').toUpperCase();
+  if (r === 'GREEN') {
+    return { label: 'High', color: '#16a34a', bg: 'rgba(22,163,74,0.1)', border: 'rgba(22,163,74,0.2)' };
+  }
+  if (r === 'YELLOW') {
+    return { label: 'Medium', color: '#d97706', bg: 'rgba(217,119,6,0.1)', border: 'rgba(217,119,6,0.2)' };
+  }
+  if (r === 'RED') {
+    return { label: 'Low', color: '#dc2626', bg: 'rgba(220,38,38,0.1)', border: 'rgba(220,38,38,0.2)' };
+  }
+  return { label: rating || 'Unrated', color: '#64748b', bg: '#f1f5f9', border: '#e2e8f0' };
+}
+
+function formatMessagingLimit(tier) {
+  if (!tier) return '250 / 24h';
+  const t = tier.toUpperCase();
+  if (t === 'TIER_50') return '50 / 24h';
+  if (t === 'TIER_250') return '250 / 24h';
+  if (t === 'TIER_1K') return '1K / 24h';
+  if (t === 'TIER_10K') return '10K / 24h';
+  if (t === 'TIER_100K') return '100K / 24h';
+  if (t === 'TIER_UNLIMITED') return 'Unlimited';
+  return t.replace('TIER_', '') + ' / 24h';
+}
+
+function formatMMStatus(status) {
+  const s = (status || 'ELIGIBLE').toUpperCase();
+  if (s === 'ELIGIBLE' || s === 'ACTIVE') {
+    return { label: 'Eligible', color: '#059669', bg: 'rgba(5,150,105,0.1)', border: 'rgba(5,150,105,0.2)' };
+  }
+  if (s === 'PAUSED') {
+    return { label: 'Paused', color: '#d97706', bg: 'rgba(217,119,6,0.1)', border: 'rgba(217,119,6,0.2)' };
+  }
+  if (s === 'RESTRICTED') {
+    return { label: 'Restricted', color: '#dc2626', bg: 'rgba(220,38,38,0.1)', border: 'rgba(220,38,38,0.2)' };
+  }
+  return { label: s, color: '#6366f1', bg: 'rgba(99,102,241,0.1)', border: 'rgba(99,102,241,0.2)' };
+}
+
+function formatLastSync(dateString) {
+  if (!dateString) return 'Never';
+  const d = new Date(dateString);
+  if (isNaN(d.getTime())) return 'Never';
+  const now = new Date();
+  const diffSec = Math.floor((now - d) / 1000);
+  if (diffSec < 60) return 'Just now';
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Component
 // ─────────────────────────────────────────────────────────────────────────────
 export default function WhatsAppPage({ embedded = false }) {
   const { user } = useAuth();
-  const { fbReady, appId, configId, configIdCatalog } = useFacebookSDK();
+  const { fbReady, appId, configId, configIdCatalog } = useFacebookSDK('WHATSAPP');
 
   // Data
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [syncingId, setSyncingId] = useState(null);
 
   // UI flow state
   // 'list' | 'choose_method' | 'manual' | 'embedded_catalog_select' | 'embedded_connecting'
@@ -128,16 +210,22 @@ export default function WhatsAppPage({ embedded = false }) {
   // Configuration ID gets used depends on the Step 2 choice below.
   const effectiveConfigId = withCatalog ? configIdCatalog : configId;
 
-  // Manual form
+  // Manual form — only the Business Account ID + Access Token are actually
+  // needed; the backend resolves the phone number (and its display name)
+  // from Meta's Graph API using those two.
   const [manualForm, setManualForm] = useState({
-    name: '',
-    waPhoneNumberId: '',
-    waDisplayPhone: '',
     waBusinessAccId: '',
     accessToken: '',
+    appSecret: '',
     verifyToken: '',
   });
   const [showToken, setShowToken] = useState(false);
+
+  // Edit Credentials modal
+  const [editModal, setEditModal] = useState(null);
+  const [editForm, setEditForm] = useState({ accessToken: '' });
+  const [showEditToken, setShowEditToken] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   // Activate / Register modal
   const [activateModal, setActivateModal] = useState(null);
@@ -145,8 +233,32 @@ export default function WhatsAppPage({ embedded = false }) {
   const [activating, setActivating] = useState(false);
   const pinInputRef = useRef(null);
 
+  // The webhook URL/verify token shown here must match /settings/meta-app's
+  // agency-level webhook config exactly — both hit the same
+  // POST /api/v1/webhook/:agencyId endpoint, verified against the SAME
+  // meta_app_settings.verify_token. Previously this page generated its own
+  // random verify token, which almost never matched what was actually saved
+  // in Meta's Dashboard, causing every webhook POST to look "unconfigured".
+  // The host is taken from the page's own origin when it's already public
+  // (https, i.e. served through the tunnel/domain Meta can reach).
+  const publicDomain = window.location.protocol === 'https:' ? window.location.origin : getBackendOrigin();
+  const [agencyVerifyToken, setAgencyVerifyToken] = useState('');
+  // Fallback verify token, generated once per page session and only used when
+  // the agency has none configured on /settings/meta-app. Lives here rather
+  // than inside ManualView so that view stays hook-free (see its comment).
+  const [fallbackVerifyToken] = useState(() => `verify_${user?.agencyId || 'token'}_${Math.random().toString(36).slice(2, 9)}`);
+  useEffect(() => {
+    metaAppAPI.get()
+      .then(res => {
+        const token = res.data?.settings?.verify_token || res.data?.generatedVerifyToken;
+        if (token) setAgencyVerifyToken(token);
+      })
+      .catch(() => {});
+  }, []);
+
   // Derived values
-  const webhookUrl = `${BACKEND_URL}/api/v1/webhook/${user?.agencyId || '{agencyId}'}`;
+  const cleanPublicDomain = publicDomain.trim().replace(/\/+$/, '');
+  const webhookUrl = `${cleanPublicDomain}/api/v1/webhook/${user?.agencyId || '{agencyId}'}`;
 
   // ── Fetch accounts ──────────────────────────────────────────────────────────
   const fetchAccounts = useCallback(async () => {
@@ -160,6 +272,24 @@ export default function WhatsAppPage({ embedded = false }) {
       setLoading(false);
     }
   }, []);
+
+  // ── Sync individual account metrics with Meta Cloud API ───────────────────────
+  const handleSync = async (id) => {
+    setSyncingId(id);
+    try {
+      const res = await channelAPI.syncWhatsApp(id);
+      if (res.data?.account) {
+        setAccounts(prev => prev.map(a => a.id === id ? { ...a, ...res.data.account } : a));
+      } else {
+        await fetchAccounts();
+      }
+      notify.success('WhatsApp metrics synced successfully with Meta');
+    } catch (err) {
+      notify.error(err.response?.data?.message || 'Failed to sync with Meta');
+    } finally {
+      setSyncingId(null);
+    }
+  };
 
   useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
 
@@ -272,7 +402,9 @@ export default function WhatsAppPage({ embedded = false }) {
                 fetchAccounts();
               })
               .catch((err) => {
-                notify.error(err?.response?.data?.message || 'Failed to complete WhatsApp connection.');
+                if (!handleLimitError(err, { userRole: user?.role })) {
+                  notify.error(err?.response?.data?.message || 'Failed to complete WhatsApp connection.');
+                }
                 setView('embedded_catalog_select');
               })
               .finally(() => setConnecting(false));
@@ -306,22 +438,51 @@ export default function WhatsAppPage({ embedded = false }) {
   };
 
   // ── Manual Form Submit ──────────────────────────────────────────────────────
-  const handleManualSubmit = async (e) => {
+  const handleManualSubmit = async (e, vt) => {
     e.preventDefault();
     setConnecting(true);
     try {
       await channelAPI.addWhatsApp({
-        ...manualForm,
-        verifyToken: manualForm.verifyToken || `verify_${Date.now()}`,
+        waBusinessAccId: manualForm.waBusinessAccId,
+        accessToken: manualForm.accessToken,
+        verifyToken: vt || manualForm.verifyToken || agencyVerifyToken || `verify_${Date.now()}`,
       });
       notify.success('WhatsApp account connected successfully!');
-      setManualForm({ name: '', waPhoneNumberId: '', waDisplayPhone: '', waBusinessAccId: '', accessToken: '', verifyToken: '' });
+      setManualForm({ waBusinessAccId: '', accessToken: '', appSecret: '', verifyToken: '' });
       setView('list');
       fetchAccounts();
     } catch (err) {
-      notify.error(err?.response?.data?.message || 'Failed to connect WhatsApp');
+      if (!handleLimitError(err, { userRole: user?.role })) {
+        notify.error(err?.response?.data?.message || 'Failed to connect WhatsApp');
+      }
     } finally {
       setConnecting(false);
+    }
+  };
+
+  // ── Edit Credentials Modal ─────────────────────────────────────────────────
+  const openEditModal = (acc) => {
+    setEditForm({
+      accessToken: (acc.access_token && acc.access_token !== 'embedded_token' && acc.access_token !== 'manual_placeholder')
+        ? acc.access_token : '',
+    });
+    setEditModal(acc);
+  };
+
+  const handleEditSubmit = async (e) => {
+    e.preventDefault();
+    setSavingEdit(true);
+    try {
+      await channelAPI.updateWhatsAppCredentials(editModal.id, {
+        accessToken: editForm.accessToken,
+      });
+      notify.success('WhatsApp Access Token updated successfully!');
+      setEditModal(null);
+      fetchAccounts();
+    } catch (err) {
+      notify.error(err?.response?.data?.message || 'Failed to update credentials');
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -422,7 +583,7 @@ export default function WhatsAppPage({ embedded = false }) {
               Manual Cloud API Setup
             </h3>
             <p style={{ margin: '0 0 14px', fontSize: '0.8rem', color: '#64748b', lineHeight: 1.5 }}>
-              For developers who already have a WhatsApp Business Account. Enter your Phone Number ID, Business Account ID and Access Token directly.
+              For developers who already have a WhatsApp Business Account. Enter your Business Account ID and Access Token — the phone number is detected automatically.
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               {['Direct credential entry', 'Pre-configured Webhook URL & Verify Token', 'Works with existing WABA'].map(f => (
@@ -432,8 +593,33 @@ export default function WhatsAppPage({ embedded = false }) {
               ))}
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', fontWeight: 700, color: '#475569', marginTop: 'auto' }}>
-            Manual Setup <ArrowRight size={14} />
+          {/* stopPropagation on both: the whole card is clickable, and the
+              Tutorial link must open the guide without also switching views. */}
+          <div style={{ display: 'flex', gap: 8, marginTop: 'auto' }}>
+            <button
+              type="button"
+              onClick={e => { e.stopPropagation(); setView('manual'); }}
+              style={{
+                flex: 1, height: 38, borderRadius: 9, border: 'none', cursor: 'pointer',
+                background: '#0f172a', color: '#fff', fontSize: '0.82rem', fontWeight: 700,
+              }}
+            >
+              Manual Setup
+            </button>
+            <a
+              href={WHATSAPP_TUTORIAL_URL}
+              target="_blank"
+              rel="noreferrer"
+              onClick={e => e.stopPropagation()}
+              style={{
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                height: 38, padding: '0 14px', borderRadius: 9, border: '1px solid #cbd5e1',
+                background: '#fff', color: '#475569', fontSize: '0.82rem', fontWeight: 700,
+                textDecoration: 'none', whiteSpace: 'nowrap',
+              }}
+            >
+              <BookOpen size={14} /> Tutorial
+            </a>
           </div>
         </div>
 
@@ -453,8 +639,8 @@ export default function WhatsAppPage({ embedded = false }) {
             <div style={{ width: 46, height: 46, borderRadius: 12, background: 'rgba(37,211,102,0.12)', color: '#25d366', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Zap size={22} />
             </div>
-            <span style={{ fontSize: '0.7rem', fontWeight: 700, background: 'rgba(37,211,102,0.1)', color: '#16a34a', padding: '3px 8px', borderRadius: 8, textTransform: 'uppercase' }}>
-              ⭐ Recommended
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 700, background: 'rgba(37,211,102,0.1)', color: '#16a34a', padding: '3px 8px', borderRadius: 8, textTransform: 'uppercase' }}>
+              <Star size={11} fill="currentColor" /> Recommended
             </span>
           </div>
           <div>
@@ -472,8 +658,17 @@ export default function WhatsAppPage({ embedded = false }) {
               ))}
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', fontWeight: 700, color: '#16a34a', marginTop: 'auto' }}>
-            Start Embedded Signup <ArrowRight size={14} />
+          <div style={{ marginTop: 'auto' }}>
+            <button
+              type="button"
+              onClick={e => { e.stopPropagation(); setView('embedded_catalog_select'); }}
+              style={{
+                width: '100%', height: 38, borderRadius: 9, border: 'none', cursor: 'pointer',
+                background: '#25d366', color: '#fff', fontSize: '0.82rem', fontWeight: 700,
+              }}
+            >
+              Start Embedded Signup
+            </button>
           </div>
         </div>
 
@@ -482,187 +677,173 @@ export default function WhatsAppPage({ embedded = false }) {
   );
 
   // ── VIEW: Manual Setup ──────────────────────────────────────────────────────
+  // Invoked as a plain function, never used as a JSX element: a component
+  // declared inside another component gets a new identity on every render,
+  // so React unmounts and remounts the whole subtree on each keystroke and
+  // the focused input goes dead after one character. Calling it inlines the
+  // JSX into this component's own output, keeping the inputs mounted.
   const ManualView = () => {
-    // Generate a default verify token once for this form session
-    const [defaultVerifyToken] = useState(`verify_${user?.agencyId || 'token'}_${Math.random().toString(36).slice(2, 9)}`);
-    const vt = manualForm.verifyToken || defaultVerifyToken;
+    const vt = agencyVerifyToken || fallbackVerifyToken;
 
     return (
-      <div style={{ maxWidth: 560 }}>
-        <button onClick={() => setView('choose_method')} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.8rem', marginBottom: 20, padding: 0 }}>
-          <ArrowLeft size={14} /> Back
+      <div style={{ maxWidth: 1060, margin: '0 auto' }}>
+        <button
+          onClick={() => setView('choose_method')}
+          style={{
+            background: 'none', border: 'none', color: '#64748b', cursor: 'pointer',
+            display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.82rem',
+            fontWeight: 600, marginBottom: 18, padding: 0,
+          }}
+        >
+          <ArrowLeft size={15} /> Back to connection methods
         </button>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-          <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(100,116,139,0.1)', color: '#475569', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Key size={18} />
-          </div>
-          <div>
-            <h2 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0f172a' }}>Manual Cloud API Setup</h2>
-            <p style={{ margin: 0, fontSize: '0.74rem', color: '#64748b' }}>Enter credentials from your Meta WhatsApp Business account</p>
-          </div>
+        <div style={{ marginBottom: 24 }}>
+          <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.01em' }}>
+            Manual Cloud API Setup
+          </h2>
+          <p style={{ margin: '4px 0 0', fontSize: '0.82rem', color: '#64748b', lineHeight: 1.5, maxWidth: 620 }}>
+            Connect an existing WhatsApp Business Account in two steps: enter your credentials, then point Meta&apos;s
+            webhook back at this workspace. Your phone number is detected automatically.
+          </p>
         </div>
 
-        {/* Webhook info banner */}
-        <div style={{ background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 10, padding: '14px 16px', marginBottom: 20, marginTop: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8rem', color: '#4f46e5', marginBottom: 8 }}>
-            <Shield size={14} /> Webhook Configuration — Copy these into your Meta Dashboard
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <ReadonlyField
-              label="Webhook Callback URL"
-              value={webhookUrl}
-              hint="Paste this URL in Meta App Dashboard → WhatsApp → Configuration → Webhook"
+        {/* Side-by-side grid: Left = Form, Right = Webhook config */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))',
+          gap: 24,
+          alignItems: 'start',
+        }}>
+          {/* Left: Credentials Form */}
+          <div style={{
+            background: '#fff',
+            borderRadius: 14,
+            border: '1px solid #e2e8f0',
+            boxShadow: '0 1px 4px rgba(0,0,0,0.04)',
+            padding: 24,
+          }}>
+            <StepHeading
+              step={1}
+              title="Account credentials"
+              subtitle="From Meta App Dashboard → WhatsApp → API Setup."
             />
-            <ReadonlyField
-              label="Verify Token"
-              value={vt}
-              hint="Copy this and paste it as the Verify Token in Meta Dashboard. Save it — it must match."
-            />
+
+            <form onSubmit={(e) => handleManualSubmit(e, vt)} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: '#334155', marginBottom: 6 }}>
+                  WhatsApp Business Account ID <span style={{ color: '#dc2626' }}>*</span>
+                </label>
+                <input
+                  required
+                  className="form-input w-full"
+                  placeholder="e.g. 987654321012345"
+                  value={manualForm.waBusinessAccId}
+                  onChange={e => setManualForm(p => ({ ...p, waBusinessAccId: e.target.value }))}
+                  style={{ height: 38, fontSize: '0.84rem', fontFamily: 'monospace' }}
+                />
+                <p style={{ margin: '4px 0 0', fontSize: '0.7rem', color: '#94a3b8' }}>
+                  Found in Meta App Dashboard → WhatsApp → Overview or API Setup.
+                </p>
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <label style={{ fontSize: '0.78rem', fontWeight: 700, color: '#334155' }}>
+                    Access Token <span style={{ color: '#dc2626' }}>*</span>
+                  </label>
+                  <a
+                    href="https://developers.facebook.com/apps"
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ fontSize: '0.72rem', color: '#6366f1', textDecoration: 'none', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 }}
+                  >
+                    Get Token <ExternalLink size={10} />
+                  </a>
+                </div>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    required
+                    type={showToken ? 'text' : 'password'}
+                    className="form-input w-full"
+                    placeholder="EAAG... (starts with EAA)"
+                    value={manualForm.accessToken}
+                    onChange={e => setManualForm(p => ({ ...p, accessToken: e.target.value }))}
+                    style={{ height: 38, fontSize: '0.84rem', fontFamily: 'monospace', paddingRight: 38 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowToken(v => !v)}
+                    style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 4 }}
+                  >
+                    {showToken ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </div>
+                <p style={{ margin: '4px 0 0', fontSize: '0.7rem', color: '#94a3b8' }}>
+                  Paste your Permanent System User Access Token from Meta App Dashboard → WhatsApp → API Setup.
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 12, borderTop: '1px solid #f1f5f9', marginTop: 4 }}>
+                <button type="button" onClick={() => setView('choose_method')} className="btn btn-secondary btn-sm">
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={connecting}
+                  className="btn btn-primary btn-sm"
+                  style={{ background: '#0f172a', borderColor: '#0f172a', fontWeight: 700, minWidth: 130 }}
+                >
+                  {connecting ? 'Connecting...' : 'Connect WhatsApp'}
+                </button>
+              </div>
+            </form>
           </div>
-          <a
-            href="https://developers.facebook.com/apps"
-            target="_blank"
-            rel="noreferrer"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginTop: 8, fontSize: '0.72rem', color: '#6366f1', textDecoration: 'none', fontWeight: 600 }}
-          >
-            Open Meta App Dashboard <ExternalLink size={11} />
-          </a>
+
+          {/* Right: webhook values to paste into Meta */}
+          <div style={{
+            background: '#fff',
+            borderRadius: 14,
+            border: '1px solid #e2e8f0',
+            boxShadow: '0 1px 4px rgba(0,0,0,0.04)',
+            padding: 24,
+          }}>
+            <StepHeading
+              step={2}
+              title="Point Meta's webhook here"
+              subtitle="In Meta App Dashboard → WhatsApp → Configuration → Webhook, click Edit and paste both values below."
+            />
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <ReadonlyField label="Callback URL" value={webhookUrl} />
+              <ReadonlyField label="Verify Token" value={vt} />
+
+              <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: 14 }}>
+                <p style={{ margin: '0 0 8px', fontSize: '0.76rem', fontWeight: 700, color: '#334155' }}>
+                  Then subscribe to messages
+                </p>
+                <p style={{ margin: 0, fontSize: '0.75rem', color: '#64748b', lineHeight: 1.6 }}>
+                  Still under Configuration, find <strong style={{ color: '#334155' }}>Webhook fields</strong>, click{' '}
+                  <strong style={{ color: '#334155' }}>Manage</strong> and tick{' '}
+                  <strong style={{ color: '#334155' }}>messages</strong>. Without this Meta verifies the URL but never
+                  sends anything to it, so no conversations reach your inbox.
+                </p>
+                <a
+                  href="https://developers.facebook.com/apps"
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 12,
+                    fontSize: '0.78rem', color: '#334155', textDecoration: 'none', fontWeight: 700,
+                    border: '1px solid #cbd5e1', borderRadius: 8, padding: '7px 12px',
+                  }}
+                >
+                  Open Meta App Dashboard <ExternalLink size={12} />
+                </a>
+              </div>
+            </div>
+          </div>
         </div>
-
-        <form onSubmit={handleManualSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-
-          <div>
-            <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: 700, color: '#334155', marginBottom: 5 }}>
-              Account Name <span style={{ color: '#dc2626' }}>*</span>
-            </label>
-            <input
-              required
-              className="form-input w-full"
-              placeholder="e.g. Sales Support WA"
-              value={manualForm.name}
-              onChange={e => setManualForm(p => ({ ...p, name: e.target.value }))}
-              style={{ height: 36, fontSize: '0.84rem' }}
-            />
-          </div>
-
-          <div>
-            <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: 700, color: '#334155', marginBottom: 5 }}>
-              Phone Number ID <span style={{ color: '#dc2626' }}>*</span>
-            </label>
-            <input
-              required
-              className="form-input w-full"
-              placeholder="e.g. 109283746501928"
-              value={manualForm.waPhoneNumberId}
-              onChange={e => setManualForm(p => ({ ...p, waPhoneNumberId: e.target.value }))}
-              style={{ height: 36, fontSize: '0.84rem', fontFamily: 'monospace' }}
-            />
-            <p style={{ margin: '3px 0 0', fontSize: '0.68rem', color: '#94a3b8' }}>
-              Found in Meta → WhatsApp → API Setup
-            </p>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: 700, color: '#334155', marginBottom: 5 }}>
-                WhatsApp Number
-              </label>
-              <input
-                className="form-input w-full"
-                placeholder="e.g. +8801XXXXXXXXX"
-                value={manualForm.waDisplayPhone}
-                onChange={e => setManualForm(p => ({ ...p, waDisplayPhone: e.target.value }))}
-                style={{ height: 36, fontSize: '0.84rem' }}
-              />
-              <p style={{ margin: '3px 0 0', fontSize: '0.68rem', color: '#94a3b8' }}>
-                The actual phone number shown to users
-              </p>
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: 700, color: '#334155', marginBottom: 5 }}>
-                WhatsApp Business Account ID
-              </label>
-              <input
-                className="form-input w-full"
-                placeholder="e.g. 987654321012345"
-                value={manualForm.waBusinessAccId}
-                onChange={e => setManualForm(p => ({ ...p, waBusinessAccId: e.target.value }))}
-                style={{ height: 36, fontSize: '0.84rem', fontFamily: 'monospace' }}
-              />
-              <p style={{ margin: '3px 0 0', fontSize: '0.68rem', color: '#94a3b8' }}>
-                Found in Meta → WhatsApp → Overview
-              </p>
-            </div>
-          </div>
-
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
-              <label style={{ fontSize: '0.76rem', fontWeight: 700, color: '#334155' }}>
-                Access Token <span style={{ color: '#dc2626' }}>*</span>
-              </label>
-              <a
-                href="https://developers.facebook.com/apps"
-                target="_blank"
-                rel="noreferrer"
-                style={{ fontSize: '0.7rem', color: '#6366f1', textDecoration: 'none', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 }}
-              >
-                Get Token <ExternalLink size={10} />
-              </a>
-            </div>
-            <div style={{ position: 'relative' }}>
-              <input
-                required
-                type={showToken ? 'text' : 'password'}
-                className="form-input w-full"
-                placeholder="EAAG... (starts with EAA)"
-                value={manualForm.accessToken}
-                onChange={e => setManualForm(p => ({ ...p, accessToken: e.target.value }))}
-                style={{ height: 36, fontSize: '0.84rem', fontFamily: 'monospace', paddingRight: 36 }}
-              />
-              <button
-                type="button"
-                onClick={() => setShowToken(v => !v)}
-                style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 2 }}
-              >
-                {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
-              </button>
-            </div>
-            <p style={{ margin: '3px 0 0', fontSize: '0.68rem', color: '#94a3b8' }}>
-              Paste your Permanent System User Access Token from Meta App Dashboard → WhatsApp → API Setup
-            </p>
-          </div>
-
-          <div>
-            <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: 700, color: '#334155', marginBottom: 5 }}>
-              Verify Token
-            </label>
-            <input
-              className="form-input w-full"
-              placeholder={defaultVerifyToken}
-              value={manualForm.verifyToken}
-              onChange={e => setManualForm(p => ({ ...p, verifyToken: e.target.value }))}
-              style={{ height: 36, fontSize: '0.84rem', fontFamily: 'monospace' }}
-            />
-            <p style={{ margin: '3px 0 0', fontSize: '0.68rem', color: '#94a3b8' }}>
-              Leave blank to auto-generate. This must match what you put in Meta Dashboard webhook settings.
-            </p>
-          </div>
-
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 6, borderTop: '1px solid #f1f5f9' }}>
-            <button type="button" onClick={() => setView('choose_method')} className="btn btn-secondary btn-sm">
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={connecting}
-              className="btn btn-primary btn-sm"
-              style={{ background: '#0f172a', borderColor: '#0f172a', fontWeight: 700, minWidth: 120 }}
-            >
-              {connecting ? 'Connecting...' : 'Connect WhatsApp'}
-            </button>
-          </div>
-        </form>
       </div>
     );
   };
@@ -894,11 +1075,11 @@ export default function WhatsAppPage({ embedded = false }) {
             <thead>
               <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', color: '#64748b', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.5 }}>
                 <th style={{ padding: '10px 14px', fontWeight: 700 }}>Account</th>
-                <th style={{ padding: '10px 14px', fontWeight: 700 }}>WhatsApp Number / ID</th>
-                <th style={{ padding: '10px 14px', fontWeight: 700 }}>WABA ID</th>
-                <th style={{ padding: '10px 14px', fontWeight: 700 }}>Method</th>
-                <th style={{ padding: '10px 14px', fontWeight: 700 }}>Webhook URL</th>
                 <th style={{ padding: '10px 14px', fontWeight: 700 }}>Status</th>
+                <th style={{ padding: '10px 14px', fontWeight: 700 }}>Quality</th>
+                <th style={{ padding: '10px 14px', fontWeight: 700 }}>Messaging Limit</th>
+                <th style={{ padding: '10px 14px', fontWeight: 700 }}>MM Status</th>
+                <th style={{ padding: '10px 14px', fontWeight: 700 }}>Last Sync</th>
                 <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
@@ -932,53 +1113,123 @@ export default function WhatsAppPage({ embedded = false }) {
                     onMouseEnter={e => (e.currentTarget.style.background = '#fafbfe')}
                     onMouseLeave={e => (e.currentTarget.style.background = '#fff')}
                   >
-                    <td style={{ padding: '12px 14px', fontWeight: 700, color: '#0f172a' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ width: 28, height: 28, borderRadius: 6, background: 'rgba(37,211,102,0.1)', color: '#25d366', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                          <MessageCircle size={14} />
+                    {/* Account Info */}
+                    <td style={{ padding: '12px 14px', color: '#0f172a' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(37,211,102,0.1)', color: '#25d366', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <MessageCircle size={16} />
                         </span>
                         <div>
-                          <div>{acc.name || 'WhatsApp Business'}</div>
-                          {acc.with_catalog ? (
-                            <span style={{ fontSize: '0.65rem', background: 'rgba(99,102,241,0.1)', color: '#4f46e5', padding: '1px 5px', borderRadius: 6, fontWeight: 700 }}>
-                              With Catalog
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                    </td>
-                    <td style={{ padding: '12px 14px', color: '#64748b', fontFamily: 'monospace', fontSize: '0.78rem' }}>
-                      <div>
-                        {acc.wa_display_phone && (
-                          <div style={{ fontWeight: 700, color: '#0f172a', marginBottom: 2 }}>
-                            {acc.wa_display_phone}
+                          <div style={{ fontWeight: 700, fontSize: '0.86rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                            {acc.name || 'WhatsApp Business'}
+                            {acc.connection_method === 'EMBEDDED' ? (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.65rem', fontWeight: 700, background: 'rgba(37,211,102,0.1)', color: '#16a34a', padding: '1px 6px', borderRadius: 6 }}>
+                                <Zap size={9} /> Embedded
+                              </span>
+                            ) : (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '0.65rem', fontWeight: 700, background: '#f1f5f9', color: '#64748b', padding: '1px 6px', borderRadius: 6 }}>
+                                <Key size={9} /> Manual
+                              </span>
+                            )}
+                            {acc.with_catalog ? (
+                              <span style={{ fontSize: '0.65rem', background: 'rgba(99,102,241,0.1)', color: '#4f46e5', padding: '1px 5px', borderRadius: 6, fontWeight: 700 }}>
+                                Catalog
+                              </span>
+                            ) : null}
                           </div>
-                        )}
-                        <div style={{ color: acc.wa_display_phone ? '#94a3b8' : '#64748b', fontSize: acc.wa_display_phone ? '0.7rem' : '0.78rem' }}>
-                          {acc.wa_phone_number_id || '—'}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3, fontSize: '0.74rem', color: '#64748b', fontFamily: 'monospace' }}>
+                            <span style={{ fontWeight: 600, color: '#334155' }}>{acc.wa_display_phone || acc.wa_phone_number_id || '—'}</span>
+                            {acc.wa_business_acc_id && (
+                              <span style={{ color: '#94a3b8', fontSize: '0.7rem' }}>
+                                (WABA: {acc.wa_business_acc_id})
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </td>
-                    <td style={{ padding: '12px 14px', color: '#64748b', fontFamily: 'monospace', fontSize: '0.78rem' }}>
-                      {acc.wa_business_acc_id || '—'}
-                    </td>
+
+                    {/* Status */}
                     <td style={{ padding: '12px 14px' }}>
-                      {acc.connection_method === 'EMBEDDED' ? (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 700, background: 'rgba(37,211,102,0.1)', color: '#16a34a', padding: '2px 7px', borderRadius: 8 }}>
-                          <Zap size={10} /> Embedded
-                        </span>
+                      {acc.is_active ? (
+                        <StatusBadge label="Connected" color="#10b981" bg="rgba(16,185,129,0.1)" />
                       ) : (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 700, background: '#f1f5f9', color: '#475569', padding: '2px 7px', borderRadius: 8 }}>
-                          <Key size={10} /> Manual
-                        </span>
+                        <StatusBadge label="Inactive" color="#ef4444" bg="rgba(239,68,68,0.1)" />
                       )}
                     </td>
+
+                    {/* Quality */}
                     <td style={{ padding: '12px 14px' }}>
-                      <CopyButton value={webhookUrl} label="Copy Webhook" />
+                      {(() => {
+                        const q = formatQuality(acc.wa_quality_rating);
+                        return (
+                          <span style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 5,
+                            fontSize: '0.73rem', fontWeight: 700, color: q.color,
+                            background: q.bg, border: `1px solid ${q.border}`,
+                            padding: '2px 8px', borderRadius: 10,
+                          }}>
+                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: q.color }} />
+                            {q.label}
+                          </span>
+                        );
+                      })()}
                     </td>
+
+                    {/* Messaging Limit */}
                     <td style={{ padding: '12px 14px' }}>
-                      <StatusBadge label="Connected" />
+                      <span style={{
+                        display: 'inline-flex', alignItems: 'center',
+                        fontSize: '0.73rem', fontWeight: 700, color: '#0f172a',
+                        background: '#f8fafc', border: '1px solid #e2e8f0',
+                        padding: '2px 8px', borderRadius: 6, fontFamily: 'monospace',
+                      }}>
+                        {formatMessagingLimit(acc.wa_messaging_limit)}
+                      </span>
                     </td>
+
+                    {/* MM Status */}
+                    <td style={{ padding: '12px 14px' }}>
+                      {(() => {
+                        const mm = formatMMStatus(acc.wa_mm_status);
+                        return (
+                          <span style={{
+                            display: 'inline-flex', alignItems: 'center',
+                            fontSize: '0.72rem', fontWeight: 700, color: mm.color,
+                            background: mm.bg, border: `1px solid ${mm.border}`,
+                            padding: '2px 8px', borderRadius: 10,
+                          }}>
+                            {mm.label}
+                          </span>
+                        );
+                      })()}
+                    </td>
+
+                    {/* Last Sync */}
+                    <td style={{ padding: '12px 14px' }}>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: '0.74rem', color: '#64748b' }}>
+                          {formatLastSync(acc.wa_last_sync_at)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleSync(acc.id)}
+                          disabled={syncingId === acc.id}
+                          style={{
+                            border: '1px solid #e2e8f0', background: '#f8fafc',
+                            color: syncingId === acc.id ? '#10b981' : '#64748b',
+                            borderRadius: 6, padding: '3px 6px',
+                            cursor: syncingId === acc.id ? 'default' : 'pointer',
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          }}
+                          title="Sync metrics with Meta"
+                        >
+                          <RefreshCw size={11} className={syncingId === acc.id ? 'spin' : ''} />
+                        </button>
+                      </div>
+                    </td>
+
+                    {/* Actions */}
                     <td style={{ padding: '12px 14px', textAlign: 'right' }}>
                       <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
                         <a
@@ -993,6 +1244,14 @@ export default function WhatsAppPage({ embedded = false }) {
                         >
                           <ExternalLink size={11} /> Manage
                         </a>
+                        <button
+                          onClick={() => openEditModal(acc)}
+                          className="btn btn-secondary btn-sm"
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 9px', fontSize: '0.72rem', background: 'rgba(99,102,241,0.08)', borderColor: 'rgba(99,102,241,0.3)', color: '#4f46e5', fontWeight: 700 }}
+                          title="Update Access Token"
+                        >
+                          <Key size={11} /> Token
+                        </button>
                         <button
                           onClick={() => openActivateModal(acc)}
                           className="btn btn-secondary btn-sm"
@@ -1040,12 +1299,12 @@ export default function WhatsAppPage({ embedded = false }) {
               <div style={{ fontSize: '0.74rem', color: 'rgba(255,255,255,0.8)', marginTop: 2 }}>{activateModal.name}</div>
             </div>
           </div>
-          <button onClick={() => setActivateModal(null)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: 8, padding: '4px 8px', color: '#fff', cursor: 'pointer' }}>✕</button>
+          <button onClick={() => setActivateModal(null)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: 8, padding: '4px 8px', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center' }}><X size={16} /></button>
         </div>
 
         <form onSubmit={handleActivateSubmit} style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}>
           <div style={{ background: 'rgba(37,211,102,0.06)', border: '1px solid rgba(37,211,102,0.2)', borderRadius: 10, padding: '12px 14px', fontSize: '0.78rem', color: '#166534', lineHeight: 1.6 }}>
-            📱 <strong>Phone Number ID:</strong>{' '}
+            <Smartphone size={13} style={{ verticalAlign: -2, marginRight: 4 }} /> <strong>Phone Number ID:</strong>{' '}
             <code style={{ fontFamily: 'monospace', background: 'rgba(0,0,0,0.06)', padding: '1px 6px', borderRadius: 4 }}>{activateModal.wa_phone_number_id}</code>
             <div style={{ marginTop: 6 }}>
               Enter a <strong>6-digit PIN</strong> of your choice. Meta uses this for 2-step verification — <strong>save it</strong> somewhere safe.
@@ -1118,19 +1377,102 @@ export default function WhatsAppPage({ embedded = false }) {
     </div>
   );
 
+  // ── Edit Credentials Modal ─────────────────────────────────────────────────
+  const EditCredentialsModal = () => (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: 9999, padding: 20, backdropFilter: 'blur(2px)',
+    }}>
+      <div style={{
+        background: '#fff', borderRadius: 16, width: '100%', maxWidth: 520,
+        boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', overflow: 'hidden',
+      }}>
+        <div style={{
+          padding: '20px 24px', background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Key size={20} color="#fff" />
+            <div>
+              <div style={{ fontWeight: 800, fontSize: '1rem', color: '#fff' }}>Update WhatsApp Access Token</div>
+              <div style={{ fontSize: '0.74rem', color: 'rgba(255,255,255,0.8)', marginTop: 2 }}>{editModal.name}</div>
+            </div>
+          </div>
+          <button onClick={() => setEditModal(null)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: 8, padding: '4px 8px', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        <form onSubmit={handleEditSubmit} style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '10px 14px', fontSize: '0.75rem', color: '#475569' }}>
+            <div><strong>Phone Number ID:</strong> <code style={{ fontFamily: 'monospace' }}>{editModal.wa_phone_number_id}</code></div>
+            {editModal.wa_business_acc_id && <div style={{ marginTop: 4 }}><strong>WABA ID:</strong> <code style={{ fontFamily: 'monospace' }}>{editModal.wa_business_acc_id}</code></div>}
+          </div>
+
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+              <label style={{ fontSize: '0.76rem', fontWeight: 700, color: '#334155' }}>
+                Access Token (System User or WhatsApp Token)
+              </label>
+              <a href="https://developers.facebook.com/apps" target="_blank" rel="noreferrer" style={{ fontSize: '0.7rem', color: '#6366f1', textDecoration: 'none', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 }}>
+                Get Token <ExternalLink size={10} />
+              </a>
+            </div>
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showEditToken ? 'text' : 'password'}
+                className="form-input w-full"
+                placeholder="EAA... (starts with EAA)"
+                value={editForm.accessToken}
+                onChange={e => setEditForm(p => ({ ...p, accessToken: e.target.value }))}
+                style={{ height: 36, fontSize: '0.84rem', fontFamily: 'monospace', paddingRight: 36 }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowEditToken(v => !v)}
+                style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 2 }}
+              >
+                {showEditToken ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 10, borderTop: '1px solid #f1f5f9' }}>
+            <button type="button" onClick={() => setEditModal(null)} disabled={savingEdit} className="btn btn-secondary btn-sm">
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={savingEdit || !editForm.accessToken}
+              className="btn btn-primary btn-sm"
+              style={{ background: '#0f172a', borderColor: '#0f172a', fontWeight: 700, minWidth: 120 }}
+            >
+              {savingEdit ? 'Updating…' : 'Update Token'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+
   // ════════════════════════════════════════════════════════════════════════════
   // RENDER
   // ════════════════════════════════════════════════════════════════════════════
   const pageContent = (
     <div style={{ width: '100%', padding: embedded ? '0' : '16px 20px' }}>
-      {view === 'list' && <AccountListView />}
-      {view === 'choose_method' && <ChooseMethodView />}
-      {view === 'manual' && <ManualView />}
-      {view === 'embedded_catalog_select' && <EmbeddedCatalogSelectView />}
-      {view === 'embedded_connecting' && <EmbeddedConnectingView />}
+      {!embedded && <ChannelBreadcrumb current="WhatsApp" />}
+      {view === 'list' && AccountListView()}
+      {view === 'choose_method' && ChooseMethodView()}
+      {view === 'manual' && ManualView()}
+      {view === 'embedded_catalog_select' && EmbeddedCatalogSelectView()}
+      {view === 'embedded_connecting' && EmbeddedConnectingView()}
+
+      {/* Edit Credentials Modal */}
+      {editModal && EditCredentialsModal()}
 
       {/* Activate Modal */}
-      {activateModal && <ActivateModal />}
+      {activateModal && ActivateModal()}
     </div>
   );
 

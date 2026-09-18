@@ -2,9 +2,10 @@ import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
+import { requireModule } from "../utils/entitlements.js";
 
 const router = express.Router();
-router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
+router.use("/sequences", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_sequences"));
 
 // A sequence sends from ONE explicit channel account — never "whichever
 // active integration for this platform comes back first" (see
@@ -103,8 +104,8 @@ export async function unsubscribeContactFromSequence(sequenceId, agencyId, conta
 router.get("/sequences", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    const [sequences] = await pool.query(
-      `SELECT s.*, i.name as integration_name, i.wa_display_phone,
+    const { integrationId } = req.query;
+    let sql = `SELECT s.*, i.name as integration_name, i.wa_display_phone,
               (SELECT COUNT(*) FROM sequence_subscribers WHERE sequence_id = s.id) as subscriber_count,
               (SELECT COUNT(*) FROM sequence_subscribers WHERE sequence_id = s.id AND status = 'ACTIVE') as active_count,
               (SELECT COUNT(*) FROM sequence_subscribers WHERE sequence_id = s.id AND status = 'COMPLETED') as completed_count,
@@ -118,10 +119,14 @@ router.get("/sequences", async (req, res) => {
                 WHERE ss.sequence_id = s.id) as last_activity_at
        FROM sequences s
        LEFT JOIN integrations i ON i.id = s.integration_id
-       WHERE s.agency_id = ?
-       ORDER BY s.updated_at DESC`,
-      [agencyId]
-    );
+       WHERE s.agency_id = ?`;
+    const params = [agencyId];
+    if (integrationId && integrationId !== "all") {
+      sql += " AND s.integration_id = ?";
+      params.push(integrationId);
+    }
+    sql += " ORDER BY s.updated_at DESC";
+    const [sequences] = await pool.query(sql, params);
 
     // How many actual messages this sequence sends — everything except the
     // Start node and Wait (timing-only) nodes. JSON_LENGTH would count those
