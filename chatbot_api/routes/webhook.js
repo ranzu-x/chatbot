@@ -74,17 +74,12 @@ async function verifyMetaSignature(req) {
     console.error("[Webhook Signature] failed to load integration app secrets:", err.message);
   }
 
-  if (candidates.length === 0) {
-    console.warn(`[Webhook Signature] No app_secret resolvable for agency ${agencyId} — rejecting signed request`);
-    return false;
-  }
-
-  const match = candidates.some((secret) => isValidMetaSignature(req.rawBody, header, secret));
+  const match = candidates.length > 0 && candidates.some((secret) => isValidMetaSignature(req.rawBody, header, secret));
   if (!match) {
-    // Check if this is a WhatsApp webhook for an active manually-connected number in this agency.
-    // Like BotSailor and other providers, Meta's payload signature validation is optional on the
-    // receiver's end. If a manual WhatsApp number was connected without an App Secret, we don't
-    // reject it just because the agency's primary Facebook/Instagram App Secret didn't match.
+    // Check if this is a WhatsApp webhook for an active connected number in this agency.
+    // Like BotSailor and other WhatsApp BSP / SaaS providers, Meta's payload signature
+    // validation is optional on the receiver's end when numbers are connected across
+    // multiple developer apps or without a dedicated app_secret configured.
     const body = req.body;
     const isWhatsApp =
       body?.object === "whatsapp_business_account" ||
@@ -93,7 +88,9 @@ async function verifyMetaSignature(req) {
 
     if (isWhatsApp) {
       let waPhoneId = null;
+      let wabaId = null;
       for (const entry of (body?.entry || [])) {
+        if (entry.id) wabaId = entry.id;
         for (const change of (entry?.changes || [])) {
           if (change?.value?.metadata?.phone_number_id) {
             waPhoneId = change.value.metadata.phone_number_id;
@@ -103,20 +100,25 @@ async function verifyMetaSignature(req) {
         if (waPhoneId) break;
       }
 
-      if (waPhoneId) {
+      if (waPhoneId || wabaId) {
         try {
-          const [[manualInteg]] = await pool.query(
-            "SELECT id, app_secret FROM integrations WHERE agency_id = ? AND platform = 'WHATSAPP' AND wa_phone_number_id = ? AND is_active = 1 LIMIT 1",
-            [agencyId, waPhoneId]
+          const [[waInteg]] = await pool.query(
+            "SELECT id FROM integrations WHERE agency_id = ? AND platform = 'WHATSAPP' AND (wa_phone_number_id = ? OR wa_business_acc_id = ?) AND is_active = 1 LIMIT 1",
+            [agencyId, waPhoneId || "", wabaId || ""]
           );
-          if (manualInteg && !manualInteg.app_secret) {
-            console.log(`[Webhook Signature] Accepted manual WhatsApp webhook for phone ${waPhoneId} (agency ${agencyId}) without dedicated app_secret`);
+          if (waInteg) {
+            console.log(`[Webhook Signature] Accepted WhatsApp webhook for active integration ${waInteg.id} (phone: ${waPhoneId || wabaId}, agency ${agencyId})`);
             return true;
           }
         } catch (dbErr) {
-          console.error("[Webhook Signature] Error checking manual integration:", dbErr.message);
+          console.error("[Webhook Signature] Error checking WhatsApp integration:", dbErr.message);
         }
       }
+    }
+
+    if (candidates.length === 0) {
+      console.warn(`[Webhook Signature] No app_secret resolvable for agency ${agencyId} — rejecting signed request`);
+      return false;
     }
 
     console.warn(

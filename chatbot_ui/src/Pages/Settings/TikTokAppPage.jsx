@@ -3,7 +3,7 @@ import AppLayout from '../../Layout/AppLayout';
 import { tiktokAppAPI } from '../../services/api';
 import { useAuth } from '../../Provider/AuthContext';
 import { notify } from '../../utils/alerts';
-import { Video, Key, Lock, Copy, Check, ExternalLink, ShieldCheck, Sparkles, RefreshCw, Globe, HelpCircle } from 'lucide-react';
+import { Video, Key, Lock, Copy, Check, ExternalLink, ShieldCheck, Sparkles, Globe, HelpCircle } from 'lucide-react';
 
 function generateRandomToken() {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -241,16 +241,7 @@ export default function TikTokAppPage({ embedded = false }) {
               </div>
 
               <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                  <label className="form-label" style={{ fontWeight: 700, fontSize: '0.82rem', margin: 0 }}>Webhook Verify Token *</label>
-                  <button
-                    type="button"
-                    onClick={() => setForm({ ...form, verifyToken: generateRandomToken() })}
-                    style={{ background: 'none', border: 'none', color: '#2563eb', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3 }}
-                  >
-                    <RefreshCw size={11} /> Regenerate
-                  </button>
-                </div>
+                <label className="form-label" style={{ fontWeight: 700, fontSize: '0.82rem', marginBottom: 4, display: 'block' }}>Webhook Verify Token *</label>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <input
                     type="text"

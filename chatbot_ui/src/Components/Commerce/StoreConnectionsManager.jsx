@@ -1,11 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router';
-import AppLayout from '../../Layout/AppLayout';
 import { commerceAPI } from '../../services/api';
 import { notify, showAlert } from '../../utils/alerts';
 import { ShoppingBag, RefreshCw, Trash2, Plus, Loader2, ExternalLink } from 'lucide-react';
 
-export default function CommercePage() {
+/** Shopify / WooCommerce store connections — connect, sync and disconnect.
+ * Embedded in Bot Manager → Commerce → Store Connections (it used to be its
+ * own sidebar page at /agency/commerce, which now redirects here). Layout
+ * chrome lives in the host page, so this renders only the content. */
+export default function StoreConnectionsManager() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [connections, setConnections] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -25,6 +28,7 @@ export default function CommercePage() {
 
   useEffect(() => { load(); }, []);
 
+  // Shopify's OAuth callback lands back here with ?connected=1|0
   useEffect(() => {
     const connected = searchParams.get('connected');
     if (connected === '1') {
@@ -98,60 +102,52 @@ export default function CommercePage() {
   };
 
   return (
-    <AppLayout>
-      <div className="page-header flex items-center justify-between">
-        <div>
-          <h1 className="page-title">Shopify & WooCommerce</h1>
-          <p className="page-subtitle">Connect a store to look up products and send them over WhatsApp.</p>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-secondary" onClick={() => setShowModal('woocommerce')}><Plus size={15} /> Connect WooCommerce</button>
-          <button className="btn btn-primary" onClick={() => setShowModal('shopify')}><Plus size={15} /> Connect Shopify</button>
-        </div>
+    <>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16 }}>
+        <button className="btn btn-secondary" onClick={() => setShowModal('woocommerce')}><Plus size={15} /> Connect WooCommerce</button>
+        <button className="btn btn-primary" onClick={() => setShowModal('shopify')}><Plus size={15} /> Connect Shopify</button>
       </div>
 
-      <div className="page-body">
-        {loading ? (
-          <div className="loading-overlay"><div className="loading-spinner" /></div>
-        ) : connections.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-icon"><ShoppingBag size={28} /></div>
-            <div className="empty-title">No stores connected</div>
-            <div className="empty-desc">Connect Shopify or WooCommerce to start syncing products.</div>
-          </div>
-        ) : (
-          <div className="table-wrapper">
-            <table>
-              <thead><tr><th>Platform</th><th>Store</th><th>Products</th><th>Last Synced</th><th>Status</th><th>Actions</th></tr></thead>
-              <tbody>
-                {connections.map((c) => (
-                  <tr key={c.id}>
-                    <td className="font-medium">{c.platform === 'SHOPIFY' ? 'Shopify' : 'WooCommerce'}</td>
-                    <td style={{ fontSize: '0.82rem', color: '#64748b' }}>{c.store_domain}</td>
-                    <td>{c.productCount}</td>
-                    <td style={{ fontSize: '0.78rem', color: '#94a3b8' }}>{c.last_synced_at ? new Date(c.last_synced_at).toLocaleString() : 'Never'}</td>
-                    <td>
-                      {c.last_sync_error ? (
-                        <span className="badge badge-muted" title={c.last_sync_error}>Sync error</span>
-                      ) : (
-                        <span className={`badge ${c.is_active ? 'badge-success' : 'badge-muted'}`}>{c.is_active ? 'Active' : 'Inactive'}</span>
-                      )}
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <button className="btn btn-secondary btn-sm" onClick={() => handleSync(c.id)} disabled={syncingId === c.id}>
-                          {syncingId === c.id ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Sync
-                        </button>
-                        <button className="btn btn-danger btn-sm" onClick={() => handleDisconnect(c.id)}><Trash2 size={12} /></button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      {loading ? (
+        <div className="loading-overlay"><div className="loading-spinner" /></div>
+      ) : connections.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-icon"><ShoppingBag size={28} /></div>
+          <div className="empty-title">No stores connected</div>
+          <div className="empty-desc">Connect Shopify or WooCommerce to start syncing products.</div>
+        </div>
+      ) : (
+        <div className="table-wrapper">
+          <table>
+            <thead><tr><th>Platform</th><th>Store</th><th>Products</th><th>Last Synced</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody>
+              {connections.map((c) => (
+                <tr key={c.id}>
+                  <td className="font-medium">{c.platform === 'SHOPIFY' ? 'Shopify' : 'WooCommerce'}</td>
+                  <td style={{ fontSize: '0.82rem', color: '#64748b' }}>{c.store_domain}</td>
+                  <td>{c.productCount}</td>
+                  <td style={{ fontSize: '0.78rem', color: '#94a3b8' }}>{c.last_synced_at ? new Date(c.last_synced_at).toLocaleString() : 'Never'}</td>
+                  <td>
+                    {c.last_sync_error ? (
+                      <span className="badge badge-muted" title={c.last_sync_error}>Sync error</span>
+                    ) : (
+                      <span className={`badge ${c.is_active ? 'badge-success' : 'badge-muted'}`}>{c.is_active ? 'Active' : 'Inactive'}</span>
+                    )}
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button className="btn btn-secondary btn-sm" onClick={() => handleSync(c.id)} disabled={syncingId === c.id}>
+                        {syncingId === c.id ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Sync
+                      </button>
+                      <button className="btn btn-danger btn-sm" onClick={() => handleDisconnect(c.id)}><Trash2 size={12} /></button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {showModal === 'shopify' && (
         <div className="modal-overlay" onClick={() => !connecting && setShowModal(null)}>
@@ -161,7 +157,7 @@ export default function CommercePage() {
               <div className="form-group">
                 <label className="form-label">Store Domain *</label>
                 <input className="form-input" placeholder="your-store.myshopify.com" value={shopDomain} onChange={(e) => setShopDomain(e.target.value)} required />
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>You'll be redirected to Shopify to approve access.</span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>You&apos;ll be redirected to Shopify to approve access.</span>
               </div>
               <div className="modal-actions">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowModal(null)}>Cancel</button>
@@ -185,11 +181,11 @@ export default function CommercePage() {
               </div>
               <div className="form-group">
                 <label className="form-label">Consumer Key *</label>
-                <input className="form-input" value={wooForm.consumerKey} onChange={(e) => setWooForm((f) => ({ ...f, consumerKey: e.target.value }))} required />
+                <input className="form-input" value={wooForm.consumerKey} onChange={(e) => setWooForm((f) => ({ ...f, consumerKey: e.target.value }))} required autoComplete="off" />
               </div>
               <div className="form-group">
                 <label className="form-label">Consumer Secret *</label>
-                <input className="form-input" type="password" value={wooForm.consumerSecret} onChange={(e) => setWooForm((f) => ({ ...f, consumerSecret: e.target.value }))} required />
+                <input className="form-input" type="password" value={wooForm.consumerSecret} onChange={(e) => setWooForm((f) => ({ ...f, consumerSecret: e.target.value }))} required autoComplete="new-password" data-lpignore="true" data-1p-ignore="true" />
                 <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Generate these from your WordPress admin under WooCommerce → Settings → Advanced → REST API.</span>
               </div>
               <div className="modal-actions">
@@ -202,6 +198,6 @@ export default function CommercePage() {
           </div>
         </div>
       )}
-    </AppLayout>
+    </>
   );
 }

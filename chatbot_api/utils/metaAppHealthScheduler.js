@@ -32,8 +32,11 @@ export async function processMetaAppHealthChecks() {
 }
 
 export function startMetaAppHealthScheduler() {
-  const intervalMs = Number(process.env.META_APP_HEALTH_INTERVAL_MS) || 10 * 60 * 1000;
-  console.log(`🩺 Meta App Health Scheduler started (runs every ${Math.round(intervalMs / 60000)} minutes)`);
+  const intervalMs = Number(process.env.META_APP_HEALTH_INTERVAL_MS) || 24 * 60 * 60 * 1000;
+  const label = intervalMs % (60 * 60 * 1000) === 0
+    ? `${Math.round(intervalMs / 3600000)} hour(s)`
+    : `${Math.round(intervalMs / 60000)} minutes`;
+  console.log(`🩺 Meta App Health Scheduler started (runs every ${label})`);
   processMetaAppHealthChecks();
   setInterval(processMetaAppHealthChecks, intervalMs);
 }

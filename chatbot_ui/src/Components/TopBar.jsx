@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router';
 import { useAuth } from '../Provider/AuthContext';
 import { useLayout } from '../Provider/LayoutContext';
 import { useNotification } from '../Provider/NotificationContext';
-import { Menu, PanelLeft, PanelLeftClose, Sun, Moon, Plug, LogOut, Bell, UserCircle, Palette, LifeBuoy, ShieldCheck, Building2 } from 'lucide-react';
+import { Menu, PanelLeft, PanelLeftClose, Sun, Moon, Plug, LogOut, Bell, UserCircle, Palette, LifeBuoy, ShieldCheck, Building2, KeyRound } from 'lucide-react';
 
 // Internal role identifiers (ADMIN/RESELLER/USER) now match the human-facing
 // label, consistent with Sidebar.jsx's ROLE_SUBTITLES.
@@ -169,6 +169,19 @@ export default function TopBar() {
                   </div>
                 </Link>
               )}
+
+              <Link
+                to="/agency/api-keys"
+                className="dropdown-item"
+                onClick={() => setMenuOpen(false)}
+                style={{ textDecoration: 'none', color: 'inherit' }}
+              >
+                <KeyRound size={15} style={{ marginRight: 8 }} />
+                <div className="dropdown-text">
+                  <div className="dropdown-label">API Keys</div>
+                  <div className="dropdown-desc">Keys for the public REST API</div>
+                </div>
+              </Link>
 
               {/* The Support Desk is a deliberately separate portal (own
                   login, own session token — see SupportDeskApp) rather than

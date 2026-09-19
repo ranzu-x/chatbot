@@ -123,19 +123,28 @@ router.delete("/bots/errors/:id", async (req, res) => {
 router.delete("/bots/errors", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    const { platform } = req.query;
+    const { platform, integrationId } = req.query;
+
+    // Mirror the exact filters GET /bots/errors applied, so "Clear All"
+    // only ever clears what the user is actually looking at — clearing a
+    // single account's log must not wipe the other accounts' logs too.
+    const conditions = ["agency_id = ?"];
+    const params = [agencyId];
 
     if (platform && platform !== "ALL") {
-      await pool.query(
-        "DELETE FROM bot_error_logs WHERE agency_id = ? AND platform = ?",
-        [agencyId, platform.toUpperCase()]
-      );
-    } else {
-      await pool.query(
-        "DELETE FROM bot_error_logs WHERE agency_id = ?",
-        [agencyId]
-      );
+      conditions.push("platform = ?");
+      params.push(platform.toUpperCase());
     }
+
+    if (integrationId && integrationId !== "all") {
+      conditions.push("integration_id = ?");
+      params.push(integrationId);
+    }
+
+    await pool.query(
+      `DELETE FROM bot_error_logs WHERE ${conditions.join(" AND ")}`,
+      params
+    );
 
     return res.json({ success: true, message: "Bot error logs cleared" });
   } catch (err) {

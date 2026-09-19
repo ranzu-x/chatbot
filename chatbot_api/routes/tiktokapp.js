@@ -52,8 +52,27 @@ router.get("/settings/tiktok-app", async (req, res) => {
     const settings = rows[0] || null;
     let verifyToken = settings?.verify_token;
 
+    // Auto-generate a verify token if not yet created AND immediately persist
+    // it so it stays fixed across reloads — same fix as routes/metaapp.js's
+    // GET /settings/meta-app. Previously this only generated one in memory
+    // and never saved it, so every request without a stored token (i.e.
+    // every request, since nothing ever wrote one) minted a fresh random
+    // value — the token changed on every page refresh.
     if (!verifyToken) {
       verifyToken = crypto.randomBytes(16).toString("hex");
+      try {
+        if (settings) {
+          await pool.query("UPDATE tiktok_app_settings SET verify_token = ? WHERE agency_id = ?", [verifyToken, agencyId]);
+        } else {
+          await pool.query(
+            "INSERT INTO tiktok_app_settings (agency_id, verify_token, is_configured, is_active) VALUES (?, ?, 0, 1)",
+            [agencyId, verifyToken]
+          );
+        }
+        console.log(`[TikTok App] Auto-saved generated verify_token for agency ${agencyId}`);
+      } catch (saveErr) {
+        console.error("[TikTok App] Failed to auto-save verify_token:", saveErr.message);
+      }
     }
 
     return res.json({

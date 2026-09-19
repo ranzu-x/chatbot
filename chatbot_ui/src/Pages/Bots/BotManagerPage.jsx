@@ -5,12 +5,13 @@ import { useAuth } from '../../Provider/AuthContext';
 import { flowAPI, integrationAPI, channelAPI, botAPI, templateAPI } from '../../services/api';
 import WhatsAppTemplateManager from '../../Components/Templates/WhatsAppTemplateManager';
 import FacebookUtilityTemplateManager from '../../Components/Templates/FacebookUtilityTemplateManager';
-import CommentAutomationManager from '../../Components/Comments/CommentAutomationManager';
 import ChatWidgetManager from '../../Components/Engagement/ChatWidgetManager';
 import SequenceMessageReport from '../../Components/Sequences/SequenceMessageReport';
 import UserInputFlowManagerList from '../../Components/UserInputFlows/UserInputFlowManagerList';
 import HttpApiCampaignManagerList from '../../Components/HttpApi/HttpApiCampaignManagerList';
 import WhatsAppFlowManagerList from '../../Components/WhatsAppFlows/WhatsAppFlowManagerList';
+import StoreConnectionsManager from '../../Components/Commerce/StoreConnectionsManager';
+import { humanizeBotError, cleanRawMessage } from '../../utils/humanizeBotError';
 import AIAgentManagerList from '../../Components/AIAgents/AIAgentManagerList';
 import AIReplySettingsPanel from '../../Components/AIAgents/AIReplySettingsPanel';
 import Swal from 'sweetalert2';
@@ -98,7 +99,6 @@ const SUB_TABS = {
     { id: 'keywordReplies',   label: 'Keyword Replies' },
     { id: 'messageTemplates', label: 'Message Templates' },
     { id: 'clickAds',         label: 'Click Ads' },
-    { id: 'userInputFlows',   label: 'User Input Flows' },
     { id: 'httpApiCampaigns', label: 'HTTP API Campaigns' },
     { id: 'followUpSequences',label: 'Sequences' },
     { id: 'quickActions',     label: 'Quick Actions' },
@@ -110,6 +110,7 @@ const SUB_TABS = {
     { id: 'customFields',   label: 'Custom Variables' },
     { id: 'contactLabels',  label: 'Contact Labels' },
     { id: 'segments',       label: 'Subscriber Segments' },
+    { id: 'userInputFlows', label: 'User Input Flows' },
     { id: 'whatsappFlows',  label: 'WhatsApp Flows' },
   ],
   ai: [
@@ -118,20 +119,15 @@ const SUB_TABS = {
     { id: 'agents',          label: 'Agents' },
   ],
   engagement: [
-    // Split into two platform-locked tabs (each renders CommentAutomationManager
-    // with lockPlatform set) instead of one screen with a combined Facebook/
-    // Instagram account dropdown — same label, disambiguated by which one is
-    // visible for the currently selected account's platform (see the filter
-    // bodies below), matching how messageTemplates already disambiguates by
-    // platform while keeping one label.
-    { id: 'facebookCommentAutomation',  label: 'Comment Automation' },
-    { id: 'instagramCommentAutomation', label: 'Comment Automation' },
+    // Comment Automation moved out to its own top-level page
+    // (/comment-automation, Sidebar.jsx) — see CommentAutomationPage.jsx.
     { id: 'iceBreakers',       label: 'Ice Breakers & Welcome' },
     { id: 'storyMentions',     label: 'Story Mentions Reply' },
     { id: 'actionMenus',       label: 'Action Buttons & Menus' },
     { id: 'chatWidget',        label: 'Chat Widget' },
   ],
   commerce: [
+    { id: 'storeConnections', label: 'Store Connections' },
     { id: 'catalogSync',      label: 'Product Catalog Sync' },
     { id: 'productMessages',  label: 'Product Messages' },
     { id: 'orderConfirm',     label: 'Order Confirmations' },
@@ -339,14 +335,20 @@ export default function BotManagerPage() {
   const [cloneTargetIntegId, setCloneTargetIntegId] = useState('');
   const [cloning, setCloning] = useState(false);
 
-  // Error Log Modal State
+  // Error Log Modal State — scoped entirely by the account selected in the
+  // left rail (see loadErrorLogs). There is no separate platform filter: one
+  // connected account is always exactly one platform, so a platform tab on
+  // top of an already-account-scoped list would just be a second control
+  // for the same dimension.
   const [showErrorLogModal, setShowErrorLogModal] = useState(false);
   const [errorLogs, setErrorLogs] = useState([]);
   const [errorLogsLoading, setErrorLogsLoading] = useState(false);
   const [errorLogSearch, setErrorLogSearch] = useState('');
-  const [errorLogPlatformFilter, setErrorLogPlatformFilter] = useState('ALL');
   const [expandedErrorId, setExpandedErrorId] = useState(null);
   const [copiedLogId, setCopiedLogId] = useState(null);
+  // 'simple' = plain-language explanation for account owners,
+  // 'developer' = the raw channel error and its diagnostic payload.
+  const [errorLogView, setErrorLogView] = useState('simple');
 
 
   // Toast
@@ -356,19 +358,16 @@ export default function BotManagerPage() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  const getActiveChannel = useCallback(() => {
-    if (selectedAccount?.platform) return selectedAccount.platform.toUpperCase();
-    if (channelFilter && channelFilter !== 'ALL') return channelFilter.toUpperCase();
-    return 'ALL';
-  }, [selectedAccount, channelFilter]);
-
-  const loadErrorLogs = useCallback(async (targetPlatform = null) => {
+  const loadErrorLogs = useCallback(async () => {
     setErrorLogsLoading(true);
     try {
-      const activePlatform = (targetPlatform !== null ? targetPlatform : errorLogPlatformFilter).toUpperCase();
       const params = { limit: 100 };
-      if (activePlatform && activePlatform !== 'ALL') {
-        params.platform = activePlatform;
+      // Scope to the account currently selected in the left rail — otherwise
+      // every connected account's errors show up under whichever one you're
+      // looking at. Agency-wide errors that aren't attributable to a single
+      // account (integration_id NULL) only appear under "All Accounts".
+      if (selectedAccount?.id && selectedAccount.id !== 'all') {
+        params.integrationId = selectedAccount.id;
       }
       const res = await botAPI.getErrorLogs(params);
       if (res.data?.success) {
@@ -379,14 +378,12 @@ export default function BotManagerPage() {
     } finally {
       setErrorLogsLoading(false);
     }
-  }, [errorLogPlatformFilter]);
+  }, [selectedAccount]);
 
-  const openErrorLogModal = useCallback((targetChannel = null) => {
-    const channel = (targetChannel || getActiveChannel()).toUpperCase();
-    setErrorLogPlatformFilter(channel);
+  const openErrorLogModal = useCallback(() => {
     setShowErrorLogModal(true);
-    loadErrorLogs(channel);
-  }, [getActiveChannel, loadErrorLogs]);
+    loadErrorLogs();
+  }, [loadErrorLogs]);
 
   const handleDeleteErrorLog = async (id, e) => {
     e?.stopPropagation();
@@ -401,10 +398,13 @@ export default function BotManagerPage() {
   };
 
   const handleClearAllErrors = async () => {
-    const channelLabel = errorLogPlatformFilter !== 'ALL' ? getPlatformInfo(errorLogPlatformFilter).label : 'All Channels';
+    // Clearing follows the same scope the list is showing — one account's
+    // errors when an account is selected, everything when "All Accounts" is.
+    const scopedToAccount = selectedAccount?.id && selectedAccount.id !== 'all';
+    const scopeLabel = scopedToAccount ? (selectedAccount.name || getPlatformInfo(selectedAccount.platform).label) : 'All Accounts';
     const result = await Swal.fire({
-      title: `Clear ${channelLabel} Bot Errors?`,
-      text: `Are you sure you want to clear error logs for ${channelLabel}? This cannot be undone.`,
+      title: `Clear Errors for ${scopeLabel}?`,
+      text: `Are you sure you want to clear the error log for ${scopeLabel}? This cannot be undone.`,
       icon: 'warning',
       showCancelButton: true,
       confirmButtonColor: '#ef4444',
@@ -413,14 +413,15 @@ export default function BotManagerPage() {
     });
     if (result.isConfirmed) {
       try {
-        const params = errorLogPlatformFilter !== 'ALL' ? { platform: errorLogPlatformFilter } : {};
+        const params = {};
+        if (scopedToAccount) params.integrationId = selectedAccount.id;
         await botAPI.clearErrorLogs(params);
-        if (errorLogPlatformFilter !== 'ALL') {
-          setErrorLogs((prev) => prev.filter((item) => (item.platform || '').toUpperCase() !== errorLogPlatformFilter.toUpperCase()));
+        if (scopedToAccount) {
+          setErrorLogs((prev) => prev.filter((item) => String(item.integration_id) !== String(selectedAccount.id)));
         } else {
           setErrorLogs([]);
         }
-        showToast(`${channelLabel} bot error logs cleared`, 'success');
+        showToast(`Error log cleared for ${scopeLabel}`, 'success');
       } catch (err) {
         console.error(err);
         showToast('Failed to clear error logs', 'error');
@@ -430,14 +431,14 @@ export default function BotManagerPage() {
 
   const handleSimulateTestError = async () => {
     try {
-      const platform = errorLogPlatformFilter !== 'ALL' ? errorLogPlatformFilter : (selectedAccount?.platform || 'WHATSAPP');
+      const platform = selectedAccount?.platform || 'WHATSAPP';
       await botAPI.createTestErrorLog({
         platform,
         contactIdentifier: selectedAccount?.wa_display_phone || '+1 (555) 019-2834',
         message: `${getPlatformInfo(platform).label} API Error: Recipient account "${selectedAccount?.name || 'CareSphere'}" delivery error test simulation.`,
       });
       showToast('Simulated error log entry added', 'success');
-      loadErrorLogs(platform);
+      loadErrorLogs();
     } catch (err) {
       console.error(err);
       showToast('Failed to generate test error', 'error');
@@ -462,12 +463,9 @@ export default function BotManagerPage() {
   };
 
   const filteredErrorLogs = useMemo(() => {
+    // Only the search box filters client-side — the list is already scoped
+    // to one account (or all) by loadErrorLogs itself.
     return errorLogs.filter((item) => {
-      if (errorLogPlatformFilter !== 'ALL') {
-        if ((item.platform || '').toUpperCase() !== errorLogPlatformFilter.toUpperCase()) {
-          return false;
-        }
-      }
       if (errorLogSearch.trim()) {
         const q = errorLogSearch.toLowerCase().trim();
         const msg = (item.error_message || '').toLowerCase();
@@ -480,7 +478,7 @@ export default function BotManagerPage() {
       }
       return true;
     });
-  }, [errorLogs, errorLogPlatformFilter, errorLogSearch]);
+  }, [errorLogs, errorLogSearch]);
 
   /* ─── Load Data ─── */
   const loadAllData = useCallback(async () => {
@@ -506,32 +504,39 @@ export default function BotManagerPage() {
         setTemplates(templRes.value.data?.templates || []);
       }
 
-      // Default select the first account if none currently chosen
+      // Default select the first account if none currently chosen. Error logs
+      // are NOT fetched here — the "Sync error logs" effect below already
+      // fires on mount and again whenever this setSelectedAccount call lands,
+      // so a call here would just be a second, near-simultaneous request for
+      // the exact same (still-unscoped) data.
       setSelectedAccount((prev) => {
         if (prev) return prev;
         if (integs.length > 0) return integs[0];
         return { id: 'all', name: 'All Connected Channels', platform: 'WHATSAPP', is_active: 1 };
       });
-
-      // Also load latest error logs
-      loadErrorLogs();
     } catch (e) {
       console.error(e);
       showToast('Failed to load bot manager data', 'error');
     } finally {
       setLoading(false);
     }
-  }, [loadErrorLogs]);
+  }, []);
 
   useEffect(() => {
     loadAllData();
   }, [loadAllData]);
 
-  // Sync error logs when selected account or channel filter changes
+  // Sync error logs when the selected account changes — this is the ONE place
+  // error logs get fetched from page-load/account-change (loadAllData
+  // deliberately does not also call loadErrorLogs; see above). Deliberately
+  // not depending on loadErrorLogs itself, only on the id that actually
+  // determines its scope — including the function reference here re-fires
+  // the effect on every render where its identity changes for unrelated
+  // reasons, which previously caused redundant duplicate fetches.
   useEffect(() => {
-    const activeChan = getActiveChannel();
-    loadErrorLogs(activeChan);
-  }, [selectedAccount?.id, selectedAccount?.platform, channelFilter, getActiveChannel, loadErrorLogs]);
+    loadErrorLogs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAccount?.id]);
 
   // Filter sub-tabs dynamically per channel platform (Message Templates for WhatsApp & Facebook)
   const currentSubTabs = useMemo(() => {
@@ -546,13 +551,7 @@ export default function BotManagerPage() {
       if (['whatsappCalling', 'catalogSync', 'productMessages'].includes(sub.id)) {
         return platform === 'WHATSAPP';
       }
-      // Comments / Story mentions ONLY for Facebook / Instagram
-      if (sub.id === 'facebookCommentAutomation') {
-        return platform === 'FACEBOOK';
-      }
-      if (sub.id === 'instagramCommentAutomation') {
-        return platform === 'INSTAGRAM';
-      }
+      // Story mentions ONLY for Facebook / Instagram
       if (sub.id === 'storyMentions') {
         return ['FACEBOOK', 'INSTAGRAM'].includes(platform);
       }
@@ -578,12 +577,6 @@ export default function BotManagerPage() {
       }
       if (['whatsappCalling', 'catalogSync', 'productMessages'].includes(sub.id)) {
         return platform === 'WHATSAPP';
-      }
-      if (sub.id === 'facebookCommentAutomation') {
-        return platform === 'FACEBOOK';
-      }
-      if (sub.id === 'instagramCommentAutomation') {
-        return platform === 'INSTAGRAM';
       }
       if (sub.id === 'storyMentions') {
         return ['FACEBOOK', 'INSTAGRAM'].includes(platform);
@@ -646,12 +639,6 @@ export default function BotManagerPage() {
       }
       if (['whatsappCalling', 'catalogSync', 'productMessages'].includes(sub.id)) {
         return platform === 'WHATSAPP';
-      }
-      if (sub.id === 'facebookCommentAutomation') {
-        return platform === 'FACEBOOK';
-      }
-      if (sub.id === 'instagramCommentAutomation') {
-        return platform === 'INSTAGRAM';
       }
       if (sub.id === 'storyMentions') {
         return ['FACEBOOK', 'INSTAGRAM'].includes(platform);
@@ -1844,23 +1831,6 @@ export default function BotManagerPage() {
           )}
 
           {/* ═════════════════════════════════════════════════════════════════
-              VIEW 2: COMMENT AUTOMATION (ENGAGEMENT)
-              ═════════════════════════════════════════════════════════════════ */}
-          {activeCategory === 'engagement' && (activeSubTab === 'facebookCommentAutomation' || activeSubTab === 'instagramCommentAutomation') && (
-            // Unlike every other view here, CommentAutomationManager isn't wrapped in
-            // `.bm-content-card` (flex:1 + overflow:hidden, which is what keeps the
-            // category/sub-tab bars above it from scrolling away) — its own root div
-            // has no bounded height, so `.bm-main-content`'s overflow-y:auto scrolled
-            // the WHOLE page (tabs included) once its content grew tall, which is
-            // exactly what made the sub-tab row disappear on Facebook/Instagram
-            // accounts. `minHeight: 0` is the actual fix — required for a flex:1 child
-            // to be allowed to scroll internally instead of growing to fit its content.
-            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
-              <CommentAutomationManager lockPlatform={activeSubTab === 'facebookCommentAutomation' ? 'FACEBOOK' : 'INSTAGRAM'} />
-            </div>
-          )}
-
-          {/* ═════════════════════════════════════════════════════════════════
               VIEW 2b: CHAT WIDGET (ENGAGEMENT) — per-channel chat entry point,
               or the full Webchat widget manager when a Webchat account is selected
               ═════════════════════════════════════════════════════════════════ */}
@@ -1955,11 +1925,11 @@ export default function BotManagerPage() {
               ═════════════════════════════════════════════════════════════════ */}
           {/* User Input Flows — full list (create/open/rename/delete + a
               "Reports" drill-down of submitted answers) lives right here in
-              Bot Manager → Automation now, not a separate page off the main
-              sidebar. The builder itself is still its own route
+              Bot Manager → Data Collection now, not a separate page off the
+              main sidebar. The builder itself is still its own route
               (/user-input-flows/:id/edit — a full canvas can't reasonably
               live inside this tab), opened via the row's Open action. */}
-          {activeCategory === 'automation' && activeSubTab === 'userInputFlows' && (
+          {activeCategory === 'dataCollection' && activeSubTab === 'userInputFlows' && (
             <div className="bm-content-card">
               <div className="bm-card-header">
                 <h3 className="bm-card-title">User Input Flows</h3>
@@ -2023,7 +1993,21 @@ export default function BotManagerPage() {
             </div>
           )}
 
-          {!['keywordReplies', 'messageTemplates'].includes(activeSubTab) && !(activeCategory === 'automation' && activeSubTab === 'userInputFlows') && !(activeCategory === 'automation' && activeSubTab === 'httpApiCampaigns') && !(activeCategory === 'automation' && activeSubTab === 'followUpSequences') && !(activeCategory === 'dataCollection' && activeSubTab === 'whatsappFlows') && (activeCategory !== 'engagement' || (activeSubTab !== 'facebookCommentAutomation' && activeSubTab !== 'instagramCommentAutomation')) && !(activeCategory === 'engagement' && activeSubTab === 'chatWidget') && activeCategory !== 'ai' && (
+          {/* Store Connections — moved here from the standalone /agency/commerce
+              page, which now redirects to this tab. */}
+          {activeCategory === 'commerce' && activeSubTab === 'storeConnections' && (
+            <div className="bm-content-card">
+              <div className="bm-card-header">
+                <h3 className="bm-card-title">Store Connections</h3>
+                <p className="bm-card-sub">
+                  Connect a Shopify or WooCommerce store to look up products and send them over WhatsApp.
+                </p>
+              </div>
+              <StoreConnectionsManager />
+            </div>
+          )}
+
+          {!['keywordReplies', 'messageTemplates'].includes(activeSubTab) && !(activeCategory === 'dataCollection' && activeSubTab === 'userInputFlows') && !(activeCategory === 'automation' && activeSubTab === 'httpApiCampaigns') && !(activeCategory === 'automation' && activeSubTab === 'followUpSequences') && !(activeCategory === 'dataCollection' && activeSubTab === 'whatsappFlows') && !(activeCategory === 'commerce' && activeSubTab === 'storeConnections') && !(activeCategory === 'engagement' && activeSubTab === 'chatWidget') && activeCategory !== 'ai' && (
             <div className="bm-content-card">
               <div className="bm-card-header">
                 <h3 className="bm-card-title">{activeSubTab.replace(/([A-Z])/g, ' $1').trim()}</h3>
@@ -2444,6 +2428,14 @@ export default function BotManagerPage() {
             style={{
               width: 880,
               maxWidth: '96vw',
+              // A fixed height (not just a maxHeight cap) so the modal is the
+              // same size whether it's showing the loading spinner, the empty
+              // state, or a full list — all three now sit inside one
+              // internally-scrolling box instead of each sizing the modal to
+              // fit itself, which is what made it visibly jump/resize on
+              // every tab switch (loading spinner is short, a populated list
+              // is tall — the modal was resizing between the two).
+              height: '80vh',
               maxHeight: '88vh',
               background: '#ffffff',
               borderRadius: 16,
@@ -2472,12 +2464,12 @@ export default function BotManagerPage() {
                     width: 40,
                     height: 40,
                     borderRadius: 10,
-                    background: '#fef2f2',
-                    border: '1px solid #fee2e2',
+                    background: '#f8fafc',
+                    border: '1px solid #e2e8f0',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: '#ef4444',
+                    color: '#64748b',
                     flexShrink: 0,
                   }}
                 >
@@ -2485,27 +2477,29 @@ export default function BotManagerPage() {
                 </div>
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <h3 style={{ margin: 0, fontSize: '1.08rem', fontWeight: 800, color: '#0f172a' }}>
-                      {errorLogPlatformFilter !== 'ALL' ? `${getPlatformInfo(errorLogPlatformFilter).label} Bot Error Log` : 'Bot Error Log'}
+                    <h3 style={{ margin: 0, fontSize: '1.08rem', fontWeight: 700, color: '#0f172a' }}>
+                      Error Log
                     </h3>
                     {errorLogs.length > 0 && (
                       <span
                         style={{
-                          background: '#fef2f2',
-                          color: '#dc2626',
-                          border: '1px solid #fecaca',
+                          background: '#f1f5f9',
+                          color: '#475569',
+                          border: '1px solid #e2e8f0',
                           fontSize: '0.72rem',
-                          fontWeight: 700,
+                          fontWeight: 600,
                           padding: '2px 8px',
                           borderRadius: 12,
                         }}
                       >
-                        {errorLogs.length} Total
+                        {errorLogs.length}
                       </span>
                     )}
                   </div>
                   <p style={{ margin: '3px 0 0 0', fontSize: '0.78rem', color: '#64748b' }}>
-                    Review delivery failures, provider API errors, and reasons why bots didn't reply.
+                    {selectedAccount?.id && selectedAccount.id !== 'all'
+                      ? <>Showing errors for <strong style={{ color: '#334155' }}>{selectedAccount.name || getPlatformInfo(selectedAccount.platform).label}</strong> only.</>
+                      : 'Showing errors across every connected account.'}
                   </p>
                 </div>
               </div>
@@ -2547,25 +2541,49 @@ export default function BotManagerPage() {
                       gap: 6,
                       padding: '6px 12px',
                       borderRadius: 8,
-                      border: '1px solid #fecaca',
-                      background: '#fff5f5',
-                      color: '#dc2626',
+                      border: '1px solid #e2e8f0',
+                      background: '#ffffff',
+                      color: '#475569',
                       fontSize: '0.76rem',
-                      fontWeight: 600,
+                      fontWeight: 500,
                       cursor: 'pointer',
-                      transition: 'all 0.15s',
                     }}
-                    onMouseOver={(e) => { e.currentTarget.style.background = '#fee2e2'; }}
-                    onMouseOut={(e) => { e.currentTarget.style.background = '#fff5f5'; }}
+                    onMouseOver={(e) => { e.currentTarget.style.background = '#f8fafc'; }}
+                    onMouseOut={(e) => { e.currentTarget.style.background = '#ffffff'; }}
                   >
                     <Trash2 size={13} />
                     <span>Clear All</span>
                   </button>
                 )}
 
+                {/* Plain-language vs raw channel error */}
+                <div style={{ display: 'inline-flex', gap: 2, padding: 2, borderRadius: 8, border: '1px solid #e2e8f0', background: '#f8fafc' }}>
+                  {[['simple', 'Simple'], ['developer', 'Developer']].map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => { setErrorLogView(mode); setExpandedErrorId(null); }}
+                      title={mode === 'simple' ? 'Plain-language explanation' : 'Raw error from the channel'}
+                      style={{
+                        padding: '4px 11px',
+                        borderRadius: 6,
+                        border: 'none',
+                        background: errorLogView === mode ? '#ffffff' : 'transparent',
+                        color: errorLogView === mode ? '#0f172a' : '#64748b',
+                        fontSize: '0.75rem',
+                        fontWeight: errorLogView === mode ? 600 : 500,
+                        cursor: 'pointer',
+                        boxShadow: errorLogView === mode ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
                 <button
                   type="button"
-                  onClick={() => loadErrorLogs(errorLogPlatformFilter)}
+                  onClick={() => loadErrorLogs()}
                   disabled={errorLogsLoading}
                   title="Refresh logs"
                   style={{
@@ -2605,7 +2623,10 @@ export default function BotManagerPage() {
               </div>
             </div>
 
-            {/* Filter & Search Toolbar */}
+            {/* Search Toolbar — no channel tabs here: the list is already
+                scoped to one account (or all accounts) via the left rail,
+                and one account is always exactly one platform, so a
+                platform filter on top of that would just duplicate it. */}
             <div
               style={{
                 padding: '12px 24px',
@@ -2613,45 +2634,9 @@ export default function BotManagerPage() {
                 background: '#f8fafc',
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 12,
-                flexWrap: 'wrap',
               }}
             >
-              {/* Channel Filter Pills */}
-              <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
-                {['WHATSAPP', 'FACEBOOK', 'TELEGRAM', 'INSTAGRAM', 'WEBCHAT', 'ALL'].map((plt) => {
-                  const isActive = errorLogPlatformFilter === plt;
-                  const pInfo = plt === 'ALL' ? { label: 'All Channels' } : getPlatformInfo(plt);
-                  return (
-                    <button
-                      key={plt}
-                      type="button"
-                      onClick={() => {
-                        setErrorLogPlatformFilter(plt);
-                        loadErrorLogs(plt);
-                      }}
-                      style={{
-                        padding: '5px 12px',
-                        borderRadius: 20,
-                        fontSize: '0.74rem',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        border: isActive ? '1px solid var(--primary)' : '1px solid #e2e8f0',
-                        background: isActive ? 'var(--primary)' : '#ffffff',
-                        color: isActive ? '#ffffff' : '#64748b',
-                        transition: 'all 0.15s',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {pInfo.label}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Search input */}
-              <div style={{ position: 'relative', width: 280, maxWidth: '100%' }}>
+              <div style={{ position: 'relative', width: '100%' }}>
                 <Search size={14} color="#94a3b8" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
                 <input
                   type="text"
@@ -2676,12 +2661,18 @@ export default function BotManagerPage() {
             <div
               style={{
                 flex: 1,
+                minHeight: 0,
                 overflowY: 'auto',
                 padding: '16px 24px',
                 background: '#f8fafc',
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 12,
+                // Loading/empty states have far less content than a populated
+                // list — center them in the fixed-height body instead of
+                // letting them pin to the top, so the box reads as one
+                // steady frame rather than a half-empty leftover.
+                justifyContent: (errorLogsLoading && errorLogs.length === 0) || filteredErrorLogs.length === 0 ? 'center' : 'flex-start',
               }}
             >
               {errorLogsLoading && errorLogs.length === 0 ? (
@@ -2730,117 +2721,76 @@ export default function BotManagerPage() {
                   const pInfo = getPlatformInfo(errItem.platform);
                   const isCopied = copiedLogId === errItem.id;
 
+                  const human = humanizeBotError(errItem);
+                  const isDev = errorLogView === 'developer';
+
                   return (
                     <div
                       key={errItem.id}
                       style={{
                         background: '#ffffff',
                         border: '1px solid #e2e8f0',
-                        borderRadius: 12,
+                        borderRadius: 10,
                         padding: '14px 18px',
-                        boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-                        transition: 'all 0.15s ease',
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14 }}>
                         {/* Error Icon & Main Message */}
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flex: 1, minWidth: 0 }}>
-                          <div
-                            style={{
-                              width: 32,
-                              height: 32,
-                              borderRadius: 8,
-                              background: '#fef2f2',
-                              color: '#ef4444',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              flexShrink: 0,
-                              marginTop: 2,
-                            }}
-                          >
-                            <AlertTriangle size={16} />
-                          </div>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11, flex: 1, minWidth: 0 }}>
+                          <AlertTriangle size={15} color="#94a3b8" style={{ flexShrink: 0, marginTop: 3 }} />
 
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div
                               style={{
                                 fontSize: '0.86rem',
-                                fontWeight: 700,
+                                fontWeight: 600,
                                 color: '#0f172a',
                                 lineHeight: 1.45,
                                 wordBreak: 'break-word',
+                                fontFamily: isDev ? 'Consolas, Monaco, "Courier New", monospace' : 'inherit',
                               }}
                             >
-                              {errItem.error_message}
+                              {isDev ? cleanRawMessage(errItem.error_message) : human.title}
                             </div>
 
-                            {/* Tags row */}
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-                              {/* Channel badge */}
-                              <span
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: 4,
-                                  fontSize: '0.72rem',
-                                  fontWeight: 600,
-                                  padding: '2px 8px',
-                                  borderRadius: 6,
-                                  background: pInfo.bg,
-                                  color: pInfo.color,
-                                }}
-                              >
+                            {!isDev && (
+                              <div style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.5, marginTop: 4 }}>
+                                {human.detail}
+                                {human.action && (
+                                  <span style={{ display: 'block', marginTop: 5, color: '#0f172a', fontWeight: 500 }}>
+                                    {human.action}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Tags row — neutral, no per-type colour coding */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 9, flexWrap: 'wrap', fontSize: '0.72rem', color: '#64748b' }}>
+                              <span style={{ padding: '2px 7px', borderRadius: 5, border: '1px solid #e2e8f0', fontWeight: 500 }}>
                                 {pInfo.label}
                               </span>
 
-                              {/* Bot or Flow info */}
                               {errItem.flow_name && (
-                                <span
-                                  style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: 4,
-                                    fontSize: '0.72rem',
-                                    fontWeight: 600,
-                                    padding: '2px 8px',
-                                    borderRadius: 6,
-                                    background: 'rgba(37, 99, 235, 0.08)',
-                                    color: '#4f46e5',
-                                  }}
-                                >
-                                  <Zap size={11} /> Flow: {errItem.flow_name}
+                                <span style={{ padding: '2px 7px', borderRadius: 5, border: '1px solid #e2e8f0', fontWeight: 500 }}>
+                                  Flow: {errItem.flow_name}
                                 </span>
                               )}
 
                               {errItem.bot_name && (
-                                <span
-                                  style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: 4,
-                                    fontSize: '0.72rem',
-                                    fontWeight: 600,
-                                    padding: '2px 8px',
-                                    borderRadius: 6,
-                                    background: 'rgba(16, 185, 129, 0.08)',
-                                    color: '#059669',
-                                  }}
-                                >
-                                  <Bot size={11} /> Bot: {errItem.bot_name}
+                                <span style={{ padding: '2px 7px', borderRadius: 5, border: '1px solid #e2e8f0', fontWeight: 500 }}>
+                                  Bot: {errItem.bot_name}
                                 </span>
                               )}
 
-                              {/* Contact identifier */}
+                              {isDev && human.code && (
+                                <span style={{ padding: '2px 7px', borderRadius: 5, border: '1px solid #e2e8f0', fontWeight: 500, fontFamily: 'Consolas, Monaco, monospace' }}>
+                                  Code {human.code}
+                                </span>
+                              )}
+
                               {errItem.contact_identifier && (
-                                <span
-                                  style={{
-                                    fontSize: '0.72rem',
-                                    color: '#64748b',
-                                    fontWeight: 500,
-                                  }}
-                                >
-                                  To: <strong>{errItem.contact_name ? `${errItem.contact_name} (${errItem.contact_identifier})` : errItem.contact_identifier}</strong>
+                                <span>
+                                  To: {errItem.contact_name ? `${errItem.contact_name} (${errItem.contact_identifier})` : errItem.contact_identifier}
                                 </span>
                               )}
                             </div>
@@ -2850,52 +2800,43 @@ export default function BotManagerPage() {
                         {/* Date / Time & Actions */}
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
                           <div style={{ textAlign: 'right' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
-                              <span
-                                style={{
-                                  fontSize: '0.7rem',
-                                  fontWeight: 700,
-                                  padding: '1px 6px',
-                                  borderRadius: 4,
-                                  background: '#f1f5f9',
-                                  color: '#475569',
-                                }}
-                              >
-                                {relative}
-                              </span>
+                            <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 500 }}>
+                              {relative}
                             </div>
-                            <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: 3 }}>
+                            <div style={{ fontSize: '0.71rem', color: '#94a3b8', marginTop: 2 }}>
                               {date} • {time}
                             </div>
                           </div>
 
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <button
-                              type="button"
-                              onClick={() => setExpandedErrorId(isExpanded ? null : errItem.id)}
-                              style={{
-                                padding: '4px 10px',
-                                borderRadius: 6,
-                                border: '1px solid #e2e8f0',
-                                background: isExpanded ? '#f1f5f9' : '#ffffff',
-                                color: '#475569',
-                                fontSize: '0.73rem',
-                                fontWeight: 600,
-                                cursor: 'pointer',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 4,
-                              }}
-                            >
-                              <span>{isExpanded ? 'Hide Details' : 'Details'}</span>
-                              <ChevronDown
-                                size={13}
+                            {isDev && (
+                              <button
+                                type="button"
+                                onClick={() => setExpandedErrorId(isExpanded ? null : errItem.id)}
                                 style={{
-                                  transform: isExpanded ? 'rotate(180deg)' : 'none',
-                                  transition: 'transform 0.15s ease',
+                                  padding: '4px 10px',
+                                  borderRadius: 6,
+                                  border: '1px solid #e2e8f0',
+                                  background: isExpanded ? '#f8fafc' : '#ffffff',
+                                  color: '#475569',
+                                  fontSize: '0.73rem',
+                                  fontWeight: 500,
+                                  cursor: 'pointer',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 4,
                                 }}
-                              />
-                            </button>
+                              >
+                                <span>{isExpanded ? 'Hide payload' : 'Payload'}</span>
+                                <ChevronDown
+                                  size={13}
+                                  style={{
+                                    transform: isExpanded ? 'rotate(180deg)' : 'none',
+                                    transition: 'transform 0.15s ease',
+                                  }}
+                                />
+                              </button>
+                            )}
 
                             <button
                               type="button"
@@ -2905,17 +2846,16 @@ export default function BotManagerPage() {
                                 width: 28,
                                 height: 28,
                                 borderRadius: 6,
-                                border: '1px solid #fee2e2',
-                                background: '#fff5f5',
-                                color: '#ef4444',
+                                border: '1px solid #e2e8f0',
+                                background: '#ffffff',
+                                color: '#64748b',
                                 display: 'inline-flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 cursor: 'pointer',
-                                transition: 'all 0.15s',
                               }}
-                              onMouseOver={(e) => { e.currentTarget.style.background = '#fee2e2'; }}
-                              onMouseOut={(e) => { e.currentTarget.style.background = '#fff5f5'; }}
+                              onMouseOver={(e) => { e.currentTarget.style.background = '#f8fafc'; }}
+                              onMouseOut={(e) => { e.currentTarget.style.background = '#ffffff'; }}
                             >
                               <Trash2 size={13} />
                             </button>
@@ -2923,21 +2863,12 @@ export default function BotManagerPage() {
                         </div>
                       </div>
 
-                      {/* Expanded Technical Details Accordion */}
-                      {isExpanded && (
-                        <div
-                          style={{
-                            marginTop: 12,
-                            paddingTop: 12,
-                            borderTop: '1px dashed #e2e8f0',
-                            background: '#f8fafc',
-                            padding: 12,
-                            borderRadius: 8,
-                          }}
-                        >
+                      {/* Raw diagnostic payload — developer view only */}
+                      {isDev && isExpanded && (
+                        <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #f1f5f9' }}>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                            <span style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#64748b' }}>
-                              Technical Diagnostic Payload
+                            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b' }}>
+                              Diagnostic payload
                             </span>
                             <button
                               type="button"
@@ -2948,16 +2879,16 @@ export default function BotManagerPage() {
                                 gap: 5,
                                 padding: '3px 8px',
                                 borderRadius: 5,
-                                border: '1px solid #cbd5e1',
+                                border: '1px solid #e2e8f0',
                                 background: '#ffffff',
-                                color: '#334155',
+                                color: '#475569',
                                 fontSize: '0.7rem',
-                                fontWeight: 600,
+                                fontWeight: 500,
                                 cursor: 'pointer',
                               }}
                             >
-                              {isCopied ? <Check size={12} color="#10b981" /> : <Copy size={12} />}
-                              <span>{isCopied ? 'Copied!' : 'Copy'}</span>
+                              {isCopied ? <Check size={12} /> : <Copy size={12} />}
+                              <span>{isCopied ? 'Copied' : 'Copy'}</span>
                             </button>
                           </div>
 
@@ -2966,8 +2897,9 @@ export default function BotManagerPage() {
                               margin: 0,
                               padding: 10,
                               borderRadius: 6,
-                              background: '#1e293b',
-                              color: '#f1f5f9',
+                              background: '#f8fafc',
+                              border: '1px solid #e2e8f0',
+                              color: '#334155',
                               fontSize: '0.72rem',
                               lineHeight: 1.45,
                               overflowX: 'auto',

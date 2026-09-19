@@ -250,12 +250,22 @@ async function processSubscriber(sub) {
   // seconds after the contact actually messaged in, because it was checking
   // the wrong thread. Mirrors utils/broadcastRunner.js's identical fix.
   if (!sequence.integration_id) {
-    await logBotError({
-      agencyId: sequence.agency_id, contactId: contact.id, contactIdentifier: contact.external_id || contact.phone || null,
-      customMessage: `Sequence "${sequence.name}" delivery failed: no account chosen to send from — open it and pick one.`,
-    });
-    await pool.query("UPDATE sequence_subscribers SET current_node_id = ?, next_run_at = DATE_ADD(NOW(), INTERVAL 1 HOUR) WHERE id = ?", [currentNodeId, sub.id]);
-    return;
+    // Auto-resolve to an active integration for this agency and platform if available
+    const [[fallbackInteg]] = await pool.query(
+      "SELECT id FROM integrations WHERE agency_id = ? AND platform = ? AND is_active = 1 ORDER BY id ASC LIMIT 1",
+      [sequence.agency_id, sequence.platform]
+    );
+    if (fallbackInteg) {
+      sequence.integration_id = fallbackInteg.id;
+      await pool.query("UPDATE sequences SET integration_id = ? WHERE id = ?", [fallbackInteg.id, sequence.id]);
+    } else {
+      await logBotError({
+        agencyId: sequence.agency_id, contactId: contact.id, contactIdentifier: contact.external_id || contact.phone || null,
+        customMessage: `Sequence "${sequence.name}" delivery failed: no account chosen to send from — open it and pick one.`,
+      });
+      await pool.query("UPDATE sequence_subscribers SET current_node_id = ?, next_run_at = DATE_ADD(NOW(), INTERVAL 1 HOUR) WHERE id = ?", [currentNodeId, sub.id]);
+      return;
+    }
   }
 
   const [[integration]] = await pool.query(

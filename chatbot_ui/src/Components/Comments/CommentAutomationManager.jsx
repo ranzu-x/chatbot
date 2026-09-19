@@ -35,11 +35,19 @@ import {
 // `lockPlatform` ('FACEBOOK' | 'INSTAGRAM') restricts this instance to one
 // platform for good — its integration list, account selector, and campaigns
 // never include the other platform, and `platform` state never switches away
-// from it. This is what BotManagerPage.jsx's two separate Comment Automation
-// sub-tabs (Facebook / Instagram) pass, replacing the old single screen that
-// mixed both platforms behind one combined account dropdown. Omit it for the
-// legacy unlocked behavior (kept for any other future call site).
-export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK', lockPlatform }) {
+// from it.
+//
+// `presetIntegrationId` + `hideAccountSelector`: CommentAutomationPage.jsx
+// (the standalone /comment-automation screen — Comment Automation used to
+// live as two sub-tabs inside Bot Manager → Engagement) renders its own
+// Facebook/Instagram account rail on the left and mounts this component per
+// selected account, `key`ed by that account's id so switching accounts
+// remounts it cleanly. `presetIntegrationId` tells `loadIntegrations()`
+// which account to select instead of defaulting to the locked platform's
+// first one, and `hideAccountSelector` hides this component's own internal
+// dropdown, since the page-level rail already is that picker — showing both
+// would let two controls disagree about which account is selected.
+export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK', lockPlatform, presetIntegrationId, hideAccountSelector }) {
   const [activeTab, setActiveTab] = useState('posts'); // 'posts' | 'campaigns'
   const [platform, setPlatform] = useState(lockPlatform || defaultPlatform); // 'FACEBOOK' | 'INSTAGRAM'
   const [integrations, setIntegrations] = useState([]);
@@ -157,8 +165,11 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
         // stays "Facebook Comment Automation" / "Instagram Comment
         // Automation" rather than silently jumping to the other platform's
         // account, which is exactly the combined-dropdown behavior this
-        // prop exists to remove.
-        const matched = list[0] || null;
+        // prop exists to remove. presetIntegrationId (the account the
+        // page-level rail has selected) wins when it's actually in this
+        // platform's list; otherwise fall back to the first one.
+        const preset = presetIntegrationId && list.find((i) => String(i.id) === String(presetIntegrationId));
+        const matched = preset || list[0] || null;
         if (matched) setSelectedIntegrationId(matched.id);
         return;
       }
@@ -535,11 +546,13 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {/* Account Selector — hidden when locked to a single platform with
-              only one (or zero) connected account: nothing to choose between,
-              and this is exactly the spot the old combined Facebook/Instagram
-              dropdown lived, so a locked instance never shows one at all. */}
-          {lockPlatform && integrations.length === 0 ? (
+          {/* Account Selector — hidden entirely when a page-level rail is
+              already the account picker (hideAccountSelector), otherwise
+              hidden when locked to a single platform with only one (or zero)
+              connected account: nothing to choose between, and this is
+              exactly the spot the old combined Facebook/Instagram dropdown
+              lived, so a locked instance never shows one at all. */}
+          {hideAccountSelector ? null : lockPlatform && integrations.length === 0 ? (
             <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>No {lockPlatform === 'FACEBOOK' ? 'Facebook Page' : 'Instagram account'} connected yet</span>
           ) : (!lockPlatform || integrations.length > 1) ? (
             <select

@@ -43,7 +43,6 @@ import AgencyPackagesPage    from './Pages/Agency/AgencyPackagesPage';
 import IntegrationsPage from './Pages/Agency/IntegrationsPage';
 import DomainSettingsPage from './Pages/Agency/DomainSettingsPage';
 import ApiKeysPage from './Pages/Agency/ApiKeysPage';
-import CommercePage from './Pages/Agency/CommercePage';
 import MyAccountPage    from './Pages/Account/MyAccountPage';
 import BillingSuccessPage from './Pages/Billing/BillingSuccessPage';
 import WebhooksManagerPage from './Pages/Integrations/WebhooksManagerPage';
@@ -86,6 +85,7 @@ import GoogleSheetsSettingsPage   from './Pages/Settings/GoogleSheetsSettingsPag
 import ContactsPage          from './Pages/Contacts/ContactsPage';
 import CampaignListPage      from './Pages/Campaigns/CampaignListPage';
 import SocialPostingPage     from './Pages/Publishing/SocialPostingPage';
+import CommentAutomationPage from './Pages/Engagement/CommentAutomationPage';
 import AppointmentList       from './Pages/Appointment/AppointmentList';
 import SlotManager           from './Pages/Appointment/SlotManager';
 
@@ -146,8 +146,11 @@ export default function App() {
             <Route path="/domain-settings" element={<ProtectedRoute roles={ADMIN_AGENCY}><DomainSettingsPage /></ProtectedRoute>} />
             <Route path="/agency/api-keys" element={<ProtectedRoute roles={ADMIN_AGENCY}><ApiKeysPage /></ProtectedRoute>} />
             <Route path="/api-keys" element={<ProtectedRoute roles={ADMIN_AGENCY}><ApiKeysPage /></ProtectedRoute>} />
-            <Route path="/agency/commerce" element={<ProtectedRoute roles={ADMIN_AGENCY}><CommercePage /></ProtectedRoute>} />
-            <Route path="/commerce" element={<ProtectedRoute roles={ADMIN_AGENCY}><CommercePage /></ProtectedRoute>} />
+            {/* Store connections live in Bot Manager → Commerce now, not a
+                standalone page — same pattern as /user-input-flows, /sequences
+                and /settings/whatsapp-flows redirecting to /bots. */}
+            <Route path="/agency/commerce" element={<Navigate to="/bots" state={{ activeCategory: 'commerce', activeSubTab: 'storeConnections' }} replace />} />
+            <Route path="/commerce" element={<Navigate to="/bots" state={{ activeCategory: 'commerce', activeSubTab: 'storeConnections' }} replace />} />
 
 
             {/* ── Connect Account Central Hub (Admin + Reseller + User) ──
@@ -195,6 +198,11 @@ export default function App() {
             <Route path="/campaigns" element={<ProtectedRoute roles={ALL_ROLES}><CampaignListPage /></ProtectedRoute>} />
             <Route path="/social-posting" element={<ProtectedRoute roles={ALL_ROLES}><SocialPostingPage /></ProtectedRoute>} />
             <Route path="/publishing" element={<ProtectedRoute roles={ALL_ROLES}><SocialPostingPage /></ProtectedRoute>} />
+
+            {/* ── Comment Automation ── pulled out of Bot Manager → Automation →
+                Engagement (see CommentAutomationPage.jsx for why); own account
+                rail scoped to Facebook/Instagram only. */}
+            <Route path="/comment-automation" element={<ProtectedRoute roles={ALL_ROLES}><CommentAutomationPage /></ProtectedRoute>} />
             <Route path="/webhooks" element={<ProtectedRoute roles={ADMIN_AGENCY}><WebhooksManagerPage /></ProtectedRoute>} />
             <Route path="/integrations/webhooks" element={<ProtectedRoute roles={ADMIN_AGENCY}><WebhooksManagerPage /></ProtectedRoute>} />
             <Route path="/orders" element={<ProtectedRoute roles={ALL_ROLES}><OrdersPage /></ProtectedRoute>} />
@@ -207,6 +215,9 @@ export default function App() {
             <Route path="/settings/apps" element={<ProtectedRoute roles={ADMIN_AGENCY}><AppSettingsHubPage /></ProtectedRoute>} />
             <Route path="/settings/app-integrations" element={<ProtectedRoute roles={ADMIN_AGENCY}><AppSettingsHubPage /></ProtectedRoute>} />
             <Route path="/agency/integrations" element={<ProtectedRoute roles={ADMIN_AGENCY}><AppSettingsHubPage /></ProtectedRoute>} />
+            <Route path="/settings/whatsapp-app" element={<ProtectedRoute roles={ADMIN_AGENCY}><MetaAppPage forcedPlatformGroup="WHATSAPP" /></ProtectedRoute>} />
+            <Route path="/settings/facebook-app" element={<ProtectedRoute roles={ADMIN_AGENCY}><MetaAppPage forcedPlatformGroup="MESSENGER_INSTAGRAM" /></ProtectedRoute>} />
+            <Route path="/settings/messenger-app" element={<ProtectedRoute roles={ADMIN_AGENCY}><MetaAppPage forcedPlatformGroup="MESSENGER_INSTAGRAM" /></ProtectedRoute>} />
             <Route path="/settings/meta-app" element={<ProtectedRoute roles={ADMIN_AGENCY}><MetaAppPage /></ProtectedRoute>} />
             <Route path="/settings/tiktok-app" element={<ProtectedRoute roles={ADMIN_AGENCY}><TikTokAppPage /></ProtectedRoute>} />
             <Route path="/settings/ai-providers" element={<ProtectedRoute roles={ADMIN_AGENCY}><AIProvidersPage /></ProtectedRoute>} />

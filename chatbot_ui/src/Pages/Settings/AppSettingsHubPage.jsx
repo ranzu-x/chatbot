@@ -21,54 +21,82 @@ import {
   Shield,
   Save,
   HelpCircle,
+  MessageCircle,
 } from 'lucide-react';
 
-const APP_NAV_ITEMS = [
+const APP_NAV_GROUPS = [
   {
-    id: 'meta',
-    label: 'Meta App',
-    subtitle: 'WhatsApp, FB & Instagram',
-    IconComponent: Radio,
-    color: '#2563eb',
-    bg: 'rgba(37, 99, 235, 0.08)',
-    border: 'rgba(37, 99, 235, 0.18)',
+    category: 'Meta / Facebook Apps',
+    items: [
+      {
+        id: 'meta_whatsapp',
+        label: 'WhatsApp App',
+        subtitle: 'Cloud API & Embedded Signup',
+        IconComponent: MessageCircle,
+        color: '#25d366',
+        bg: 'rgba(37, 211, 102, 0.1)',
+        border: 'rgba(37, 211, 102, 0.25)',
+      },
+      {
+        id: 'meta_messenger',
+        label: 'Facebook & Messenger',
+        subtitle: 'Pages, Messenger & Instagram DMs',
+        IconComponent: Radio,
+        color: '#1877f2',
+        bg: 'rgba(24, 119, 242, 0.08)',
+        border: 'rgba(24, 119, 242, 0.18)',
+      },
+    ],
   },
   {
-    id: 'tiktok',
-    label: 'TikTok App',
-    subtitle: 'DMs & Comment Replies',
-    IconComponent: Video,
-    color: '#0f172a',
-    bg: 'rgba(15, 23, 42, 0.06)',
-    border: 'rgba(15, 23, 42, 0.15)',
-  },
-  {
-    id: 'google',
-    label: 'Google App',
-    subtitle: 'OAuth, Sheets & Gmail',
-    IconComponent: Globe,
-    color: '#0284c7',
-    bg: 'rgba(2, 132, 199, 0.08)',
-    border: 'rgba(2, 132, 199, 0.18)',
-  },
-  {
-    id: 'shopify',
-    label: 'Shopify App',
-    subtitle: 'Store Catalog & Orders',
-    IconComponent: ShoppingBag,
-    color: '#16a34a',
-    bg: 'rgba(22, 163, 74, 0.08)',
-    border: 'rgba(22, 163, 74, 0.18)',
+    category: 'Other Platforms',
+    items: [
+      {
+        id: 'tiktok',
+        label: 'TikTok App',
+        subtitle: 'DMs & Comment Replies',
+        IconComponent: Video,
+        color: '#0f172a',
+        bg: 'rgba(15, 23, 42, 0.06)',
+        border: 'rgba(15, 23, 42, 0.15)',
+      },
+      {
+        id: 'google',
+        label: 'Google App',
+        subtitle: 'OAuth, Sheets & Gmail',
+        IconComponent: Globe,
+        color: '#0284c7',
+        bg: 'rgba(2, 132, 199, 0.08)',
+        border: 'rgba(2, 132, 199, 0.18)',
+      },
+      {
+        id: 'shopify',
+        label: 'Shopify App',
+        subtitle: 'Store Catalog & Orders',
+        IconComponent: ShoppingBag,
+        color: '#16a34a',
+        bg: 'rgba(22, 163, 74, 0.08)',
+        border: 'rgba(22, 163, 74, 0.18)',
+      },
+    ],
   },
 ];
 
+const APP_NAV_ITEMS = APP_NAV_GROUPS.flatMap((g) => g.items);
+
 export default function AppSettingsHubPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const rawTab = searchParams.get('tab') || 'meta';
-  const activeTab = APP_NAV_ITEMS.some(item => item.id === rawTab) ? rawTab : 'meta';
+  const rawTab = searchParams.get('tab') || 'meta_whatsapp';
+  const resolveTab = (t) => {
+    if (t === 'meta' || t === 'whatsapp') return 'meta_whatsapp';
+    if (t === 'messenger' || t === 'facebook') return 'meta_messenger';
+    return APP_NAV_ITEMS.some(item => item.id === t) ? t : 'meta_whatsapp';
+  };
+  const activeTab = resolveTab(rawTab);
 
   const [loadingStatuses, setLoadingStatuses] = useState(true);
-  const [metaConfigured, setMetaConfigured] = useState(false);
+  const [whatsappConfigured, setWhatsappConfigured] = useState(false);
+  const [messengerConfigured, setMessengerConfigured] = useState(false);
   const [tiktokConfigured, setTiktokConfigured] = useState(false);
 
   // Google Settings State
@@ -99,12 +127,16 @@ export default function AppSettingsHubPage() {
   const fetchStatuses = async () => {
     setLoadingStatuses(true);
     try {
-      const [metaRes, tiktokRes] = await Promise.allSettled([
-        metaAppAPI.get(),
+      const [whatsappRes, messengerRes, tiktokRes] = await Promise.allSettled([
+        metaAppAPI.get('WHATSAPP'),
+        metaAppAPI.get('MESSENGER_INSTAGRAM'),
         tiktokAppAPI.get(),
       ]);
-      if (metaRes.status === 'fulfilled' && metaRes.value?.data?.settings?.app_id) {
-        setMetaConfigured(true);
+      if (whatsappRes.status === 'fulfilled' && whatsappRes.value?.data?.settings?.app_id) {
+        setWhatsappConfigured(true);
+      }
+      if (messengerRes.status === 'fulfilled' && messengerRes.value?.data?.settings?.app_id) {
+        setMessengerConfigured(true);
       }
       if (tiktokRes.status === 'fulfilled' && tiktokRes.value?.data?.settings?.client_key) {
         setTiktokConfigured(true);
@@ -191,87 +223,112 @@ export default function AppSettingsHubPage() {
               top: 20,
             }}
           >
-            <div style={{ padding: '6px 10px', fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#94a3b8' }}>
-              App Integration Menu
-            </div>
+            {APP_NAV_GROUPS.map((group, groupIdx) => (
+              <div key={group.category} style={{ marginBottom: groupIdx < APP_NAV_GROUPS.length - 1 ? 12 : 0 }}>
+                <div style={{
+                  padding: '6px 10px 4px',
+                  fontSize: '0.67rem',
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                  color: '#94a3b8',
+                  borderTop: groupIdx > 0 ? '1px solid #f1f5f9' : 'none',
+                  marginTop: groupIdx > 0 ? 6 : 0,
+                  paddingTop: groupIdx > 0 ? 8 : 4,
+                }}>
+                  {group.category}
+                </div>
 
-            {APP_NAV_ITEMS.map((item) => {
-              const isSelected = activeTab === item.id;
-              const isConfigured = (item.id === 'meta' && metaConfigured) || (item.id === 'tiktok' && tiktokConfigured);
-              const Icon = item.IconComponent;
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {group.items.map((item) => {
+                    const isSelected = activeTab === item.id;
+                    const isConfigured =
+                      (item.id === 'meta_whatsapp' && whatsappConfigured) ||
+                      (item.id === 'meta_messenger' && messengerConfigured) ||
+                      (item.id === 'tiktok' && tiktokConfigured);
+                    const Icon = item.IconComponent;
 
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setTab(item.id)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '9px 12px',
-                    borderRadius: 8,
-                    border: isSelected ? '1px solid #cbd5e1' : '1px solid transparent',
-                    background: isSelected ? '#f1f5f9' : 'transparent',
-                    color: isSelected ? '#0f172a' : '#475569',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    transition: 'background 0.15s ease',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isSelected) e.currentTarget.style.background = '#f8fafc';
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isSelected) e.currentTarget.style.background = 'transparent';
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                    <div
-                      style={{
-                        width: 28,
-                        height: 28,
-                        borderRadius: 6,
-                        background: item.bg,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: isSelected ? '#0f172a' : item.color,
-                        flexShrink: 0,
-                      }}
-                    >
-                      <Icon size={16} />
-                    </div>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: isSelected ? 700 : 600, fontSize: '0.82rem', color: isSelected ? '#0f172a' : '#334155' }}>
-                        {item.label}
-                      </div>
-                      <div style={{ fontSize: '0.68rem', color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {item.subtitle}
-                      </div>
-                    </div>
-                  </div>
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => setTab(item.id)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '9px 12px',
+                          borderRadius: 8,
+                          border: isSelected ? '1px solid #cbd5e1' : '1px solid transparent',
+                          background: isSelected ? '#f1f5f9' : 'transparent',
+                          color: isSelected ? '#0f172a' : '#475569',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          transition: 'background 0.15s ease',
+                          width: '100%',
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isSelected) e.currentTarget.style.background = '#f8fafc';
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!isSelected) e.currentTarget.style.background = 'transparent';
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                          <div
+                            style={{
+                              width: 28,
+                              height: 28,
+                              borderRadius: 6,
+                              background: item.bg,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              color: isSelected ? '#0f172a' : item.color,
+                              flexShrink: 0,
+                            }}
+                          >
+                            <Icon size={16} />
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: isSelected ? 700 : 600, fontSize: '0.82rem', color: isSelected ? '#0f172a' : '#334155' }}>
+                              {item.label}
+                            </div>
+                            <div style={{ fontSize: '0.68rem', color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {item.subtitle}
+                            </div>
+                          </div>
+                        </div>
 
-                  <span
-                    style={{
-                      width: 6,
-                      height: 6,
-                      borderRadius: '50%',
-                      background: isConfigured ? '#16a34a' : isSelected ? '#94a3b8' : '#cbd5e1',
-                      flexShrink: 0,
-                    }}
-                  />
-                </button>
-              );
-            })}
+                        <span
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: '50%',
+                            background: isConfigured ? '#16a34a' : isSelected ? '#94a3b8' : '#cbd5e1',
+                            flexShrink: 0,
+                          }}
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
 
           {/* ── Right Workspace ── */}
           <div style={{ minWidth: 0 }}>
-            {/* 1. Meta App Configuration */}
-            {activeTab === 'meta' && (
-              <MetaAppPage embedded={true} />
+            {/* 1. WhatsApp Meta App Configuration */}
+            {(activeTab === 'meta_whatsapp' || activeTab === 'meta') && (
+              <MetaAppPage embedded={true} forcedPlatformGroup="WHATSAPP" />
             )}
 
-            {/* 2. TikTok App Configuration */}
+            {/* 2. Facebook & Messenger Meta App Configuration */}
+            {activeTab === 'meta_messenger' && (
+              <MetaAppPage embedded={true} forcedPlatformGroup="MESSENGER_INSTAGRAM" />
+            )}
+
+            {/* 3. TikTok App Configuration */}
             {activeTab === 'tiktok' && (
               <TikTokAppPage embedded={true} />
             )}
@@ -334,6 +391,9 @@ export default function AppSettingsHubPage() {
                       placeholder="e.g. 1234567890-xxxxxxxx.apps.googleusercontent.com"
                       value={googleForm.clientId}
                       onChange={(e) => setGoogleForm({ ...googleForm, clientId: e.target.value })}
+                      autoComplete="off"
+                      autoCorrect="off"
+                      spellCheck="false"
                     />
                     <span style={{ fontSize: '0.72rem', color: '#64748b' }}>Obtain from Google Cloud Console → APIs & Services → Credentials.</span>
                   </div>
@@ -347,6 +407,11 @@ export default function AppSettingsHubPage() {
                       placeholder="GOCSPX-xxxxxxxxxxxxxxxx"
                       value={googleForm.clientSecret}
                       onChange={(e) => setGoogleForm({ ...googleForm, clientSecret: e.target.value })}
+                      autoComplete="new-password"
+                      autoCorrect="off"
+                      spellCheck="false"
+                      data-lpignore="true"
+                      data-1p-ignore="true"
                     />
                   </div>
 
@@ -426,6 +491,9 @@ export default function AppSettingsHubPage() {
                       placeholder="e.g. your-store.myshopify.com"
                       value={shopifyForm.shopDomain}
                       onChange={(e) => setShopifyForm({ ...shopifyForm, shopDomain: e.target.value })}
+                      autoComplete="off"
+                      autoCorrect="off"
+                      spellCheck="false"
                     />
                   </div>
 
@@ -438,6 +506,11 @@ export default function AppSettingsHubPage() {
                       placeholder="shpat_xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
                       value={shopifyForm.accessToken}
                       onChange={(e) => setShopifyForm({ ...shopifyForm, accessToken: e.target.value })}
+                      autoComplete="new-password"
+                      autoCorrect="off"
+                      spellCheck="false"
+                      data-lpignore="true"
+                      data-1p-ignore="true"
                     />
                     <span style={{ fontSize: '0.72rem', color: '#64748b' }}>Created via Shopify Admin → Settings → Apps and sales channels → Develop apps.</span>
                   </div>
@@ -450,6 +523,11 @@ export default function AppSettingsHubPage() {
                       placeholder="shpss_xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
                       value={shopifyForm.webhookSecret}
                       onChange={(e) => setShopifyForm({ ...shopifyForm, webhookSecret: e.target.value })}
+                      autoComplete="new-password"
+                      autoCorrect="off"
+                      spellCheck="false"
+                      data-lpignore="true"
+                      data-1p-ignore="true"
                     />
                   </div>
 

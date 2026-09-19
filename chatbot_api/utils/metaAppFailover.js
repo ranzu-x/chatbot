@@ -12,23 +12,42 @@ const IG_SUBSCRIBED_FIELDS = "messages,messaging_postbacks,messaging_optins,mess
  * the Settings UI. Never invents a new per-integration app_secret override;
  * only refreshes rows that already carry one (routes/webhook.js's
  * verifyMetaSignature also checks the pool's own resolved app_secret, so
- * rows without an override already pick up the new app automatically). */
+ * rows without an override already pick up the new app automatically).
+ *
+ * IMPORTANT: /subscribed_apps subscribes the WABA/Page to whichever app the
+ * access token used in the call itself belongs to — NOT to some app named
+ * elsewhere in the request. So this must call it with poolRow's OWN
+ * system_user_token (a token that actually belongs to the NEW app), never
+ * with the integration's existing access_token (which belongs to whatever
+ * app it was originally connected under, and would just re-confirm/leave
+ * the subscription on the OLD app — this was a real bug here previously:
+ * it used the integration's own token, so "failover" never actually moved
+ * the Meta-side subscription, while still locally overwriting the stored
+ * app_secret to the new app's — creating exactly the mismatch this comment
+ * now prevents). Without a valid system_user_token on poolRow, the Meta-side
+ * re-subscription cannot happen at all — skip it and let the caller know via
+ * `failed`, rather than silently doing something that looks like it worked. */
 export async function resubscribeIntegrationsToPool(agencyId, platformGroup, poolRow) {
   const result = { attempted: 0, succeeded: 0, failed: [] };
+  const newAppToken = poolRow.system_user_token?.trim();
 
   if (platformGroup === "WHATSAPP") {
     const [rows] = await pool.query(
-      "SELECT id, wa_business_acc_id, access_token, app_secret FROM integrations WHERE agency_id = ? AND platform = 'WHATSAPP' AND is_active = 1",
+      "SELECT id, wa_business_acc_id, app_secret FROM integrations WHERE agency_id = ? AND platform = 'WHATSAPP' AND is_active = 1",
       [agencyId]
     );
     for (const row of rows) {
-      if (!row.wa_business_acc_id || !row.access_token) continue;
+      if (!row.wa_business_acc_id) continue;
       result.attempted++;
+      if (!newAppToken) {
+        result.failed.push({ integrationId: row.id, error: "No system_user_token on the new app — can't re-subscribe on Meta's side. Add one in Settings first." });
+        continue;
+      }
       try {
         const subRes = await fetch(`https://graph.facebook.com/v21.0/${row.wa_business_acc_id}/subscribed_apps`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ access_token: row.access_token }),
+          body: JSON.stringify({ access_token: newAppToken }),
         });
         const subData = await subRes.json();
         if (subData?.error) throw new Error(subData.error.message);
@@ -42,16 +61,20 @@ export async function resubscribeIntegrationsToPool(agencyId, platformGroup, poo
     }
   } else {
     const [rows] = await pool.query(
-      "SELECT id, platform, fb_page_id, access_token, app_secret FROM integrations WHERE agency_id = ? AND platform IN ('FACEBOOK','INSTAGRAM') AND is_active = 1",
+      "SELECT id, platform, fb_page_id, app_secret FROM integrations WHERE agency_id = ? AND platform IN ('FACEBOOK','INSTAGRAM') AND is_active = 1",
       [agencyId]
     );
     for (const row of rows) {
-      if (!row.fb_page_id || !row.access_token) continue;
+      if (!row.fb_page_id) continue;
       result.attempted++;
+      if (!newAppToken) {
+        result.failed.push({ integrationId: row.id, error: "No system_user_token on the new app — can't re-subscribe on Meta's side. Add one in Settings first." });
+        continue;
+      }
       try {
         const fields = row.platform === "INSTAGRAM" ? IG_SUBSCRIBED_FIELDS : FB_SUBSCRIBED_FIELDS;
         const subRes = await fetch(
-          `https://graph.facebook.com/v21.0/${row.fb_page_id}/subscribed_apps?subscribed_fields=${fields}&access_token=${row.access_token}`,
+          `https://graph.facebook.com/v21.0/${row.fb_page_id}/subscribed_apps?subscribed_fields=${fields}&access_token=${newAppToken}`,
           { method: "POST" }
         );
         const subData = await subRes.json();

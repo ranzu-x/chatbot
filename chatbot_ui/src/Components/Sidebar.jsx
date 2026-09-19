@@ -5,6 +5,7 @@ import { useLayout } from '../Provider/LayoutContext';
 import {
   LayoutDashboard,
   MessageSquare,
+  MessageCircle,
   Users,
   Bot,
   Radio,
@@ -37,20 +38,17 @@ const NAV_CONFIG = {
       { label: 'Subscribers',      icon: Users,           path: '/contacts',     moduleKey: 'feature_subscribers' },
       { label: 'Automation',      icon: Bot,             path: '/bots',         moduleKey: 'feature_bot_manager' },
       { label: 'Post Publishing',  icon: FileText,        path: '/social-posting' },
+      { label: 'Comment Automation', icon: MessageCircle, path: '/comment-automation', moduleKey: 'feature_bot_manager' },
       { label: 'Connect Account',  icon: Radio,           path: '/connect-accounts' },
       { label: 'Broadcasts',       icon: Send,            path: '/campaigns',    moduleKey: 'feature_broadcasts' },
       { label: 'In-Chat Orders',   icon: ShoppingBag,     path: '/orders' },
       { label: 'Appointments',     icon: Calendar,        path: '/appointments', moduleKey: 'feature_appointments' },
     ]},
-    { section: 'Automation & Messaging', items: [
+    { section: 'Integration', items: [
       { label: 'App Integrations',    icon: Blocks,    path: '/settings/apps' },
       { label: 'AI Providers',        icon: KeyRound,  path: '/settings/ai-providers', moduleKey: 'feature_ai_agent' },
-    ]},
-    { section: 'Developer & Connections', items: [
       { label: 'Webhooks & Zapier',   icon: Globe,     path: '/webhooks' },
-      { label: 'API Keys',            icon: KeyRound,  path: '/agency/api-keys', moduleKey: 'feature_api_developer' },
       { label: 'Custom Domain',       icon: Globe,     path: '/agency/domain-settings', moduleKey: 'feature_custom_domain' },
-      { label: 'Shopify & WooCommerce', icon: ShoppingBag, path: '/agency/commerce', moduleKey: 'feature_whatsapp_commerce' },
     ]},
     { section: 'Team & Access', items: [
       { label: 'Team Members',        icon: Users,     path: '/team' },
@@ -72,20 +70,17 @@ const NAV_CONFIG = {
       { label: 'Subscribers',      icon: Users,           path: '/contacts',     moduleKey: 'feature_subscribers' },
       { label: 'Automation',      icon: Bot,             path: '/bots',         moduleKey: 'feature_bot_manager' },
       { label: 'Post Publishing',  icon: FileText,        path: '/social-posting' },
+      { label: 'Comment Automation', icon: MessageCircle, path: '/comment-automation', moduleKey: 'feature_bot_manager' },
       { label: 'Connect Account',  icon: Radio,           path: '/connect-accounts' },
       { label: 'Broadcasts',       icon: Send,            path: '/campaigns',    moduleKey: 'feature_broadcasts' },
       { label: 'In-Chat Orders',   icon: ShoppingBag,     path: '/orders' },
       { label: 'Appointments',     icon: Calendar,        path: '/appointments', moduleKey: 'feature_appointments' },
     ]},
-    { section: 'Automation & Messaging', items: [
+    { section: 'Integration', items: [
       { label: 'App Integrations',    icon: Blocks,   path: '/settings/apps' },
       { label: 'AI Providers',        icon: KeyRound, path: '/settings/ai-providers', moduleKey: 'feature_ai_agent' },
-    ]},
-    { section: 'Developer & Connections', items: [
       { label: 'Webhooks & Zapier',   icon: Globe,    path: '/webhooks' },
-      { label: 'API Keys',            icon: KeyRound, path: '/agency/api-keys', moduleKey: 'feature_api_developer' },
       { label: 'Custom Domain',       icon: Globe,    path: '/agency/domain-settings', moduleKey: 'feature_custom_domain' },
-      { label: 'Shopify & WooCommerce', icon: ShoppingBag, path: '/agency/commerce', moduleKey: 'feature_whatsapp_commerce' },
     ]},
     { section: 'Team & Billing', items: [
       { label: 'User Manager',        icon: Users,    path: '/agency/team' },
@@ -113,6 +108,7 @@ const NAV_CONFIG = {
       { label: 'Subscribers',      icon: Users,         path: '/contacts',       moduleKey: 'feature_subscribers' },
       { label: 'Automation',      icon: Bot,           path: '/bots',           moduleKey: 'feature_bot_manager' },
       { label: 'Post Publishing',  icon: FileText,      path: '/social-posting' },
+      { label: 'Comment Automation', icon: MessageCircle, path: '/comment-automation', moduleKey: 'feature_bot_manager' },
       { label: 'Connect Account',  icon: Radio,         path: '/connect-accounts' },
       { label: 'Broadcasts',       icon: Send,          path: '/campaigns',      moduleKey: 'feature_broadcasts' },
       { label: 'In-Chat Orders',   icon: ShoppingBag,   path: '/orders' },

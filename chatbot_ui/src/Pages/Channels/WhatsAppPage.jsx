@@ -357,8 +357,8 @@ export default function WhatsAppPage({ embedded = false }) {
     if (!appId || !effectiveConfigId) {
       notify.error(
         withCatalog
-          ? 'No "With Catalog" Configuration ID is set up yet. Go to Settings → Meta App Setup and add one — catalog access needs its own Configuration, separate from the plain one.'
-          : 'Meta App ID and Configuration ID are required. Go to Settings → Meta App Setup.'
+          ? 'No "With Catalog" Configuration ID is set up yet. Go to App Integrations → WhatsApp App and add one — catalog access needs its own Configuration, separate from the plain one.'
+          : 'Meta App ID and Configuration ID are required. Go to App Integrations → WhatsApp App.'
       );
       return;
     }

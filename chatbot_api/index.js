@@ -80,6 +80,7 @@ import { startBroadcastScheduler } from "./utils/broadcastScheduler.js";
 import { startSupportDeskScheduler } from "./utils/supportDeskScheduler.js";
 import { startCommerceSyncScheduler } from "./utils/commerceSyncScheduler.js";
 import { startMetaAppHealthScheduler } from "./utils/metaAppHealthScheduler.js";
+import { startBotErrorLogRetentionScheduler } from "./utils/botErrorLogRetentionScheduler.js";
 
 dotenv.config();
 
@@ -103,6 +104,7 @@ startBroadcastScheduler();
 startSupportDeskScheduler();
 startCommerceSyncScheduler();
 startMetaAppHealthScheduler();
+startBotErrorLogRetentionScheduler();
 
 // ─── Middleware ────────────────────────────────────────────────────────────────
 app.use(

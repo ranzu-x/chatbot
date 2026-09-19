@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { Eye, EyeOff, Copy, Check, Info, AlertCircle, RefreshCw, Key, Sparkles, Save, Radio, Sliders } from 'lucide-react';
+import { Eye, EyeOff, Copy, Check, Info, AlertCircle, RefreshCw, Key, Sparkles, Save, Radio, Sliders, MessageCircle, ArrowLeftRight } from 'lucide-react';
 import AppLayout from '../../Layout/AppLayout';
 import { metaAppAPI } from '../../services/api';
 import StandbyAppsSection from '../../Components/Settings/StandbyAppsSection';
@@ -72,14 +72,20 @@ const PLATFORM_TABS = [
   { key: 'MESSENGER_INSTAGRAM', label: 'Messenger + Instagram App' },
 ];
 
-export default function MetaAppPage({ embedded = false }) {
+export default function MetaAppPage({ embedded = false, forcedPlatformGroup = null }) {
   const { user } = useAuth();
 
   // WhatsApp and Facebook/Instagram are deliberately separate Meta app
   // slots — a ban on one doesn't take down the other. Each tab manages its
   // own ACTIVE meta_app_pool row independently.
-  const [platformGroup, setPlatformGroup] = useState('WHATSAPP');
+  const [platformGroup, setPlatformGroup] = useState(forcedPlatformGroup || 'WHATSAPP');
   const isWhatsAppTab = platformGroup === 'WHATSAPP';
+
+  useEffect(() => {
+    if (forcedPlatformGroup) {
+      setPlatformGroup(forcedPlatformGroup);
+    }
+  }, [forcedPlatformGroup]);
 
   // Real numeric agency ID from backend or user context
   const [agencyId, setAgencyId] = useState(user?.agencyId || 1);
@@ -249,6 +255,34 @@ export default function MetaAppPage({ embedded = false }) {
     }
   }, [form.appId, form.appSecret]);
 
+  const [copyingOther, setCopyingOther] = useState(false);
+
+  const copyCredentialsFromOtherApp = async () => {
+    const otherGroup = isWhatsAppTab ? 'MESSENGER_INSTAGRAM' : 'WHATSAPP';
+    const otherLabel = isWhatsAppTab ? 'Facebook & Messenger' : 'WhatsApp';
+    setCopyingOther(true);
+    try {
+      const res = await metaAppAPI.get(otherGroup);
+      const otherSettings = res.data?.settings;
+      if (!otherSettings?.app_id) {
+        notify.error(`No credentials found in ${otherLabel} App to copy yet.`);
+        return;
+      }
+      setForm(f => ({
+        ...f,
+        appName: otherSettings.app_name || f.appName,
+        appId: otherSettings.app_id || '',
+        appSecret: otherSettings.app_secret || '',
+        systemUserToken: otherSettings.system_user_token || f.systemUserToken,
+      }));
+      notify.success(`Credentials copied from ${otherLabel} App! Click "Save Settings" below to apply.`);
+    } catch (err) {
+      notify.error('Failed to load credentials from other app.');
+    } finally {
+      setCopyingOther(false);
+    }
+  };
+
   const handleSave = async (e) => {
     e.preventDefault();
     setSaving(true);
@@ -309,47 +343,155 @@ export default function MetaAppPage({ embedded = false }) {
       {!embedded && (
         <div className="page-header">
           <div className="flex items-center gap-3">
-            <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(24, 119, 242, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#1877f2' }}>
-              <Radio size={20} />
+            <div style={{
+              width: 36,
+              height: 36,
+              borderRadius: 8,
+              background: isWhatsAppTab ? 'rgba(37, 211, 102, 0.1)' : 'rgba(24, 119, 242, 0.1)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: isWhatsAppTab ? '#25d366' : '#1877f2',
+            }}>
+              {isWhatsAppTab ? <MessageCircle size={20} /> : <Radio size={20} />}
             </div>
             <div>
-              <h1 className="page-title">Meta Developer App Setup</h1>
+              <h1 className="page-title">
+                {isWhatsAppTab ? 'WhatsApp Developer App Setup' : 'Facebook & Messenger App Setup'}
+              </h1>
               <p className="page-subtitle">
-                WhatsApp and Facebook/Instagram use separate Meta apps, on purpose — a ban on one won't take down the other.
+                {isWhatsAppTab
+                  ? 'Configure Meta App for WhatsApp Cloud API & Embedded Signup with dedicated standby app pool.'
+                  : 'Configure Meta App for Facebook Pages, Messenger & Instagram DMs with dedicated standby app pool.'}
               </p>
             </div>
           </div>
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--border)' }}>
-        {PLATFORM_TABS.map((tab) => (
-          <button
-            key={tab.key}
-            type="button"
-            onClick={() => setPlatformGroup(tab.key)}
-            style={{
-              padding: '10px 18px',
-              border: 'none',
-              borderBottom: platformGroup === tab.key ? '2px solid var(--primary, #2563eb)' : '2px solid transparent',
-              background: 'transparent',
-              color: platformGroup === tab.key ? 'var(--primary, #2563eb)' : 'var(--text-secondary)',
-              fontWeight: platformGroup === tab.key ? 700 : 500,
-              fontSize: '0.88rem',
-              cursor: 'pointer',
-              marginBottom: -1,
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      {embedded && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{
+              width: 38,
+              height: 38,
+              borderRadius: 10,
+              background: isWhatsAppTab ? 'rgba(37, 211, 102, 0.1)' : 'rgba(24, 119, 242, 0.08)',
+              border: isWhatsAppTab ? '1px solid rgba(37, 211, 102, 0.25)' : '1px solid rgba(24, 119, 242, 0.18)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: isWhatsAppTab ? '#25d366' : '#1877f2',
+            }}>
+              {isWhatsAppTab ? <MessageCircle size={20} /> : <Radio size={20} />}
+            </div>
+            <div>
+              <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                {isWhatsAppTab ? 'WhatsApp Developer App Setup' : 'Facebook & Messenger App Setup'}
+              </h2>
+              <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                {isWhatsAppTab
+                  ? 'Meta App credentials for WhatsApp Cloud API, Embedded Signup & Catalog management'
+                  : 'Meta App credentials for Facebook Pages, Messenger & Instagram Direct Messages'}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!forcedPlatformGroup && (
+        <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--border)' }}>
+          {PLATFORM_TABS.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setPlatformGroup(tab.key)}
+              style={{
+                padding: '10px 18px',
+                border: 'none',
+                borderBottom: platformGroup === tab.key ? '2px solid var(--primary, #2563eb)' : '2px solid transparent',
+                background: 'transparent',
+                color: platformGroup === tab.key ? 'var(--primary, #2563eb)' : 'var(--text-secondary)',
+                fontWeight: platformGroup === tab.key ? 700 : 500,
+                fontSize: '0.88rem',
+                cursor: 'pointer',
+                marginBottom: -1,
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className={embedded ? "" : "page-body"}>
         {loading ? (
           <div className="loading-overlay"><div className="loading-spinner" /></div>
         ) : (
           <form onSubmit={handleSave} autoComplete="off">
+            
+            {/* ── Explainer & 1-Click Sync Banner ── */}
+            <div style={{
+              background: isWhatsAppTab ? 'rgba(37, 211, 102, 0.05)' : 'rgba(24, 119, 242, 0.05)',
+              border: isWhatsAppTab ? '1px solid rgba(37, 211, 102, 0.22)' : '1px solid rgba(24, 119, 242, 0.2)',
+              borderRadius: 12,
+              padding: '16px 20px',
+              marginBottom: 20,
+              display: 'flex',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: 16,
+              flexWrap: 'wrap',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flex: 1, minWidth: 260 }}>
+                <div style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 8,
+                  background: isWhatsAppTab ? 'rgba(37, 211, 102, 0.12)' : 'rgba(24, 119, 242, 0.12)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: isWhatsAppTab ? '#16a34a' : '#1877f2',
+                  flexShrink: 0,
+                  marginTop: 2,
+                }}>
+                  <Info size={18} />
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>
+                    One Meta App or Two? Your Choice!
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                    <strong>Standard setup:</strong> You can use the <em>exact same Meta App ID &amp; Secret</em> for both WhatsApp and Facebook/Messenger.<br />
+                    <strong>Advanced setup:</strong> You can use <em>two separate Meta Apps</em> so that if Meta restricts one service, the other stays 100% online.
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', alignSelf: 'center' }}>
+                <button
+                  type="button"
+                  onClick={copyCredentialsFromOtherApp}
+                  disabled={copyingOther}
+                  className="btn btn-secondary btn-sm"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontSize: '0.78rem',
+                    fontWeight: 600,
+                    borderColor: isWhatsAppTab ? 'rgba(37, 211, 102, 0.35)' : 'rgba(24, 119, 242, 0.35)',
+                    background: '#ffffff',
+                    whiteSpace: 'nowrap',
+                  }}
+                  title={isWhatsAppTab ? 'Import App ID, Secret and Token from Facebook & Messenger' : 'Import App ID, Secret and Token from WhatsApp'}
+                >
+                  <ArrowLeftRight size={13} className={copyingOther ? 'animate-spin' : ''} />
+                  {isWhatsAppTab ? 'Use same app as Facebook & Messenger' : 'Use same app as WhatsApp'}
+                </button>
+              </div>
+            </div>
             
             {/* ── Domain / HTTPS Notice Banner ── */}
             {isLocalhost && (
@@ -473,9 +615,19 @@ export default function MetaAppPage({ embedded = false }) {
                     <div style={{ fontWeight: 700, color: 'var(--primary)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
                       <Info size={14} /> Quick Meta Setup Instructions:
                     </div>
-                    1. In Meta App Dashboard &rarr; <strong>App settings &rarr; Basic</strong>, paste the <strong>App domain</strong>, <strong>Privacy Policy URL</strong>, and <strong>Terms URL</strong>.<br />
-                    2. In <strong>WhatsApp / Messenger &rarr; Configuration &rarr; Webhooks</strong>, paste the <strong>Webhook callback url</strong> and <strong>Webhook verify token</strong> above.<br />
-                    3. Click <strong>Verify and Save</strong> in Meta, then subscribe to the <code>messages</code> field.
+                    {isWhatsAppTab ? (
+                      <>
+                        1. In Meta App Dashboard &rarr; <strong>App settings &rarr; Basic</strong>, paste the <strong>App domain</strong>, <strong>Privacy Policy URL</strong>, and <strong>Terms URL</strong>.<br />
+                        2. In <strong>WhatsApp &rarr; Configuration &rarr; Webhooks</strong>, paste the <strong>Webhook callback url</strong> and <strong>Webhook verify token</strong> above.<br />
+                        3. Click <strong>Verify and Save</strong> in Meta, then subscribe to the <code>messages</code> field.
+                      </>
+                    ) : (
+                      <>
+                        1. In Meta App Dashboard &rarr; <strong>App settings &rarr; Basic</strong>, paste the <strong>App domain</strong>, <strong>Privacy Policy URL</strong>, and <strong>Terms URL</strong>.<br />
+                        2. In <strong>Messenger &rarr; Settings &rarr; Webhooks</strong>, paste the <strong>Webhook callback url</strong> and <strong>Webhook verify token</strong> above.<br />
+                        3. Click <strong>Verify and Save</strong>, then subscribe to <code>messages</code> and <code>messaging_postbacks</code>.
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -483,9 +635,40 @@ export default function MetaAppPage({ embedded = false }) {
 
             {/* ── Section 2: App Credentials Form ── */}
             <div className="card" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, paddingBottom: 16, borderBottom: '1px solid var(--border)' }}>
-                <Key size={18} color="var(--primary, #2563eb)" />
-                <span style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-primary)' }}>App Credentials & Meta Secrets</span>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginBottom: 20, paddingBottom: 16, borderBottom: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Key size={18} color="var(--primary, #2563eb)" />
+                  <span style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-primary)' }}>App Credentials &amp; Meta Secrets</span>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Active for:</span>
+                  {isWhatsAppTab ? (
+                    <>
+                      <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: 'rgba(37, 211, 102, 0.1)', color: '#16a34a', border: '1px solid rgba(37, 211, 102, 0.25)' }}>
+                        WhatsApp Cloud API
+                      </span>
+                      <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: 'rgba(37, 211, 102, 0.1)', color: '#16a34a', border: '1px solid rgba(37, 211, 102, 0.25)' }}>
+                        Embedded Signup
+                      </span>
+                      <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: 'rgba(37, 211, 102, 0.1)', color: '#16a34a', border: '1px solid rgba(37, 211, 102, 0.25)' }}>
+                        Catalog Sync
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: 'rgba(24, 119, 242, 0.08)', color: '#1877f2', border: '1px solid rgba(24, 119, 242, 0.2)' }}>
+                        Facebook Pages
+                      </span>
+                      <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: 'rgba(24, 119, 242, 0.08)', color: '#1877f2', border: '1px solid rgba(24, 119, 242, 0.2)' }}>
+                        Messenger Bots
+                      </span>
+                      <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: 'rgba(24, 119, 242, 0.08)', color: '#1877f2', border: '1px solid rgba(24, 119, 242, 0.2)' }}>
+                        Instagram DMs
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
 
               {/* App Name */}
@@ -623,7 +806,15 @@ export default function MetaAppPage({ embedded = false }) {
                   </button>
                 </div>
                 <p style={{ marginTop: 5, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                  <strong>How to get:</strong> Meta Business Settings &rarr; <strong>System Users</strong> &rarr; <strong>Generate New Token</strong> &rarr; Select your app & check <code style={{ background: 'rgba(0,0,0,0.05)', padding: '1px 4px', borderRadius: 3 }}>whatsapp_business_management</code> & <code style={{ background: 'rgba(0,0,0,0.05)', padding: '1px 4px', borderRadius: 3 }}>whatsapp_business_messaging</code>. Once saved here, all WhatsApp numbers activate seamlessly with only a 6-digit PIN!
+                  {isWhatsAppTab ? (
+                    <>
+                      <strong>How to get:</strong> Meta Business Settings &rarr; <strong>System Users</strong> &rarr; <strong>Generate New Token</strong> &rarr; Select your app & check <code style={{ background: 'rgba(0,0,0,0.05)', padding: '1px 4px', borderRadius: 3 }}>whatsapp_business_management</code> & <code style={{ background: 'rgba(0,0,0,0.05)', padding: '1px 4px', borderRadius: 3 }}>whatsapp_business_messaging</code>. Once saved here, all WhatsApp numbers activate seamlessly with only a 6-digit PIN!
+                    </>
+                  ) : (
+                    <>
+                      <strong>How to get:</strong> Meta Business Settings &rarr; <strong>System Users</strong> &rarr; <strong>Generate New Token</strong> &rarr; Select your app & check <code style={{ background: 'rgba(0,0,0,0.05)', padding: '1px 4px', borderRadius: 3 }}>pages_messaging</code>, <code style={{ background: 'rgba(0,0,0,0.05)', padding: '1px 4px', borderRadius: 3 }}>pages_show_list</code>, and <code style={{ background: 'rgba(0,0,0,0.05)', padding: '1px 4px', borderRadius: 3 }}>instagram_basic</code>.
+                    </>
+                  )}
                 </p>
               </div>
 
