@@ -9,6 +9,8 @@ import pool from "./db.js";
 // ─── Route Imports ─────────────────────────────────────────────────────────────
 import authRoutes from "./routes/auth.js";
 import { authLimiter, apiLimiter } from "./middleware/rateLimiter.js";
+import { tenantContext } from "./middleware/tenant.js";
+import { startFollowUpScheduler } from "./utils/followUpScheduler.js";
 import adminRoutes from "./routes/admin.js";
 import agencyRoutes from "./routes/agency.js";
 import conversationRoutes from "./routes/conversations.js";
@@ -105,6 +107,7 @@ startSupportDeskScheduler();
 startCommerceSyncScheduler();
 startMetaAppHealthScheduler();
 startBotErrorLogRetentionScheduler();
+startFollowUpScheduler();
 
 // ─── Middleware ────────────────────────────────────────────────────────────────
 app.use(
@@ -206,6 +209,10 @@ app.use("/api/v1", whatsappFlowEndpointRoutes);
 app.use("/api/v1/auth/login", authLimiter);
 app.use(["/api/v1/auth/register", "/api/v1/hospital-admin/signup"], authLimiter);
 app.use("/api/v1", apiLimiter);
+// Server-side workspace check + req.tenant for every authenticated request
+// (deactivated workspace, or a token pointing at a workspace the user does not
+// belong to, is refused here once instead of in each route). See middleware/tenant.js.
+app.use("/api/v1", tenantContext);
 
 app.use("/api/v1", webchatRoutes);
 app.use("/api/v1", authRoutes);

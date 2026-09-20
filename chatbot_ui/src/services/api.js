@@ -197,6 +197,15 @@ export const resellerCustomerAPI = {
   toggle: (id) => api.patch(`/reseller/customers/${id}/toggle`),
 };
 
+// ─── Reseller's own users (User Manager, same screen as Super Admin's) ─
+export const resellerUserAPI = {
+  getAll: () => api.get("/reseller/users"),
+  create: (data) => api.post("/reseller/users", data),
+  update: (id, data) => api.put(`/reseller/users/${id}`, data),
+  toggle: (id) => api.patch(`/reseller/users/${id}/toggle`),
+  remove: (id) => api.delete(`/reseller/users/${id}`),
+};
+
 // ─── Reseller's own plans for its customers ────────────────────────
 export const agencyPackageAPI = {
   getAll: () => api.get("/reseller/packages"),
@@ -443,6 +452,7 @@ export const followupAPI = {
   create: (data) => api.post("/follow-ups", data),
   update: (id, data) => api.put(`/follow-ups/${id}`, data),
   setStatus: (id, status) => api.patch(`/follow-ups/${id}/status`, { status }),
+  snooze: (id, minutes) => api.post(`/follow-ups/${id}/snooze`, { minutes }),
   delete: (id) => api.delete(`/follow-ups/${id}`),
 };
 

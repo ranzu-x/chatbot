@@ -4,7 +4,7 @@ import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { sendPlatformMessage } from "../utils/platformSender.js";
 import { emitToAgency, emitToConversation } from "../utils/socket.js";
-import { getOrgMember, integrationAccessClause } from "../utils/teamAccess.js";
+import { getOrgMember, integrationAccessClause, isValidAssignee } from "../utils/teamAccess.js";
 import { unsubscribeContactFromSequence } from "./sequences.js";
 import { requireModule, assertLimit } from "../utils/entitlements.js";
 import { translateText } from "../utils/translateMessage.js";
@@ -13,6 +13,38 @@ import { buildSearch } from "../utils/searchQuery.js";
 const router = express.Router();
 
 router.use("/conversations", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_live_chat"));
+
+// The list endpoint below scopes a member to "assigned chats only" and/or an
+// allow-list of channels, but every per-conversation route (open, read, send,
+// assign, status...) used to look a conversation up by id alone, so a
+// restricted member could still open or reply to any chat in the workspace by
+// id. This runs for every route with an :id param and applies the same rules.
+// A conversation the caller may not see answers 404, same as a missing one.
+router.param("id", async (req, res, next, id) => {
+  try {
+    if (!req.user) return next();
+    const agencyId = req.user.agencyId;
+    const orgMember = await getOrgMember(req.user.id, agencyId);
+    const chatAccess = orgMember?.chat_access || (req.user.role === "USER" ? "ASSIGNED_ONLY" : "ALL");
+    const { clause, params } = await integrationAccessClause(orgMember?.id, "cv.integration_id");
+    if (chatAccess !== "ASSIGNED_ONLY" && !clause) return next();
+
+    const [rows] = await pool.query(
+      `SELECT cv.id, cv.assigned_to_id FROM conversations cv WHERE cv.id = ? AND cv.agency_id = ?${clause}`,
+      [id, agencyId, ...params]
+    );
+    let allowed = rows.length > 0;
+    if (allowed && chatAccess === "ASSIGNED_ONLY" && rows[0].assigned_to_id != null) {
+      const [mine] = await pool.query("SELECT id FROM agent_profiles WHERE user_id = ?", [req.user.id]);
+      allowed = mine.some((r) => Number(r.id) === Number(rows[0].assigned_to_id));
+    }
+    if (!allowed) return res.status(404).json({ success: false, message: "Conversation not found" });
+    return next();
+  } catch (err) {
+    console.error("Conversation access check failed:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 
 // ─── GET ALL CONVERSATIONS (for inbox) ───────────────────────────────────────
 router.get("/conversations", async (req, res) => {
@@ -49,17 +81,21 @@ router.get("/conversations", async (req, res) => {
              c.name as contactName, c.phone as contactPhone, c.email as contactEmail,
              c.avatar as contactAvatar, c.platform as contactPlatform, c.external_id as contactExternalId,
              c.tags as contactTags, c.bot_paused as contactBotPaused, c.is_blocked as contactIsBlocked,
-             u.name as assignedAgentName,
+             CASE
+               WHEN u.role = 'ADMIN' OR ap.team_role = 'OWNER' OR ap.user_type = 'OWNER_USER' OR u.id = a.owner_id THEN 'Admin'
+               ELSE u.name
+             END as assignedAgentName,
              m.body as lastMessageBody, m.direction as lastMessageDirection, m.created_at as lastMessageTime,
              m.status as lastMessageStatus, m.failure_stage as lastMessageFailureStage,
              m.is_read as lastMessageIsRead, m.delivered_at as lastMessageDeliveredAt
       FROM conversations cv
       JOIN contacts c ON c.id = cv.contact_id
       JOIN integrations i ON i.id = cv.integration_id
+      LEFT JOIN agencies a ON a.id = cv.agency_id
       LEFT JOIN agent_profiles ap ON ap.id = cv.assigned_to_id
       LEFT JOIN users u ON u.id = ap.user_id
       LEFT JOIN messages m ON m.id = (
-        SELECT id FROM messages WHERE conversation_id = cv.id ORDER BY created_at DESC LIMIT 1
+        SELECT id FROM messages WHERE conversation_id = cv.id ORDER BY created_at DESC, id DESC LIMIT 1
       )
       WHERE cv.agency_id = ? AND COALESCE(cv.last_message_at, cv.created_at) BETWEEN ? AND ?
     `;
@@ -77,8 +113,12 @@ router.get("/conversations", async (req, res) => {
         "SELECT id FROM agent_profiles WHERE user_id = ?", [req.user.id]
       );
       if (agentProfile.length) {
-        query += " AND (cv.assigned_to_id = ? OR cv.assigned_to_id IS NULL)";
-        params.push(agentProfile[0].id);
+        query += " AND (cv.assigned_to_id IN (?) OR cv.assigned_to_id IS NULL)";
+        params.push(agentProfile.map((r) => r.id));
+      } else {
+        // No profile to match against: previously this fell through with no
+        // restriction at all (fail-open). Only unassigned chats are safe.
+        query += " AND cv.assigned_to_id IS NULL";
       }
     }
 
@@ -197,10 +237,14 @@ router.get("/conversations/:id", async (req, res) => {
              c.avatar as contactAvatar, c.platform as contactPlatform, c.external_id as contactExternalId,
              c.tags as contactTags, c.bot_paused as contactBotPaused, c.platform_profile as contactPlatformProfile,
              c.is_blocked as contactIsBlocked, c.blocked_reason as contactBlockedReason,
-             u.name as assignedAgentName
+             CASE
+               WHEN u.role = 'ADMIN' OR ap.team_role = 'OWNER' OR ap.user_type = 'OWNER_USER' OR u.id = a.owner_id THEN 'Admin'
+               ELSE u.name
+             END as assignedAgentName
       FROM conversations cv
       JOIN contacts c ON c.id = cv.contact_id
       JOIN integrations i ON i.id = cv.integration_id
+      LEFT JOIN agencies a ON a.id = cv.agency_id
       LEFT JOIN agent_profiles ap ON ap.id = cv.assigned_to_id
       LEFT JOIN users u ON u.id = ap.user_id
       WHERE cv.id = ? AND cv.agency_id = ?
@@ -231,7 +275,7 @@ router.get("/conversations/:id", async (req, res) => {
     // scroll-up, so a long-running conversation never loads its entire
     // history in one shot.
     const [recentDesc] = await pool.query(
-      "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 51",
+      "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT 51",
       [req.params.id]
     );
     const hasMoreMessages = recentDesc.length > 50;
@@ -305,10 +349,13 @@ router.get("/conversations/:id/messages", async (req, res) => {
     if (before) {
       // Cursor is the oldest message id currently loaded on the client —
       // page further back in time from its created_at.
-      query += " AND created_at < (SELECT created_at FROM messages WHERE id = ?)";
-      params.push(before);
+      // (created_at, id) pair, not created_at alone: messages routinely share
+      // a second (a customer's message and the bot's instant reply), and a
+      // strict "<" on the timestamp skipped every sibling of the cursor row.
+      query += " AND (created_at < (SELECT created_at FROM messages WHERE id = ?) OR (created_at = (SELECT created_at FROM messages WHERE id = ?) AND id < ?))";
+      params.push(before, before, before);
     }
-    query += " ORDER BY created_at DESC LIMIT ?";
+    query += " ORDER BY created_at DESC, id DESC LIMIT ?";
     params.push(limit + 1);
 
     const [rows] = await pool.query(query, params);
@@ -337,17 +384,33 @@ router.patch("/conversations/:id/assign", async (req, res) => {
     const { agentProfileId } = req.body;
     const agencyId = req.user.agencyId;
     const newStatus = agentProfileId ? 'ASSIGNED' : 'OPEN';
-    await pool.query(
+    if (agentProfileId && !(await isValidAssignee(agentProfileId, agencyId, req.user.id))) {
+      return res.status(400).json({ success: false, message: "That team member does not belong to this workspace." });
+    }
+    const [assignResult] = await pool.query(
       "UPDATE conversations SET assigned_to_id = ?, status = ? WHERE id = ? AND agency_id = ?",
       [agentProfileId || null, newStatus, req.params.id, agencyId]
     );
+    if (!assignResult.affectedRows) {
+      return res.status(404).json({ success: false, message: "Conversation not found" });
+    }
     let assignedAgentName = null;
     if (agentProfileId) {
+      const [[agency]] = await pool.query("SELECT owner_id FROM agencies WHERE id = ?", [agencyId]);
       const [[agUser]] = await pool.query(
-        "SELECT u.name FROM agent_profiles ap JOIN users u ON u.id = ap.user_id WHERE ap.id = ?",
+        `SELECT u.id, u.name, u.role, ap.team_role, ap.user_type
+         FROM agent_profiles ap
+         JOIN users u ON u.id = ap.user_id
+         WHERE ap.id = ?`,
         [agentProfileId]
       );
-      assignedAgentName = agUser?.name || null;
+      const isAccountAdmin = agUser && (
+        agUser.role === "ADMIN" ||
+        agUser.team_role === "OWNER" ||
+        agUser.user_type === "OWNER_USER" ||
+        Number(agency?.owner_id) === Number(agUser.id)
+      );
+      assignedAgentName = isAccountAdmin ? "Admin" : (agUser?.name || null);
     }
     const payload = {
       conversationId: parseInt(req.params.id),
@@ -515,12 +578,40 @@ router.patch("/conversations/bulk-assign", async (req, res) => {
     if (!Array.isArray(conversationIds) || conversationIds.length === 0) {
       return res.status(400).json({ success: false, message: "conversationIds array is required" });
     }
+    if (agentProfileId && !(await isValidAssignee(agentProfileId, agencyId, req.user.id))) {
+      return res.status(400).json({ success: false, message: "That team member does not belong to this workspace." });
+    }
+    // Unassigning used to leave status = 'ASSIGNED' with nobody assigned.
+    const bulkStatus = agentProfileId ? "ASSIGNED" : "OPEN";
     await pool.query(
-      "UPDATE conversations SET assigned_to_id = ?, status = 'ASSIGNED' WHERE id IN (?) AND agency_id = ?",
-      [agentProfileId || null, conversationIds, agencyId]
+      "UPDATE conversations SET assigned_to_id = ?, status = ? WHERE id IN (?) AND agency_id = ?",
+      [agentProfileId || null, bulkStatus, conversationIds, agencyId]
     );
+    let bulkAgentName = null;
+    if (agentProfileId) {
+      const [[agency]] = await pool.query("SELECT owner_id FROM agencies WHERE id = ?", [agencyId]);
+      const [[agUser]] = await pool.query(
+        `SELECT u.id, u.name, u.role, ap.team_role, ap.user_type
+         FROM agent_profiles ap
+         JOIN users u ON u.id = ap.user_id
+         WHERE ap.id = ?`,
+        [agentProfileId]
+      );
+      const isAccountAdmin = agUser && (
+        agUser.role === "ADMIN" ||
+        agUser.team_role === "OWNER" ||
+        agUser.user_type === "OWNER_USER" ||
+        Number(agency?.owner_id) === Number(agUser.id)
+      );
+      bulkAgentName = isAccountAdmin ? "Admin" : (agUser?.name || null);
+    }
     for (const id of conversationIds) {
-      emitToAgency(agencyId, "conversation_updated", { conversationId: Number(id), assignedToId: agentProfileId || null, status: "ASSIGNED" });
+      emitToAgency(agencyId, "conversation_updated", {
+        conversationId: Number(id),
+        assignedToId: agentProfileId || null,
+        assignedAgentName: bulkAgentName,
+        status: bulkStatus
+      });
     }
     return res.json({ success: true, message: `${conversationIds.length} conversation(s) assigned` });
   } catch (err) {
@@ -541,12 +632,19 @@ router.patch("/conversations/bulk-status", async (req, res) => {
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ success: false, message: "Invalid status" });
     }
+    // Same rule as the single-conversation route: Open means unassigned.
     await pool.query(
-      "UPDATE conversations SET status = ? WHERE id IN (?) AND agency_id = ?",
+      status === "OPEN"
+        ? "UPDATE conversations SET status = ?, assigned_to_id = NULL WHERE id IN (?) AND agency_id = ?"
+        : "UPDATE conversations SET status = ? WHERE id IN (?) AND agency_id = ?",
       [status, conversationIds, agencyId]
     );
     for (const id of conversationIds) {
-      emitToAgency(agencyId, "conversation_updated", { conversationId: Number(id), status });
+      emitToAgency(agencyId, "conversation_updated", {
+        conversationId: Number(id),
+        status,
+        ...(status === "OPEN" ? { assignedToId: null, assignedAgentName: null } : {}),
+      });
     }
     return res.json({ success: true, message: `${conversationIds.length} conversation(s) updated` });
   } catch (err) {
@@ -733,6 +831,13 @@ router.post("/conversations/:id/messages", async (req, res) => {
       "UPDATE conversations SET last_message_at = NOW(), status = 'ASSIGNED' WHERE id = ?",
       [req.params.id]
     );
+    if (conv.status !== "ASSIGNED") {
+      // The status change used to be silent, so other agents' lists (and this
+      // agent's own status dropdown) kept showing the old status until reload.
+      const statusPayload = { conversationId: conv.id, status: "ASSIGNED" };
+      emitToAgency(agencyId, "conversation_updated", statusPayload);
+      emitToConversation(conv.id, "conversation_updated", statusPayload);
+    }
 
     const [savedMsg] = await pool.query("SELECT * FROM messages WHERE id = ?", [msgResult.insertId]);
     const message = savedMsg[0];
@@ -876,11 +981,21 @@ router.post("/conversations/:id/join", async (req, res) => {
     if (!rows.length) return res.status(404).json({ success: false, message: "Conversation not found" });
     const conv = rows[0];
 
-    // When someone joins, assign to whoever is joining (if they have an agent profile),
-    // otherwise retain the existing assigned_to_id.
-    const [[agentProfile]] = await pool.query("SELECT id FROM agent_profiles WHERE user_id = ?", [req.user.id]);
+    // When someone joins, assign to whoever is joining.
+    // Ensure an agent profile exists so admin/owner can join even if not previously created as agent.
+    let [[agentProfile]] = await pool.query("SELECT id FROM agent_profiles WHERE user_id = ?", [req.user.id]);
+    if (!agentProfile) {
+      const [ins] = await pool.query(
+        "INSERT INTO agent_profiles (user_id, owner_user_id, user_type, team_role) VALUES (?, ?, 'OWNER_USER', 'OWNER')",
+        [req.user.id, req.user.id]
+      );
+      agentProfile = { id: ins.insertId };
+    }
+
+    const [[agency]] = await pool.query("SELECT owner_id FROM agencies WHERE id = ?", [agencyId]);
+    const isAccountAdmin = req.user.role === "ADMIN" || Number(agency?.owner_id) === Number(req.user.id);
     let assignedToId = agentProfile ? agentProfile.id : conv.assigned_to_id;
-    let assignedAgentName = agentProfile ? req.user.name : null;
+    let assignedAgentName = isAccountAdmin ? "Admin" : (req.user.name || null);
     if (!assignedAgentName && assignedToId) {
       const [[agUser]] = await pool.query(
         "SELECT u.name FROM agent_profiles ap JOIN users u ON u.id = ap.user_id WHERE ap.id = ?",
@@ -912,7 +1027,7 @@ router.post("/conversations/:id/join", async (req, res) => {
       botPaused: true,
       pauseReason: "HUMAN_TAKEOVER",
       pausedByUserId: req.user.id,
-      pausedByName: req.user.name,
+      pausedByName: isAccountAdmin ? "Admin" : req.user.name,
       assignedToId,
       assignedAgentName,
       status: "ASSIGNED",

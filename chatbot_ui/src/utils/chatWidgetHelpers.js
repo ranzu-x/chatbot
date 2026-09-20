@@ -81,6 +81,7 @@ export function buildDefaultWidgetFlowGraph(widgetName, platform = 'WHATSAPP', e
         displayName: extra.displayName || widgetName || 'Support Chat',
         greetingMessage: greeting,
         placeholderText: extra.placeholderText || 'Type a message…',
+        prefillMessage: extra.prefillMessage || '',
         buttonText: btnText,
         buttonBgColor: platColor,
       },

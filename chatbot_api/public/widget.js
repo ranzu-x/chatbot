@@ -23,7 +23,25 @@
           z-index: 999999;
           font-family: 'Inter', system-ui, -apple-system, sans-serif;
         }
+        .chatsaas-badge {
+          position: absolute;
+          top: -6px;
+          right: -4px;
+          min-width: 20px;
+          height: 20px;
+          padding: 0 5px;
+          box-sizing: border-box;
+          border-radius: 999px;
+          background: #ef4444;
+          color: #fff;
+          font-size: 11px;
+          font-weight: 700;
+          line-height: 20px;
+          text-align: center;
+          box-shadow: 0 0 0 2px #fff;
+        }
         .chatsaas-bubble {
+          position: relative;
           border-radius: 999px;
           background: #6366f1;
           box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
@@ -222,18 +240,133 @@
   let conversationId = null;
   let socket = null;
   let config = null; // resolved from GET /webchat/config, see loadConfig()
+  const seenOutbound = new Set(); // ids of agent/bot messages already shown (dedupes socket vs. resync)
+  let unread = 0;
+  let firstConnect = true;
+  let syncing = false;
+  const originalTitle = document.title;
 
   // Toggle chat window
-  bubble.addEventListener("click", () => openWindow());
+  bubble.addEventListener("click", () => { requestNotificationPermission(); openWindow(); });
 
   function openWindow() {
     windowEl.classList.add("open");
+    unread = 0;
+    updateBadge();
     if (config && config.widgetType === "DEEPLINK") {
       renderDeepLinkWindow(config);
     } else {
-      initChat();
+      // First open initializes; later opens catch up on anything missed.
+      if (conversationId) syncMessages();
+      else initChat();
     }
   }
+
+  // ── Unread badge + browser notifications ─────────────────────────────
+  // Notifications use the page's own Notification API (no service worker /
+  // push), so they only fire while the visitor still has the site open —
+  // which is the intended scope.
+  function updateBadge() {
+    let badge = bubble.querySelector(".chatsaas-badge");
+    if (!unread) {
+      if (badge) badge.remove();
+      return;
+    }
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "chatsaas-badge";
+      bubble.appendChild(badge);
+    }
+    badge.textContent = unread > 9 ? "9+" : String(unread);
+  }
+
+  function requestNotificationPermission() {
+    try {
+      if ("Notification" in window && Notification.permission === "default") {
+        Notification.requestPermission();
+      }
+    } catch (e) { /* older browsers */ }
+  }
+
+  function notifyIncoming(msg) {
+    const windowOpen = windowEl.classList.contains("open");
+    const pageHidden = document.hidden;
+    if (windowOpen && !pageHidden) return; // visitor is looking at it
+
+    if (!windowOpen) {
+      unread += 1;
+      updateBadge();
+    }
+
+    if (pageHidden) {
+      document.title = `(${unread || 1}) New message`;
+    }
+
+    try {
+      if ("Notification" in window && Notification.permission === "granted") {
+        const body = (msg && msg.body) || ((msg && (msg.media_url || msg.mediaUrl)) ? "Sent you an image" : "New message");
+        const n = new Notification((config && (config.displayName || config.name)) || "New message", {
+          body,
+          tag: `chatsaas-${widgetKey}`,
+          icon: config && config.logoUrl ? resolveAssetUrl(config.logoUrl) : undefined,
+        });
+        n.onclick = () => {
+          window.focus();
+          openWindow();
+          n.close();
+        };
+      }
+    } catch (e) { /* notifications unavailable */ }
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    document.title = originalTitle;
+    if (conversationId) {
+      if (socket && !socket.connected) socket.connect();
+      syncMessages();
+    }
+  });
+
+  // Catch-up after the socket was down (idle tab, sleep, network drop,
+  // server restart). Re-runs init, which returns the full history, and
+  // shows only agent/bot messages not already on screen.
+  async function syncMessages() {
+    if (syncing || !visitorId) return;
+    syncing = true;
+    try {
+      const response = await fetch(`${backendUrl}/api/v1/webchat/init`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ widgetKey, visitorId }),
+      });
+      const data = await response.json();
+      if (!data.success) return;
+
+      // The old conversation was resolved on the agent side, so init opened
+      // a fresh one. Follow it, or every later send would 404.
+      if (data.conversationId !== conversationId) {
+        conversationId = data.conversationId;
+        if (socket && socket.connected) {
+          socket.emit("webchat_join", { widgetId: widgetKey, sessionId: visitorId, conversationId });
+        }
+      }
+
+      (data.messages || []).forEach((m) => {
+        if (m.direction !== "OUTBOUND") return;
+        if (appendMessage(m, "outbound")) notifyIncoming(m);
+      });
+    } catch (err) {
+      console.error("ChatSaaS Widget sync failed:", err);
+    } finally {
+      syncing = false;
+    }
+  }
+
+  // Fallback for a socket that can't reconnect (blocked, proxy drops it).
+  setInterval(() => {
+    if (conversationId && (!socket || !socket.connected)) syncMessages();
+  }, 30000);
 
   // Positions the fixed container in whichever corner the widget is
   // configured for, and places the button/window on the matching side.
@@ -272,6 +405,7 @@
       ? `<img class="chatsaas-bubble-logo" src="${resolveAssetUrl(cfg.logoUrl)}" alt="" style="width:${size.iconBox};height:${size.iconBox}" />`
       : `<span style="font-size:${size.iconBox}">💬</span>`;
     bubble.innerHTML = `${logo}<span>${escapeHtml(cfg.buttonText || "Chat with us")}</span>`;
+    updateBadge();
   }
 
   function resolveAssetUrl(url) {
@@ -299,6 +433,10 @@
 
       if (config.openOnStartup) {
         openWindow();
+      } else if (visitorId && config.widgetType !== "DEEPLINK") {
+        // Returning visitor: connect quietly so replies (e.g. after a flow
+        // delay) arrive even though the window was never opened this visit.
+        initChat();
       }
     } catch (err) {
       console.error("ChatSaaS Widget config load failed:", err);
@@ -371,6 +509,8 @@
       const text = inputEl.value.trim();
       if (!text) return;
       inputEl.value = "";
+
+      requestNotificationPermission();
 
       // Append instantly
       appendMessage(text, "inbound");
@@ -448,7 +588,12 @@
 
   function appendMessage(msgData, direction) {
     const messagesContainer = windowEl.querySelector(".chatsaas-messages");
-    if (!messagesContainer) return;
+    if (!messagesContainer) return false;
+
+    if (direction === "outbound" && msgData && typeof msgData === "object" && msgData.id != null) {
+      if (seenOutbound.has(msgData.id)) return false;
+      seenOutbound.add(msgData.id);
+    }
 
     const msgEl = document.createElement("div");
     msgEl.className = `chatsaas-message ${direction}`;
@@ -493,6 +638,7 @@
       messagesContainer.appendChild(msgEl);
       messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
+    return hasContent;
   }
 
   function initSocketConnection() {
@@ -508,16 +654,29 @@
       transports: ["websocket", "polling"],
     });
 
-    socket.emit("webchat_join", {
-      widgetId: widgetKey,
-      sessionId: visitorId,
-      conversationId: conversationId,
-    });
+    const joinRoom = () => {
+      socket.emit("webchat_join", {
+        widgetId: widgetKey,
+        sessionId: visitorId,
+        conversationId: conversationId,
+      });
+    };
+
+    const onConnect = () => {
+      joinRoom();
+      // A reconnect means messages may have been emitted while we were away.
+      if (!firstConnect) syncMessages();
+      firstConnect = false;
+    };
+    socket.on("connect", onConnect);
+    if (socket.connected) {
+      onConnect();
+    }
 
     socket.on("new_message", (data) => {
       // If message is from agent or bot (outbound from visitor's perspective)
       if (data.conversationId === conversationId && data.message.direction === "OUTBOUND") {
-        appendMessage(data.message, "outbound");
+        if (appendMessage(data.message, "outbound")) notifyIncoming(data.message);
       }
     });
   }

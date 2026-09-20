@@ -6,6 +6,7 @@ import { requirePermission } from "../middleware/permissionMiddleware.js";
 import { assertLimit, getAgencyEntitlements } from "../utils/entitlements.js";
 import { buildSearch } from "../utils/searchQuery.js";
 import { getAccessibleIntegrationIds, setIntegrationAccess } from "../utils/teamAccess.js";
+import { invalidateTenantCache } from "../middleware/tenant.js";
 
 const router = express.Router();
 
@@ -593,6 +594,7 @@ router.patch("/team-members/:id/toggle", requireTeamManage, async (req, res) => 
 
     const nextStatus = check[0].is_active ? 0 : 1;
     await pool.query("UPDATE users SET is_active = ? WHERE id = ?", [nextStatus, targetUserId]);
+    invalidateTenantCache();
 
     return res.json({ success: true, isActive: nextStatus === 1 });
   } catch (err) {

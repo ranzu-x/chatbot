@@ -19,6 +19,7 @@ export default function Register() {
     logoUrl: '',
     primaryColor: '#2563eb',
     allowUserRegistration: true,
+    signupUnavailable: false,
   });
 
   const [loadingTenant, setLoadingTenant] = useState(true);
@@ -46,6 +47,7 @@ export default function Register() {
             logoUrl: a.logoUrl || '',
             primaryColor: a.primaryColor || '#2563eb',
             allowUserRegistration: a.allowUserRegistration !== false,
+            signupUnavailable: a.signupUnavailable === true,
           });
           document.title = `Sign Up | ${a.brandName || a.name}`;
         }
@@ -122,7 +124,11 @@ export default function Register() {
             Registration Closed
           </h2>
           <p style={{ fontSize: '0.84rem', color: '#64748b', marginBottom: 20 }}>
-            Public user registration is currently disabled for <strong>{tenant.brandName}</strong>. Please contact your workspace administrator for access.
+            {tenant.signupUnavailable ? (
+              <>Registration isn't available on this address. Please use the sign-up link your provider gave you.</>
+            ) : (
+              <>Public user registration is currently disabled for <strong>{tenant.brandName}</strong>. Please contact your workspace administrator for access.</>
+            )}
           </p>
           <Link to="/login" className="btn btn-primary" style={{ padding: '8px 20px' }}>
             Back to Sign In

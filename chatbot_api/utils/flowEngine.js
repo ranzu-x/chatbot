@@ -8,6 +8,7 @@ import * as googleSheetsUtil from "./googleSheets.js";
 import { resolveNextNodeId, resolveNextStepNodeId } from "./flowGraph.js";
 import { enrollContactsInSequence, unsubscribeContactFromSequence } from "../routes/sequences.js";
 import { executeHttpApiCampaign } from "../services/httpApiExecutor.js";
+import { scheduleFlowDelayResume } from "./flowDelayScheduler.js";
 
 // Mirrors FlowBuilderPage.jsx's TYPING_ELIGIBLE_NODE_TYPES — only node types
 // that actually send a message to the contact offer "Show typing before
@@ -20,7 +21,7 @@ const TYPING_ELIGIBLE_TYPES = new Set([
 /**
  * Helper to find matching flow based on triggers
  */
-export async function findMatchingFlow(agencyId, platform, conversationId, integration, incomingMsgBody, msgType = "TEXT") {
+export async function findMatchingFlow(agencyId, platform, conversationId, integration, incomingMsgBody, msgType = "TEXT", extraContext = {}) {
   const msgText = (incomingMsgBody || "").trim().toLowerCase();
   const upperMsgType = (msgType || "TEXT").toUpperCase();
   const isMedia = ["IMAGE", "VIDEO", "AUDIO", "VOICE", "DOCUMENT", "FILE"].includes(upperMsgType);
@@ -47,6 +48,30 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
   // and a returning contact never qualifies as a first-contact either,
   // because their conversation already has history.
   if (msgText) {
+    const contextPrefill = (extraContext?.widgetPrefillMessage || "").trim().toLowerCase();
+    if (contextPrefill && (msgText === contextPrefill || msgText.startsWith(contextPrefill))) {
+      let targetFlow = extraContext?.widgetFlowId
+        ? flows.find(f => f.id === extraContext.widgetFlowId)
+        : null;
+      if (!targetFlow && extraContext?.widgetFlowId) {
+        const [[fRow]] = await pool.query("SELECT * FROM flows WHERE id = ? AND is_active = 1", [extraContext.widgetFlowId]);
+        if (fRow) targetFlow = fRow;
+      }
+      if (targetFlow) {
+        let widgetNodes = [];
+        try { widgetNodes = JSON.parse(targetFlow.nodes_json || "[]"); } catch {}
+        const widgetStart = widgetNodes.find(n => n.type === "start");
+        if (widgetStart) {
+          return {
+            flow: targetFlow,
+            nodes: widgetNodes,
+            edges: JSON.parse(targetFlow.edges_json || "[]"),
+            startNode: widgetStart,
+          };
+        }
+      }
+    }
+
     for (const f of flows) {
       let widgetNodes = [];
       try { widgetNodes = JSON.parse(f.nodes_json || "[]"); } catch { continue; }
@@ -57,7 +82,7 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
       const prefill = (widgetStart.data?.prefillMessage || "").trim().toLowerCase();
       // startsWith, not equality — the prefilled text is editable in WhatsApp
       // and visitors routinely type extra onto the end before sending.
-      if (prefill && msgText.startsWith(prefill)) {
+      if (prefill && (msgText === prefill || msgText.startsWith(prefill))) {
         return {
           flow: f,
           nodes: widgetNodes,
@@ -157,24 +182,12 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
             break;
           }
         }
-      } else if (tType === "first_contact" || tType === "first_message") {
+      } else if (tType === "first_contact" || tType === "first_message" || tType === "chat_widget" || tType === "chatwidget") {
         if (conversationId) {
+          // Count only INBOUND messages from the visitor so initial greeting
+          // messages (e.g. sent by webchat/init) don't inflate the count.
           const [msgCount] = await pool.query(
-            "SELECT COUNT(*) as count FROM messages WHERE conversation_id = ?",
-            [conversationId]
-          );
-          if (msgCount[0]?.count <= 1) {
-            isMatch = true;
-            break;
-          }
-        }
-      } else if (tType === "chat_widget" || tType === "chatwidget") {
-        // Same semantics as first_contact: the widget/deep-link hands the
-        // visitor off to send their first message, which is what should
-        // trigger this flow's greeting — not every later message they send.
-        if (conversationId) {
-          const [msgCount] = await pool.query(
-            "SELECT COUNT(*) as count FROM messages WHERE conversation_id = ?",
+            "SELECT COUNT(*) as count FROM messages WHERE conversation_id = ? AND direction = 'INBOUND'",
             [conversationId]
           );
           if (msgCount[0]?.count <= 1) {
@@ -206,6 +219,35 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
     }
   }
 
+  // If no trigger matched yet, but this is a chat widget conversation on its first
+  // inbound message and has a designated widget flow, launch that flow!
+  if (extraContext?.widgetFlowId && conversationId) {
+    const [inboundCount] = await pool.query(
+      "SELECT COUNT(*) as count FROM messages WHERE conversation_id = ? AND direction = 'INBOUND'",
+      [conversationId]
+    );
+    if (inboundCount[0]?.count <= 1) {
+      let widgetFlow = flows.find(f => f.id === extraContext.widgetFlowId);
+      if (!widgetFlow) {
+        const [[fRow]] = await pool.query("SELECT * FROM flows WHERE id = ? AND is_active = 1", [extraContext.widgetFlowId]);
+        if (fRow) widgetFlow = fRow;
+      }
+      if (widgetFlow) {
+        let fNodes = [];
+        try { fNodes = JSON.parse(widgetFlow.nodes_json || "[]"); } catch {}
+        const sNode = fNodes.find(n => n.type === "start");
+        if (sNode) {
+          return {
+            flow: widgetFlow,
+            nodes: fNodes,
+            edges: JSON.parse(widgetFlow.edges_json || "[]"),
+            startNode: sNode,
+          };
+        }
+      }
+    }
+  }
+
   return null;
 }
 
@@ -224,7 +266,7 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
 // Main Execution Loop below not to re-pause on the very node whose delay just
 // expired (every other node's own Delay, reached later in this same pass,
 // still applies normally).
-export async function processFlow(agencyId, platform, conversation, contact, incomingMsgBody, integration, msgType = "TEXT", buttonRoute = null, resumeContext = null) {
+export async function processFlow(agencyId, platform, conversation, contact, incomingMsgBody, integration, msgType = "TEXT", buttonRoute = null, resumeContext = null, extraContext = null) {
   const conversationId = conversation.id;
 
   try {
@@ -416,14 +458,14 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         edges = JSON.parse(flow.edges_json || "[]");
       } else {
         // Flow deleted or inactive, close session
-        await pool.query("UPDATE flow_sessions SET status = 'COMPLETED' WHERE id = ?", [session.id]);
+        await pool.query("UPDATE flow_sessions SET status = 'COMPLETED', delay_next_run_at = NULL WHERE id = ?", [session.id]);
         session = null;
       }
     }
 
     if (!session) {
       // 2. Look for matching flow trigger
-      const match = await findMatchingFlow(agencyId, platform, conversationId, integration, incomingMsgBody, msgType);
+      const match = await findMatchingFlow(agencyId, platform, conversationId, integration, incomingMsgBody, msgType, extraContext);
       if (match) {
         flow = match.flow;
         nodes = match.nodes;
@@ -519,10 +561,10 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
     // If the node no longer exists in flow (e.g. user deleted it while session was active)
     if (!currentNode) {
       console.log(`🤖 [Flow Engine] Node "${currentNodeId}" not found in flow ${flow?.id}. Stale session ${session.id} will be completed.`);
-      await pool.query("UPDATE flow_sessions SET status = 'COMPLETED' WHERE id = ?", [session.id]);
+      await pool.query("UPDATE flow_sessions SET status = 'COMPLETED', delay_next_run_at = NULL WHERE id = ?", [session.id]);
       session = null;
       // Check if incoming message starts a new flow
-      const newMatch = await findMatchingFlow(agencyId, platform, conversationId, integration, incomingMsgBody, msgType);
+      const newMatch = await findMatchingFlow(agencyId, platform, conversationId, integration, incomingMsgBody, msgType, extraContext);
       if (newMatch) {
         console.log(`🤖 [Flow Engine] User input "${incomingMsgBody}" triggered new flow "${newMatch.flow.name}".`);
         flow = newMatch.flow;
@@ -1009,6 +1051,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             );
           }
           console.log(`⏱️ [Flow Engine] Node ${node.id} delayed ${delaySeconds}s — session ${session.id} paused.`);
+          scheduleFlowDelayResume(session.id, delaySeconds);
           return true;
         }
       }
@@ -1666,7 +1709,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
 
           // Complete flow session
           await pool.query(
-            "UPDATE flow_sessions SET status = 'COMPLETED', current_node_id = ? WHERE id = ?",
+            "UPDATE flow_sessions SET status = 'COMPLETED', delay_next_run_at = NULL, current_node_id = ? WHERE id = ?",
             [node.id, session.id]
           );
 
@@ -1688,7 +1731,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
 
           // Complete flow session
           await pool.query(
-            "UPDATE flow_sessions SET status = 'COMPLETED', current_node_id = ? WHERE id = ?",
+            "UPDATE flow_sessions SET status = 'COMPLETED', delay_next_run_at = NULL, current_node_id = ? WHERE id = ?",
             [node.id, session.id]
           );
 
@@ -1754,7 +1797,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
       // where it ended.
       await pool.query(
         `UPDATE flow_sessions
-         SET status = 'COMPLETED', current_node_id = ?, variables = ?,
+         SET status = 'COMPLETED', delay_next_run_at = NULL, current_node_id = ?, variables = ?,
              active_context = 'MAIN', user_input_flow_id = NULL,
              uif_current_node_id = NULL, return_node_id = NULL
          WHERE id = ?`,

@@ -9,12 +9,15 @@ import {
   labelAPI,
   customFieldAPI,
   sequenceAPI,
-  followupAPI,
   aiRewriteAPI,
 } from '../../services/api';
 import SendMenuPanel from '../../Components/Inbox/SendMenuPanel';
 import JoinChatModal from '../../Components/Inbox/JoinChatModal';
 import CreateCannedModal from '../../Components/Inbox/CreateCannedModal';
+import AssignTeamModal from '../../Components/Inbox/AssignTeamModal';
+import FollowUpPanel from '../../Components/Inbox/FollowUpPanel';
+import FollowUpAlerts from '../../Components/Inbox/FollowUpAlerts';
+import { socketAuth } from '../../utils/socketAuth';
 import WhatsAppCallPanel from '../../Components/Inbox/WhatsAppCallPanel';
 import useWhatsAppCall from '../../hooks/useWhatsAppCall';
 import { useAuth } from '../../Provider/AuthContext';
@@ -960,6 +963,7 @@ export default function InboxPage() {
   const [assigningAgent, setAssigningAgent] = useState(false);
   const [convStatus, setConvStatus] = useState('OPEN');
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [showAssignTeamModal, setShowAssignTeamModal] = useState(false);
 
   // Sequences (drip campaigns) enrolled for the selected subscriber
   const [contactSequences, setContactSequences] = useState([]);
@@ -968,10 +972,8 @@ export default function InboxPage() {
   const [sequenceBusy, setSequenceBusy] = useState(false);
 
   // Follow-ups for the selected subscriber
-  const [contactFollowUps, setContactFollowUps] = useState([]);
-  const [showNewFollowUp, setShowNewFollowUp] = useState(false);
-  const [newFollowUpDraft, setNewFollowUpDraft] = useState({ date: '', time: '', note: '', assignedToAgentProfileId: '' });
-  const [savingFollowUp, setSavingFollowUp] = useState(false);
+  // Bumped when someone changes a follow-up elsewhere, so the open panel reloads.
+  const [followUpRefreshKey, setFollowUpRefreshKey] = useState(0);
 
   // Canned Responses State
   const [cannedResponses, setCannedResponses] = useState([]);
@@ -1119,8 +1121,15 @@ export default function InboxPage() {
     return {};
   }, [dateRangePreset, customDateFrom, customDateTo]);
 
+  // Monotonic request counters: when filters change or the agent clicks
+  // through conversations quickly, an older, slower response used to land
+  // last and overwrite the newer one (wrong messages under the wrong chat).
+  const convsLoadSeq = useRef(0);
+  const messagesLoadSeq = useRef(0);
+
   // Load conversations list
   const loadConversations = useCallback(async () => {
+    const seq = ++convsLoadSeq.current;
     try {
       const params = { page: 1, limit: 30, ...buildDateRangeParams() };
       if (viewFilter === 'unread') {
@@ -1140,6 +1149,7 @@ export default function InboxPage() {
       if (labelFilterId) params.labelId = labelFilterId;
       if (agentFilter) params.assignedToId = agentFilter;
       const res = await conversationAPI.getAll(params);
+      if (seq !== convsLoadSeq.current) return; // a newer load superseded this one
       setConversations(res.data.conversations || res.data || []);
       const pagination = res.data.pagination;
       setConvPage(1);
@@ -1147,15 +1157,19 @@ export default function InboxPage() {
     } catch (err) {
       console.error('Failed to load conversations', err);
     } finally {
-      setConvLoading(false);
+      if (seq === convsLoadSeq.current) setConvLoading(false);
     }
   }, [viewFilter, statusFilter, platformFilter, labelFilterId, agentFilter, buildDateRangeParams]);
+
+  const loadConversationsRef = useRef(loadConversations);
+  useEffect(() => { loadConversationsRef.current = loadConversations; }, [loadConversations]);
 
   // Appends the next page instead of replacing the list — the "Load more"
   // row at the bottom of the conversation list calls this.
   const loadMoreConversations = useCallback(async () => {
     if (loadingMoreConvs || !convHasMore) return;
     setLoadingMoreConvs(true);
+    const moreSeq = convsLoadSeq.current;
     try {
       const nextPage = convPage + 1;
       const params = { page: nextPage, limit: 30, ...buildDateRangeParams() };
@@ -1176,6 +1190,7 @@ export default function InboxPage() {
       if (labelFilterId) params.labelId = labelFilterId;
       if (agentFilter) params.assignedToId = agentFilter;
       const res = await conversationAPI.getAll(params);
+      if (moreSeq !== convsLoadSeq.current) return;
       const newRows = res.data.conversations || [];
       setConversations((prev) => {
         const existingIds = new Set(prev.map((c) => String(c._id || c.id)));
@@ -1199,9 +1214,11 @@ export default function InboxPage() {
   // Load messages and subscriber info
   const loadMessages = useCallback(async (convId) => {
     if (!convId) return;
+    const seq = ++messagesLoadSeq.current;
     setMsgLoading(true);
     try {
       const res = await conversationAPI.getOne(convId);
+      if (seq !== messagesLoadSeq.current) return; // agent already moved on to another chat
       const data = res.data;
       setMessages(data.messages || []);
       setHasMoreMessages(Boolean(data.hasMoreMessages));
@@ -1236,14 +1253,11 @@ export default function InboxPage() {
           .then((r) => setContactSequences(r.data?.sequences || []))
           .catch(() => setContactSequences([]));
 
-        followupAPI.getAll({ contactId })
-          .then((r) => setContactFollowUps(r.data?.followUps || []))
-          .catch(() => setContactFollowUps([]));
       }
     } catch (err) {
       console.error('Failed to load conversation details', err);
     } finally {
-      setMsgLoading(false);
+      if (seq === messagesLoadSeq.current) setMsgLoading(false);
     }
   }, []);
 
@@ -1310,6 +1324,22 @@ export default function InboxPage() {
     setFastSearchResults([]);
   };
 
+  // Set when an inbound message arrives in the open chat while the tab is in the
+  // background; cleared (and marked read on the server) once the tab is visible.
+  const unreadWhileHiddenRef = useRef(null);
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.hidden) return;
+      const pending = unreadWhileHiddenRef.current;
+      unreadWhileHiddenRef.current = null;
+      if (pending && String(pending) === String(selectedIdRef.current)) {
+        conversationAPI.markRead(pending).catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []);
+
   // Socket.io Real-time connection with strict deduplication
   useEffect(() => {
     if (!user) return;
@@ -1324,13 +1354,18 @@ export default function InboxPage() {
       }
     }
 
+    // The server works out who this is from the login token; it ignores anything the browser claims.
     const socket = io(socketUrl, {
-      auth: {
-        agencyId: user.agencyId,
-        userId: user.id,
-        role: user.role,
-      },
+      auth: socketAuth(),
       transports: ['websocket', 'polling'],
+    });
+
+    // Anything emitted while the socket was down is gone for good, so after a
+    // reconnect (laptop sleep, network blip, server restart) re-fetch the list
+    // and the open conversation instead of silently showing stale data.
+    socket.io.on('reconnect', () => {
+      loadConversationsRef.current();
+      if (selectedIdRef.current) loadMessages(selectedIdRef.current);
     });
 
     socket.on('new_message', (data) => {
@@ -1339,6 +1374,14 @@ export default function InboxPage() {
       if (isOpenConv && incoming) {
         if (incoming.direction === 'INBOUND') {
           setSelectedConv((prev) => (prev ? { ...prev, lastInboundAt: incoming.created_at, last_inbound_at: incoming.created_at } : prev));
+          // The list badge was zeroed locally but the server's unread count kept
+          // growing, so the chat came back as "unread" after a reload. Only mark
+          // it read if the agent can actually see it; otherwise wait for focus.
+          if (document.hidden) {
+            unreadWhileHiddenRef.current = String(data.conversationId);
+          } else {
+            conversationAPI.markRead(data.conversationId).catch(() => {});
+          }
         }
         setMessages((prev) => {
           const isDuplicate = prev.some((m) => {
@@ -1368,7 +1411,7 @@ export default function InboxPage() {
           lastMessageTime: incoming.created_at,
           last_message_at: incoming.created_at,
           ...(incoming.direction === 'INBOUND' ? { lastInboundAt: incoming.created_at, last_inbound_at: incoming.created_at } : {}),
-          unread_count: isOpenConv ? 0 : (Number(prev[idx].unread_count) || 0) + (incoming.direction === 'INBOUND' ? 1 : 0),
+          unread_count: (isOpenConv && !document.hidden) ? 0 : (Number(prev[idx].unread_count) || 0) + (incoming.direction === 'INBOUND' ? 1 : 0),
         };
         const next = [...prev];
         next.splice(idx, 1);
@@ -1382,7 +1425,7 @@ export default function InboxPage() {
     // the sole remaining full-list refresh, and only fires for genuinely new
     // conversations, not on every message.
     socket.on('new_conversation', () => {
-      loadConversations();
+      loadConversationsRef.current();
     });
 
     // Live tick updates: delivered / read / failed status arriving asynchronously
@@ -1455,6 +1498,13 @@ export default function InboxPage() {
     // Structured label attached/detached for a single subscriber — patches
     // the sidebar (if open) and every matching conversation-list row in
     // place instead of refreshing the whole list.
+    // A follow-up was created / edited / snoozed / finished (by anyone): reload the open panel.
+    socket.on('follow_up_updated', (data) => {
+      if (data && String(data.contactId) === String(selectedContactIdRef.current)) {
+        setFollowUpRefreshKey((k) => k + 1);
+      }
+    });
+
     socket.on('contact_labels_updated', (data) => {
       if (String(data.contactId) === String(selectedContactIdRef.current)) {
         setContactLabels(data.labels || []);
@@ -1476,7 +1526,7 @@ export default function InboxPage() {
         // Re-fetch this subscriber's full detail rather than guessing the new label set client-side
         loadMessages(selectedIdRef.current);
       }
-      loadConversations();
+      loadConversationsRef.current();
     });
 
     // Custom field catalog changed (field added/renamed/removed) — refresh definitions
@@ -1496,7 +1546,7 @@ export default function InboxPage() {
       if (String(data.conversationId) === String(selectedIdRef.current)) {
         setMessages([]);
       }
-      loadConversations();
+      loadConversationsRef.current();
     });
 
     // Block / unblock — patch the open subscriber panel and every matching
@@ -1551,9 +1601,11 @@ export default function InboxPage() {
     });
 
     return () => socket.disconnect();
-    // loadMessages is a stable useCallback([]) reference — safe to omit here.
+    // loadMessages is a stable useCallback([]) reference and the list loader is
+    // read through loadConversationsRef — so filter changes no longer tear down
+    // and rebuild the socket (which dropped events during the reconnect).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, loadConversations]);
+  }, [user]);
 
   // Keyboard shortcuts: Ctrl/Cmd+K focuses search, "/" focuses the reply box
   // (only when not already typing somewhere), Escape closes the subscriber drawer.
@@ -1601,10 +1653,12 @@ export default function InboxPage() {
     const oldestId = messages[0]?.id;
     if (!oldestId) return;
     setLoadingOlderMessages(true);
+    const pagingConvId = selectedIdRef.current;
     const prevScrollHeight = container?.scrollHeight || 0;
     const prevScrollTop = container?.scrollTop || 0;
     try {
-      const res = await conversationAPI.getMessages(selectedIdRef.current, { before: oldestId, limit: 50 });
+      const res = await conversationAPI.getMessages(pagingConvId, { before: oldestId, limit: 50 });
+      if (String(selectedIdRef.current) !== String(pagingConvId)) return; // switched chats while loading
       const older = res.data?.messages || [];
       if (older.length) {
         isPrependingOlderRef.current = true;
@@ -1665,6 +1719,7 @@ export default function InboxPage() {
     }
 
     const text = messageText.trim();
+    const sentConvId = selectedId; // the reply may finish after the agent has opened another chat
     setMessageText('');
     setShowCannedPicker(false);
     setSending(true);
@@ -1681,8 +1736,8 @@ export default function InboxPage() {
       });
       const newMsg = res.data.message || res.data;
 
-      // Add to messages only if not already present
-      setMessages((prev) => {
+      // Add to messages only if not already present (and only if this chat is still open)
+      if (String(selectedIdRef.current) === String(sentConvId)) setMessages((prev) => {
         const isDuplicate = prev.some((m) => {
           if (m.id && newMsg.id && String(m.id) === String(newMsg.id)) return true;
           if (m._id && newMsg._id && String(m._id) === String(newMsg._id)) return true;
@@ -1707,8 +1762,8 @@ export default function InboxPage() {
         next.unshift(patched);
         return next;
       });
-
-      loadConversations();
+      // No full list re-fetch here: the row is patched above, and the server
+      // broadcasts any status change over the socket.
     } catch (err) {
       console.error('Failed to send message', err);
       const errMsg = err?.response?.data?.message || 'Failed to send message. Check your WhatsApp connection settings.';
@@ -1717,8 +1772,10 @@ export default function InboxPage() {
       // shows what was attempted instead of it just vanishing — add it if present.
       const failedMsg = err?.response?.data?.chatMessage;
       if (failedMsg) {
-        setMessages((prev) => (prev.some((m) => String(m.id) === String(failedMsg.id)) ? prev : [...prev, failedMsg]));
-      } else {
+        if (String(selectedIdRef.current) === String(sentConvId)) {
+          setMessages((prev) => (prev.some((m) => String(m.id) === String(failedMsg.id)) ? prev : [...prev, failedMsg]));
+        }
+      } else if (String(selectedIdRef.current) === String(sentConvId)) {
         // No persisted record came back — restore the typed text so nothing is lost
         setMessageText(text);
       }
@@ -1751,6 +1808,7 @@ export default function InboxPage() {
       }
     }
 
+    const uploadConvId = selectedId;
     setUploading(true);
     try {
       const formData = new FormData();
@@ -1770,7 +1828,7 @@ export default function InboxPage() {
       });
 
       const newMsg = res.data.message || res.data;
-      setMessages((prev) => {
+      if (String(selectedIdRef.current) === String(uploadConvId)) setMessages((prev) => {
         const isDuplicate = prev.some((m) => {
           if (m.id && newMsg.id && String(m.id) === String(newMsg.id)) return true;
           if (m._id && newMsg._id && String(m._id) === String(newMsg._id)) return true;
@@ -1787,7 +1845,9 @@ export default function InboxPage() {
       // still records it as a red-tick message so it's visible in the conversation.
       const failedMsg = err?.response?.data?.chatMessage;
       if (failedMsg) {
-        setMessages((prev) => (prev.some((m) => String(m.id) === String(failedMsg.id)) ? prev : [...prev, failedMsg]));
+        if (String(selectedIdRef.current) === String(uploadConvId)) {
+          setMessages((prev) => (prev.some((m) => String(m.id) === String(failedMsg.id)) ? prev : [...prev, failedMsg]));
+        }
         setSendError(err?.response?.data?.message || 'Failed to deliver attachment.');
         setTimeout(() => setSendError(''), 8000);
       } else {
@@ -2186,14 +2246,47 @@ export default function InboxPage() {
       loadConversations();
     } catch (err) {
       console.error('Failed to assign agent', err);
+      setSendError(err?.response?.data?.message || 'Could not assign this conversation. Please try again.');
+      setTimeout(() => setSendError(''), 6000);
     } finally {
       setAssigningAgent(false);
     }
   };
 
-  // Update Conversation Status (OPEN, PENDING, RESOLVED)
+  // Confirm Assign Team from Modal
+  const handleAssignTeamFromModal = async (agentProfileId) => {
+    if (!selectedId || !agentProfileId) return;
+    setAssigningAgent(true);
+    try {
+      const res = await conversationAPI.assign(selectedId, agentProfileId);
+      const ag = agentsList.find((a) =>
+        String(a.profileId || a.agent_profile_id || a.id) === String(agentProfileId) ||
+        String(a.userId || a.id) === String(agentProfileId)
+      );
+      setSelectedConv((prev) => (prev ? {
+        ...prev,
+        assigned_to_id: agentProfileId,
+        assignedAgentName: res.data?.assignedAgentName || ag?.name || null,
+        status: 'ASSIGNED',
+      } : prev));
+      setConvStatus('ASSIGNED');
+      setShowAssignTeamModal(false);
+      loadConversations();
+    } catch (err) {
+      console.error('Failed to assign team', err);
+      alert(err?.response?.data?.message || 'Failed to assign team');
+    } finally {
+      setAssigningAgent(false);
+    }
+  };
+
+  // Update Conversation Status (OPEN, PENDING, RESOLVED, ASSIGNED)
   const handleUpdateStatus = async (newStatus) => {
     if (!selectedId) return;
+    if (newStatus === 'ASSIGNED') {
+      setShowAssignTeamModal(true);
+      return;
+    }
     setUpdatingStatus(true);
     try {
       await conversationAPI.updateStatus(selectedId, newStatus);
@@ -2207,24 +2300,6 @@ export default function InboxPage() {
           assigned_to_id: null,
           assignedAgentName: null,
         } : prev));
-      } else if (newStatus === 'ASSIGNED' && !selectedConv?.assigned_to_id) {
-        // Switching to Assigned when unassigned automatically assigns to current agent
-        const targetProfileId = myProfileId || (agentsList[0] ? (agentsList[0].profileId || agentsList[0].agent_profile_id || agentsList[0].id) : null);
-        if (targetProfileId) {
-          const res = await conversationAPI.assign(selectedId, targetProfileId);
-          const ag = agentsList.find((a) =>
-            String(a.profileId || a.agent_profile_id || a.id) === String(targetProfileId) ||
-            String(a.userId || a.id) === String(targetProfileId)
-          );
-          setSelectedConv((prev) => (prev ? {
-            ...prev,
-            status: 'ASSIGNED',
-            assigned_to_id: targetProfileId,
-            assignedAgentName: res.data?.assignedAgentName || ag?.name || null,
-          } : prev));
-        } else {
-          setSelectedConv((prev) => (prev ? { ...prev, status: 'ASSIGNED' } : prev));
-        }
       } else {
         setSelectedConv((prev) => (prev ? { ...prev, status: newStatus } : prev));
       }
@@ -2331,52 +2406,22 @@ export default function InboxPage() {
   };
 
   // ─── Follow-ups ───────────────────────────────────────────────────────────
-  const refreshContactFollowUps = () => {
-    const contactId = selectedConv?.contact_id || selectedConv?.contactId;
-    if (!contactId) return;
-    followupAPI.getAll({ contactId }).then((r) => setContactFollowUps(r.data?.followUps || [])).catch(() => {});
-  };
-
-  const handleCreateFollowUp = async () => {
-    const contactId = selectedConv?.contact_id || selectedConv?.contactId;
-    if (!contactId || !newFollowUpDraft.date || !newFollowUpDraft.time || !newFollowUpDraft.note.trim() || savingFollowUp) return;
-    setSavingFollowUp(true);
-    try {
-      const dueAt = new Date(`${newFollowUpDraft.date}T${newFollowUpDraft.time}`).toISOString();
-      await followupAPI.create({
-        contactId,
-        conversationId: selectedId,
-        dueAt,
-        note: newFollowUpDraft.note.trim(),
-        assignedToAgentProfileId: newFollowUpDraft.assignedToAgentProfileId || null,
-      });
-      setNewFollowUpDraft({ date: '', time: '', note: '', assignedToAgentProfileId: '' });
-      setShowNewFollowUp(false);
-      refreshContactFollowUps();
-    } catch (err) {
-      console.error('Failed to create follow-up', err);
-    } finally {
-      setSavingFollowUp(false);
+  // Creating, editing, snoozing and finishing them lives in FollowUpPanel; the bell and
+  // pop-ups in FollowUpAlerts call this to jump into the chat a reminder is about.
+  const handleOpenFollowUpConversation = (fu) => {
+    const convId = fu.conversationId ?? fu.conversation_id;
+    if (!convId) return;
+    const existing = conversations.find((c) => String(c._id || c.id) === String(convId));
+    if (existing) {
+      selectConversation(existing);
+    } else {
+      // Not in the loaded page(s): open it directly by id.
+      setSelectedConv({ id: convId, contact_id: fu.contactId ?? fu.contact_id });
+      setMessages([]);
+      loadMessages(convId);
     }
-  };
-
-  const handleFollowUpStatus = async (followUpId, status) => {
-    try {
-      await followupAPI.setStatus(followUpId, status);
-      refreshContactFollowUps();
-    } catch (err) {
-      console.error('Failed to update follow-up', err);
-    }
-  };
-
-  const handleDeleteFollowUp = async (followUpId) => {
-    if (!window.confirm('Delete this follow-up?')) return;
-    try {
-      await followupAPI.delete(followUpId);
-      refreshContactFollowUps();
-    } catch (err) {
-      console.error('Failed to delete follow-up', err);
-    }
+    setShowSubscriberPanel(true);
+    setActiveDrawerTab('Follow-ups');
   };
 
   // ─── Structured Labels (unified with the Contacts/Subscriber Manager) ────────
@@ -2679,9 +2724,12 @@ export default function InboxPage() {
                   <><MessageSquare size={16} color="#2563eb" /> Conversations</>
                 )}
               </div>
-              <span style={{ fontSize: '0.72rem', fontWeight: 600, padding: '2px 8px', borderRadius: 12, background: 'rgba(37, 99, 235, 0.08)', color: '#2563eb' }}>
-                {filteredConversations.length} {viewFilter === 'archived' ? 'Archived' : viewFilter === 'blocked' ? 'Blocked' : 'Active'}
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <FollowUpAlerts user={user} onOpenConversation={handleOpenFollowUpConversation} />
+                <span style={{ fontSize: '0.72rem', fontWeight: 600, padding: '2px 8px', borderRadius: 12, background: 'rgba(37, 99, 235, 0.08)', color: '#2563eb' }}>
+                  {filteredConversations.length} {viewFilter === 'archived' ? 'Archived' : viewFilter === 'blocked' ? 'Blocked' : 'Active'}
+                </span>
+              </div>
             </div>
 
             {/* Search + Filter — one row. Search stays narrow (flex-1, not
@@ -2772,7 +2820,8 @@ export default function InboxPage() {
                         <option value="unassigned">Unassigned</option>
                         {agentsList.map((a) => {
                           const pid = String(a.profileId || a.agent_profile_id || a.id);
-                          return <option key={pid} value={pid}>{a.name || a.email}</option>;
+                          const isAdm = a.isAdmin || a.role === 'ADMIN' || a.name === 'Admin';
+                          return <option key={pid} value={pid}>{isAdm ? 'Admin' : (a.name || a.email)}</option>;
                         })}
                       </select>
                     </div>
@@ -4130,6 +4179,16 @@ export default function InboxPage() {
                   setCannedResponses((prev) => [...prev, newCanned]);
                 }}
               />
+              <AssignTeamModal
+                open={showAssignTeamModal}
+                onClose={() => setShowAssignTeamModal(false)}
+                onAssign={handleAssignTeamFromModal}
+                agents={agentsList}
+                currentAssignedId={selectedConv?.assigned_to_id}
+                subscriberName={selectedConv?.contactName || selectedConv?.contact_name || selectedConv?.external_id}
+                platform={selectedConv?.platform || selectedConv?.integrationPlatform}
+                loading={assigningAgent}
+              />
             </>
           ) : (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
@@ -4290,9 +4349,26 @@ export default function InboxPage() {
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 700, color: '#64748b', marginBottom: 3 }}>
-                  Assigned Team Agent
-                </label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
+                  <label style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748b' }}>
+                    Assigned Team Agent
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowAssignTeamModal(true)}
+                    style={{
+                      border: 'none',
+                      background: 'none',
+                      color: '#2563eb',
+                      fontSize: '0.68rem',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      padding: '1px 4px',
+                    }}
+                  >
+                    Assign Team
+                  </button>
+                </div>
                 <select
                   value={selectedConv.assigned_to_id || ''}
                   disabled={assigningAgent}
@@ -4302,9 +4378,10 @@ export default function InboxPage() {
                   <option value="">👤 Unassigned</option>
                   {agentsList.map((ag) => {
                     const pid = ag.profileId || ag.agent_profile_id || ag.id;
+                    const isAdm = ag.isAdmin || ag.role === 'ADMIN' || ag.name === 'Admin';
                     return (
                       <option key={pid} value={pid}>
-                        {ag.name} ({ag.email})
+                        {isAdm ? 'Admin' : (ag.name || ag.email)}
                       </option>
                     );
                   })}
@@ -4494,100 +4571,15 @@ export default function InboxPage() {
               </div>
             )}
 
-            {/* Follow-ups — new reusable reminder system (utils/followups.js
-                backend), "Overdue" derived server-side from due_at, not stored. */}
+            {/* Follow-ups: title, description, date/time with 1-24 hour shortcuts, snooze.
+                Due ones alert live in the inbox (FollowUpAlerts, in the list header). */}
             {activeDrawerTab === 'Follow-ups' && (
-              <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {!showNewFollowUp ? (
-                  <button
-                    onClick={() => setShowNewFollowUp(true)}
-                    className="btn btn-primary w-full btn-sm"
-                    style={{ justifyContent: 'center' }}
-                  >
-                    <Plus size={13} /> New Follow-up
-                  </button>
-                ) : (
-                  <div style={{ border: '1px solid #e2e8f0', borderRadius: 8, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <input
-                        type="date"
-                        value={newFollowUpDraft.date}
-                        onChange={(e) => setNewFollowUpDraft((d) => ({ ...d, date: e.target.value }))}
-                        style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: '0.8rem' }}
-                      />
-                      <input
-                        type="time"
-                        value={newFollowUpDraft.time}
-                        onChange={(e) => setNewFollowUpDraft((d) => ({ ...d, time: e.target.value }))}
-                        style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: '0.8rem' }}
-                      />
-                    </div>
-                    <textarea
-                      value={newFollowUpDraft.note}
-                      onChange={(e) => setNewFollowUpDraft((d) => ({ ...d, note: e.target.value }))}
-                      placeholder="What's this follow-up about?"
-                      rows={2}
-                      style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: '0.8rem', resize: 'vertical' }}
-                    />
-                    <select
-                      value={newFollowUpDraft.assignedToAgentProfileId}
-                      onChange={(e) => setNewFollowUpDraft((d) => ({ ...d, assignedToAgentProfileId: e.target.value }))}
-                      style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: '0.8rem', background: '#fff' }}
-                    >
-                      <option value="">Assign to me</option>
-                      {agentsList.map((a) => (
-                        <option key={a.agent_profile_id || a.id} value={a.agent_profile_id || a.id}>{a.name}</option>
-                      ))}
-                    </select>
-                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                      <button
-                        onClick={() => setShowNewFollowUp(false)}
-                        className="btn btn-secondary btn-sm"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={handleCreateFollowUp}
-                        disabled={!newFollowUpDraft.date || !newFollowUpDraft.time || !newFollowUpDraft.note.trim() || savingFollowUp}
-                        className="btn btn-primary btn-sm"
-                      >
-                        {savingFollowUp ? 'Saving…' : 'Create'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                <div>
-                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
-                    Follow-ups ({contactFollowUps.length})
-                  </span>
-                  {contactFollowUps.length === 0 ? (
-                    <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: 8 }}>No follow-ups yet.</div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
-                      {contactFollowUps.map((f) => {
-                        const statusColor = { PENDING: '#2563eb', OVERDUE: '#ef4444', COMPLETED: '#10b981', CANCELLED: '#94a3b8' }[f.status] || '#64748b';
-                        return (
-                          <div key={f.id} style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                              <span style={{ fontSize: '0.78rem', fontWeight: 700, color: statusColor }}>{f.status}</span>
-                              <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>{new Date(f.due_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</span>
-                            </div>
-                            <div style={{ fontSize: '0.8rem', color: '#0f172a' }}>{f.note}</div>
-                            {(f.status === 'PENDING' || f.status === 'OVERDUE') && (
-                              <div style={{ display: 'flex', gap: 10, marginTop: 2 }}>
-                                <button onClick={() => handleFollowUpStatus(f.id, 'COMPLETED')} style={{ fontSize: '0.72rem', fontWeight: 700, color: '#10b981', background: 'none', border: 'none', cursor: 'pointer' }}>Mark Done</button>
-                                <button onClick={() => handleFollowUpStatus(f.id, 'CANCELLED')} style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', background: 'none', border: 'none', cursor: 'pointer' }}>Cancel</button>
-                                <button onClick={() => handleDeleteFollowUp(f.id)} style={{ fontSize: '0.72rem', fontWeight: 700, color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
+              <FollowUpPanel
+                contactId={selectedConv?.contact_id || selectedConv?.contactId}
+                conversationId={selectedConv?.id || selectedConv?._id}
+                agentsList={agentsList}
+                refreshKey={followUpRefreshKey}
+              />
             )}
 
             {/* Tab 4: Custom Fields */}

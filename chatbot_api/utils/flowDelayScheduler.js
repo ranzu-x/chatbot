@@ -12,59 +12,74 @@ import { processFlow } from "./flowEngine.js";
  * delay of hours never holds a live connection open.
  */
 
-// Optimistic-lock claim — same idiom as sequenceRunner.js's claimSubscriber /
-// socialPostScheduler.js's claim: bump the due column forward as a "claimed"
-// placeholder, conditioned on it still matching the exact value just read.
-// If the resumed run needs to re-pause later (e.g. it hits ANOTHER node with
-// its own delay), that write overwrites this placeholder with a real value;
-// if it finishes without pausing again, that write clears it to NULL.
-async function claimSession(sessionId, previousDelayNextRunAt) {
+// Optimistic-lock claim — bump the due column forward as a "claimed"
+// placeholder. Conditioned on status = 'ACTIVE' and delay_next_run_at <= NOW()
+// so overlapping ticks or timer callbacks never double-process.
+async function claimSession(sessionId) {
   const [result] = await pool.query(
     `UPDATE flow_sessions SET delay_next_run_at = DATE_ADD(NOW(), INTERVAL 1 HOUR)
-     WHERE id = ? AND status = 'ACTIVE' AND delay_next_run_at = ?`,
-    [sessionId, previousDelayNextRunAt]
+     WHERE id = ? AND status = 'ACTIVE' AND delay_next_run_at IS NOT NULL AND delay_next_run_at <= NOW()`,
+    [sessionId]
   );
   return result.affectedRows === 1;
 }
 
-async function resumeOneSession(session) {
-  const [[row]] = await pool.query(
-    `SELECT cv.contact_id, cv.integration_id, cv.platform AS conversationPlatform, cv.bot_paused AS conversationBotPaused,
-            i.id AS integrationId, i.platform AS integrationPlatform, i.access_token, i.wa_phone_number_id,
-            i.fb_page_id, i.ig_account_id, i.tiktok_open_id,
-            c.id AS contactId, c.name AS contactName, c.phone AS contactPhone, c.email AS contactEmail,
-            c.external_id AS contactExternalId, c.platform AS contactPlatform, c.bot_paused AS contactBotPaused
-     FROM conversations cv
-     LEFT JOIN integrations i ON i.id = cv.integration_id
-     JOIN contacts c ON c.id = cv.contact_id
-     WHERE cv.id = ?`,
-    [session.conversation_id]
+export async function resumeSessionById(sessionId) {
+  const [[session]] = await pool.query(
+    "SELECT * FROM flow_sessions WHERE id = ? AND status = 'ACTIVE' AND delay_next_run_at IS NOT NULL",
+    [sessionId]
   );
+  if (!session) return;
+  // Atomically claim the session so scheduler poll ticks don't collide
+  const [result] = await pool.query(
+    `UPDATE flow_sessions SET delay_next_run_at = DATE_ADD(NOW(), INTERVAL 1 HOUR)
+     WHERE id = ? AND status = 'ACTIVE' AND delay_next_run_at IS NOT NULL`,
+    [sessionId]
+  );
+  if (result.affectedRows !== 1) return;
+  await resumeOneSession(session);
+}
 
-  if (!row) {
-    console.warn(`[Flow Delay] Conversation ${session.conversation_id} missing for session ${session.id}; completing.`);
-    await pool.query("UPDATE flow_sessions SET status = 'COMPLETED' WHERE id = ?", [session.id]);
+/**
+ * For short conversational delays (e.g. 2s, 3s, 5s), schedules an in-memory
+ * setTimeout so the bot responds immediately when the delay expires rather
+ * than waiting for the next cron poll.
+ */
+export function scheduleFlowDelayResume(sessionId, delaySeconds) {
+  if (typeof delaySeconds !== "number" || delaySeconds <= 0 || delaySeconds > 120) {
+    return; // Longer delays are handled by the background poller
+  }
+  const delayMs = Math.max(1, delaySeconds) * 1000;
+  setTimeout(() => {
+    resumeSessionById(sessionId).catch((err) => {
+      console.error(`[Flow Delay] Timer resume failed for session ${sessionId}:`, err.message);
+    });
+  }, delayMs);
+}
+
+async function resumeOneSession(session) {
+  // Full rows, not a hand-picked column list: the live inbound path hands
+  // processFlow whole conversation / contact / integration rows, and the send
+  // layer reads fields off them that a partial join silently dropped
+  // (integration.agency_id, app_secret, per-channel tokens…). Note that
+  // `conversations` has no `platform` column — the channel comes from the
+  // integration (or the contact) — selecting cv.platform made every resume fail.
+  const [[conversation]] = await pool.query("SELECT * FROM conversations WHERE id = ?", [session.conversation_id]);
+  const [[contact]] = conversation
+    ? await pool.query("SELECT * FROM contacts WHERE id = ?", [conversation.contact_id])
+    : [[null]];
+
+  if (!conversation || !contact) {
+    console.warn(`[Flow Delay] Conversation/contact missing for session ${session.id}; completing.`);
+    await pool.query("UPDATE flow_sessions SET status = 'COMPLETED', delay_next_run_at = NULL WHERE id = ?", [session.id]);
     return;
   }
 
-  const conversation = {
-    id: session.conversation_id,
-    contact_id: row.contact_id,
-    integration_id: row.integration_id,
-    platform: row.conversationPlatform,
-    bot_paused: row.conversationBotPaused,
-  };
-  const contact = {
-    id: row.contactId, name: row.contactName, phone: row.contactPhone, email: row.contactEmail,
-    external_id: row.contactExternalId, platform: row.contactPlatform, bot_paused: row.contactBotPaused,
-  };
-  const integration = row.integrationId
-    ? {
-        id: row.integrationId, platform: row.integrationPlatform, access_token: row.access_token,
-        wa_phone_number_id: row.wa_phone_number_id, fb_page_id: row.fb_page_id, ig_account_id: row.ig_account_id,
-        tiktok_open_id: row.tiktok_open_id,
-      }
-    : null;
+  let integration = null;
+  if (conversation.integration_id) {
+    const [[integ]] = await pool.query("SELECT * FROM integrations WHERE id = ?", [conversation.integration_id]);
+    integration = integ || null;
+  }
   const platform = conversation.platform || integration?.platform || contact.platform || "WEBCHAT";
   const resumeNodeId = session.active_context === "USER_INPUT_FLOW" ? session.uif_current_node_id : session.current_node_id;
 
@@ -87,8 +102,8 @@ export async function processDueFlowDelays() {
     );
     for (const session of dueSessions) {
       try {
-        const claimed = await claimSession(session.id, session.delay_next_run_at);
-        if (!claimed) continue; // another tick already grabbed this one
+        const claimed = await claimSession(session.id);
+        if (!claimed) continue; // another tick or timer already grabbed this one
         await resumeOneSession(session);
       } catch (err) {
         console.error(`[Flow Delay] Session ${session.id} failed:`, err.message);
@@ -100,6 +115,8 @@ export async function processDueFlowDelays() {
 }
 
 export function startFlowDelayScheduler() {
-  console.log("⏱️  Flow Delay scheduler started (runs every 60 seconds)");
-  setInterval(processDueFlowDelays, 60000);
+  console.log("⏱️  Flow Delay scheduler started (runs every 5 seconds)");
+  // Run an immediate check on startup for any overdue sessions
+  processDueFlowDelays().catch(() => {});
+  setInterval(processDueFlowDelays, 5000);
 }

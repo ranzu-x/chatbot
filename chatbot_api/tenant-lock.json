@@ -1,0 +1,7 @@
+{
+  "_comment": "Route files that have been converted to tenant-scoped data access (utils/tenantDb.js or a dedicated data layer such as utils/resellerScope.js). They may contain NO raw SQL: `npm run lint:tenant` fails the build if a raw pool/conn query or a direct db import appears in one. Add a file here once it is converted; never remove one.",
+  "locked": [
+    "routes/resellerCustomers.js",
+    "routes/cannedResponses.js"
+  ]
+}

@@ -29,6 +29,9 @@ export default function InChatPaymentCheckoutPage() {
     cvc: '',
   });
 
+  // The checkout link carries an unguessable token (?t=...); the API refuses the order without it.
+  const orderToken = new URLSearchParams(window.location.search).get('t') || '';
+
   useEffect(() => {
     fetchOrder();
   }, [orderId]);
@@ -36,7 +39,7 @@ export default function InChatPaymentCheckoutPage() {
   const fetchOrder = async () => {
     setLoading(true);
     try {
-      const res = await api.get(`/payments/order/${orderId}`);
+      const res = await api.get(`/payments/order/${orderId}`, { params: { t: orderToken } });
       const ord = res.data?.order;
       setOrder(ord);
       if (ord.status === 'PAID') {
@@ -56,7 +59,7 @@ export default function InChatPaymentCheckoutPage() {
     setError(null);
 
     try {
-      await api.post(`/payments/order/${orderId}/simulate-pay`);
+      await api.post(`/payments/order/${orderId}/simulate-pay`, { t: orderToken });
       setPaidSuccess(true);
     } catch (err) {
       console.error(err);

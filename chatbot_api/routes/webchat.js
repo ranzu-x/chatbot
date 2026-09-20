@@ -65,12 +65,30 @@ function checkWidgetOrigin(req, widget) {
   return { ok: true };
 }
 
+async function resolveWidgetPrefill(widget) {
+  if (widget.prefill_message && widget.prefill_message.trim()) {
+    return widget.prefill_message.trim();
+  }
+  if (widget.flow_id) {
+    try {
+      const [[flow]] = await pool.query("SELECT nodes_json FROM flows WHERE id = ?", [widget.flow_id]);
+      if (flow?.nodes_json) {
+        const nodes = JSON.parse(flow.nodes_json || "[]");
+        const start = nodes.find((n) => n.type === "start");
+        const prefill = (start?.data?.prefillMessage || "").trim();
+        if (prefill) return prefill;
+      }
+    } catch {}
+  }
+  return "";
+}
+
 // Shared shape between GET /webchat/config (styling only, fired on page load
 // so the closed-state launcher button can be styled correctly before the
 // visitor ever interacts) and POST /webchat/init's `widget` field below.
 // `deepLink` is only populated for a DEEPLINK widget (see buildDeepLink) —
 // null for an ordinary WEBCHAT widget, which has no external hand-off.
-function serializeWidgetConfig(widget, deepLink = null) {
+function serializeWidgetConfig(widget, deepLink = null, effectivePrefill = null) {
   return {
     widgetType: widget.widget_type || "WEBCHAT",
     targetPlatform: widget.target_platform || null,
@@ -83,7 +101,7 @@ function serializeWidgetConfig(widget, deepLink = null) {
     headerTextColor: widget.header_text_color || "#ffffff",
     greetingMessage: widget.greeting_message,
     placeholderText: widget.placeholder_text,
-    prefillMessage: widget.prefill_message,
+    prefillMessage: effectivePrefill !== null ? effectivePrefill : widget.prefill_message,
     position: widget.position || "BOTTOM_RIGHT",
     openOnStartup: Boolean(widget.open_on_startup),
     offsetX: widget.offset_x ?? 20,
@@ -114,8 +132,15 @@ async function loadTargetIntegration(integrationId) {
 // ─── GET ACTIVE WIDGETS FOR PUBLIC MARKETING / LANDING PAGES ─────────────────
 router.get("/webchat/landing-widgets", async (req, res) => {
   try {
+    // Public and unauthenticated, so it may only ever expose the PLATFORM's own
+    // widgets (the ones the marketing site is meant to embed). It used to list
+    // every active widget of every workspace, publishing each customer's widget
+    // key and name to anyone and putting their chatbots on the platform's site.
     const [widgets] = await pool.query(
-      "SELECT id, widget_key, name, widget_type, position FROM webchat_widgets WHERE is_active = 1 ORDER BY id ASC"
+      `SELECT w.id, w.widget_key, w.name, w.widget_type, w.position
+       FROM webchat_widgets w
+       JOIN agencies a ON a.id = w.agency_id AND a.account_type = 'PLATFORM'
+       WHERE w.is_active = 1 ORDER BY w.id ASC`
     );
     const widgetKeys = widgets.map((w) => w.widget_key);
     return res.json({ success: true, widgetKeys, widgets });
@@ -147,13 +172,14 @@ router.get("/webchat/config", async (req, res) => {
     const originCheck = checkWidgetOrigin(req, widget);
     if (!originCheck.ok) return res.status(originCheck.status).json({ success: false, message: originCheck.message });
 
+    const effectivePrefill = await resolveWidgetPrefill(widget);
     let deepLink = null;
     if (widget.widget_type === "DEEPLINK") {
       const target = await loadTargetIntegration(widget.integration_id);
-      deepLink = buildDeepLink(target, { prefillMessage: widget.prefill_message });
+      deepLink = buildDeepLink(target, { prefillMessage: effectivePrefill || widget.prefill_message });
     }
 
-    return res.json({ success: true, widget: serializeWidgetConfig(widget, deepLink) });
+    return res.json({ success: true, widget: serializeWidgetConfig(widget, deepLink, effectivePrefill) });
   } catch (err) {
     console.error("Webchat config error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -230,15 +256,17 @@ router.post("/webchat/init", async (req, res) => {
 
     // Load existing messages for this conversation
     const [messages] = await pool.query(
-      "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC",
+      "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, id ASC",
       [conversation.id]
     );
+
+    const effectivePrefill = await resolveWidgetPrefill(widget);
 
     return res.json({
       success: true,
       visitorId: sessId,
       conversationId: conversation.id,
-      widget: serializeWidgetConfig(widget),
+      widget: serializeWidgetConfig(widget, null, effectivePrefill),
       messages,
     });
   } catch (err) {
@@ -314,8 +342,14 @@ router.post("/webchat/message", async (req, res) => {
       message,
     });
 
+    const effectivePrefill = await resolveWidgetPrefill(widget);
+
     // Run Flow engine
-    const flowRan = await processFlow(agencyId, "WEBCHAT", conversation, contact, body, integration);
+    const flowRan = await processFlow(agencyId, "WEBCHAT", conversation, contact, body, integration, "TEXT", null, null, {
+      widgetId: widget.id,
+      widgetFlowId: widget.flow_id,
+      widgetPrefillMessage: effectivePrefill || widget.prefill_message,
+    });
     if (!flowRan) {
       // AI Reply "Always trigger" mode gets first refusal (no-op unless
       // this bot's trigger mode is actually ALWAYS — see aiReplyEngine.js).

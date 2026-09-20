@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import pool from "../db.js";
 import { stripe } from "./stripeService.js";
 
@@ -23,12 +24,17 @@ export async function createChatPaymentLink({
   const numericAmount = Number(amount);
   const curr = (currency || "USD").toUpperCase();
 
+  // Random per-order token that goes in the checkout link. The checkout page
+  // and its public API routes require it; without it the sequential order id
+  // alone would let anyone read or pay other workspaces' orders.
+  const accessToken = crypto.randomBytes(16).toString("hex");
+
   // 1. Create order record in database (PENDING)
   const [ins] = await pool.query(
     `INSERT INTO chat_orders (
       agency_id, subscriber_id, flow_id, node_id, product_name, amount,
-      currency, status, customer_name, customer_email, customer_phone, channel
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)`,
+      currency, status, customer_name, customer_email, customer_phone, channel, access_token
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?)`,
     [
       agencyId,
       subscriberId,
@@ -41,6 +47,7 @@ export async function createChatPaymentLink({
       customerEmail,
       customerPhone,
       channel,
+      accessToken,
     ]
   );
 
@@ -85,11 +92,11 @@ export async function createChatPaymentLink({
       stripeSessionId = session.id;
     } catch (stripeErr) {
       console.error("Stripe chat payment session error:", stripeErr);
-      paymentUrl = `http://localhost:5173/payments/pay/${orderId}`;
+      paymentUrl = `http://localhost:5173/payments/pay/${orderId}?t=${accessToken}`;
     }
   } else {
     // Simulated direct payment checkout link
-    paymentUrl = `http://localhost:5173/payments/pay/${orderId}`;
+    paymentUrl = `http://localhost:5173/payments/pay/${orderId}?t=${accessToken}`;
   }
 
   // Update payment_url in database

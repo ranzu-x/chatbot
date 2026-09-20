@@ -315,10 +315,20 @@ router.patch("/channels/whatsapp/:id/credentials", async (req, res) => {
 
   try {
     const [[row]] = await pool.query(
-      "SELECT id FROM integrations WHERE id = ? AND agency_id = ? AND platform = 'WHATSAPP'",
+      "SELECT id, wa_phone_number_id, wa_business_acc_id FROM integrations WHERE id = ? AND agency_id = ? AND platform = 'WHATSAPP'",
       [req.params.id, agencyId]
     );
     if (!row) return res.status(404).json({ success: false, message: "WhatsApp account not found" });
+
+    // A replacement token has to belong to this same WhatsApp number, otherwise
+    // pasting some other account's token would silently re-point the row.
+    if (accessToken?.trim() && row.wa_business_acc_id) {
+      await verifyWhatsAppNumber({
+        accessToken: accessToken.trim(),
+        wabaId: row.wa_business_acc_id,
+        phoneNumberId: row.wa_phone_number_id,
+      });
+    }
 
     const cleanAppSecret = typeof appSecret === "string" ? appSecret.trim() : undefined;
     if (cleanAppSecret && !/^[a-f0-9]{32}$/i.test(cleanAppSecret)) {
@@ -345,7 +355,7 @@ router.patch("/channels/whatsapp/:id/credentials", async (req, res) => {
     return res.json({ success: true, message: "WhatsApp credentials updated successfully" });
   } catch (err) {
     console.error("WhatsApp credentials update error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
+    return res.status(err.status || 500).json({ success: false, message: err.status ? err.message : "Server error" });
   }
 });
 
@@ -369,6 +379,38 @@ router.delete("/channels/whatsapp/:id", async (req, res) => {
 });
 
 const isValidMetaToken = (t) => Boolean(t && typeof t === 'string' && t.startsWith('EAA') && t.length > 20);
+
+// A WhatsApp account only counts as connected if Meta itself confirms that this
+// token can see this phone number under this WhatsApp Business Account. Every
+// route that creates or re-points a WhatsApp integration goes through this, so
+// nothing made-up (a placeholder phone id, a dummy token, a number that belongs
+// to somebody else's account) can ever be saved as "WhatsApp".
+async function verifyWhatsAppNumber({ accessToken, wabaId, phoneNumberId }) {
+  const fail = (message) => { const e = new Error(message); e.status = 400; throw e; };
+  if (!isValidMetaToken(accessToken)) {
+    fail("A valid Meta access token is required to connect a WhatsApp account.");
+  }
+  if (!wabaId || !phoneNumberId) {
+    fail("Could not find a WhatsApp Business Account and phone number to connect. Complete the WhatsApp signup with Meta and try again.");
+  }
+  let data;
+  try {
+    const r = await fetch(
+      `https://graph.facebook.com/v21.0/${encodeURIComponent(wabaId)}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating&access_token=${encodeURIComponent(accessToken)}`
+    );
+    data = await r.json();
+  } catch {
+    fail("Could not reach Meta to verify this WhatsApp number. Please try again.");
+  }
+  if (data?.error) {
+    fail(`Meta rejected this WhatsApp account: ${data.error.message || "verification failed"}`);
+  }
+  const match = (data?.data || []).find((n) => String(n.id) === String(phoneNumberId));
+  if (!match) {
+    fail("This phone number is not part of that WhatsApp Business Account, so it cannot be connected.");
+  }
+  return match;
+}
 
 // ─── REGISTER WHATSAPP NUMBER VIA META CLOUD API ────────────────────────────
 router.post("/channels/whatsapp/:id/register", async (req, res) => {
@@ -565,6 +607,18 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
       }
     }
 
+    // 2b. Meta must confirm this is a real number on a real WhatsApp Business
+    // Account before we touch the database. Previously a failed lookup fell
+    // through to a made-up phone id ("wa_<timestamp>"), a placeholder token and
+    // a generic "WhatsApp Business" name, and saved that as a connected account.
+    const verifiedNumber = await verifyWhatsAppNumber({
+      accessToken,
+      wabaId: effectiveWabaId,
+      phoneNumberId: effectivePhoneNumberId,
+    });
+    if (verifiedNumber.display_phone_number) phoneDisplay = verifiedNumber.display_phone_number;
+    if (verifiedNumber.verified_name) verifiedName = verifiedNumber.verified_name;
+
     // 3. Fetch phone number details from Meta Graph API if valid token available
     if (effectivePhoneNumberId && isValidMetaToken(accessToken)) {
       try {
@@ -621,11 +675,13 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
 
     // 6. Insert or Update in integrations table
     const accountName = verifiedName || `${phoneDisplay} (WhatsApp)`;
-    const pId = effectivePhoneNumberId || `wa_${Date.now()}`;
+    const pId = effectivePhoneNumberId;
 
+    // Same number only. It used to also match on display name, which existed to
+    // paper over the invented phone ids above.
     const [existing] = await pool.query(
-      "SELECT id, access_token FROM integrations WHERE agency_id = ? AND platform = 'WHATSAPP' AND (wa_phone_number_id = ? OR name = ?)",
-      [agencyId, pId, accountName]
+      "SELECT id, access_token FROM integrations WHERE agency_id = ? AND platform = 'WHATSAPP' AND wa_phone_number_id = ?",
+      [agencyId, pId]
     );
 
     let integrationId;
@@ -637,7 +693,7 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
                wa_display_phone = ?, wa_business_acc_id = ?, is_active = 1, with_catalog = ?,
                connection_method = 'EMBEDDED', updated_at = NOW()
          WHERE id = ?`,
-        [accountName, accessToken || existing[0].access_token || "embedded_token",
+        [accountName, accessToken,
          verifyToken, pId, phoneDisplay || null, effectiveWabaId || null, catalogFlag, integrationId]
       );
     } else {
@@ -646,7 +702,7 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
            (agency_id, platform, name, access_token, verify_token,
             wa_phone_number_id, wa_display_phone, wa_business_acc_id, is_active, with_catalog, connection_method)
          VALUES (?, 'WHATSAPP', ?, ?, ?, ?, ?, ?, 1, ?, 'EMBEDDED')`,
-        [agencyId, accountName, accessToken || "embedded_token",
+        [agencyId, accountName, accessToken,
          verifyToken, pId, phoneDisplay || null, effectiveWabaId || null, catalogFlag]
       );
       integrationId = ins.insertId;
@@ -2008,10 +2064,25 @@ router.get("/channels/webchat", async (req, res) => {
 router.get("/channels/webchat/by-flow/:flowId", async (req, res) => {
   try {
     const agencyId = req.agencyId || req.user?.agencyId;
-    const [rows] = await pool.query(
+    let [rows] = await pool.query(
       "SELECT * FROM webchat_widgets WHERE flow_id = ? AND agency_id = ? LIMIT 1",
       [req.params.flowId, agencyId]
     );
+    if (!rows.length) {
+      // Fallback: check if this flow belongs to a webchat integration that has an active widget
+      const [[flow]] = await pool.query("SELECT * FROM flows WHERE id = ? AND agency_id = ?", [req.params.flowId, agencyId]);
+      if (flow && flow.platform === "WEBCHAT" && flow.integration_id) {
+        const [wRows] = await pool.query(
+          "SELECT * FROM webchat_widgets WHERE integration_id = ? AND agency_id = ? LIMIT 1",
+          [flow.integration_id, agencyId]
+        );
+        if (wRows.length) {
+          await pool.query("UPDATE webchat_widgets SET flow_id = ? WHERE id = ? AND agency_id = ?", [flow.id, wRows[0].id, agencyId]);
+          wRows[0].flow_id = flow.id;
+          rows = wRows;
+        }
+      }
+    }
     if (!rows.length) return res.status(404).json({ success: false, message: "No widget linked to this flow" });
     return res.json({ success: true, widget: rows[0] });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }

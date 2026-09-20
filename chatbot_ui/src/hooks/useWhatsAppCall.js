@@ -1,3 +1,4 @@
+import { socketAuth } from '../utils/socketAuth';
 import { useState, useRef, useCallback, useEffect } from 'react';
 import io from 'socket.io-client';
 import { whatsappCallAPI } from '../services/api';
@@ -77,7 +78,7 @@ export default function useWhatsAppCall() {
       socketUrl = apiUrl.startsWith('http') ? apiUrl.replace('/api/v1', '') : undefined;
     }
     const socket = io(socketUrl, {
-      auth: { agencyId: user.agencyId, userId: user.id, role: user.role },
+      auth: socketAuth(),
       transports: ['websocket', 'polling'],
     });
     socketRef.current = socket;

@@ -83,7 +83,8 @@ const NAV_CONFIG = {
       { label: 'Custom Domain',       icon: Globe,    path: '/agency/domain-settings', moduleKey: 'feature_custom_domain' },
     ]},
     { section: 'Team & Billing', items: [
-      { label: 'User Manager',        icon: Users,    path: '/agency/team' },
+      { label: 'User Manager',        icon: Users,    path: '/reseller/users', accountTypeIn: ['RESELLER'] },
+      { label: 'Team Members',        icon: Users,    path: '/agency/team' },
       { label: 'Team Roles & Permissions', icon: KeyRound, path: '/roles' },
       { label: 'Audit Log',                icon: ScrollText, path: '/admin/audit-log' },
       { label: 'Packages & Modules',  icon: Package,  path: '/agency/packages' },

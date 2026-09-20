@@ -244,7 +244,7 @@ router.patch("/bots/:id/toggle", async (req, res) => {
     const [[bot]] = await pool.query("SELECT is_active FROM bots WHERE id=? AND agency_id=?", [req.params.id, req.user.agencyId]);
     if (!bot) return res.status(404).json({ success: false, message: "Bot not found" });
     const newStatus = !bot.is_active;
-    await pool.query("UPDATE bots SET is_active=? WHERE id=?", [newStatus, req.params.id]);
+    await pool.query("UPDATE bots SET is_active=? WHERE id=? AND agency_id=?", [newStatus, req.params.id, req.user.agencyId]);
     return res.json({ success: true, isActive: newStatus });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
@@ -258,8 +258,17 @@ router.delete("/bots/:id", async (req, res) => {
 });
 
 // ─── BOT RULES ───────────────────────────────────────────────────
+// Every rule route below first proves the bot is the caller's own. They used to
+// filter by bot id alone, so any logged-in user could read, add to, or delete
+// the rules of another workspace's bot just by using its id.
+async function ownsBot(botId, agencyId) {
+  const [[bot]] = await pool.query("SELECT id FROM bots WHERE id = ? AND agency_id = ?", [botId, agencyId]);
+  return Boolean(bot);
+}
+
 router.get("/bots/:id/rules", async (req, res) => {
   try {
+    if (!(await ownsBot(req.params.id, req.user.agencyId))) return res.status(404).json({ success: false, message: "Bot not found" });
     const [rules] = await pool.query("SELECT * FROM bot_rules WHERE bot_id=? ORDER BY sort_order ASC", [req.params.id]);
     return res.json({ success: true, rules });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
@@ -270,6 +279,7 @@ router.post("/bots/:id/rules", async (req, res) => {
   if (!triggerKeyword || !replyMessage)
     return res.status(400).json({ success: false, message: "Keyword and reply message are required" });
   try {
+    if (!(await ownsBot(req.params.id, req.user.agencyId))) return res.status(404).json({ success: false, message: "Bot not found" });
     const [[count]] = await pool.query("SELECT COUNT(*) as c FROM bot_rules WHERE bot_id=?", [req.params.id]);
     await pool.query(
       "INSERT INTO bot_rules (bot_id, trigger_keyword, reply_message, is_exact_match, sort_order) VALUES (?,?,?,?,?)",
@@ -281,7 +291,9 @@ router.post("/bots/:id/rules", async (req, res) => {
 
 router.delete("/bots/:botId/rules/:ruleId", async (req, res) => {
   try {
-    await pool.query("DELETE FROM bot_rules WHERE id=?", [req.params.ruleId]);
+    if (!(await ownsBot(req.params.botId, req.user.agencyId))) return res.status(404).json({ success: false, message: "Bot not found" });
+    // Also pinned to that bot, so a rule id from a different bot is not deletable through this one.
+    await pool.query("DELETE FROM bot_rules WHERE id=? AND bot_id=?", [req.params.ruleId, req.params.botId]);
     return res.json({ success: true, message: "Rule deleted" });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });

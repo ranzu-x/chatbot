@@ -125,6 +125,7 @@ export default function App() {
               <Route path="/roles" element={<ProtectedRoute roles={ADMIN_AGENCY}><RolesPage /></ProtectedRoute>} />
               <Route path="/admin/audit-log" element={<ProtectedRoute roles={ADMIN_AGENCY}><AuditLogPage /></ProtectedRoute>} />
               <Route path="/reseller/customers" element={<ProtectedRoute roles={['RESELLER']}><ResellerCustomersPage /></ProtectedRoute>} />
+              <Route path="/reseller/users" element={<ProtectedRoute roles={['RESELLER']}><UsersPage scope="reseller" /></ProtectedRoute>} />
               {/* "Packages & Modules" for an agency is now package-creation for ITS
                   OWN customers (used to be reseller-only) — /reseller/packages kept
                   as a working alias, /agency/packages is the primary path now. */}

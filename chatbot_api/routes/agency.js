@@ -149,13 +149,98 @@ router.get("/agency/analytics", async (req, res) => {
 router.get("/agency/agents", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    const [agents] = await pool.query(`
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    // Helper to ensure an agent_profile exists for a user and return it
+    async function ensureAgentProfile(uId) {
+      let [[prof]] = await pool.query("SELECT id, is_online FROM agent_profiles WHERE user_id = ?", [uId]);
+      if (!prof) {
+        const [ins] = await pool.query(
+          "INSERT INTO agent_profiles (user_id, owner_user_id, user_type, team_role) VALUES (?, ?, 'OWNER_USER', 'OWNER')",
+          [uId, uId]
+        );
+        prof = { id: ins.insertId, is_online: 0 };
+      }
+      return prof;
+    }
+
+    // Fetch agency to identify account owner
+    let ownerId = null;
+    if (agencyId) {
+      const [[agency]] = await pool.query("SELECT id, owner_id FROM agencies WHERE id = ?", [agencyId]);
+      ownerId = agency?.owner_id || null;
+    }
+
+    const adminAgents = [];
+    const seenUserIds = new Set();
+
+    // 1. Account Owner as Admin
+    if (ownerId) {
+      const ownerProf = await ensureAgentProfile(ownerId);
+      const [[ownerUser]] = await pool.query(
+        "SELECT id, name, email, is_active, created_at FROM users WHERE id = ?",
+        [ownerId]
+      );
+      if (ownerUser) {
+        adminAgents.push({
+          id: ownerUser.id,
+          name: "Admin",
+          email: ownerUser.email,
+          is_active: ownerUser.is_active,
+          profileId: ownerProf.id,
+          agent_profile_id: ownerProf.id,
+          is_online: ownerProf.is_online || 0,
+          isAdmin: true,
+          role: "ADMIN",
+          created_at: ownerUser.created_at,
+        });
+        seenUserIds.add(ownerUser.id);
+      }
+    }
+
+    // 2. Platform ADMIN caller if not already added
+    if (userRole === "ADMIN" && !seenUserIds.has(userId)) {
+      const adminProf = await ensureAgentProfile(userId);
+      const [[adminUser]] = await pool.query(
+        "SELECT id, name, email, is_active, created_at FROM users WHERE id = ?",
+        [userId]
+      );
+      if (adminUser) {
+        adminAgents.push({
+          id: adminUser.id,
+          name: "Admin",
+          email: adminUser.email,
+          is_active: adminUser.is_active,
+          profileId: adminProf.id,
+          agent_profile_id: adminProf.id,
+          is_online: adminProf.is_online || 0,
+          isAdmin: true,
+          role: "ADMIN",
+          created_at: adminUser.created_at,
+        });
+        seenUserIds.add(adminUser.id);
+      }
+    }
+
+    // 3. Team members explicitly assigned to this agency
+    const [teamAgents] = await pool.query(`
       SELECT u.id, u.name, u.email, u.is_active, ap.id as profileId, ap.id as agent_profile_id, ap.is_online, u.created_at
       FROM agent_profiles ap
       JOIN users u ON u.id = ap.user_id
       WHERE ap.agency_id = ?
       ORDER BY u.created_at DESC
     `, [agencyId]);
+
+    const otherAgents = [];
+    for (const ag of teamAgents) {
+      if (!seenUserIds.has(ag.id)) {
+        otherAgents.push(ag);
+        seenUserIds.add(ag.id);
+      }
+    }
+
+    const agents = [...adminAgents, ...otherAgents];
     return res.json({ success: true, agents });
   } catch (err) {
     console.error(err);

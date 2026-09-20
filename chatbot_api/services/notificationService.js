@@ -13,8 +13,9 @@ export async function broadcastAgentAlert({
   try {
     const io = getIO();
     if (io) {
-      // Emit to agency room
-      io.to(`agency_${agencyId}`).emit("agent:alert", {
+      // Emit to the agency room. (This used to say "agency_<id>", a room name
+      // nothing ever joins, so these alerts were never delivered to anyone.)
+      io.to(`agency:${agencyId}`).emit("agent:alert", {
         title,
         body,
         conversationId,

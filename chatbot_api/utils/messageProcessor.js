@@ -80,7 +80,7 @@ export async function findOrCreateContact(agencyId, platform, externalId, name, 
   contact._overLimit = overLimit; // non-persisted hint for findOrCreateConversation, below
 
   if (overLimit) {
-    console.warn(`[Subscriber Limit] Agency ${agencyId} is over its subscriber limit — new contact ${contact.id} (${platform}) created with Bot/AI paused.`);
+    console.warn(`[Subscriber Limit] Tenant ${agencyId} is over its subscriber limit — new contact ${contact.id} (${platform}) created with Bot/AI paused.`);
     broadcastAgentAlert({
       agencyId,
       title: "Subscriber limit reached",
@@ -177,7 +177,7 @@ export async function matchBotRules(agencyId, platform, conversation, contact, i
     try {
       await assertLimit(agencyId, "max_monthly_messages", 1, null);
     } catch {
-      console.warn(`[Message Credit Limit] Agency ${agencyId} is over its monthly message limit — skipping bot auto-reply.`);
+      console.warn(`[Message Credit Limit] Tenant ${agencyId} is over its monthly message limit — skipping bot auto-reply.`);
       return false;
     }
 
@@ -185,7 +185,7 @@ export async function matchBotRules(agencyId, platform, conversation, contact, i
     const upperMsgType = (msgType || "TEXT").toUpperCase();
     const isMedia = ["IMAGE", "VIDEO", "AUDIO", "VOICE", "DOCUMENT", "FILE"].includes(upperMsgType);
     const integrationId = integration?.id || conversation?.integration_id;
-    console.log(`🤖 [Bot Matcher] Checking rules for agency=${agencyId}, platform=${platform}, type=${upperMsgType}, text="${textBody}"`);
+    console.log(`🤖 [Bot Matcher] Checking rules for tenant=${agencyId}, platform=${platform}, type=${upperMsgType}, text="${textBody}"`);
     
     // Find active bot: prioritized by specific integration_id, then platform fallback
     const [bots] = await pool.query(
@@ -197,7 +197,7 @@ export async function matchBotRules(agencyId, platform, conversation, contact, i
     );
 
     if (!bots.length) {
-      console.log(`🤖 [Bot Matcher] No active bot found for agency=${agencyId}, platform=${platform}`);
+      console.log(`🤖 [Bot Matcher] No active bot found for tenant=${agencyId}, platform=${platform}`);
       return false;
     }
     const bot = bots[0];

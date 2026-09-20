@@ -1,3 +1,4 @@
+import { socketAuth } from "../../utils/socketAuth";
 import { useEffect, useRef } from "react";
 import io from "socket.io-client";
 import { useSupportAuth } from "../context/SupportAuthContext";
@@ -22,7 +23,7 @@ export function useSupportSocket(onEvent) {
       socketUrl = apiUrl.startsWith("http") ? apiUrl.replace("/api/v1", "") : undefined;
     }
     const socket = io(socketUrl, {
-      auth: { agencyId: user.agencyId, userId: user.id, role: user.role },
+      auth: socketAuth(),
       transports: ["websocket", "polling"],
     });
     socketRef.current = socket;

@@ -119,6 +119,16 @@ router.post("/integrations", async (req, res) => {
   if (!platform || !name || !accessToken)
     return res.status(400).json({ success: false, message: "Platform, name, and access token are required" });
 
+  // This generic route saves whatever IDs it is given with no check against
+  // Meta, which is how WhatsApp accounts that were never real could appear.
+  // WhatsApp must go through /channels/whatsapp (verified with Meta).
+  if (String(platform).toUpperCase() === "WHATSAPP") {
+    return res.status(400).json({
+      success: false,
+      message: "WhatsApp accounts must be connected from the WhatsApp channel page so they can be verified with Meta.",
+    });
+  }
+
   try {
     await pool.query(
       `INSERT INTO integrations 
@@ -142,17 +152,22 @@ router.post("/integrations", async (req, res) => {
 router.put("/integrations/:id", async (req, res) => {
   const {
     name, accessToken, verifyToken,
-    waPhoneNumberId, waBusinessAccId,
     fbPageId, fbPageName,
     igAccountId, igUsername, isActive,
   } = req.body;
+  let { waPhoneNumberId, waBusinessAccId } = req.body;
 
   try {
     const [check] = await pool.query(
-      "SELECT id FROM integrations WHERE id = ? AND agency_id = ?",
+      "SELECT id, platform, wa_phone_number_id, wa_business_acc_id FROM integrations WHERE id = ? AND agency_id = ?",
       [req.params.id, req.user.agencyId]
     );
     if (!check.length) return res.status(404).json({ success: false, message: "Integration not found" });
+    // A verified WhatsApp number's phone/WABA ids can't be edited into something else here.
+    if (check[0].platform === "WHATSAPP") {
+      waPhoneNumberId = check[0].wa_phone_number_id;
+      waBusinessAccId = check[0].wa_business_acc_id;
+    }
 
     await pool.query(
       `UPDATE integrations SET name=?, access_token=?, verify_token=?, wa_phone_number_id=?, 

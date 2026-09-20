@@ -64,3 +64,31 @@ and `/settings/tiktok-app` — these hold the Reseller's own Meta/TikTok
 *developer app* credentials (`client_id`/`client_secret`), a materially
 different and more sensitive thing than connecting one channel account
 with those apps already configured.
+
+## Tenant isolation (reseller A must never see reseller B)
+
+Decided design, built in three layers. Read this before adding or changing any route that touches tenant data.
+
+**Database** (`chatbot_api/migrate_tenant_isolation.js`, `migrate_chat_order_access_token.js`):
+- `users.home_agency_id` — every login belongs to one workspace. Filled automatically by triggers when a user becomes an owner/member/agent, and immutable afterwards. `agencies.parent_agency_id` is the reseller pointer (no duplicate column).
+- Triggers on `agencies`: a `RESELLER_CUSTOMER` must have a `RESELLER` parent, only customers may have a parent, a customer can never change reseller, a reseller with customers can't be demoted.
+- Composite FKs `conversations(contact_id|integration_id, agency_id)`; triggers on `flows`/`bots` so an `integration_id` must be in the same workspace.
+- `chat_orders.access_token`: checkout links are `/payments/pay/<id>?t=<token>`; the public order routes require it. `simulate-pay` is off when `NODE_ENV=production` and Stripe is configured.
+
+**Code**:
+- `middleware/tenant.js` (`tenantContext`, mounted globally in `index.js`) re-checks on every authenticated request that the user is active, the workspace exists and is active, and the user actually belongs to it. It sets `req.tenant` (`agencyId`, `resellerId`, account type). Deactivation therefore takes effect within seconds; call `invalidateTenantCache()` after any change to `is_active`/membership.
+- Scope from `req.tenant`, never from `req.body/query/params`. Cross-tenant lookups answer 404, not 403.
+- `utils/tenantDb.js` — `tenantDb(req).list/getOwned/insert/updateOwned/deleteOwned` add `agency_id` to every statement and only accept workspace-owned tables.
+- `utils/resellerScope.js` — the only place that touches a reseller's customers/users; every function is anchored on the reseller id.
+- **Locked files** (`tenant-lock.json`): `routes/resellerCustomers.js`, `routes/cannedResponses.js` may contain no raw SQL. `npm run lint:tenant` (runs before `npm test`) fails if they do. Converting another route file? Move its SQL behind `tenantDb`/a data layer, then add it to the lock. Never remove an entry. Unconverted files only produce warnings (`npm run lint:tenant -- --verbose`).
+- Email stays unique platform-wide (decided). Emails-in-use errors on reseller flows use a neutral message so they don't reveal other resellers' users. There is deliberately NO "login as user" for resellers.
+
+**Proof**: `npm run test:tenant` (opt-in, uses the real DB, cleans up after itself) builds two resellers each with a customer and a marked row in every tenant table, attacks every route from each tenant with the others' ids, and fails on any response containing another tenant's data or any change to another tenant's rows. `npm run check:tenant` is a read-only nightly integrity check. Any new route with an `:id` param may need an entry in `PARAM_OVERRIDES` in `test/helpers/tenantIsolation.js` if the param name doesn't match a table.
+
+**Known gaps**: only routes whose id param maps to a seeded table are attacked (26 skipped: platform-global, provider-keyed, blog). Mutation routes get a generic body, so a leak behind specific validation may not be reached. Most route files are still unconverted (see `lint:tenant`). `/auth/register` on an unrecognised domain is refused (403 SIGNUP_NOT_AVAILABLE, no account created) except on a truly fresh install; only a verified reseller domain or a matching subdomain/slug can sign people up.
+
+**Real-time (socket.io)** — `utils/socket.js` decides who a connection is from a verified login token (`auth.token` or the httpOnly `token` cookie), never from client-claimed `agencyId`/`userId`. Verified users join `agency:<id>` and `user:<id>`; `join_conversation` requires the conversation to be in their workspace; webchat visitors can only join the conversation their own visitor id created (`canJoinWebchat`). Every browser `io()` call must pass `auth: socketAuth()` (`chatbot_ui/src/utils/socketAuth.js`). Use `emitToUser` for personal alerts.
+
+## Follow-up reminders (Inbox)
+
+`follow_ups` rows have a title, optional description (`note`), `due_at`, optional assignee, `snooze_count` and `alerted_at` (NULL = has not fired for the current due time). `utils/followUpScheduler.js` runs every 30s, claims due PENDING rows by stamping `alerted_at`, and emits `follow_up_due` to the assignee's `user:<id>` room (or the creator if unassigned). Snoozing (`POST /follow-ups/:id/snooze {minutes}`) or changing the due time sets `alerted_at` back to NULL, which is all it takes to re-fire. UI: `Components/Inbox/FollowUpPanel.jsx` (create/edit/list in the subscriber drawer; 1/2/4/6/12/24-hour shortcuts) and `FollowUpAlerts.jsx` (bell + pop-ups + chime + desktop notification, in the conversation-list header). Reminders whose person had no tab open stay overdue and show in the bell (`GET /follow-ups?mine=1&status=OVERDUE`). Migration: `migrate_followup_reminders.js`.

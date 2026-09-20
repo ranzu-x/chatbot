@@ -58,6 +58,28 @@ export function playNotificationSound(type = 'message') {
         osc.start(toneTime);
         osc.stop(toneTime + 0.2);
       });
+    } else if (type === 'followup') {
+      // Reminder bell: a rising three-note chime played twice, so it is noticed
+      // without being as sharp as the handover alert.
+      [0, 0.9].forEach((offset) => {
+        [659.25, 830.61, 987.77].forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          const toneTime = now + offset + i * 0.14;
+
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, toneTime);
+
+          gain.gain.setValueAtTime(0.28, toneTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, toneTime + 0.45);
+
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+
+          osc.start(toneTime);
+          osc.stop(toneTime + 0.45);
+        });
+      });
     } else if (type === 'order') {
       // Cash chime arpeggio (C major)
       [523.25, 659.25, 783.99, 1046.5].forEach((freq, i) => {

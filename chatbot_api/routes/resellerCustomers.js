@@ -1,184 +1,127 @@
 /**
- * A Reseller's own "Create Customer" flow — creates a RESELLER_CUSTOMER
- * agencies row owned by the caller's reseller org (parent_agency_id), per
- * the approved SaaS hierarchy plan (§6). Separate from
- * routes/resellers.js, which is Super Admin's view into this same data.
+ * A Reseller's own customers and their users.
+ *
+ *   /reseller/customers  — "Add Customer" style management of customer workspaces
+ *   /reseller/users      — the User Manager (same screen as Super Admin's, scoped)
+ *
+ * TENANT-LOCKED: this file contains no SQL. Every read and write goes through
+ * utils/resellerScope.js, which takes the reseller's id from `req.tenant`
+ * (derived server-side by middleware/tenant.js) and anchors every statement on
+ * it. `npm run lint:tenant` fails if raw queries are added here.
  */
 import express from "express";
-import bcrypt from "bcrypt";
-import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { requirePermission } from "../middleware/permissionMiddleware.js";
-import { assertLimit } from "../utils/entitlements.js";
-import { logAuditEvent } from "../utils/auditLog.js";
+import { requireReseller } from "../middleware/tenant.js";
+import * as scope from "../utils/resellerScope.js";
 
 const router = express.Router();
-router.use(authMiddleware);
+// Scoped to /reseller: an unscoped router.use(authMiddleware) here used to 401
+// every later-mounted router's public routes (see index.js mount order notes).
+router.use("/reseller", authMiddleware, requireReseller);
 
-async function requireCallerIsReseller(req, res) {
-  const [[agency]] = await pool.query("SELECT id, account_type FROM agencies WHERE id = ?", [req.user.agencyId]);
-  if (!agency || agency.account_type !== "RESELLER") {
-    res.status(403).json({ success: false, message: "Only a reseller account can manage reseller customers" });
-    return null;
+const VIEW = requirePermission("reseller.customers.view", "reseller.customers.manage");
+const MANAGE = requirePermission("reseller.customers.manage");
+
+function fail(res, err, label) {
+  if (err instanceof scope.TenantError) {
+    return res.status(err.status).json({ success: false, message: err.message, code: err.code });
   }
-  return agency;
+  console.error(`${label} error:`, err);
+  return res.status(500).json({ success: false, message: "Server error" });
 }
 
-// ─── LIST MY CUSTOMERS ────────────────────────────────────────────────────────
-router.get("/reseller/customers", requirePermission("reseller.customers.view", "reseller.customers.manage"), async (req, res) => {
-  const reseller = await requireCallerIsReseller(req, res);
-  if (!reseller) return;
+// ─── Customers ───────────────────────────────────────────────────────────────
+router.get("/reseller/customers", VIEW, async (req, res) => {
   try {
-    const [rows] = await pool.query(`
-      SELECT a.id, a.name, a.slug, a.is_active, a.owner_id, u.name AS ownerName, u.email AS ownerEmail, a.created_at,
-             acs.package_id AS agencyPackageId, ap.name AS agencyPackageName, acs.status AS subscriptionStatus
-      FROM agencies a
-      JOIN users u ON u.id = a.owner_id
-      LEFT JOIN agency_client_subscriptions acs ON acs.client_agency_id = a.id AND acs.status = 'ACTIVE'
-      LEFT JOIN agency_packages ap ON ap.id = acs.package_id
-      WHERE a.parent_agency_id = ? AND a.account_type = 'RESELLER_CUSTOMER'
-      ORDER BY a.created_at DESC
-    `, [reseller.id]);
-    return res.json({ success: true, customers: rows });
-  } catch (err) {
-    console.error("GET /reseller/customers error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
+    return res.json({ success: true, customers: await scope.listCustomers(req.tenant.agencyId) });
+  } catch (err) { return fail(res, err, "GET /reseller/customers"); }
 });
 
-// ─── CREATE A CUSTOMER ────────────────────────────────────────────────────────
-router.post("/reseller/customers", requirePermission("reseller.customers.manage"), async (req, res) => {
-  const reseller = await requireCallerIsReseller(req, res);
-  if (!reseller) return;
-
+router.post("/reseller/customers", MANAGE, async (req, res) => {
   const { name, slug, ownerName, ownerEmail, ownerPassword, agencyPackageId } = req.body;
   if (!name || !ownerName || !ownerEmail || !ownerPassword) {
     return res.status(400).json({ success: false, message: "name, ownerName, ownerEmail and ownerPassword are required" });
   }
-
-  // Pool limit — real usage across the reseller's whole tree vs the
-  // reseller's own platform package limit for max_bot_accounts is checked
-  // elsewhere; here we specifically gate the *customer count* itself
-  // (this reseller's own package's own "how many customers" ceiling).
   try {
-    await assertLimit(reseller.id, "max_reseller_customers", 1, req.user.id);
-  } catch (limitErr) {
-    return res.status(403).json({ success: false, message: limitErr.message || "Customer limit reached for your reseller plan.", code: "LIMIT_EXCEEDED" });
-  }
-
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    const [[existing]] = await conn.query("SELECT id FROM users WHERE email = ?", [ownerEmail]);
-    if (existing) {
-      await conn.rollback();
-      return res.status(400).json({ success: false, message: "Email already in use" });
-    }
-    const hashed = await bcrypt.hash(ownerPassword, 10);
-    const [userResult] = await conn.query(
-      "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, 'RESELLER')",
-      [ownerName, ownerEmail, hashed]
-    );
-    const ownerId = userResult.insertId;
-    const agencySlug = slug || `${name}-${Date.now().toString(36)}`.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    const [agencyResult] = await conn.query(
-      "INSERT INTO agencies (name, slug, owner_id, account_type, parent_agency_id) VALUES (?, ?, ?, 'RESELLER_CUSTOMER', ?)",
-      [name, agencySlug, ownerId, reseller.id]
-    );
-    const customerId = agencyResult.insertId;
-
-    const [[ownerRole]] = await conn.query("SELECT id FROM roles WHERE scope_type='AGENCY' AND agency_id IS NULL AND slug='owner'");
-    if (ownerRole) {
-      await conn.query(
-        "INSERT INTO organization_members (user_id, agency_id, role_id, member_kind, chat_access) VALUES (?,?,?, 'OWNER', 'ALL')",
-        [ownerId, customerId, ownerRole.id]
-      );
-    }
-
-    if (agencyPackageId) {
-      const [[pkg]] = await conn.query("SELECT id FROM agency_packages WHERE id = ? AND agency_id = ?", [agencyPackageId, reseller.id]);
-      if (pkg) {
-        await conn.query(
-          "INSERT INTO agency_client_subscriptions (agency_id, client_agency_id, package_id, provider, status, started_at, notes) VALUES (?, ?, ?, 'STRIPE', 'ACTIVE', NOW(), 'Assigned at customer creation')",
-          [reseller.id, customerId, agencyPackageId]
-        );
-      }
-    }
-
-    await conn.commit();
-
-    logAuditEvent({
-      agencyId: reseller.id, actor: req.user, action: "reseller_customer.create",
-      entityType: "agency", entityId: customerId, entityLabel: name,
-      summary: `Created customer "${name}" (owner: ${ownerEmail})`,
-      targetAgencyId: customerId,
+    const { customerId } = await scope.createCustomerAccount({
+      resellerId: req.tenant.agencyId, actor: req.user,
+      name, slug, ownerName, ownerEmail: String(ownerEmail).toLowerCase().trim(), ownerPassword, agencyPackageId,
     });
-
     return res.status(201).json({ success: true, message: "Customer created", customerId });
-  } catch (err) {
-    await conn.rollback();
-    console.error("POST /reseller/customers error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
-  } finally {
-    conn.release();
-  }
+  } catch (err) { return fail(res, err, "POST /reseller/customers"); }
 });
 
-// ─── ASSIGN/CHANGE A CUSTOMER'S AGENCY PACKAGE ────────────────────────────────
-router.patch("/reseller/customers/:id/package", requirePermission("reseller.customers.manage"), async (req, res) => {
-  const reseller = await requireCallerIsReseller(req, res);
-  if (!reseller) return;
+router.patch("/reseller/customers/:id/package", MANAGE, async (req, res) => {
   const { agencyPackageId } = req.body;
   if (!agencyPackageId) return res.status(400).json({ success: false, message: "agencyPackageId is required" });
   try {
-    const [[customer]] = await pool.query("SELECT id, name FROM agencies WHERE id = ? AND parent_agency_id = ? AND account_type='RESELLER_CUSTOMER'", [req.params.id, reseller.id]);
+    const customer = await scope.getCustomer(req.tenant.agencyId, req.params.id);
     if (!customer) return res.status(404).json({ success: false, message: "Customer not found" });
-    const [[pkg]] = await pool.query("SELECT id, name FROM agency_packages WHERE id = ? AND agency_id = ?", [agencyPackageId, reseller.id]);
-    if (!pkg) return res.status(400).json({ success: false, message: "Package not found" });
-
-    await pool.query("UPDATE agency_client_subscriptions SET status='CANCELLED' WHERE client_agency_id = ? AND status='ACTIVE'", [customer.id]);
-    await pool.query(
-      "INSERT INTO agency_client_subscriptions (agency_id, client_agency_id, package_id, provider, status, started_at, notes) VALUES (?, ?, ?, 'STRIPE', 'ACTIVE', NOW(), 'Reassigned by reseller')",
-      [reseller.id, customer.id, agencyPackageId]
-    );
-
-    logAuditEvent({
-      agencyId: reseller.id, actor: req.user, action: "reseller_customer.package_change",
-      entityType: "agency", entityId: customer.id, entityLabel: customer.name,
-      summary: `Changed "${customer.name}"'s plan to "${pkg.name}"`,
-      targetAgencyId: customer.id,
-    });
-
+    await scope.assignCustomerPackage(req.tenant.agencyId, req.user, customer, agencyPackageId);
     return res.json({ success: true, message: "Package reassigned. Existing data is always kept — if the new plan's limits are lower, this customer just can't add more of that resource until they're back under the limit." });
-  } catch (err) {
-    console.error("PATCH /reseller/customers/:id/package error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
+  } catch (err) { return fail(res, err, "PATCH /reseller/customers/:id/package"); }
 });
 
-// ─── TOGGLE A CUSTOMER'S STATUS ───────────────────────────────────────────────
-router.patch("/reseller/customers/:id/toggle", requirePermission("reseller.customers.manage"), async (req, res) => {
-  const reseller = await requireCallerIsReseller(req, res);
-  if (!reseller) return;
+router.patch("/reseller/customers/:id/toggle", MANAGE, async (req, res) => {
   try {
-    const [[customer]] = await pool.query("SELECT id, is_active, name FROM agencies WHERE id = ? AND parent_agency_id = ? AND account_type='RESELLER_CUSTOMER'", [req.params.id, reseller.id]);
+    const customer = await scope.getCustomer(req.tenant.agencyId, req.params.id);
     if (!customer) return res.status(404).json({ success: false, message: "Customer not found" });
-    const newStatus = customer.is_active ? 0 : 1;
-    await pool.query("UPDATE agencies SET is_active = ? WHERE id = ?", [newStatus, customer.id]);
+    return res.json({ success: true, isActive: await scope.toggleCustomer(req.tenant.agencyId, req.user, customer) });
+  } catch (err) { return fail(res, err, "PATCH /reseller/customers/:id/toggle"); }
+});
 
-    logAuditEvent({
-      agencyId: reseller.id, actor: req.user, action: "reseller_customer.toggle",
-      entityType: "agency", entityId: customer.id, entityLabel: customer.name,
-      summary: `${newStatus ? "Activated" : "Deactivated"} customer "${customer.name}"`,
-      changes: { is_active: { before: !!customer.is_active, after: newStatus === 1 } },
-      targetAgencyId: customer.id,
-    });
+// ─── User Manager ────────────────────────────────────────────────────────────
+router.get("/reseller/users", VIEW, async (req, res) => {
+  try {
+    return res.json({ success: true, users: await scope.listCustomerUsers(req.tenant.agencyId) });
+  } catch (err) { return fail(res, err, "GET /reseller/users"); }
+});
 
-    return res.json({ success: true, isActive: newStatus === 1 });
-  } catch (err) {
-    console.error("PATCH /reseller/customers/:id/toggle error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
+router.post("/reseller/users", MANAGE, async (req, res) => {
+  const name = String(req.body.name || "").trim();
+  const email = String(req.body.email || "").toLowerCase().trim();
+  const { password, phone, packageId } = req.body;
+  if (!name || !email || !password) {
+    return res.status(400).json({ success: false, message: "Name, email, and password are required" });
   }
+  if (String(password).length < 6) {
+    return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
+  }
+  try {
+    const { ownerId, customerId } = await scope.createCustomerAccount({
+      resellerId: req.tenant.agencyId, actor: req.user,
+      name: `${name}'s Workspace`, ownerName: name, ownerEmail: email, ownerPassword: password,
+      agencyPackageId: packageId || null, phone: phone || null,
+    });
+    return res.status(201).json({ success: true, message: "User created", userId: ownerId, customerId });
+  } catch (err) { return fail(res, err, "POST /reseller/users"); }
+});
+
+router.put("/reseller/users/:id", MANAGE, async (req, res) => {
+  try {
+    const target = await scope.getCustomerUser(req.tenant.agencyId, req.params.id);
+    if (!target) return res.status(404).json({ success: false, message: "User not found" });
+    const { packageChange } = await scope.updateCustomerUser(req.tenant.agencyId, req.user, target, req.body);
+    return res.json({ success: true, message: "User updated", packageChange });
+  } catch (err) { return fail(res, err, "PUT /reseller/users/:id"); }
+});
+
+router.patch("/reseller/users/:id/toggle", MANAGE, async (req, res) => {
+  try {
+    const target = await scope.getCustomerUser(req.tenant.agencyId, req.params.id);
+    if (!target) return res.status(404).json({ success: false, message: "User not found" });
+    return res.json({ success: true, isActive: await scope.toggleCustomerUser(req.tenant.agencyId, req.user, target) });
+  } catch (err) { return fail(res, err, "PATCH /reseller/users/:id/toggle"); }
+});
+
+router.delete("/reseller/users/:id", MANAGE, async (req, res) => {
+  try {
+    const target = await scope.getCustomerUser(req.tenant.agencyId, req.params.id);
+    if (!target) return res.status(404).json({ success: false, message: "User not found" });
+    await scope.deleteCustomerUser(req.tenant.agencyId, req.user, target);
+    return res.json({ success: true, message: "User deleted" });
+  } catch (err) { return fail(res, err, "DELETE /reseller/users/:id"); }
 });
 
 export default router;

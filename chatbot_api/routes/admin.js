@@ -6,6 +6,7 @@ import { authMiddleware } from "../middleware/authmiddleware.js";
 import { requirePermission } from "../middleware/permissionMiddleware.js";
 import { assignPackageLocally } from "../services/stripeService.js";
 import { logAuditEvent, diffFields } from "../utils/auditLog.js";
+import { invalidateTenantCache } from "../middleware/tenant.js";
 
 const router = express.Router();
 
@@ -194,6 +195,7 @@ router.patch("/admin/agencies/:id/toggle", requirePermission("admin.agencies.man
     if (!rows.length) return res.status(404).json({ success: false, message: "Agency not found" });
     const newStatus = !rows[0].is_active;
     await pool.query("UPDATE agencies SET is_active = ? WHERE id = ?", [newStatus, req.params.id]);
+    invalidateTenantCache(); // deactivation must lock the workspace out immediately
 
     logAuditEvent({
       agencyId: req.user.agencyId, actor: req.user, action: "agency.toggle",
@@ -230,6 +232,7 @@ router.patch("/admin/agencies/:id", requirePermission("admin.agencies.manage"), 
 
     if (typeof isActive === "boolean") {
       await conn.query("UPDATE agencies SET is_active = ? WHERE id = ?", [isActive ? 1 : 0, req.params.id]);
+      invalidateTenantCache();
     }
     if (name) {
       await conn.query("UPDATE agencies SET name = ? WHERE id = ?", [name, req.params.id]);
@@ -332,6 +335,9 @@ router.delete("/admin/agencies/:id", requirePermission("admin.agencies.manage"),
     if (childCount > 0) {
       return res.status(400).json({ success: false, message: `Cannot delete — this account still has ${childCount} customer(s) under it` });
     }
+    // Conversations first (conversations -> contacts is NO ACTION, so the
+    // workspace cascade fails once it has any chats).
+    await pool.query("DELETE FROM conversations WHERE agency_id = ?", [req.params.id]);
     await pool.query("DELETE FROM agencies WHERE id = ?", [req.params.id]);
 
     logAuditEvent({
@@ -420,6 +426,7 @@ router.patch("/admin/users/:id/toggle", requirePermission("admin.users.manage"),
     if (!rows.length) return res.status(404).json({ success: false, message: "User not found" });
     const newStatus = rows[0].is_active ? 0 : 1;
     await pool.query("UPDATE users SET is_active = ? WHERE id = ?", [newStatus, req.params.id]);
+    invalidateTenantCache();
 
     logAuditEvent({
       agencyId: req.user.agencyId, actor: req.user, action: "user.toggle",

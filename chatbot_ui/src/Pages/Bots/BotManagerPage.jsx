@@ -728,39 +728,18 @@ export default function BotManagerPage() {
     try {
       const template = STARTER_TEMPLATES.find((t) => t.id === selectedTemplate) || STARTER_TEMPLATES[0];
       const targetPlatform = selectedAccount?.platform || newFlowPlatform || 'WHATSAPP';
-      const isWebchat = (targetPlatform || '').toUpperCase() === 'WEBCHAT';
       const targetIntegId = selectedAccount?.id && selectedAccount?.id !== 'all' ? selectedAccount?.id : null;
 
       let nodes = template.nodes(newFlowName);
       let edges = template.edges(newFlowName);
 
-      if (isWebchat) {
-        nodes = [
-          {
-            id: 'start_1',
-            type: 'start',
-            position: { x: 80, y: 120 },
-            data: {
-              label: 'Chat Widget',
-              chatWidgetStart: true,
-              targetPlatform: 'WEBCHAT',
-              widgetName: newFlowName.trim(),
-              displayName: selectedAccount?.name || newFlowName.trim() || 'Support Chat',
-              greetingMessage: 'Hello! How can we help you today?',
-              buttonText: 'Chat with us',
-              buttonBgColor: '#6366f1',
-            },
-          },
-          ...nodes.filter((n) => n.id !== 'start_1'),
-        ];
-      }
 
       const res = await flowAPI.create({
         name: newFlowName.trim(),
         platform: targetPlatform,
         integrationId: targetIntegId,
-        triggerKeyword: isWebchat ? null : 'hi,hello',
-        triggerType: isWebchat ? 'CHAT_WIDGET' : 'KEYWORD',
+        triggerKeyword: 'hi,hello',
+        triggerType: 'KEYWORD',
         nodes_json: JSON.stringify(nodes),
         edges_json: JSON.stringify(edges),
         isActive: 1,
@@ -770,16 +749,6 @@ export default function BotManagerPage() {
       setShowCreateModal(false);
       setNewFlowName('');
       const newId = res.data?.flowId || res.data?.flow?.id || res.data?.id;
-
-      if (isWebchat && targetIntegId && newId) {
-        try {
-          const wRes = await channelAPI.getWebchat();
-          const matchedWidget = (wRes.data?.widgets || []).find((w) => String(w.integration_id) === String(targetIntegId));
-          if (matchedWidget && !matchedWidget.flow_id) {
-            await channelAPI.updateWebchat(matchedWidget.id, { flowId: newId });
-          }
-        } catch {}
-      }
 
       if (newId) {
         openFlowBuilder(newId);

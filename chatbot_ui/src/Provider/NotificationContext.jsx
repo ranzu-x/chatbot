@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { io } from 'socket.io-client';
 import api from '../services/api';
+import { useAuth } from './AuthContext';
+import { socketAuth } from '../utils/socketAuth';
 import { playNotificationSound } from '../services/soundEffects';
 import {
   Bell,
@@ -30,8 +32,12 @@ export function NotificationProvider({ children }) {
   const [activeAlert, setActiveAlert] = useState(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const navigate = useNavigate();
+  const { user } = useAuth();
 
+  // Connects once someone is logged in (and again if a different user logs in): the server only
+  // delivers alerts to a connection it has verified, so a socket opened before login gets nothing.
   useEffect(() => {
+    if (!user) return undefined;
     loadSettings();
 
     const apiUrl = import.meta.env.VITE_API_URL || '';
@@ -39,6 +45,7 @@ export function NotificationProvider({ children }) {
 
     // Connect WebSocket
     const socket = io(socketUrl || 'http://localhost:5000', {
+      auth: socketAuth(),
       transports: ['websocket', 'polling'],
     });
 
@@ -49,7 +56,7 @@ export function NotificationProvider({ children }) {
     return () => {
       socket.disconnect();
     };
-  }, []);
+  }, [user?.id]);
 
   const loadSettings = async () => {
     try {

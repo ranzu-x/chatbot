@@ -31,6 +31,24 @@ export async function setIntegrationAccess(organizationMemberId, integrationIds 
   await pool.query("INSERT INTO team_member_integration_access (organization_member_id, integration_id) VALUES ?", [values]);
 }
 
+/**
+ * An assignee must belong to this workspace: a team member of it, the account
+ * owner, or the caller themself (a platform Admin). Owner/Admin profiles carry
+ * no agency_id, so a plain agency_id match would reject them.
+ */
+export async function isValidAssignee(agentProfileId, agencyId, callerUserId) {
+  const [rows] = await pool.query(
+    `SELECT ap.id FROM agent_profiles ap
+     WHERE ap.id = ?
+       AND (ap.agency_id = ?
+            OR ap.user_id = (SELECT owner_id FROM agencies WHERE id = ?)
+            OR ap.user_id = ?)
+     LIMIT 1`,
+    [agentProfileId, agencyId, agencyId, callerUserId]
+  );
+  return rows.length > 0;
+}
+
 /** The caller's own organization_members row (id, role_id, chat_access) for their current workspace. */
 export async function getOrgMember(userId, agencyId) {
   if (!userId || !agencyId) return null;

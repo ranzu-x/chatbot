@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
-import { adminAPI, packageAPI } from '../../services/api';
+import { adminAPI, packageAPI, resellerUserAPI, agencyPackageAPI } from '../../services/api';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -57,7 +58,15 @@ function getPackageForRole(role, id) {
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
-export default function UsersPage() {
+// One screen, two scopes. scope="admin" is the Super Admin's User Manager over
+// the platform's users and platform packages. scope="reseller" is the same
+// screen for a Reseller: only the users under their own account, and only
+// their own plans. Everything below that differs by scope branches on isReseller.
+export default function UsersPage({ scope = 'admin' }) {
+  const isReseller = scope === 'reseller';
+  const navigate = useNavigate();
+  // Reseller rows carry the real plan name; the admin screen derives its label.
+  const pkgLabel = (u) => (isReseller ? (u.packageName || 'No plan') : getPackageForRole(u.role, u.id));
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -107,7 +116,7 @@ export default function UsersPage() {
   const fetchUsers = async () => {
     setLoading(true);
     try {
-      const res = await adminAPI.getUsers();
+      const res = isReseller ? await resellerUserAPI.getAll() : await adminAPI.getUsers();
       setUsers(res.data.users || []);
     } catch (err) {
       console.error(err);
@@ -119,14 +128,18 @@ export default function UsersPage() {
 
   useEffect(() => {
     fetchUsers();
-    packageAPI.getAll().then((res) => setPackages(res.data?.packages || res.data || [])).catch(() => {});
-  }, []);
+    (isReseller ? agencyPackageAPI.getAll() : packageAPI.getAll())
+      .then((res) => setPackages(res.data?.packages || res.data || []))
+      .catch(() => {});
+  }, [isReseller]);
 
   // ── Toggle User Active Status ──
   const handleToggleStatus = async (user, e) => {
     e.stopPropagation();
     try {
-      if (adminAPI.toggleUser) {
+      if (isReseller) {
+        await resellerUserAPI.toggle(user.id);
+      } else if (adminAPI.toggleUser) {
         await adminAPI.toggleUser(user.id);
       }
       setUsers((prev) =>
@@ -145,17 +158,19 @@ export default function UsersPage() {
     setSaving(true);
     try {
       if (editingUser) {
-        if (adminAPI.updateUser) {
-          const res = await adminAPI.updateUser(editingUser.id, {
+        if (isReseller || adminAPI.updateUser) {
+          const payload = {
             name: form.name,
             email: form.email,
-            role: form.role,
             phone: form.phone,
             address: form.address,
             packageId: form.packageId || undefined,
             isActive: form.isActive,
             ...(form.newPassword && { newPassword: form.newPassword }),
-          });
+          };
+          const res = isReseller
+            ? await resellerUserAPI.update(editingUser.id, payload)
+            : await adminAPI.updateUser(editingUser.id, { ...payload, role: form.role });
           if (res.data?.packageChange) {
             setPackageChangeNote(res.data.packageChange.note);
             showToast(`User updated — plan changed to ${res.data.packageChange.toPackage}`);
@@ -164,7 +179,15 @@ export default function UsersPage() {
           }
         }
       } else {
-        if (adminAPI.createUser) {
+        if (isReseller) {
+          await resellerUserAPI.create({
+            name: form.name,
+            email: form.email,
+            password: form.password,
+            phone: form.phone || undefined,
+            packageId: form.packageId || undefined,
+          });
+        } else if (adminAPI.createUser) {
           await adminAPI.createUser(form);
         }
         showToast('User created successfully');
@@ -183,9 +206,14 @@ export default function UsersPage() {
   // ── Delete User ──
   const handleDelete = async (user, e) => {
     if (e) e.stopPropagation();
-    if (!window.confirm(`Are you sure you want to delete user ${user.name}?`)) return;
+    const confirmText = isReseller
+      ? `Delete ${user.name}? This also deletes their workspace and everything in it. This cannot be undone.`
+      : `Are you sure you want to delete user ${user.name}?`;
+    if (!window.confirm(confirmText)) return;
     try {
-      if (adminAPI.deleteUser) {
+      if (isReseller) {
+        await resellerUserAPI.remove(user.id);
+      } else if (adminAPI.deleteUser) {
         await adminAPI.deleteUser(user.id);
       }
       showToast('User deleted');
@@ -206,7 +234,7 @@ export default function UsersPage() {
         (u.email && u.email.toLowerCase().includes(q)) ||
         formatUserId(u.id).includes(q);
 
-      const pkg = getPackageForRole(u.role, u.id);
+      const pkg = pkgLabel(u);
       const matchesPkg = !packageFilter || pkg.toLowerCase() === packageFilter.toLowerCase();
 
       const matchesType =
@@ -222,7 +250,7 @@ export default function UsersPage() {
 
       return matchesSearch && matchesPkg && matchesType && matchesStatus;
     });
-  }, [users, search, packageFilter, userTypeFilter, statusFilter]);
+  }, [users, search, packageFilter, userTypeFilter, statusFilter, isReseller]);
 
   const totalUsers = filteredUsers.length;
   const totalPages = Math.ceil(totalUsers / pageSize) || 1;
@@ -259,8 +287,8 @@ export default function UsersPage() {
       formatUserId(u.id),
       `"${(u.name || '').replace(/"/g, '""')}"`,
       `"${u.email || ''}"`,
-      u.role || 'Member',
-      getPackageForRole(u.role, u.id),
+      isReseller ? 'User' : (u.role || 'Member'),
+      pkgLabel(u),
       u.is_active ? 'Active' : 'Inactive',
       u.created_at || '',
     ]);
@@ -370,7 +398,7 @@ export default function UsersPage() {
             User Manager
           </h1>
           <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '3px 0 0 0' }}>
-            List of subscribed users & team members
+            {isReseller ? 'Users who signed up under your domain or were added by you' : 'List of subscribed users & team members'}
           </p>
         </div>
 
@@ -403,7 +431,7 @@ export default function UsersPage() {
 
           {/* Manage Ratings / Packages Button */}
           <button
-            onClick={() => setShowRatingsModal(true)}
+            onClick={() => (isReseller ? navigate('/agency/packages') : setShowRatingsModal(true))}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -418,7 +446,7 @@ export default function UsersPage() {
               cursor: 'pointer',
             }}
           >
-            <span style={{ color: '#f59e0b' }}>★</span> Manage Ratings
+            <span style={{ color: '#f59e0b' }}>★</span> {isReseller ? 'Manage Packages' : 'Manage Ratings'}
           </button>
         </div>
       </div>
@@ -458,17 +486,28 @@ export default function UsersPage() {
               outline: 'none',
             }}
           >
-            <option value="">Any Package/Role</option>
-            <option value="Basic">Basic</option>
-            <option value="Premium 1K">Premium 1K</option>
-            <option value="Agency Pro">Agency Pro</option>
-            <option value="Enterprise">Enterprise</option>
+            <option value="">{isReseller ? 'Any Package' : 'Any Package/Role'}</option>
+            {isReseller ? (
+              <>
+                {packages.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
+                <option value="No plan">No plan</option>
+              </>
+            ) : (
+              <>
+                <option value="Basic">Basic</option>
+                <option value="Premium 1K">Premium 1K</option>
+                <option value="Agency Pro">Agency Pro</option>
+                <option value="Enterprise">Enterprise</option>
+              </>
+            )}
           </select>
           <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--text-muted)', fontSize: '0.7rem' }}>
             ▼
           </span>
         </div>
 
+        {!isReseller && (
+          <>
         {/* Dropdown 2: Any User Type */}
         <div style={{ position: 'relative', minWidth: 150, flex: '1 1 140px' }}>
           <select
@@ -499,6 +538,8 @@ export default function UsersPage() {
             ▼
           </span>
         </div>
+          </>
+        )}
 
         {/* Dropdown 3: Status */}
         <div style={{ position: 'relative', minWidth: 130, flex: '1 1 120px' }}>
@@ -674,8 +715,10 @@ export default function UsersPage() {
                 paginatedUsers.map((u, idx) => {
                   const rowNum = (currentPage - 1) * pageSize + idx + 1;
                   const isChecked = selectedIds.has(u.id);
-                  const pkg = getPackageForRole(u.role, u.id);
-                  const pseudoIp = getPseudoIP(u.id);
+                  const pkg = pkgLabel(u);
+                  // No real IP / login tracking exists; the Super Admin screen shows a
+                  // placeholder, a reseller's screen shows a dash rather than invented data.
+                  const pseudoIp = isReseller ? '—' : getPseudoIP(u.id);
 
                   return (
                     <tr key={u.id} style={{ cursor: 'pointer' }} onClick={() => setViewingUser(u)}>
@@ -769,7 +812,7 @@ export default function UsersPage() {
 
                       {/* ROLE */}
                       <td style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
-                        {u.role === 'ADMIN' ? 'Admin' : u.role === 'RESELLER' ? 'Reseller' : 'User'}
+                        {isReseller ? 'User' : (u.role === 'ADMIN' ? 'Admin' : u.role === 'RESELLER' ? 'Reseller' : 'User')}
                       </td>
 
                       {/* ACTIONS */}
@@ -783,6 +826,8 @@ export default function UsersPage() {
                           >
                             👁
                           </button>
+                          {!isReseller && (
+                          <>
                           {/* Activity / Clock */}
                           <button
                             className="action-icon-btn"
@@ -794,6 +839,8 @@ export default function UsersPage() {
                           >
                             🕒
                           </button>
+                          </>
+                          )}
                           {/* Assign Team / Profile */}
                           <button
                             className="action-icon-btn"
@@ -802,6 +849,8 @@ export default function UsersPage() {
                           >
                             👥
                           </button>
+                          {!isReseller && (
+                          <>
                           {/* Login As / Key */}
                           <button
                             className="action-icon-btn"
@@ -810,6 +859,8 @@ export default function UsersPage() {
                           >
                             🔑
                           </button>
+                          </>
+                          )}
                           {/* Edit */}
                           <button
                             className="action-icon-btn"
@@ -841,7 +892,7 @@ export default function UsersPage() {
 
                       {/* EXPIRY DATE */}
                       <td style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>
-                        {u.role === 'ADMIN' ? 'Never' : formatDate(u.created_at ? new Date(new Date(u.created_at).getTime() + 365 * 86400000) : null)}
+                        {isReseller ? '—' : (u.role === 'ADMIN' ? 'Never' : formatDate(u.created_at ? new Date(new Date(u.created_at).getTime() + 365 * 86400000) : null))}
                       </td>
 
                       {/* CREATED AT */}
@@ -856,7 +907,7 @@ export default function UsersPage() {
 
                       {/* LAST LOGIN */}
                       <td style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>
-                        {formatDate(u.updated_at || u.created_at)}
+                        {isReseller ? '—' : formatDate(u.updated_at || u.created_at)}
                       </td>
                     </tr>
                   );
@@ -1056,6 +1107,7 @@ export default function UsersPage() {
                 </div>
               )}
 
+              {!isReseller && (
               <div>
                 <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>
                   Role & Access
@@ -1070,6 +1122,22 @@ export default function UsersPage() {
                   <option value="ADMIN">Super Admin</option>
                 </select>
               </div>
+              )}
+              {isReseller && !editingUser && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>Phone</label>
+                    <input className="form-input w-full" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>Package</label>
+                    <select className="form-input w-full" value={form.packageId} onChange={(e) => setForm({ ...form, packageId: e.target.value })}>
+                      <option value="">— No plan —</option>
+                      {packages.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+              )}
 
               {editingUser && (
                 <>
@@ -1238,7 +1306,7 @@ export default function UsersPage() {
                       color: 'var(--primary)',
                     }}
                   >
-                    {getPackageForRole(viewingUser.role, viewingUser.id)}
+                    {pkgLabel(viewingUser)}
                   </span>
                 </div>
               </div>
@@ -1252,12 +1320,27 @@ export default function UsersPage() {
               </div>
               <div>
                 <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem' }}>Role:</span>
-                <strong>{viewingUser.role}</strong>
+                <strong>{isReseller ? 'User' : viewingUser.role}</strong>
               </div>
-              <div>
-                <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem' }}>Last Known IP:</span>
-                <code>{getPseudoIP(viewingUser.id)}</code>
-              </div>
+              {isReseller ? (
+                <>
+                  <div>
+                    <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem' }}>Workspace:</span>
+                    <strong>{viewingUser.agencyName || '—'}</strong>
+                  </div>
+                  {viewingUser.phone && (
+                    <div>
+                      <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem' }}>Phone:</span>
+                      <span>{viewingUser.phone}</span>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div>
+                  <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem' }}>Last Known IP:</span>
+                  <code>{getPseudoIP(viewingUser.id)}</code>
+                </div>
+              )}
               <div>
                 <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem' }}>Registration Date:</span>
                 <span>{new Date(viewingUser.created_at).toLocaleString()}</span>

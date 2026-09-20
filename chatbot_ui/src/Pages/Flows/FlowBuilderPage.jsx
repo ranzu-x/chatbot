@@ -2760,7 +2760,6 @@ function StartNode({ id, data = {}, selected }) {
   const isWidgetStart = Boolean(
     data.chatWidgetStart ||
     ctxIsChatWidget ||
-    (currentPlatform && currentPlatform.toUpperCase() === 'WEBCHAT') ||
     (data.targetPlatform && data.targetPlatform.toUpperCase() === 'WEBCHAT')
   );
 
@@ -2990,13 +2989,13 @@ function StartNode({ id, data = {}, selected }) {
           from it (this card applies padding once around the whole thing,
           unlike NodeWrapper's cards which pad per-section and so never have
           this problem). */}
-      <div className="fb-next-step-row" style={{ marginTop: 14, marginRight: -16, marginLeft: -16, paddingLeft: 16 }}>
+      <div className="fb-next-step-row" style={{ marginTop: 8, marginRight: -16, marginLeft: -16, paddingLeft: 16, paddingTop: 4, paddingBottom: 4 }}>
         <span>Then</span>
         <Handle
           type="source"
           position={Position.Right}
           id="then"
-          className={`btn-handle${connectedHandles.has('then') ? ' connected' : ''}`}
+          className={`next-step-handle${connectedHandles.has('then') ? ' connected' : ''}`}
         />
       </div>
 
@@ -3006,13 +3005,13 @@ function StartNode({ id, data = {}, selected }) {
           needs its own handle rather than sharing "then"/"next-step". Always
           present (not just once attached) so the wire has somewhere to
           render the moment the node is created. */}
-      <div className="fb-next-step-row" style={{ marginTop: 0, marginRight: -16, marginLeft: -16, paddingLeft: 16, borderTop: 'none' }}>
+      <div className="fb-next-step-row" style={{ marginTop: 0, marginRight: -16, marginLeft: -16, paddingLeft: 16, paddingTop: 2, paddingBottom: 6, borderTop: 'none' }}>
         <span>Sequence</span>
         <Handle
           type="source"
           position={Position.Right}
           id="attach-sequence"
-          className={`btn-handle${connectedHandles.has('attach-sequence') ? ' connected' : ''}`}
+          className={`next-step-handle${connectedHandles.has('attach-sequence') ? ' connected' : ''}`}
         />
       </div>
     </div>
@@ -6948,7 +6947,7 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
       case 'start':
         // A Chat Widget flow's Start node configures the website floating chat widget
         // (appearance, branding, colors, logo, greeting, prefill message, offsets, domains)
-        if (isChatWidgetFlow || linkedWidget || data.chatWidgetStart || (platform || '').toUpperCase() === 'WEBCHAT') {
+        if (isChatWidgetFlow || linkedWidget || data.chatWidgetStart) {
           const effectiveForm = widgetAppearanceForm || {
             name: data.widgetName || flowName || 'Chat Widget',
             displayName: data.displayName || data.widgetName || flowName || 'Support Chat',
@@ -9206,7 +9205,6 @@ function FlowBuilderInner() {
   const isBroadcastFlow = flowData?.trigger_type === 'BROADCAST';
   const isChatWidgetFlow = Boolean(
     flowData?.trigger_type === 'CHAT_WIDGET' ||
-    (flowData ? (flowData.platform || '').toUpperCase() === 'WEBCHAT' : (platform || '').toUpperCase() === 'WEBCHAT') ||
     linkedWidget ||
     nodes.some((n) => n.type === 'start' && n.data?.chatWidgetStart)
   );
@@ -9496,6 +9494,8 @@ function FlowBuilderInner() {
                   widgetName: widget.name,
                   displayName: widget.display_name || widget.name,
                   greetingMessage: widget.greeting_message,
+                  placeholderText: widget.placeholder_text,
+                  prefillMessage: widget.prefill_message,
                   buttonText: widget.button_text,
                   buttonBgColor: widget.button_bg_color,
                 }
@@ -9519,7 +9519,7 @@ function FlowBuilderInner() {
             : (flow.edges_json || []);
         } catch { loadedEdges = []; }
 
-        const isChatWidgetFlowLoaded = flow.trigger_type === 'CHAT_WIDGET' || (flow.platform || '').toUpperCase() === 'WEBCHAT';
+        const isChatWidgetFlowLoaded = flow.trigger_type === 'CHAT_WIDGET';
 
         // Auto-add start node if empty. A brand-new User Input Flow starts with its
         // Start node plus one Question, so it opens ready to fill in rather than
@@ -9554,7 +9554,7 @@ function FlowBuilderInner() {
             ...(isUserInputFlow && n.type === 'start' ? { uifStart: true } : {}),
             ...(isSequence && n.type === 'start' ? { sequenceStart: true } : {}),
             ...(isBroadcastFlowLoaded && n.type === 'start' ? { broadcastStart: true } : {}),
-            ...((isChatWidgetFlowLoaded || flow.trigger_type === 'CHAT_WIDGET' || (flow.platform || '').toUpperCase() === 'WEBCHAT' || Boolean(n.data?.chatWidgetStart)) && n.type === 'start' ? {
+            ...((isChatWidgetFlowLoaded || flow.trigger_type === 'CHAT_WIDGET' || Boolean(n.data?.chatWidgetStart)) && n.type === 'start' ? {
               chatWidgetStart: true,
               targetPlatform: (flow.platform || 'WEBCHAT').toUpperCase(),
               widgetName: n.data?.widgetName || flow.name || 'Chat Widget',
@@ -9568,7 +9568,7 @@ function FlowBuilderInner() {
 
           // Skipped for a User Input Flow's / Sequence's / Broadcast's / Chat Widget's Start
           // node — none of them has a keyword trigger to backfill.
-          if (n.type === 'start' && !isUserInputFlow && !isSequence && !isBroadcastFlowLoaded && !isChatWidgetFlowLoaded && flow.trigger_type !== 'CHAT_WIDGET' && (flow.platform || '').toUpperCase() !== 'WEBCHAT' && !nodeData.chatWidgetStart) {
+          if (n.type === 'start' && !isUserInputFlow && !isSequence && !isBroadcastFlowLoaded && !isChatWidgetFlowLoaded && flow.trigger_type !== 'CHAT_WIDGET' && !nodeData.chatWidgetStart) {
             if (!nodeData.triggers || !Array.isArray(nodeData.triggers) || nodeData.triggers.length === 0) {
               const kws = nodeData.keywords !== undefined
                 ? (Array.isArray(nodeData.keywords) ? nodeData.keywords : [nodeData.keywords])
@@ -9828,7 +9828,7 @@ function FlowBuilderInner() {
 
       let triggerKeyword = flowData?.trigger_keyword || '';
       const startNode = currentNodes.find((n) => n.type === 'start');
-      const isWidget = Boolean(startNode?.data?.chatWidgetStart || isChatWidgetFlow || (platform || '').toUpperCase() === 'WEBCHAT');
+      const isWidget = Boolean(startNode?.data?.chatWidgetStart || isChatWidgetFlow);
       const triggerType = isWidget
         ? 'CHAT_WIDGET'
         : (startNode?.data?.trigger_type || 'KEYWORD').toUpperCase();

@@ -40,6 +40,15 @@ async function resolveAgencyFromDomain(rawHost) {
   return null;
 }
 
+// A brand-new install has no workspace at all except the reserved PLATFORM row.
+// Only then may the first person to sign up become the owner of a new workspace.
+async function isFreshInstall() {
+  const [[row]] = await pool.query("SELECT COUNT(*) AS n FROM agencies WHERE account_type <> 'PLATFORM'");
+  return row.n === 0;
+}
+
+const SIGNUP_UNAVAILABLE_MESSAGE = "Registration isn't available on this address. Please use the sign-up link your provider gave you.";
+
 // ─── RESOLVE TENANT & WHITE-LABEL INFO (Public) ──────────────────────────────
 router.get("/auth/tenant", async (req, res) => {
   try {
@@ -48,6 +57,9 @@ router.get("/auth/tenant", async (req, res) => {
 
     let agency = matchedAgency;
     let isCustomTenant = Boolean(matchedAgency);
+    // Login/branding still fall back to the default workspace for an unrecognised
+    // address, but sign-up does not: see POST /auth/register.
+    const signupUnavailable = !matchedAgency && !(await isFreshInstall());
 
     // Fallback to default/main agency — never the reserved PLATFORM row,
     // which isn't a customer-facing tenant (see resolveAgencyFromDomain).
@@ -98,7 +110,8 @@ router.get("/auth/tenant", async (req, res) => {
         faviconUrl: branding.faviconUrl || "",
         primaryColor: branding.primaryColor || "#2563eb",
         supportEmail: branding.supportEmail || "",
-        allowUserRegistration: agency.allow_user_registration !== 0,
+        allowUserRegistration: !signupUnavailable && agency.allow_user_registration !== 0,
+        signupUnavailable,
       },
     });
   } catch (err) {
@@ -142,16 +155,12 @@ router.post(["/auth/register", "/hospital-admin/signup"], async (req, res) => {
     // mints a brand-new RESELLER_CUSTOMER account instead (step below).
     const signingUpUnderReseller = targetAgency?.account_type === "RESELLER" ? targetAgency : null;
 
-    if (!targetAgency) {
-      // No verified domain/subdomain match — default to the lowest-id
-      // active, non-reseller, non-platform agency (preserves the prior
-      // "join the default single-tenant workspace" behavior for plain/
-      // unbranded installs; the reserved PLATFORM row is never a valid
-      // signup target — see resolveAgencyFromDomain's docs above).
-      const [mainRows] = await pool.query(
-        "SELECT * FROM agencies WHERE is_active = 1 AND account_type = 'DIRECT_CUSTOMER' ORDER BY id ASC LIMIT 1"
-      );
-      if (mainRows.length) targetAgency = mainRows[0];
+    if (!targetAgency && !(await isFreshInstall())) {
+      // Not a recognised domain or subdomain. This used to drop the person into
+      // the lowest-id DIRECT_CUSTOMER workspace as a team member, i.e. somebody
+      // else's workspace (for example a reseller's user who visited an
+      // unverified or mistyped domain). Refused instead: no account is created.
+      return res.status(403).json({ success: false, code: "SIGNUP_NOT_AVAILABLE", message: SIGNUP_UNAVAILABLE_MESSAGE });
     }
 
     // Literally no agency exists yet anywhere (fresh install) — the
@@ -303,16 +312,18 @@ router.post("/auth/login", async (req, res) => {
     const match = await bcrypt.compare(password, user.password);
     if (!match) return res.status(401).json({ success: false, message: "Invalid email or password" });
 
-    let resolvedAgencyId = user.agencyId || user.agentAgencyId || null;
+    // home_agency_id is the authority (kept correct by database triggers, see
+    // migrate_tenant_isolation.js); the older owner / agent-profile lookups only
+    // matter for a user created before it existed.
+    let resolvedAgencyId = user.home_agency_id || user.agencyId || user.agentAgencyId || null;
     if (!resolvedAgencyId) {
       // An orphaned user (no owned agency, no agent_profiles row — e.g.
-      // created via the raw POST /admin/users endpoint) — never silently
-      // land them on the reserved PLATFORM row (id may now be the lowest
-      // id in the table); fall back to their own agency, else the lowest
-      // active DIRECT_CUSTOMER, else bootstrap one with them as owner.
+      // created via the raw POST /admin/users endpoint). Never place them in
+      // somebody else's workspace: this used to fall back to "the lowest active
+      // DIRECT_CUSTOMER", i.e. another tenant's workspace. They get their own.
       const [agRows] = await pool.query(
-        "SELECT id FROM agencies WHERE owner_id = ? OR (is_active = 1 AND account_type = 'DIRECT_CUSTOMER') ORDER BY (owner_id = ?) DESC, id ASC LIMIT 1",
-        [user.id, user.id]
+        "SELECT id FROM agencies WHERE owner_id = ? ORDER BY id ASC LIMIT 1",
+        [user.id]
       );
       if (agRows.length) {
         resolvedAgencyId = agRows[0].id;

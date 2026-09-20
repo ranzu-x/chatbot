@@ -22,7 +22,7 @@ export default function ResellerCustomersPage() {
         setCustomers(cRes.data?.customers || []);
         setPackages(pRes.data?.packages || []);
       })
-      .catch(() => notify.error('Failed to load customers'))
+      .catch(() => notify.error('Failed to load users'))
       .finally(() => setLoading(false));
   };
 
@@ -36,8 +36,8 @@ export default function ResellerCustomersPage() {
     setError('');
     setSaving(true);
     resellerCustomerAPI.create({ ...form, agencyPackageId: form.agencyPackageId || null })
-      .then(() => { notify.success('Customer created'); setShowModal(false); load(); })
-      .catch((err) => setError(err?.response?.data?.message || 'Failed to create customer'))
+      .then(() => { notify.success('User created'); setShowModal(false); load(); })
+      .catch((err) => setError(err?.response?.data?.message || 'Failed to create user'))
       .finally(() => setSaving(false));
   };
 
@@ -55,11 +55,11 @@ export default function ResellerCustomersPage() {
     <AppLayout>
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
         <div>
-          <h1 className="page-title">My Customers</h1>
-          <p className="page-subtitle">Accounts you've created — each gets its own workspace, team, bots and subscribers, billed against your shared plan.</p>
+          <h1 className="page-title">User Manager</h1>
+          <p className="page-subtitle">Users you've added or who signed up under your domain — each gets its own workspace, team, bots and subscribers, billed against your shared plan.</p>
         </div>
         <button className="btn btn-primary btn-sm" onClick={openModal} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Plus size={14} /> Add Customer
+          <Plus size={14} /> Add User
         </button>
       </div>
 
@@ -68,7 +68,7 @@ export default function ResellerCustomersPage() {
           <div className="loading-overlay"><div className="loading-spinner" /></div>
         ) : customers.length === 0 ? (
           <div className="card" style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
-            No customers yet — create one, or share your white-label signup domain so customers can sign themselves up.
+            No users yet. Click "Add User" to create one, or share your signup domain so users can sign themselves up.
           </div>
         ) : (
           <div className="grid-3">
@@ -103,7 +103,7 @@ export default function ResellerCustomersPage() {
       {showModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ width: 460, maxWidth: '92vw', background: 'var(--bg-card)', borderRadius: 14, padding: 22, border: '1px solid var(--border)' }}>
-            <h3 style={{ fontSize: 16, fontWeight: 700, marginTop: 0 }}>Add Customer</h3>
+            <h3 style={{ fontSize: 16, fontWeight: 700, marginTop: 0 }}>Add User</h3>
             {error && <div style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444', padding: '8px 12px', borderRadius: 8, fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
             <form onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div>
