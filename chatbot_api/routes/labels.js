@@ -57,6 +57,35 @@ export async function applyLabelToContact(agencyId, contactId, labelId) {
   }
 }
 
+/**
+ * Helper: detach one label from a contact (idempotent) and broadcast the update.
+ * Counterpart of applyLabelToContact — used by the Flow Builder's Actions node.
+ * The contact/label pair is only touched if both belong to `agencyId`.
+ */
+export async function removeLabelFromContact(agencyId, contactId, labelId) {
+  try {
+    await pool.query(
+      `DELETE cl FROM contact_labels cl
+       JOIN contacts c ON c.id = cl.contact_id AND c.agency_id = ?
+       JOIN labels l ON l.id = cl.label_id AND l.agency_id = ?
+       WHERE cl.contact_id = ? AND cl.label_id = ?`,
+      [agencyId, agencyId, contactId, labelId]
+    );
+    await syncContactTagsJson(contactId);
+    const [contactLabels] = await pool.query(
+      `SELECT l.id, l.name, l.color
+       FROM labels l
+       JOIN contact_labels cl ON cl.label_id = l.id
+       WHERE cl.contact_id = ?
+       ORDER BY l.name ASC`,
+      [contactId]
+    );
+    emitToAgency(agencyId, "contact_labels_updated", { contactId: Number(contactId), labels: contactLabels });
+  } catch (err) {
+    console.error("Failed to remove label from contact:", err);
+  }
+}
+
 // ─── 1. LIST ALL UNIFIED LABELS FOR AGENCY ──────────────────────────────────
 router.get("/labels", async (req, res) => {
   try {

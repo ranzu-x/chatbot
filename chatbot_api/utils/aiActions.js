@@ -64,6 +64,15 @@ export async function buildToolsForAgent(agentId) {
   return { tools, byName };
 }
 
+// BOT SCOPE (utils/botScope.js): an AI action may only start flows / sequences of the SAME bot
+// account the conversation is on — never another bot's.
+async function conversationIntegrationId(conversation, agencyId) {
+  if (conversation?.integration_id) return conversation.integration_id;
+  if (!conversation?.id) return null;
+  const [[row]] = await pool.query("SELECT integration_id FROM conversations WHERE id = ? AND agency_id = ?", [conversation.id, agencyId]);
+  return row?.integration_id ?? null;
+}
+
 /** Runs one already-validated (in the agent's own allow-list) action row. */
 export async function executeAction(actionRow, { agencyId, contact, conversation }) {
   const config = actionRow.config || {};
@@ -79,7 +88,10 @@ export async function executeAction(actionRow, { agencyId, contact, conversation
       return;
     case "start_flow": {
       if (!config.flowId || !conversation?.id) return;
-      const [[targetFlow]] = await pool.query("SELECT * FROM flows WHERE id = ? AND agency_id = ? AND is_active = 1", [config.flowId, agencyId]);
+      const [[targetFlow]] = await pool.query(
+        "SELECT * FROM flows WHERE id = ? AND agency_id = ? AND integration_id = ? AND is_active = 1",
+        [config.flowId, agencyId, await conversationIntegrationId(conversation, agencyId)]
+      );
       if (!targetFlow) return;
       const nodes = JSON.parse(targetFlow.nodes_json || "[]");
       const startNode = nodes.find((n) => n.type === "start");
@@ -92,10 +104,10 @@ export async function executeAction(actionRow, { agencyId, contact, conversation
       return;
     }
     case "start_sequence":
-      if (config.sequenceId && contact?.id) await enrollContactsInSequence(config.sequenceId, agencyId, { contactId: contact.id, enrolledVia: "ai-agent" });
+      if (config.sequenceId && contact?.id) await enrollContactsInSequence(config.sequenceId, agencyId, { contactId: contact.id, enrolledVia: "ai-agent", integrationId: await conversationIntegrationId(conversation, agencyId) });
       return;
     case "stop_sequence":
-      if (config.sequenceId && contact?.id) await unsubscribeContactFromSequence(config.sequenceId, agencyId, contact.id);
+      if (config.sequenceId && contact?.id) await unsubscribeContactFromSequence(config.sequenceId, agencyId, contact.id, { integrationId: await conversationIntegrationId(conversation, agencyId) });
       return;
     case "assign_human":
       if (conversation?.id) await pool.query("UPDATE conversations SET status = 'OPEN', assigned_to_id = NULL WHERE id = ?", [conversation.id]);

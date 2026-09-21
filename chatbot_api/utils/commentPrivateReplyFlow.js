@@ -22,6 +22,7 @@
  */
 import axios from "axios";
 import pool from "../db.js";
+import { expandMessageBlocks } from "./flowGraph.js";
 
 const META_API_VERSION = process.env.META_API_VERSION || "v21.0";
 
@@ -75,9 +76,10 @@ function collectMessages(nodes, edges, maxMessages) {
 export async function runPrivateReplyFlow({ agencyId, flowId, commentId, senderId, senderName, integration }) {
   if (!flowId || !commentId || !integration?.access_token) return { sent: 0 };
 
+  // BOT SCOPE: only a flow of the SAME bot account the comment came in on.
   const [[flow]] = await pool.query(
-    "SELECT id, nodes_json, edges_json FROM flows WHERE id = ? AND agency_id = ?",
-    [flowId, agencyId]
+    "SELECT id, nodes_json, edges_json FROM flows WHERE id = ? AND agency_id = ? AND integration_id = ?",
+    [flowId, agencyId, integration.id ?? null]
   );
   if (!flow) {
     console.warn(`[Comment Automation] Private-reply flow ${flowId} not found for agency ${agencyId}`);
@@ -93,6 +95,7 @@ export async function runPrivateReplyFlow({ agencyId, flowId, commentId, senderI
     console.warn(`[Comment Automation] Could not parse nodes/edges for flow ${flowId}`);
     return { sent: 0 };
   }
+  ({ nodes, edges } = expandMessageBlocks(nodes, edges));
 
   const messages = collectMessages(nodes, edges, 2).map((m) => ({
     ...m,

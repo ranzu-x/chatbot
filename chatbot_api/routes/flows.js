@@ -3,6 +3,7 @@ import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { requireModule } from "../utils/entitlements.js";
+import { findOutOfScopeRefs, describeOutOfScope, violationsForClient, stripComponentRefs, getOwnedIntegration } from "../utils/botScope.js";
 
 const router = express.Router();
 router.use("/flows", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_bot_manager"));
@@ -53,6 +54,10 @@ router.get("/flows/:id", async (req, res) => {
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
+function safeParse(v) {
+  try { return typeof v === "string" ? JSON.parse(v || "[]") : (v || []); } catch { return []; }
+}
+
 // ── CREATE ────────────────────────────────────────────────────────
 router.post("/flows", async (req, res) => {
   const name = req.body.name;
@@ -70,6 +75,15 @@ router.post("/flows", async (req, res) => {
   const edgesStr = typeof edges === "string" ? edges : JSON.stringify(edges || []);
 
   try {
+    // The bot account must be one of THIS workspace's, and the flow may only reference
+    // that bot's own Sequences / User Input Flows / Flows (utils/botScope.js).
+    if (integrationId && !(await getOwnedIntegration(req.user.agencyId, integrationId))) {
+      return res.status(403).json({ success: false, code: "BOT_SCOPE_VIOLATION", message: "That bot account isn't available to you." });
+    }
+    const badRefs = await findOutOfScopeRefs({ agencyId: req.user.agencyId, integrationId, nodes: safeParse(nodesStr) });
+    if (badRefs.length) {
+      return res.status(403).json({ success: false, code: "BOT_SCOPE_VIOLATION", message: describeOutOfScope(badRefs, integrationId || null), violations: violationsForClient(badRefs) });
+    }
     const [result] = await pool.query(
       `INSERT INTO flows (agency_id, bot_id, integration_id, name, platform, trigger_keyword, trigger_type, nodes_json, edges_json)
        VALUES (?,?,?,?,?,?,?,?,?)`,
@@ -110,10 +124,23 @@ router.put("/flows/:id", async (req, res) => {
   const edgesStr = typeof edges === "string" ? edges : JSON.stringify(edges || []);
 
   try {
+    const [[existing]] = await pool.query("SELECT id, integration_id FROM flows WHERE id=? AND agency_id=?", [req.params.id, req.user.agencyId]);
+    if (!existing) return res.status(404).json({ success: false, message: "Flow not found" });
+
+    // A save that doesn't mention the bot account keeps the current one (it used to
+    // silently null it). A bot account can only be one of this workspace's.
+    const effectiveIntegrationId = integrationId ? integrationId : existing.integration_id;
+    if (integrationId && !(await getOwnedIntegration(req.user.agencyId, integrationId))) {
+      return res.status(403).json({ success: false, code: "BOT_SCOPE_VIOLATION", message: "That bot account isn't available to you." });
+    }
+    const badRefs = await findOutOfScopeRefs({ agencyId: req.user.agencyId, integrationId: effectiveIntegrationId, nodes: safeParse(nodesStr) });
+    if (badRefs.length) {
+      return res.status(403).json({ success: false, code: "BOT_SCOPE_VIOLATION", message: describeOutOfScope(badRefs, effectiveIntegrationId || null), violations: violationsForClient(badRefs) });
+    }
     await pool.query(
       `UPDATE flows SET name=?, platform=COALESCE(?, platform), integration_id=?, trigger_keyword=?, trigger_type=COALESCE(?, trigger_type), bot_id=?,
        nodes_json=?, edges_json=?, is_active=COALESCE(?, is_active) WHERE id=? AND agency_id=?`,
-      [name, platform || null, integrationId || null, triggerKeyword, triggerType, botId,
+      [name, platform || null, effectiveIntegrationId || null, triggerKeyword, triggerType, botId,
         nodesStr, edgesStr,
         isActive, req.params.id, req.user.agencyId]
     );
@@ -158,6 +185,14 @@ router.post("/flows/:id/clone", async (req, res) => {
 
     const newName = req.body.name?.trim() || `${source.name} (Copy)`;
 
+    // Copied onto a different bot account → drop every Sequence / User Input Flow / Flow
+    // pointer, so the copy can never reach the original bot's components.
+    const sameBot = String(targetIntegrationId || "") === String(source.integration_id || "");
+    let cloneNodesJson = source.nodes_json;
+    if (!sameBot) {
+      cloneNodesJson = JSON.stringify(stripComponentRefs(safeParse(source.nodes_json)));
+    }
+
     const [result] = await pool.query(
       `INSERT INTO flows (agency_id, bot_id, integration_id, name, platform, trigger_keyword, trigger_type, nodes_json, edges_json, is_active)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -169,7 +204,7 @@ router.post("/flows/:id/clone", async (req, res) => {
         targetPlatform,
         source.trigger_keyword,
         source.trigger_type,
-        source.nodes_json,
+        cloneNodesJson,
         source.edges_json,
         1,
       ]

@@ -1118,19 +1118,23 @@ router.post("/conversations/:id/unsubscribe", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
     const [rows] = await pool.query(
-      "SELECT id, contact_id FROM conversations WHERE id = ? AND agency_id = ?",
+      "SELECT id, contact_id, integration_id FROM conversations WHERE id = ? AND agency_id = ?",
       [req.params.id, agencyId]
     );
     if (!rows.length) return res.status(404).json({ success: false, message: "Conversation not found" });
 
+    // BOT SCOPE: this conversation belongs to one bot account, so it only ever stops THAT
+    // bot's sequences — never sequences another bot enrolled the same contact in.
     const [activeSubs] = await pool.query(
-      "SELECT DISTINCT sequence_id FROM sequence_subscribers WHERE contact_id = ? AND status = 'ACTIVE'",
-      [rows[0].contact_id]
+      `SELECT DISTINCT ss.sequence_id FROM sequence_subscribers ss
+       JOIN sequences sq ON sq.id = ss.sequence_id AND sq.agency_id = ? AND sq.integration_id = ?
+       WHERE ss.contact_id = ? AND ss.status = 'ACTIVE'`,
+      [agencyId, rows[0].integration_id, rows[0].contact_id]
     );
 
     let stopped = 0;
     for (const s of activeSubs) {
-      const result = await unsubscribeContactFromSequence(s.sequence_id, agencyId, rows[0].contact_id);
+      const result = await unsubscribeContactFromSequence(s.sequence_id, agencyId, rows[0].contact_id, { integrationId: rows[0].integration_id });
       stopped += result.stopped || 0;
     }
 

@@ -1,6 +1,6 @@
 import { Fragment, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router';
-import { userInputFlowAPI } from '../../services/api';
+import { userInputFlowAPI, integrationAPI } from '../../services/api';
 import PlatformIcon, { getPlatformMeta } from '../Common/PlatformIcon';
 import { ChevronDown, ChevronRight, RefreshCw, Plus, Pencil, Trash2, ExternalLink } from 'lucide-react';
 import Swal from 'sweetalert2';
@@ -73,7 +73,7 @@ function ResponseRows({ flowId }) {
  * Lives inside Bot Manager → Automation now — no longer a separate page
  * reached from the main sidebar.
  */
-export default function UserInputFlowManagerList() {
+export default function UserInputFlowManagerList({ integrationId = null }) {
   const navigate = useNavigate();
   const [flows, setFlows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -85,21 +85,37 @@ export default function UserInputFlowManagerList() {
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
 
+  const [integrations, setIntegrations] = useState([]);
+  const [createIntegrationId, setCreateIntegrationId] = useState('');
+  useEffect(() => { integrationAPI.getAll().then((res) => setIntegrations(res.data?.integrations || [])).catch(() => {}); }, []);
+
+  // Opened from one bot account → only that bot's forms, and new forms belong to it.
+  const lockedIntegration = integrationId ? integrations.find((i) => String(i.id) === String(integrationId)) || null : null;
+  useEffect(() => {
+    if (lockedIntegration) { setNewPlatform(lockedIntegration.platform); setCreateIntegrationId(String(lockedIntegration.id)); }
+  }, [lockedIntegration]);
+  const accountsForNewPlatform = integrations.filter((i) => i.platform === newPlatform && i.is_active);
+  const accountLabel = (i) => i.name || i.wa_display_phone || i.fb_page_name || i.ig_username || `Account #${i.id}`;
+
   const load = useCallback(() => {
     setLoading(true);
-    userInputFlowAPI.getAll()
+    userInputFlowAPI.getAll(integrationId ? { integrationId } : undefined)
       .then((res) => setFlows(res.data?.userInputFlows || []))
       .catch(() => setFlows([]))
       .finally(() => setLoading(false));
-  }, []);
+  }, [integrationId]);
 
   useEffect(() => { load(); }, [load]);
 
   const handleCreate = async () => {
     if (!newName.trim() || creating) return;
+    if (!createIntegrationId) {
+      Swal.fire({ icon: 'info', title: 'Choose a bot account', text: 'A form belongs to one bot account and can only be used by that bot.' });
+      return;
+    }
     try {
       setCreating(true);
-      const res = await userInputFlowAPI.create({ name: newName.trim(), platform: newPlatform, nodesJson: [], edgesJson: [] });
+      const res = await userInputFlowAPI.create({ name: newName.trim(), platform: newPlatform, integrationId: createIntegrationId, nodesJson: [], edgesJson: [] });
       const id = res.data?.userInputFlowId;
       setShowCreate(false);
       setNewName('');
@@ -159,7 +175,7 @@ export default function UserInputFlowManagerList() {
           onClick={() => setShowCreate(true)}
           style={{
             display: 'flex', alignItems: 'center', gap: 6, padding: '7px 16px', borderRadius: 8, border: 'none',
-            background: 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)',
+            background: '#0f172a',
             color: '#fff', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer',
           }}
         >
@@ -213,6 +229,23 @@ export default function UserInputFlowManagerList() {
                           />
                         ) : (
                           <span style={{ cursor: 'pointer' }} onClick={() => setExpandedId(isOpen ? null : f.id)}>{f.name}</span>
+                        )}
+                        {!f.integration_id && (
+                          <div style={{ marginTop: 4, fontWeight: 500 }}>
+                            <select
+                              defaultValue=""
+                              onChange={async (e) => {
+                                if (!e.target.value) return;
+                                try { await userInputFlowAPI.update(f.id, { integrationId: e.target.value }); load(); }
+                                catch (err) { Swal.fire({ icon: 'error', title: 'Could not assign', text: err?.response?.data?.message || 'Please try again.' }); }
+                              }}
+                              title="No bot account yet — no bot can use this form until you assign one. This can't be changed later."
+                              style={{ fontSize: '0.72rem', padding: '3px 6px', borderRadius: 6, border: '1px solid #fca5a5', background: '#fef2f2', color: '#dc2626' }}
+                            >
+                              <option value="">Not assigned — choose bot account…</option>
+                              {integrations.filter((i) => i.platform === f.platform && i.is_active).map((i) => <option key={i.id} value={i.id}>{accountLabel(i)}</option>)}
+                            </select>
+                          </div>
                         )}
                       </td>
                       <td style={{ padding: '10px 14px' }}>
@@ -274,10 +307,28 @@ export default function UserInputFlowManagerList() {
               placeholder="e.g. Lead Capture Form"
               style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #e2e8f0', fontSize: '0.86rem', boxSizing: 'border-box' }}
             />
-            <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: 700, color: '#475569', margin: '14px 0 5px' }}>Channel</label>
+            {lockedIntegration ? (
+              <div style={{ margin: '14px 0 0', padding: '10px 12px', borderRadius: 9, background: '#f8fafc', border: '1px solid #e2e8f0', fontSize: '0.8rem', color: '#334155' }}>
+                <strong>Belongs to:</strong> {accountLabel(lockedIntegration)}
+                <div style={{ color: '#94a3b8', marginTop: 2 }}>Only this bot account can use it. This can't be changed later.</div>
+              </div>
+            ) : (
+              <>
+                <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: 700, color: '#475569', margin: '14px 0 5px' }}>Channel</label>
             <select value={newPlatform} onChange={(e) => setNewPlatform(e.target.value)} style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #e2e8f0', fontSize: '0.86rem', boxSizing: 'border-box' }}>
               {PLATFORM_OPTIONS.map((p) => <option key={p} value={p}>{getPlatformMeta(p).label}</option>)}
             </select>
+                <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: 700, color: '#475569', margin: '14px 0 5px' }}>Bot account</label>
+                {accountsForNewPlatform.length === 0 ? (
+                  <div style={{ padding: '9px 12px', borderRadius: 9, background: '#fef3c7', color: '#92400e', fontSize: '0.78rem' }}>No connected, active {getPlatformMeta(newPlatform).label} account. Connect one first.</div>
+                ) : (
+                  <select value={createIntegrationId} onChange={(e) => setCreateIntegrationId(e.target.value)} style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #e2e8f0', fontSize: '0.86rem', boxSizing: 'border-box' }}>
+                    <option value="">Choose an account…</option>
+                    {accountsForNewPlatform.map((i) => <option key={i.id} value={i.id}>{accountLabel(i)}</option>)}
+                  </select>
+                )}
+              </>
+            )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 22 }}>
               <button type="button" onClick={() => setShowCreate(false)} style={{ padding: '9px 18px', borderRadius: 9, border: 'none', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer', background: '#f1f5f9', color: '#475569' }}>
                 Cancel
@@ -289,7 +340,7 @@ export default function UserInputFlowManagerList() {
                 style={{
                   padding: '9px 18px', borderRadius: 9, border: 'none', fontSize: '0.84rem', fontWeight: 700,
                   cursor: !newName.trim() || creating ? 'not-allowed' : 'pointer',
-                  background: !newName.trim() || creating ? '#c4b5fd' : 'linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)',
+                  background: !newName.trim() || creating ? '#94a3b8' : '#0f172a',
                   color: '#fff',
                 }}
               >

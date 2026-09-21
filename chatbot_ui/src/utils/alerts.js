@@ -149,26 +149,19 @@ export const notify = {
   success: (msg) =>
     toast.success(msg, {
       duration: 4000,
-      style: { background: '#0f172a', color: '#ffffff', fontSize: '0.85rem', borderRadius: '10px' },
     }),
 
   error: (msg) =>
     toast.error(msg, {
       duration: 5000,
-      style: { background: '#0f172a', color: '#ffffff', fontSize: '0.85rem', borderRadius: '10px' },
     }),
 
   info: (msg) =>
     toast(msg, {
       duration: 4000,
-      icon: 'ℹ️',
-      style: { background: '#0f172a', color: '#ffffff', fontSize: '0.85rem', borderRadius: '10px' },
     }),
 
-  loading: (msg) =>
-    toast.loading(msg, {
-      style: { background: '#0f172a', color: '#ffffff', fontSize: '0.85rem', borderRadius: '10px' },
-    }),
+  loading: (msg) => toast.loading(msg),
 
   dismiss: (id) => toast.dismiss(id),
 };

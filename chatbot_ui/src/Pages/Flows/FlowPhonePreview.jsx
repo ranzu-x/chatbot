@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   X, RotateCcw, Send, MessageSquare, Image as ImageIcon, Video,
-  Clock, Sparkles, User, ExternalLink
+  Clock, Sparkles, User, ExternalLink, Music, FileText
 } from 'lucide-react';
 import PlatformIcon from '../../Components/Common/PlatformIcon';
+import { expandMessageBlocks } from '../../utils/expandMessageBlocks';
 
 const backendUrl = import.meta.env.VITE_API_URL
   ? import.meta.env.VITE_API_URL.replace('/api/v1', '')
@@ -20,12 +21,14 @@ function resolveMediaUrl(url) {
 export default function FlowPhonePreview({
   open = true,
   onClose,
-  nodes = [],
-  edges = [],
+  nodes: rawNodes = [],
+  edges: rawEdges = [],
   platform = 'FACEBOOK',
   businessName = 'CareSphere',
 }) {
-  if (!open) return null;
+  // A Message Block is previewed as the chain of messages it stands for — the same
+  // expansion the server runs before sending (see utils/expandMessageBlocks.js).
+  const { nodes, edges } = expandMessageBlocks(rawNodes, rawEdges);
 
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
@@ -76,8 +79,9 @@ export default function FlowPhonePreview({
   };
 
   useEffect(() => {
-    restartPreview();
-  }, [open, startNode?.id]);
+    if (open) restartPreview();
+    // Restart only when the preview opens or the Start node changes — not on every canvas edit.
+  }, [open, startNode?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Execute and append a node's content to the chat messages
   const renderNodeMessages = (node, existingMessages = messages) => {
@@ -198,6 +202,38 @@ export default function FlowPhonePreview({
       return;
     }
 
+    // 6b. Audio / File / Card / Carousel / List Menu
+    else if (node.type === 'audio') {
+      newItems.push({ id: `msg-${Date.now()}-audio`, sender: 'bot', type: 'audio', audioUrl: data.audioUrl || data.mediaUrl || '', nodeId: node.id });
+    } else if (node.type === 'file') {
+      newItems.push({ id: `msg-${Date.now()}-file`, sender: 'bot', type: 'file', filename: data.filename || 'Document', nodeId: node.id });
+    } else if (node.type === 'card') {
+      newItems.push({ id: `msg-${Date.now()}-card`, sender: 'bot', type: 'card', cards: [{ title: data.title, subtitle: data.subtitle, imageUrl: data.imageUrl }], nodeId: node.id });
+    } else if (node.type === 'carousel') {
+      newItems.push({ id: `msg-${Date.now()}-carousel`, sender: 'bot', type: 'card', cards: Array.isArray(data.cards) ? data.cards : [], nodeId: node.id });
+    } else if (node.type === 'listMenu') {
+      const lists = Array.isArray(data.lists) && data.lists.length
+        ? data.lists
+        : [{ title: data.title, items: data.items || [] }];
+      const items = lists.flatMap((l) => (Array.isArray(l.sections) ? l.sections.flatMap((sec) => sec.items || []) : (l.items || [])));
+      newItems.push({
+        id: `msg-${Date.now()}-list`, sender: 'bot', type: 'text',
+        text: lists[0]?.title || 'Menu', buttons: items.map((it) => (typeof it === 'string' ? { title: it } : it)),
+        nodeId: node.id, viaList: true,
+      });
+    }
+
+    // 6c. Silent steps: they change contact data / start something else, they don't send a message
+    else if (['actions', 'startSequenceAction', 'stopSequenceAction', 'wait'].includes(node.type)) {
+      // nothing to show — the walk just continues to the next step below
+    } else if (node.type === 'startAutomation') {
+      newItems.push({
+        id: `msg-${Date.now()}-auto`, sender: 'bot', type: 'text',
+        text: data.flowName ? `▶ Starts the automation "${data.flowName}"` : '▶ Starts another automation',
+        nodeId: node.id,
+      });
+    }
+
     // 7. Generic Fallback
     else {
       newItems.push({
@@ -265,6 +301,7 @@ export default function FlowPhonePreview({
       edges.find((e) => e.source === sourceNodeId && e.sourceHandle === `btn-${index}`) ||
       edges.find((e) => e.source === sourceNodeId && e.sourceHandle === `btn_${index}`) ||
       edges.find((e) => e.source === sourceNodeId && e.sourceHandle === `qr-${index}`) ||
+      edges.find((e) => e.source === sourceNodeId && e.sourceHandle === `item-${index}`) ||
       edges.find((e) => e.source === sourceNodeId && e.sourceHandle === `button-${index}`) ||
       edges.find((e) => e.source === sourceNodeId && e.sourceHandle === 'next-step') ||
       edges.find((e) => e.source === sourceNodeId && !e.sourceHandle) ||
@@ -370,6 +407,8 @@ export default function FlowPhonePreview({
     }
   };
 
+  if (!open) return null;
+
   return (
     <div className="flow-preview-wrapper animate-slide-left">
       {/* ── Realistic Smartphone Frame ─────────────────────────── */}
@@ -434,7 +473,7 @@ export default function FlowPhonePreview({
                     {m.type === 'image' && (
                       <div className="flow-phone-image-box">
                         {m.imageUrl ? (
-                          <img src={resolveMediaUrl(m.imageUrl)} alt="Attached" className="flow-phone-img" />
+                          <img draggable={false} onContextMenu={(e) => e.preventDefault()} src={resolveMediaUrl(m.imageUrl)} alt="Attached" className="flow-phone-img" />
                         ) : (
                           <div className="flow-phone-img-placeholder">
                             <ImageIcon size={32} />
@@ -449,7 +488,7 @@ export default function FlowPhonePreview({
                     {m.type === 'video' && (
                       <div className="flow-phone-image-box">
                         {m.videoUrl ? (
-                          <video
+                          <video controlsList="nodownload noremoteplayback" disablePictureInPicture onContextMenu={(e) => e.preventDefault()}
                             src={resolveMediaUrl(m.videoUrl)}
                             controls
                             className="flow-phone-img"
@@ -462,6 +501,34 @@ export default function FlowPhonePreview({
                           </div>
                         )}
                         {m.caption && <div className="flow-phone-caption">{m.caption}</div>}
+                      </div>
+                    )}
+
+                    {/* Audio */}
+                    {m.type === 'audio' && (
+                      <div className="flow-phone-image-box" style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Music size={18} /><span>Audio clip</span></div>
+                        {m.audioUrl && <audio controlsList="nodownload noremoteplayback" onContextMenu={(e) => e.preventDefault()} src={resolveMediaUrl(m.audioUrl)} controls style={{ width: '100%', height: 32 }} />}
+                      </div>
+                    )}
+
+                    {/* File */}
+                    {m.type === 'file' && (
+                      <div className="flow-phone-image-box" style={{ padding: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <FileText size={20} /><span>{m.filename}</span>
+                      </div>
+                    )}
+
+                    {/* Card / Carousel */}
+                    {m.type === 'card' && (
+                      <div style={{ display: 'flex', gap: 8, overflowX: 'auto' }}>
+                        {(m.cards || []).map((c, cIdx) => (
+                          <div key={cIdx} className="flow-phone-image-box" style={{ flex: '0 0 180px', padding: 8 }}>
+                            {c.imageUrl && <img draggable={false} onContextMenu={(e) => e.preventDefault()} src={resolveMediaUrl(c.imageUrl)} alt="" className="flow-phone-img" style={{ maxHeight: 100, width: '100%', objectFit: 'cover' }} />}
+                            <div style={{ fontWeight: 700, marginTop: 4 }}>{c.title || 'Card'}</div>
+                            {c.subtitle && <div style={{ opacity: 0.75, fontSize: 12 }}>{c.subtitle}</div>}
+                          </div>
+                        ))}
                       </div>
                     )}
 
@@ -494,14 +561,14 @@ export default function FlowPhonePreview({
                               <div className="text-xs font-bold text-slate-100">{m.headerText}</div>
                             ) : m.headerMediaUrl ? (
                               m.headerType === 'video' ? (
-                                <video
+                                <video controlsList="nodownload noremoteplayback" disablePictureInPicture onContextMenu={(e) => e.preventDefault()}
                                   src={resolveMediaUrl(m.headerMediaUrl)}
                                   controls
                                   className="flow-phone-img"
                                   style={{ maxHeight: 140, width: '100%', objectFit: 'cover' }}
                                 />
                               ) : (
-                                <img
+                                <img draggable={false} onContextMenu={(e) => e.preventDefault()}
                                   src={resolveMediaUrl(m.headerMediaUrl)}
                                   alt="Header Media"
                                   className="flow-phone-img"

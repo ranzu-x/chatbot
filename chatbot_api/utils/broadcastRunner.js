@@ -36,6 +36,7 @@ import pool from "../db.js";
 import { sendMsg, replaceVariables, encodeButtonRoute, normalizeButtonType } from "./flowEngine.js";
 import { canSendNow } from "./messagingWindow.js";
 import { syncContactTagsJson } from "../routes/labels.js";
+import { expandMessageBlocks } from "./flowGraph.js";
 
 /**
  * Finds or creates the conversation a broadcast send goes into. Deliberately
@@ -296,6 +297,7 @@ export async function executeBroadcast(campaignId) {
       flow = flowRow;
       try { nodes = JSON.parse(flow.nodes_json || "[]"); } catch { nodes = []; }
       try { edges = JSON.parse(flow.edges_json || "[]"); } catch { edges = []; }
+      ({ nodes, edges } = expandMessageBlocks(nodes, edges));
       sendableNodes = collectSendableNodes(flow, nodes, edges);
     }
 

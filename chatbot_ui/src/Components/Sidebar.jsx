@@ -82,7 +82,7 @@ const NAV_CONFIG = {
       { label: 'Webhooks & Zapier',   icon: Globe,    path: '/webhooks' },
       { label: 'Custom Domain',       icon: Globe,    path: '/agency/domain-settings', moduleKey: 'feature_custom_domain' },
     ]},
-    { section: 'Team & Billing', items: [
+    { section: 'Users & Billing', items: [
       { label: 'User Manager',        icon: Users,    path: '/reseller/users', accountTypeIn: ['RESELLER'] },
       { label: 'Team Members',        icon: Users,    path: '/agency/team' },
       { label: 'Team Roles & Permissions', icon: KeyRound, path: '/roles' },

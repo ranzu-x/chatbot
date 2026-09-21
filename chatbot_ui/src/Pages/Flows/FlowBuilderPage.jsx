@@ -1,10 +1,11 @@
+import { createPortal } from 'react-dom';
 import React, { useState, useEffect, useCallback, useRef, useMemo, createContext, useContext } from 'react';
 import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router';
 import {
   ReactFlow, Background, Controls, MiniMap,
   Handle, Position, useNodesState, useEdgesState,
   addEdge, ReactFlowProvider, useReactFlow, useNodeConnections,
-  BaseEdge, EdgeLabelRenderer, MarkerType
+  BaseEdge, EdgeLabelRenderer
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
@@ -16,7 +17,7 @@ import {
   User, Settings2, CornerDownRight, Image, Upload,
   Video, Music, FileText, Globe, ExternalLink,
   Smartphone, RotateCcw, Undo2, Redo2, ThumbsUp, Sparkles, MoreVertical,
-  Copy, ShoppingBag, HelpCircle, Flag, ClipboardList, Workflow, Tag, Timer, Palette, Megaphone, Network
+  Copy, ShoppingBag, HelpCircle, Flag, ClipboardList, Workflow, Tag, Timer, Palette, Megaphone, Network, MessagesSquare
 } from 'lucide-react';
 import FlowPhonePreview from './FlowPhonePreview';
 import PlatformIcon, { getPlatformMeta } from '../../Components/Common/PlatformIcon';
@@ -59,6 +60,9 @@ const PLATFORM_RULES = {
     wait: true,
     startSequenceAction: true,
     stopSequenceAction: true,
+    actions: true,
+    startAutomation: true,
+    messageBlock: true,
     condition: true,
     delay: true,
     webhook: true,
@@ -94,6 +98,9 @@ const PLATFORM_RULES = {
     wait: true,
     startSequenceAction: true,
     stopSequenceAction: true,
+    actions: true,
+    startAutomation: true,
+    messageBlock: true,
     condition: true,
     delay: true,
     webhook: true,
@@ -129,6 +136,9 @@ const PLATFORM_RULES = {
     wait: true,
     startSequenceAction: true,
     stopSequenceAction: true,
+    actions: true,
+    startAutomation: true,
+    messageBlock: true,
     condition: true,
     delay: true,
     webhook: true,
@@ -164,6 +174,9 @@ const PLATFORM_RULES = {
     wait: true,
     startSequenceAction: true,
     stopSequenceAction: true,
+    actions: true,
+    startAutomation: true,
+    messageBlock: true,
     condition: true,
     delay: true,
     webhook: true,
@@ -199,6 +212,9 @@ const PLATFORM_RULES = {
     wait: true,
     startSequenceAction: true,
     stopSequenceAction: true,
+    actions: true,
+    startAutomation: true,
+    messageBlock: true,
     condition: true,
     delay: true,
     webhook: true,
@@ -234,6 +250,9 @@ const PLATFORM_RULES = {
     wait: true,
     startSequenceAction: true,
     stopSequenceAction: true,
+    actions: true,
+    startAutomation: true,
+    messageBlock: true,
     condition: true,
     delay: true,
     webhook: true,
@@ -271,6 +290,10 @@ const NODE_COLORS = {
   startSequenceAction: '#0891b2', // Cyan (a distinct "enroll" color)
   stopSequenceAction: '#dc2626',  // Same red family as "end" — a stop/halt action
   wait: '#64748b',                // Slate — same family as delay, a timing step not content
+  // Header tints match ManyChat (see ActionsNode / StartAutomationNode).
+  actions: '#d9480f',
+  startAutomation: '#4d7c0f',
+  messageBlock: '#0284c7',
 };
 
 // Dynamic light-color styling themes per connected channel for the main Save button
@@ -351,7 +374,7 @@ const NODE_ICONS = {
   video: Video,
   audio: Music,
   file: FileText,
-  buttons: MousePointerClick,
+  buttons: MessageSquare,
   quickReplies: Keyboard,
   listMenu: ListOrdered,
   card: CreditCard,
@@ -370,12 +393,16 @@ const NODE_ICONS = {
   startSequenceAction: Play,
   stopSequenceAction: CircleStop,
   wait: Clock,
+  actions: Zap,
+  startAutomation: Workflow,
+  messageBlock: MessagesSquare,
 };
 
 const PALETTE_CATEGORIES = [
   {
     label: 'Messages',
     items: [
+      { type: 'messageBlock', label: 'Send Message' },
       { type: 'interactive', label: 'Interactive (Header/Footer)' },
       { type: 'buttons', label: 'Text Message' },
       { type: 'quickReplies', label: 'Quick Replies' },
@@ -408,6 +435,8 @@ const PALETTE_CATEGORIES = [
   {
     label: 'Actions',
     items: [
+      { type: 'actions', label: 'Actions' },
+      { type: 'startAutomation', label: 'Start Automation' },
       { type: 'startSequenceAction', label: 'Start Sequence' },
       { type: 'stopSequenceAction', label: 'Stop Sequence' },
       { type: 'handoff', label: 'Agent Handoff' },
@@ -430,7 +459,7 @@ const USER_INPUT_FLOW_PALETTE = [
   {
     label: 'Messages & Media',
     items: [
-      { type: 'text', label: 'Text Message' },
+      { type: 'text', label: 'Text' },
       { type: 'image', label: 'Image' },
       { type: 'video', label: 'Video' },
       { type: 'audio', label: 'Audio' },
@@ -454,7 +483,7 @@ const SEQUENCE_PALETTE = [
   {
     label: 'Messages & Media',
     items: [
-      { type: 'text', label: 'Text Message' },
+      { type: 'text', label: 'Text' },
       { type: 'image', label: 'Image' },
       { type: 'video', label: 'Video' },
       { type: 'audio', label: 'Audio' },
@@ -503,6 +532,9 @@ const DEFAULT_NODE_DATA = {
   runUserInputFlow: { label: 'Run User Input Flow', userInputFlowId: null, userInputFlowName: '' },
   startSequenceAction: { label: 'Start Sequence', sequenceId: null, sequenceName: '' },
   stopSequenceAction: { label: 'Stop Sequence', sequenceId: null, sequenceName: '' },
+  actions: { label: 'Actions', actions: [] },
+  startAutomation: { label: 'Start Automation', flowId: null, flowName: '' },
+  messageBlock: { label: 'Send Message', items: [{ id: 'it_first', type: 'buttons', data: { label: 'Text Message', message: '', buttons: [] } }] },
   // Sequence-only delay step, between two content nodes — see SEQUENCE_PALETTE.
   wait: { label: 'Wait', preset: '5m', customValue: '', customUnit: 'minutes' },
   // The following two only ever appear inside a User Input Flow's own mini-builder:
@@ -520,7 +552,7 @@ const DELAY_EXCLUDED_NODE_TYPES = new Set(['start', 'wait']);
 // actually send a message to the contact.
 const TYPING_ELIGIBLE_NODE_TYPES = new Set([
   'text', 'interactive', 'image', 'video', 'audio', 'file',
-  'buttons', 'quickReplies', 'listMenu', 'carousel', 'card',
+  'buttons', 'quickReplies', 'listMenu', 'carousel', 'card', 'messageBlock',
 ]);
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -641,6 +673,10 @@ const builderStyles = `
   }
 
   /* ── Palette (Left) ────────────────────────────────────────── */
+  /* Chromium/Edge: hide the media player's Download item (other browsers ignore this; see controlsList on the players) */
+  video::-internal-media-controls-download-button { display: none; }
+  video::-webkit-media-controls-enclosure { overflow: hidden; }
+  video::-webkit-media-controls-panel { width: calc(100% + 30px); }
   .fb-palette {
     width: 228px;
     flex-shrink: 0;
@@ -655,49 +691,42 @@ const builderStyles = `
   .fb-palette::-webkit-scrollbar { width: 4px; }
   .fb-palette::-webkit-scrollbar-thumb { background: #d0d0e8; border-radius: 4px; }
   .fb-palette-header {
-    padding: 14px 16px 6px;
+    padding: 14px 16px 8px;
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 1.2px;
-    color: #9999bb;
-    border-bottom: 1px solid #f0f0fa;
+    letter-spacing: 0.4px;
+    color: #94a3b8;
+    border-bottom: 1px solid #f1f5f9;
     margin-bottom: 4px;
   }
   .fb-palette-category {
-    padding: 4px 14px;
-    font-size: 9.5px;
+    padding: 10px 14px 2px;
+    font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 1px;
-    color: #9999bb;
-    margin-top: 10px;
-    margin-bottom: 2px;
+    letter-spacing: 0.4px;
+    color: #94a3b8;
   }
   .fb-palette-item {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 9px 12px;
-    margin: 1px 6px;
-    border-radius: 8px;
+    gap: 8px;
+    padding: 7px 8px;
+    margin: 0 6px;
+    border-radius: 6px;
     cursor: grab;
-    transition: all 0.15s;
+    transition: background 0.12s;
     user-select: none;
-    color: #1a1a2e;
-    font-size: 13px;
+    color: #1e293b;
+    font-size: 12.5px;
     font-weight: 500;
-    border: 1px solid transparent;
+    line-height: 1.3;
   }
-  .fb-palette-item:hover {
-    background: #f0f0fa;
-    border-color: #e4e4f0;
-    transform: translateX(2px);
-  }
+  .fb-palette-item:hover { background: #f1f5f9; }
   .fb-palette-item:active { cursor: grabbing; }
   .fb-palette-item-icon {
-    width: 30px; height: 30px;
-    border-radius: 8px;
+    width: 16px; height: 16px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -705,9 +734,10 @@ const builderStyles = `
   }
   .fb-palette-item-grip {
     margin-left: auto;
-    color: #9999bb;
+    color: #cbd5e1;
     opacity: 0;
-    transition: opacity 0.2s;
+    display: flex;
+    transition: opacity 0.12s;
   }
   .fb-palette-item:hover .fb-palette-item-grip { opacity: 1; }
 
@@ -941,10 +971,10 @@ const builderStyles = `
 
   /* ── Custom Node Styles ────────────────────────────────────── */
   .fb-node {
-    width: 220px;
-    min-width: 220px;
-    max-width: 220px;
-    border-radius: 12px;
+    width: 270px;
+    min-width: 270px;
+    max-width: 270px;
+    border-radius: 16px;
     background: #ffffff;
     border: 1.5px solid #e4e4f0;
     box-shadow: 0 2px 12px rgba(0,0,0,0.07), 0 1px 4px rgba(0,0,0,0.04);
@@ -970,7 +1000,7 @@ const builderStyles = `
     align-items: center;
     gap: 8px;
     padding: 9px 12px;
-    border-radius: 10px 10px 0 0;
+    border-radius: 14px 14px 0 0;
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.2px;
@@ -1018,10 +1048,10 @@ const builderStyles = `
     justify-content: space-between;
     padding: 4px 8px;
     border-radius: 6px;
-    background: rgba(99,102,241,0.07);
-    border: 1px solid rgba(99,102,241,0.15);
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
     font-size: 11px;
-    color: #4f46e5;
+    color: #334155;
     font-weight: 500;
     position: relative;
   }
@@ -1034,18 +1064,18 @@ const builderStyles = `
   .fb-node-reply-chip {
     padding: 3px 8px;
     border-radius: 14px;
-    background: rgba(99,102,241,0.08);
-    border: 1px solid rgba(99,102,241,0.15);
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
     font-size: 10px;
-    color: #4f46e5;
+    color: #334155;
     font-weight: 500;
   }
 
   /* ── Condition node ─────────────────────────────────────────── */
   .fb-node-condition {
-    min-width: 160px;
-    max-width: 220px;
-    border-radius: 12px;
+    min-width: 270px;
+    max-width: 270px;
+    border-radius: 16px;
     background: #ffffff;
     border: 1.5px solid #e4e4f0;
     box-shadow: 0 2px 12px rgba(0,0,0,0.07);
@@ -1094,7 +1124,14 @@ const builderStyles = `
      inline right value (buttons-in-a-chip, list items) — nothing further
      needed there. */
   .react-flow__handle-right { right: 10px !important; }
-  .react-flow__handle-left { left: -5px !important; }
+  /* Several per-button/per-item handles carry an inline
+     transform: translateY(-50%) which REPLACES React Flow's own
+     translate(50%, -50%) — losing the horizontal half-width shift the Next
+     Step handle (which has no inline transform) keeps. That is what left every
+     button connector ~6px off the Next Step line. Pinning the full transform
+     here puts them all on the same vertical line. */
+  .react-flow__handle-right { transform: translate(50%, -50%) !important; }
+  .react-flow__handle-left { left: 3px !important; }
   /* A per-button/per-item dot lives inside its own small chip, not the card's
      padded content edge the rule above assumes — so "10px inward from the
      chip" landed 14-24px inward from the CARD's true edge (the chip's own
@@ -1203,7 +1240,7 @@ const builderStyles = `
     background: #64748b !important;
     border: 2px solid #ffffff !important;
     box-shadow: 0 0 0 1px #cbd5e1 !important;
-    left: -5px !important;
+    left: 3px !important;
   }
   /* No hover animation here either — restates the same resting look above,
      no transform, so hovering the receiving side looks identical to not
@@ -1215,6 +1252,12 @@ const builderStyles = `
     border: 2px solid #ffffff !important;
     box-shadow: 0 0 0 1px #cbd5e1 !important;
   }
+
+  /* Red "remove button" cross on a button chip: hidden until the chip is
+     hovered (or the cross itself is keyboard-focused). */
+  .fb-btn-remove { opacity: 0; pointer-events: none; transition: opacity 0.12s; }
+  *:hover > .fb-btn-remove,
+  .fb-btn-remove:focus-visible { opacity: 1; pointer-events: auto; }
 
   /* ── Next Step row (bottom of card) ────────────────────────── */
   .fb-next-step-row {
@@ -1245,15 +1288,18 @@ const builderStyles = `
     z-index: 4 !important;
   }
   .react-flow__edge-path {
-    stroke: #64748b !important;
-    stroke-width: 2 !important;
+    stroke: #94a3b8 !important;
+    stroke-width: 1.75 !important;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: stroke 0.15s ease, stroke-width 0.15s ease;
   }
   .react-flow__edge.selected .react-flow__edge-path {
     stroke: #0f172a !important;
     stroke-width: 2.5 !important;
   }
   .react-flow__edge:hover .react-flow__edge-path {
-    stroke: #334155 !important;
+    stroke: #475569 !important;
     stroke-width: 2.5 !important;
   }
 
@@ -1744,6 +1790,78 @@ const builderStyles = `
    HELPER: Platform validation
    ═══════════════════════════════════════════════════════════════════ */
 
+/* ── "Message Block" node ──────────────────────────────────────────────
+   One card that holds an ordered list of ordinary message elements
+   (data.items = [{ id, type, data }]) — text, media, card/carousel, and (last)
+   one that waits for a reply. Each element keeps exactly the data shape of the
+   standalone node of that type, and the backend expands the block into that
+   chain of nodes at load time (utils/flowGraph.js expandMessageBlocks), so every
+   element sends through the same per-channel code as a normal node.
+   Only an ENDING element may wait for a reply, so it is always last. */
+// 'buttons' is the "Text" element: a message with 0-3 optional buttons, each with its own
+// connector — buttons on a text/image do not stop the block, later elements still send.
+const BLOCK_CONTENT_TYPES = ['buttons', 'image', 'video', 'audio', 'file', 'card', 'carousel', 'delay'];
+const BLOCK_ENDING_TYPES = ['quickReplies', 'listMenu', 'interactive'];
+const BLOCK_ITEM_LABELS = {
+  text: 'Text',
+  buttons: 'Text',
+  delay: 'Delay',
+  image: 'Image',
+  video: 'Video',
+  audio: 'Audio',
+  file: 'File / Document',
+  card: 'Card',
+  carousel: 'Carousel',
+  quickReplies: 'Quick Replies',
+  listMenu: 'List Menu',
+  interactive: 'Interactive (Header/Footer)',
+};
+
+// A text element with a message and no buttons — the only thing quick replies can attach to.
+function isPlainBlockText(item) {
+  return !!item && (item.type === 'buttons' || item.type === 'text')
+    && !!(item.data?.message || '').trim() && !(item.data?.buttons || []).length;
+}
+
+function newBlockItem(type) {
+  return {
+    id: `it_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
+    type,
+    data: JSON.parse(JSON.stringify(DEFAULT_NODE_DATA[type] || {})),
+  };
+}
+
+/* ── "Actions" node: the individual side-effects it can run ────────────
+   One Actions node holds an ordered list of these (ManyChat-style), each
+   {id, type, ...target}. Names are snapshotted onto the action so the canvas
+   card can show them without re-fetching; the engine only reads the ids. */
+const ACTION_TYPES = {
+  add_label:       { label: 'Add Label',             group: 'Labels',        icon: Tag,       target: 'label' },
+  remove_label:    { label: 'Remove Label',          group: 'Labels',        icon: Tag,       target: 'label' },
+  add_sequence:    { label: 'Add to Sequence',       group: 'Sequences',     icon: Layers,    target: 'sequence' },
+  remove_sequence: { label: 'Remove from Sequence',  group: 'Sequences',     icon: Layers,    target: 'sequence' },
+  set_field:       { label: 'Set Custom Field',      group: 'Custom Fields', icon: Settings2, target: 'field', hasValue: true },
+  clear_field:     { label: 'Clear Custom Field',    group: 'Custom Fields', icon: Settings2, target: 'field' },
+};
+
+function isActionConfigured(a) {
+  const t = ACTION_TYPES[a?.type];
+  if (!t) return false;
+  if (t.target === 'label') return !!a.labelId;
+  if (t.target === 'sequence') return !!a.sequenceId;
+  if (t.target === 'field') return !!a.fieldId && (!t.hasValue || String(a.value ?? '').trim() !== '');
+  return false;
+}
+
+function describeAction(a) {
+  const t = ACTION_TYPES[a?.type];
+  if (!t) return '';
+  if (t.target === 'label') return a.labelName || '';
+  if (t.target === 'sequence') return a.sequenceName || '';
+  if (t.hasValue) return a.fieldName ? `${a.fieldName} = ${a.value ?? ''}` : '';
+  return a.fieldName || '';
+}
+
 function isNodeSupportedOnPlatform(nodeType, platform) {
   if (!platform) return true;
   const p = (platform || 'WEBCHAT').toUpperCase();
@@ -1839,6 +1957,71 @@ function generateNodeId(type) {
 /* ═══════════════════════════════════════════════════════════════════
    HELPER: Component Data Validation
    ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Bot scope, checked in the browser too ─────────────────────────────
+   A flow may only use Sequences / User Input Flows / Flows of ITS OWN bot account (the server
+   enforces it — utils/botScope.js). The builder's pickers only load this bot's own items, so any
+   reference whose id isn't in those lists is foreign: flag the exact element instead of waiting
+   for the server to refuse the save. */
+const BOT_REF_KEYS = {
+  sequenceId: { kind: 'Sequence', nameKey: 'sequenceName' },
+  userInputFlowId: { kind: 'User Input Flow', nameKey: 'userInputFlowName' },
+  flowId: { kind: 'Flow', nameKey: 'flowName' },
+};
+
+function findForeignRefs(nodes, { sequences, userInputFlows, flows }) {
+  const setOf = (list) => (list ? new Set(list.map((x) => Number(x.id))) : null); // null = list not loaded → skip that kind
+  const own = { sequenceId: setOf(sequences), userInputFlowId: setOf(userInputFlows), flowId: setOf(flows) };
+  const out = [];
+  for (const n of nodes || []) {
+    const nodeLabel = n?.data?.label || n?.type;
+    const walk = (v, itemId, where) => {
+      if (Array.isArray(v)) { v.forEach((x) => walk(x, itemId, where)); return; }
+      if (!v || typeof v !== 'object') return;
+      const here = v.title || v.label || where;
+      for (const [k, val] of Object.entries(v)) {
+        const ref = BOT_REF_KEYS[k];
+        if (ref && val !== null && val !== undefined && /^\d+$/.test(String(val))) {
+          if (own[k] && !own[k].has(Number(val))) {
+            const name = v[ref.nameKey] ? ` "${v[ref.nameKey]}"` : ` #${val}`;
+            const label = [nodeLabel, here && here !== nodeLabel ? `"${here}"` : null].filter(Boolean).join(' → ');
+            out.push({ nodeId: n.id, itemId, message: `${label}: ${ref.kind}${name} isn't one of this bot's own — pick this bot's own ${ref.kind} or remove it` });
+          }
+        } else {
+          walk(val, itemId, here);
+        }
+      }
+    };
+    if (n?.type === 'messageBlock') {
+      for (const item of Array.isArray(n.data?.items) ? n.data.items : []) walk(item?.data, item?.id || null, null);
+    } else {
+      walk(n?.data, null, null);
+    }
+  }
+  return out;
+}
+
+const escapeHtml = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// Message Block: the error text AND the id of the element that has it (so the panel can open it).
+function validateMessageBlock(data) {
+  const items = Array.isArray(data.items) ? data.items : [];
+  if (items.length === 0) return { error: 'Add at least one element', itemId: null };
+  const endIdx = items.findIndex((i) => BLOCK_ENDING_TYPES.includes(i.type));
+  if (endIdx >= 0 && endIdx !== items.length - 1) {
+    return { error: 'Quick replies, lists and interactive messages must be the last element', itemId: items[endIdx].id };
+  }
+  for (let i = 0; i < items.length; i += 1) {
+    let itemData = items[i].data || {};
+    // Quick replies with no text of their own attach to the plain message right above them.
+    if (items[i].type === 'quickReplies' && !(itemData.message || '').trim() && isPlainBlockText(items[i - 1])) {
+      itemData = { ...itemData, message: items[i - 1].data.message };
+    }
+    const err = validateNodeData({ type: items[i].type, data: itemData });
+    if (err) return { error: `${BLOCK_ITEM_LABELS[items[i].type] || 'Element'} ${i + 1}: ${err}`, itemId: items[i].id };
+  }
+  return { error: null, itemId: null };
+}
 
 function validateNodeData(node) {
   if (!node) return null;
@@ -1988,8 +2171,7 @@ function validateNodeData(node) {
       if (!data.message || !data.message.trim()) {
         return 'Quick replies message cannot be empty';
       }
-      const validReplies = (data.replies || []).filter((r) => (typeof r === 'string' ? r : r?.title || '').trim());
-      if (validReplies.length === 0) {
+      if ((data.replies || []).filter((r) => (typeof r === 'string' ? r : r?.title || '').trim()).length === 0) {
         return 'At least one quick reply option is required';
       }
       return null;
@@ -2040,8 +2222,7 @@ function validateNodeData(node) {
       if (!data.cards || data.cards.length === 0) {
         return 'Carousel requires at least one card';
       }
-      const hasValidCard = data.cards.some((c) => (c.title || '').trim() || (c.imageUrl || '').trim());
-      if (!hasValidCard) {
+      if (!data.cards.some((c) => (c.title || '').trim() || (c.imageUrl || '').trim())) {
         return 'At least one card needs a title or image';
       }
       return null;
@@ -2080,6 +2261,21 @@ function validateNodeData(node) {
       if (!data.sequenceId) {
         return `Select ${node.type === 'stopSequenceAction' ? 'a Sequence to stop' : 'or create a Sequence to start'}`;
       }
+      return null;
+
+    case 'messageBlock':
+      return validateMessageBlock(data).error;
+
+    case 'actions': {
+      const list = Array.isArray(data.actions) ? data.actions : [];
+      if (list.length === 0) return 'Add at least one action';
+      const bad = list.find((a) => !isActionConfigured(a));
+      if (bad) return `Finish setting up "${ACTION_TYPES[bad.type]?.label || 'action'}"`;
+      return null;
+    }
+
+    case 'startAutomation':
+      if (!data.flowId) return 'Choose an automation to start';
       return null;
 
     case 'wait':
@@ -2196,6 +2392,12 @@ function getNodeDimensions(node) {
       return { width, height: 145 };
     case 'httpApi':
       return { width, height: 135 };
+    case 'startAutomation':
+      return { width, height: 170 };
+    case 'messageBlock':
+      return { width, height: 90 + 78 * Math.max(1, (node?.data?.items || []).length) };
+    case 'actions':
+      return { width, height: 120 + 44 * Math.max(1, (node?.data?.actions || []).length) };
     case 'collectInput':
     case 'question':
     case 'payment':
@@ -2419,6 +2621,7 @@ function getAutoLayoutedNodes(nodes, edges) {
    CUSTOM NODE COMPONENTS (Clean Light Theme)
    ═══════════════════════════════════════════════════════════════════ */
 
+// eslint-disable-next-line react-refresh/only-export-components -- shared with the node components defined in this file
 export const FlowNodeActionsContext = createContext({
   onDuplicate: () => {},
   onDelete: () => {},
@@ -2428,6 +2631,9 @@ export const FlowNodeActionsContext = createContext({
   buttonTargetNodes: new Set(),
   emptySourceNodes: new Set(),
   sequencesList: [],
+  flowsList: [],
+  currentFlowId: null,
+  currentIntegrationId: null,
 });
 
 /* ── Node Hover Actions Toolbar (Duplicate & Delete, + guided actions on a Question node) ── */
@@ -2529,7 +2735,7 @@ function useConnectedHandles(nodeId) {
 }
 
 /* ── Base wrapper for standard nodes ─────────────────────────── */
-function NodeWrapper({ children, color, label, icon: Icon, selected, data, type, id, hideNextStep = false, width }) {
+function NodeWrapper({ children, color, label, icon: Icon, selected, data, type, id, hideNextStep = false, width, headerBg, iconColor }) {
   const connectedHandles = useConnectedHandles(id);
   const unsupported = data?._unsupported;
   const validationError = data?._validationError;
@@ -2560,8 +2766,8 @@ function NodeWrapper({ children, color, label, icon: Icon, selected, data, type,
       <div
         className="fb-node-header"
         style={{
-          background: validationError ? '#fef2f2' : `${color}12`,
-          borderBottom: `1px solid ${validationError ? '#fecaca' : `${color}22`}`,
+          background: validationError ? '#fef2f2' : (headerBg || `${color}12`),
+          borderBottom: `1px solid ${validationError ? '#fecaca' : (headerBg ? 'transparent' : `${color}22`)}`,
         }}
       >
         <div
@@ -2569,34 +2775,23 @@ function NodeWrapper({ children, color, label, icon: Icon, selected, data, type,
             width: 22,
             height: 22,
             borderRadius: 6,
-            background: validationError ? '#fee2e2' : `${color}1e`,
+            background: validationError ? '#fee2e2' : (headerBg ? 'transparent' : `${color}1e`),
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
           }}
         >
-          {Icon && <Icon size={13} style={{ color: validationError ? '#ef4444' : color }} />}
+          {Icon && <Icon size={13} style={{ color: validationError ? '#ef4444' : (iconColor || color) }} />}
         </div>
         <span style={{ fontWeight: 600, fontSize: '11.5px', color: validationError ? '#b91c1c' : '#1e293b', flex: 1 }}>{label}</span>
-        {formatDelayBadge(data?.delay) && (
-          <span
-            title={`Delayed ${formatDelayBadge(data.delay)} before this step runs`}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 2, fontSize: 9, fontWeight: 700,
-              color: '#c2410c', background: '#fff7ed', border: '1px solid #fed7aa',
-              borderRadius: 4, padding: '1px 4px', flexShrink: 0,
-            }}
-          >
-            <Timer size={9} /> {formatDelayBadge(data.delay)}
-          </span>
-        )}
         {data?.showTyping && (
           <span className="fb-node-typing-badge" title="Shows a typing indicator right before this sends">
             <span className="dot" /><span className="dot" /><span className="dot" />
           </span>
         )}
       </div>
+      {type !== 'delay' && <DelayPill data={data} style={{ margin: '10px 12px 0' }} />}
       {children}
       {!hideNextStep && type !== 'end' && (
         <div className="fb-next-step-row">
@@ -2631,7 +2826,7 @@ function StartNode({ id, data = {}, selected }) {
         className={`fb-node${selected ? ' selected' : ''}`}
         style={{
           borderColor: selected ? '#7c3aed' : '#e2e8f0', background: '#ffffff',
-          minWidth: 260, maxWidth: 280, width: 270, borderRadius: 20,
+          minWidth: 270, maxWidth: 270, width: 270, borderRadius: 16,
           boxShadow: '0 4px 20px rgba(0,0,0,0.06)', padding: '16px 16px 14px 16px',
           position: 'relative',
         }}
@@ -2679,7 +2874,7 @@ function StartNode({ id, data = {}, selected }) {
         className={`fb-node${selected ? ' selected' : ''}`}
         style={{
           borderColor: selected ? '#0891b2' : '#e2e8f0', background: '#ffffff',
-          minWidth: 260, maxWidth: 280, width: 270, borderRadius: 20,
+          minWidth: 270, maxWidth: 270, width: 270, borderRadius: 16,
           boxShadow: '0 4px 20px rgba(0,0,0,0.06)', padding: '16px 16px 14px 16px',
           position: 'relative',
         }}
@@ -2722,7 +2917,7 @@ function StartNode({ id, data = {}, selected }) {
         className={`fb-node${selected ? ' selected' : ''}`}
         style={{
           borderColor: selected ? '#2563eb' : '#e2e8f0', background: '#ffffff',
-          minWidth: 260, maxWidth: 280, width: 270, borderRadius: 20,
+          minWidth: 270, maxWidth: 270, width: 270, borderRadius: 16,
           boxShadow: '0 4px 20px rgba(0,0,0,0.06)', padding: '16px 16px 14px 16px',
           position: 'relative',
         }}
@@ -2914,7 +3109,7 @@ function StartNode({ id, data = {}, selected }) {
                 width: 20,
                 height: 20,
                 borderRadius: '50%',
-                background: '#0084ff',
+                background: '#334155',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -2962,7 +3157,7 @@ function StartNode({ id, data = {}, selected }) {
           padding: '10px 14px',
           background: '#ffffff',
           border: '1.5px dashed #cbd5e1',
-          color: '#0084ff',
+          color: '#334155',
           fontSize: 12.5,
           fontWeight: 700,
           cursor: 'pointer',
@@ -2970,8 +3165,8 @@ function StartNode({ id, data = {}, selected }) {
           transition: 'all 0.15s ease',
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.borderColor = '#0084ff';
-          e.currentTarget.style.background = '#f0f7ff';
+          e.currentTarget.style.borderColor = '#64748b';
+          e.currentTarget.style.background = '#f8fafc';
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.borderColor = '#cbd5e1';
@@ -3045,19 +3240,20 @@ function TextNode({ id, data, selected }) {
     <div
       className={`fb-node${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
       style={{
-        borderRadius: 20,
+        borderRadius: 16,
         background: '#ffffff',
-        border: selected ? '2px solid #10b981' : '1.5px solid #e2e8f0',
-        boxShadow: selected ? '0 0 0 2px rgba(16, 185, 129, 0.2), 0 8px 24px rgba(0,0,0,0.08)' : '0 4px 20px rgba(0,0,0,0.06)',
+        border: selected ? `1.5px solid ${NODE_COLORS.text}` : '1.5px solid #e2e8f0',
+        boxShadow: selected ? `0 0 0 3px ${NODE_COLORS.text}26, 0 6px 24px rgba(0,0,0,0.10)` : '0 4px 20px rgba(0,0,0,0.06)',
         width: 270,
-        minWidth: 260,
-        maxWidth: 280,
+        minWidth: 270,
+        maxWidth: 270,
         overflow: 'visible',
         position: 'relative',
         padding: '14px 14px 10px 14px',
       }}
     >
       <NodeHoverActions nodeId={id} nodeType="text" />
+      <DelayPill data={data} />
 
       {/* Target handle on left */}
       <Handle
@@ -3085,14 +3281,14 @@ function TextNode({ id, data, selected }) {
             width: 20,
             height: 20,
             borderRadius: '50%',
-            background: '#0084ff',
+            background: NODE_COLORS.text,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
           }}
         >
-          <MessageSquare size={11} color="#ffffff" />
+          <Type size={11} color="#ffffff" />
         </div>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', lineHeight: 1.2 }}>
@@ -3112,7 +3308,7 @@ function TextNode({ id, data, selected }) {
           color: messageText ? '#334155' : '#94a3b8',
           textAlign: messageText ? 'left' : 'center',
           lineHeight: 1.4,
-          marginBottom: (buttons.length > 0 || true) ? 8 : 0,
+          marginBottom: 8,
           minHeight: 48,
           display: 'flex',
           alignItems: 'center',
@@ -3150,7 +3346,7 @@ function TextNode({ id, data, selected }) {
                 style={{
                   fontSize: 12,
                   fontWeight: 700,
-                  color: '#0084ff',
+                  color: '#334155',
                   textAlign: 'center',
                   flex: 1,
                   overflow: 'hidden',
@@ -3161,13 +3357,14 @@ function TextNode({ id, data, selected }) {
                 {btnTitle}
               </span>
 
+              {btn?.sequenceId && <SeqBadge />}
               {isPhone && (
                 <Phone
                   size={14}
                   style={{
                     position: 'absolute',
                     right: 12,
-                    color: '#0084ff',
+                    color: '#334155',
                   }}
                 />
               )}
@@ -3177,7 +3374,7 @@ function TextNode({ id, data, selected }) {
                   style={{
                     position: 'absolute',
                     right: 12,
-                    color: '#0084ff',
+                    color: '#334155',
                   }}
                 />
               )}
@@ -3187,7 +3384,7 @@ function TextNode({ id, data, selected }) {
                   style={{
                     position: 'absolute',
                     right: 12,
-                    color: '#0084ff',
+                    color: '#334155',
                   }}
                 />
               )}
@@ -3208,6 +3405,7 @@ function TextNode({ id, data, selected }) {
               <button
                 type="button"
                 title="Remove button"
+                className="fb-btn-remove"
                 onClick={(e) => {
                   e.stopPropagation();
                   onUpdateNodeData(id, { ...data, buttons: buttons.filter((_, bi) => bi !== i) });
@@ -3253,15 +3451,15 @@ function TextNode({ id, data, selected }) {
               borderRadius: 12,
               background: '#f8fafc',
               border: '1.5px dashed #cbd5e1',
-              color: '#0084ff',
+              color: '#334155',
               fontSize: 11.5,
               fontWeight: 700,
               cursor: 'pointer',
               transition: 'all 0.15s',
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = '#0084ff';
-              e.currentTarget.style.background = '#f0f7ff';
+              e.currentTarget.style.borderColor = '#334155';
+              e.currentTarget.style.background = '#f8fafc';
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.borderColor = '#cbd5e1';
@@ -3331,19 +3529,20 @@ function InteractiveNode({ id, data, selected }) {
     <div
       className={`fb-node${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
       style={{
-        borderRadius: 20,
+        borderRadius: 16,
         background: '#ffffff',
-        border: selected ? '2px solid #25d366' : '1.5px solid #e2e8f0',
-        boxShadow: selected ? '0 0 0 2px rgba(37, 211, 102, 0.2), 0 8px 24px rgba(0,0,0,0.08)' : '0 4px 20px rgba(0,0,0,0.06)',
+        border: selected ? '1.5px solid #334155' : '1.5px solid #e2e8f0',
+        boxShadow: selected ? `0 0 0 3px ${NODE_COLORS.interactive}26, 0 6px 24px rgba(0,0,0,0.10)` : '0 4px 20px rgba(0,0,0,0.06)',
         width: 270,
-        minWidth: 260,
-        maxWidth: 280,
+        minWidth: 270,
+        maxWidth: 270,
         overflow: 'visible',
         position: 'relative',
         padding: '14px 14px 10px 14px',
       }}
     >
       <NodeHoverActions nodeId={id} nodeType="interactive" />
+      <DelayPill data={data} />
 
       {/* Target handle on left */}
       <Handle
@@ -3371,7 +3570,7 @@ function InteractiveNode({ id, data, selected }) {
             width: 20,
             height: 20,
             borderRadius: '50%',
-            background: '#25d366',
+            background: NODE_COLORS.interactive,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -3408,20 +3607,20 @@ function InteractiveNode({ id, data, selected }) {
                 {headerText || 'Header Text'}
               </span>
             ) : headerType === 'image' && fullHeaderMediaUrl ? (
-              <img
+              <img draggable={false} onContextMenu={(e) => e.preventDefault()}
                 src={fullHeaderMediaUrl}
                 alt="Header preview"
                 style={{ width: '100%', maxHeight: 110, objectFit: 'cover', borderRadius: 8, display: 'block' }}
               />
             ) : headerType === 'video' && fullHeaderMediaUrl ? (
-              <video
+              <video controlsList="nodownload noremoteplayback" disablePictureInPicture onContextMenu={(e) => e.preventDefault()}
                 src={fullHeaderMediaUrl}
                 controls
                 muted
                 style={{ width: '100%', maxHeight: 110, borderRadius: 8, background: '#000', display: 'block' }}
               />
             ) : (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: headerMediaUrl ? '#25d366' : '#94a3b8', fontSize: 11, fontWeight: 600 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: headerMediaUrl ? '#334155' : '#94a3b8', fontSize: 11, fontWeight: 600 }}>
                 {headerType === 'image' && <Image size={14} />}
                 {headerType === 'video' && <Video size={14} />}
                 {headerType === 'document' && <FileText size={14} />}
@@ -3481,7 +3680,7 @@ function InteractiveNode({ id, data, selected }) {
                 style={{
                   fontSize: 12,
                   fontWeight: 600,
-                  color: '#25d366',
+                  color: '#334155',
                   textAlign: 'center',
                   flex: 1,
                   overflow: 'hidden',
@@ -3492,13 +3691,14 @@ function InteractiveNode({ id, data, selected }) {
                 {btnTitle}
               </span>
 
+              {btn?.sequenceId && <SeqBadge />}
               {isPhone && (
                 <Phone
                   size={14}
                   style={{
                     position: 'absolute',
                     right: 12,
-                    color: '#25d366',
+                    color: '#334155',
                   }}
                 />
               )}
@@ -3508,7 +3708,7 @@ function InteractiveNode({ id, data, selected }) {
                   style={{
                     position: 'absolute',
                     right: 12,
-                    color: '#25d366',
+                    color: '#334155',
                   }}
                 />
               )}
@@ -3518,7 +3718,7 @@ function InteractiveNode({ id, data, selected }) {
                   style={{
                     position: 'absolute',
                     right: 12,
-                    color: '#25d366',
+                    color: '#334155',
                   }}
                 />
               )}
@@ -3539,6 +3739,7 @@ function InteractiveNode({ id, data, selected }) {
               <button
                 type="button"
                 title="Remove button"
+                className="fb-btn-remove"
                 onClick={(e) => {
                   e.stopPropagation();
                   onUpdateNodeData(id, { ...data, buttons: buttons.filter((_, bi) => bi !== i) });
@@ -3584,15 +3785,15 @@ function InteractiveNode({ id, data, selected }) {
               borderRadius: 12,
               background: '#f8fafc',
               border: '1.5px dashed #cbd5e1',
-              color: '#25d366',
+              color: '#334155',
               fontSize: 11.5,
               fontWeight: 600,
               cursor: 'pointer',
               transition: 'all 0.15s',
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = '#25d366';
-              e.currentTarget.style.background = '#f0fdf4';
+              e.currentTarget.style.borderColor = '#334155';
+              e.currentTarget.style.background = '#f8fafc';
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.borderColor = '#cbd5e1';
@@ -3654,19 +3855,20 @@ function ImageNode({ id, data, selected }) {
     <div
       className={`fb-node${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
       style={{
-        borderRadius: 20,
+        borderRadius: 16,
         background: '#ffffff',
-        border: selected ? '2px solid #10b981' : '1.5px solid #e2e8f0',
-        boxShadow: selected ? '0 0 0 2px rgba(16, 185, 129, 0.2), 0 8px 24px rgba(0,0,0,0.08)' : '0 4px 20px rgba(0,0,0,0.06)',
+        border: selected ? `1.5px solid ${NODE_COLORS.image}` : '1.5px solid #e2e8f0',
+        boxShadow: selected ? `0 0 0 3px ${NODE_COLORS.image}26, 0 6px 24px rgba(0,0,0,0.10)` : '0 4px 20px rgba(0,0,0,0.06)',
         width: 270,
-        minWidth: 260,
-        maxWidth: 280,
+        minWidth: 270,
+        maxWidth: 270,
         overflow: 'visible',
         position: 'relative',
         padding: '14px 14px 10px 14px',
       }}
     >
       <NodeHoverActions nodeId={id} nodeType="image" />
+      <DelayPill data={data} />
 
       {/* Left target handle */}
       <Handle
@@ -3694,14 +3896,14 @@ function ImageNode({ id, data, selected }) {
             width: 20,
             height: 20,
             borderRadius: '50%',
-            background: '#0084ff',
+            background: NODE_COLORS.image,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
           }}
         >
-          <MessageSquare size={11} color="#ffffff" />
+          <Image size={11} color="#ffffff" />
         </div>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', lineHeight: 1.2 }}>
@@ -3731,7 +3933,7 @@ function ImageNode({ id, data, selected }) {
       {/* Image Preview Container */}
       <div style={{ marginBottom: buttons.length ? 8 : 0 }}>
         {fullUrl ? (
-          <img
+          <img draggable={false} onContextMenu={(e) => e.preventDefault()}
             src={fullUrl}
             alt="Preview"
             style={{
@@ -3792,7 +3994,7 @@ function ImageNode({ id, data, selected }) {
                 style={{
                   fontSize: 12,
                   fontWeight: 700,
-                  color: '#0084ff',
+                  color: '#334155',
                   textAlign: 'center',
                   flex: 1,
                   overflow: 'hidden',
@@ -3803,13 +4005,14 @@ function ImageNode({ id, data, selected }) {
                 {btnTitle}
               </span>
 
+              {btn?.sequenceId && <SeqBadge />}
               {isPhone && (
                 <Phone
                   size={14}
                   style={{
                     position: 'absolute',
                     right: 12,
-                    color: '#0084ff',
+                    color: '#334155',
                   }}
                 />
               )}
@@ -3819,7 +4022,7 @@ function ImageNode({ id, data, selected }) {
                   style={{
                     position: 'absolute',
                     right: 12,
-                    color: '#0084ff',
+                    color: '#334155',
                   }}
                 />
               )}
@@ -3829,7 +4032,7 @@ function ImageNode({ id, data, selected }) {
                   style={{
                     position: 'absolute',
                     right: 12,
-                    color: '#0084ff',
+                    color: '#334155',
                   }}
                 />
               )}
@@ -3850,6 +4053,7 @@ function ImageNode({ id, data, selected }) {
               <button
                 type="button"
                 title="Remove button"
+                className="fb-btn-remove"
                 onClick={(e) => {
                   e.stopPropagation();
                   onUpdateNodeData(id, { ...data, buttons: buttons.filter((_, bi) => bi !== i) });
@@ -3895,15 +4099,15 @@ function ImageNode({ id, data, selected }) {
               borderRadius: 12,
               background: '#f8fafc',
               border: '1.5px dashed #cbd5e1',
-              color: '#0084ff',
+              color: '#334155',
               fontSize: 11.5,
               fontWeight: 700,
               cursor: 'pointer',
               transition: 'all 0.15s',
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = '#0084ff';
-              e.currentTarget.style.background = '#f0f7ff';
+              e.currentTarget.style.borderColor = '#334155';
+              e.currentTarget.style.background = '#f8fafc';
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.borderColor = '#cbd5e1';
@@ -3950,19 +4154,20 @@ function VideoNode({ id, data, selected }) {
     <div
       className={`fb-node${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
       style={{
-        borderRadius: 20,
+        borderRadius: 16,
         background: '#ffffff',
-        border: selected ? '2px solid #10b981' : '1.5px solid #e2e8f0',
-        boxShadow: selected ? '0 0 0 2px rgba(16, 185, 129, 0.2), 0 8px 24px rgba(0,0,0,0.08)' : '0 4px 20px rgba(0,0,0,0.06)',
+        border: selected ? `1.5px solid ${NODE_COLORS.video}` : '1.5px solid #e2e8f0',
+        boxShadow: selected ? `0 0 0 3px ${NODE_COLORS.video}26, 0 6px 24px rgba(0,0,0,0.10)` : '0 4px 20px rgba(0,0,0,0.06)',
         width: 270,
-        minWidth: 260,
-        maxWidth: 280,
+        minWidth: 270,
+        maxWidth: 270,
         overflow: 'visible',
         position: 'relative',
         padding: '14px 14px 10px 14px',
       }}
     >
       <NodeHoverActions nodeId={id} nodeType="video" />
+      <DelayPill data={data} />
       <Handle
         type="target"
         position={Position.Left}
@@ -3970,8 +4175,8 @@ function VideoNode({ id, data, selected }) {
         style={{ position: 'absolute', left: -5, top: 24 }}
       />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <div style={{ width: 20, height: 20, borderRadius: '50%', background: '#0084ff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <MessageSquare size={11} color="#ffffff" />
+        <div style={{ width: 20, height: 20, borderRadius: '50%', background: NODE_COLORS.video, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <Video size={11} color="#ffffff" />
         </div>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', lineHeight: 1.2 }}>Video</div>
@@ -3983,7 +4188,7 @@ function VideoNode({ id, data, selected }) {
         </div>
       )}
       {fullVideoUrl ? (
-        <video
+        <video controlsList="nodownload noremoteplayback" disablePictureInPicture onContextMenu={(e) => e.preventDefault()}
           src={fullVideoUrl}
           controls
           muted
@@ -4005,12 +4210,13 @@ function VideoNode({ id, data, selected }) {
             const isGoToFlow = btnAction === 'goToFlow';
             return (
               <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '9px 14px', borderRadius: 12, background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.03)', position: 'relative' }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: '#0084ff', textAlign: 'center', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#334155', textAlign: 'center', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {btnTitle}
                 </span>
-                {isPhone && <Phone size={14} style={{ position: 'absolute', right: 12, color: '#0084ff' }} />}
-                {isUrl && <ExternalLink size={14} style={{ position: 'absolute', right: 12, color: '#0084ff' }} />}
-                {isGoToFlow && <Workflow size={14} style={{ position: 'absolute', right: 12, color: '#0084ff' }} />}
+                {btn?.sequenceId && <SeqBadge />}
+                {isPhone && <Phone size={14} style={{ position: 'absolute', right: 12, color: '#334155' }} />}
+                {isUrl && <ExternalLink size={14} style={{ position: 'absolute', right: 12, color: '#334155' }} />}
+                {isGoToFlow && <Workflow size={14} style={{ position: 'absolute', right: 12, color: '#334155' }} />}
                 {!isPhone && !isUrl && !isGoToFlow && (
                   <Handle type="source" position={Position.Right} id={`btn-${i}`} className={`btn-handle${connectedHandles.has(`btn-${i}`) ? ' connected' : ''}`} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)' }} />
                 )}
@@ -4037,19 +4243,20 @@ function AudioNode({ id, data, selected }) {
     <div
       className={`fb-node${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
       style={{
-        borderRadius: 20,
+        borderRadius: 16,
         background: '#ffffff',
-        border: selected ? '2px solid #10b981' : '1.5px solid #e2e8f0',
-        boxShadow: selected ? '0 0 0 2px rgba(16, 185, 129, 0.2), 0 8px 24px rgba(0,0,0,0.08)' : '0 4px 20px rgba(0,0,0,0.06)',
+        border: selected ? `1.5px solid ${NODE_COLORS.audio}` : '1.5px solid #e2e8f0',
+        boxShadow: selected ? `0 0 0 3px ${NODE_COLORS.audio}26, 0 6px 24px rgba(0,0,0,0.10)` : '0 4px 20px rgba(0,0,0,0.06)',
         width: 270,
-        minWidth: 260,
-        maxWidth: 280,
+        minWidth: 270,
+        maxWidth: 270,
         overflow: 'visible',
         position: 'relative',
         padding: '14px 14px 10px 14px',
       }}
     >
       <NodeHoverActions nodeId={id} nodeType="audio" />
+      <DelayPill data={data} />
       <Handle
         type="target"
         position={Position.Left}
@@ -4057,15 +4264,15 @@ function AudioNode({ id, data, selected }) {
         style={{ position: 'absolute', left: -5, top: 24 }}
       />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <div style={{ width: 20, height: 20, borderRadius: '50%', background: '#0084ff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <MessageSquare size={11} color="#ffffff" />
+        <div style={{ width: 20, height: 20, borderRadius: '50%', background: NODE_COLORS.audio, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <Music size={11} color="#ffffff" />
         </div>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', lineHeight: 1.2 }}>Audio Clip</div>
         </div>
       </div>
       <div style={{ padding: '20px 12px', borderRadius: 12, background: '#f8fafc', border: '1.5px dashed #cbd5e1', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, color: '#94a3b8' }}>
-        <Music size={24} style={{ opacity: 0.5, color: '#64748b' }} />
+        <Music size={24} style={{ color: NODE_COLORS.audio }} />
         <span style={{ fontSize: 11, fontWeight: 600 }}>{audioUrl ? 'Audio Attached' : 'Audio Clip'}</span>
       </div>
       <div className="fb-next-step-row" style={{ marginTop: 8, marginRight: -14, marginLeft: -14, paddingLeft: 14 }}>
@@ -4086,19 +4293,20 @@ function FileNode({ id, data, selected }) {
     <div
       className={`fb-node${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
       style={{
-        borderRadius: 20,
+        borderRadius: 16,
         background: '#ffffff',
-        border: selected ? '2px solid #10b981' : '1.5px solid #e2e8f0',
-        boxShadow: selected ? '0 0 0 2px rgba(16, 185, 129, 0.2), 0 8px 24px rgba(0,0,0,0.08)' : '0 4px 20px rgba(0,0,0,0.06)',
+        border: selected ? `1.5px solid ${NODE_COLORS.file}` : '1.5px solid #e2e8f0',
+        boxShadow: selected ? `0 0 0 3px ${NODE_COLORS.file}26, 0 6px 24px rgba(0,0,0,0.10)` : '0 4px 20px rgba(0,0,0,0.06)',
         width: 270,
-        minWidth: 260,
-        maxWidth: 280,
+        minWidth: 270,
+        maxWidth: 270,
         overflow: 'visible',
         position: 'relative',
         padding: '14px 14px 10px 14px',
       }}
     >
       <NodeHoverActions nodeId={id} nodeType="file" />
+      <DelayPill data={data} />
       <Handle
         type="target"
         position={Position.Left}
@@ -4106,15 +4314,15 @@ function FileNode({ id, data, selected }) {
         style={{ position: 'absolute', left: -5, top: 24 }}
       />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <div style={{ width: 20, height: 20, borderRadius: '50%', background: '#0084ff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <MessageSquare size={11} color="#ffffff" />
+        <div style={{ width: 20, height: 20, borderRadius: '50%', background: NODE_COLORS.file, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <FileText size={11} color="#ffffff" />
         </div>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', lineHeight: 1.2 }}>File / Document</div>
         </div>
       </div>
       <div style={{ padding: '16px 12px', borderRadius: 12, background: '#f8fafc', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 10, color: '#334155' }}>
-        <FileText size={22} style={{ color: '#0084ff', flexShrink: 0 }} />
+        <FileText size={22} style={{ color: NODE_COLORS.file, flexShrink: 0 }} />
         <span style={{ fontSize: 11.5, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{filename}</span>
       </div>
       <div className="fb-next-step-row" style={{ marginTop: 8, marginRight: -14, marginLeft: -14, paddingLeft: 14 }}>
@@ -4151,19 +4359,20 @@ function ButtonsNode({ id, data, selected }) {
     <div
       className={`fb-node${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
       style={{
-        borderRadius: 20,
+        borderRadius: 16,
         background: '#ffffff',
-        border: selected ? '2px solid #10b981' : '1.5px solid #e2e8f0',
-        boxShadow: selected ? '0 0 0 2px rgba(16, 185, 129, 0.2), 0 8px 24px rgba(0,0,0,0.08)' : '0 4px 20px rgba(0,0,0,0.06)',
+        border: selected ? `1.5px solid ${NODE_COLORS.buttons}` : '1.5px solid #e2e8f0',
+        boxShadow: selected ? `0 0 0 3px ${NODE_COLORS.buttons}26, 0 6px 24px rgba(0,0,0,0.10)` : '0 4px 20px rgba(0,0,0,0.06)',
         width: 270,
-        minWidth: 260,
-        maxWidth: 280,
+        minWidth: 270,
+        maxWidth: 270,
         overflow: 'visible',
         position: 'relative',
         padding: '14px 14px 10px 14px',
       }}
     >
       <NodeHoverActions nodeId={id} nodeType="buttons" />
+      <DelayPill data={data} />
 
       {/* Target handle on left */}
       <Handle
@@ -4191,7 +4400,7 @@ function ButtonsNode({ id, data, selected }) {
             width: 20,
             height: 20,
             borderRadius: '50%',
-            background: '#0084ff',
+            background: NODE_COLORS.buttons,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -4218,7 +4427,7 @@ function ButtonsNode({ id, data, selected }) {
           color: messageText ? '#334155' : '#94a3b8',
           textAlign: messageText ? 'left' : 'center',
           lineHeight: 1.4,
-          marginBottom: (buttons.length > 0 || true) ? 8 : 0,
+          marginBottom: 8,
           minHeight: 44,
           display: 'flex',
           alignItems: 'center',
@@ -4256,7 +4465,7 @@ function ButtonsNode({ id, data, selected }) {
                 style={{
                   fontSize: 12,
                   fontWeight: 700,
-                  color: '#0084ff',
+                  color: '#334155',
                   textAlign: 'center',
                   flex: 1,
                   overflow: 'hidden',
@@ -4267,13 +4476,14 @@ function ButtonsNode({ id, data, selected }) {
                 {btnTitle}
               </span>
 
+              {btn?.sequenceId && <SeqBadge />}
               {isPhone && (
                 <Phone
                   size={14}
                   style={{
                     position: 'absolute',
                     right: 12,
-                    color: '#0084ff',
+                    color: '#334155',
                   }}
                 />
               )}
@@ -4283,7 +4493,7 @@ function ButtonsNode({ id, data, selected }) {
                   style={{
                     position: 'absolute',
                     right: 12,
-                    color: '#0084ff',
+                    color: '#334155',
                   }}
                 />
               )}
@@ -4293,7 +4503,7 @@ function ButtonsNode({ id, data, selected }) {
                   style={{
                     position: 'absolute',
                     right: 12,
-                    color: '#0084ff',
+                    color: '#334155',
                   }}
                 />
               )}
@@ -4314,6 +4524,7 @@ function ButtonsNode({ id, data, selected }) {
               <button
                 type="button"
                 title="Remove button"
+                className="fb-btn-remove"
                 onClick={(e) => {
                   e.stopPropagation();
                   onUpdateNodeData(id, { ...data, buttons: buttons.filter((_, bi) => bi !== i) });
@@ -4359,15 +4570,15 @@ function ButtonsNode({ id, data, selected }) {
               borderRadius: 12,
               background: '#f8fafc',
               border: '1.5px dashed #cbd5e1',
-              color: '#0084ff',
+              color: '#334155',
               fontSize: 11.5,
               fontWeight: 700,
               cursor: 'pointer',
               transition: 'all 0.15s',
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = '#0084ff';
-              e.currentTarget.style.background = '#f0f7ff';
+              e.currentTarget.style.borderColor = '#334155';
+              e.currentTarget.style.background = '#f8fafc';
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.borderColor = '#cbd5e1';
@@ -4412,7 +4623,7 @@ function QuickRepliesNode({ id, data, selected }) {
       )}
       <div className="fb-node-btn-list" style={{ marginTop: 2 }}>
         {replies.map((r, i) => (
-          <div key={i} className="fb-node-btn-chip" style={{ background: 'rgba(2, 132, 199, 0.08)', borderColor: 'rgba(2, 132, 199, 0.2)', color: '#0369a1' }}>
+          <div key={i} className="fb-node-btn-chip">
             <span style={{ fontSize: '11px', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r || `Reply ${i + 1}`}</span>
             <ChevronRight size={12} style={{ opacity: 0.6, flexShrink: 0 }} />
             <Handle
@@ -4456,7 +4667,7 @@ function ListMenuNode({ id, data, selected }) {
           {list.sections.map((section, si) => (
             <div key={si}>
               {(section.title || '').trim() && (
-                <div style={{ padding: '3px 12px 2px', fontSize: 10, fontWeight: 700, color: '#8b5cf6', textTransform: 'uppercase', letterSpacing: 0.3 }}>
+                <div style={{ padding: '3px 12px 2px', fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.3 }}>
                   {section.title}
                 </div>
               )}
@@ -4469,10 +4680,11 @@ function ListMenuNode({ id, data, selected }) {
                   // so it gets a small indicator instead of a connector dot.
                   const isGoToFlow = item.action === 'goToFlow';
                   return (
-                    <div key={ii} className="fb-node-btn-chip" style={{ background: 'rgba(124, 58, 237, 0.08)', borderColor: 'rgba(124, 58, 237, 0.2)', color: '#6d28d9' }}>
+                    <div key={ii} className="fb-node-btn-chip">
                       <span style={{ fontSize: '11px', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.title || `Option ${ii + 1}`}</span>
+                      {item.sequenceId && <SeqBadge inline />}
                       {isGoToFlow ? (
-                        <Workflow size={12} style={{ opacity: 0.8, flexShrink: 0, color: '#6d28d9' }} />
+                        <Workflow size={12} style={{ opacity: 0.8, flexShrink: 0, color: '#334155' }} />
                       ) : (
                         <>
                           <ChevronRight size={12} style={{ opacity: 0.6, flexShrink: 0 }} />
@@ -4495,7 +4707,7 @@ function ListMenuNode({ id, data, selected }) {
             <div className="fb-node-btn-list" style={{ marginTop: 2 }}>
               <div
                 className="fb-node-btn-chip"
-                style={{ background: 'transparent', borderStyle: 'dashed', borderColor: '#c4b5fd', color: '#8b5cf6' }}
+                style={{ background: 'transparent', borderStyle: 'dashed', borderColor: '#cbd5e1', color: '#64748b' }}
                 title="Drag from here to add a section"
               >
                 <Plus size={12} style={{ opacity: 0.8, flexShrink: 0 }} />
@@ -4591,8 +4803,8 @@ function CollectInputNode({ id, data, selected, type }) {
       style={{
         background: '#ffffff',
         borderRadius: 20,
-        border: selected ? '2px solid #8b5cf6' : '1.5px solid #e2e8f0',
-        boxShadow: selected ? '0 8px 24px rgba(139,92,246,0.18)' : '0 4px 14px rgba(0,0,0,0.06)',
+        border: selected ? `1.5px solid ${NODE_COLORS.collectInput}` : '1.5px solid #e2e8f0',
+        boxShadow: selected ? `0 0 0 3px ${NODE_COLORS.collectInput}26, 0 6px 24px rgba(0,0,0,0.10)` : '0 4px 14px rgba(0,0,0,0.06)',
         width: 270,
         position: 'relative',
         overflow: 'visible',
@@ -4605,6 +4817,7 @@ function CollectInputNode({ id, data, selected, type }) {
           on every real Question node. `type` is a prop React Flow already passes
           to every custom node component. */}
       <NodeHoverActions nodeId={id} nodeType={type} data={data} />
+      <DelayPill data={data} />
       <Handle
         type="target"
         position={Position.Left}
@@ -4780,6 +4993,7 @@ function ConditionNode({ id, data, selected }) {
       }}
     >
       <NodeHoverActions nodeId={id} nodeType="condition" />
+      <DelayPill data={data} />
       {validationError ? (
         <div className="fb-node-warning" style={{ background: '#ef4444' }} title={`Missing Data: ${validationError}`}>
           <AlertTriangle size={12} color="#fff" />
@@ -4878,14 +5092,8 @@ function DelayNode({ id, data, selected }) {
   return (
     <NodeWrapper id={id} color={NODE_COLORS.delay} label="Delay" icon={Clock} selected={selected} data={data} type="delay">
       <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
-      <div className="fb-node-body" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <Clock size={18} style={{ color: NODE_COLORS.delay, flexShrink: 0 }} />
-        <div>
-          <span style={{ fontWeight: 700, fontSize: 18, color: '#1e293b' }}>
-            {data.seconds || 0}
-          </span>
-          <span style={{ fontSize: 11, marginLeft: 4, color: '#64748b' }}>seconds</span>
-        </div>
+      <div className="fb-node-body">
+        <DelayPill data={data} always style={{ marginBottom: 0 }} />
       </div>
     </NodeWrapper>
   );
@@ -4930,6 +5138,7 @@ function HttpApiNode({ id, data, selected }) {
       }}
     >
       <NodeHoverActions nodeId={id} nodeType="httpApi" />
+      <DelayPill data={data} />
       {validationError ? (
         <div className="fb-node-warning" style={{ background: '#ef4444' }} title={`Missing Data: ${validationError}`}>
           <AlertTriangle size={12} color="#fff" />
@@ -4995,7 +5204,7 @@ function HttpApiNode({ id, data, selected }) {
 /* ── Collect Payment Node ────────────────────────────────────── */
 function PaymentNode({ id, data, selected }) {
   return (
-    <NodeWrapper id={id} color={NODE_COLORS.payment} label="In-Chat Payment" icon={CreditCard} selected={selected} data={data} type="payment">
+    <NodeWrapper id={id} color={NODE_COLORS.payment} label="In-Chat Payment" icon={ShoppingBag} selected={selected} data={data} type="payment">
       <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
       <div className="fb-node-body">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -5083,7 +5292,7 @@ function StartSequenceActionNode({ id, data, selected }) {
   const messageCount = sequence?.message_count;
 
   return (
-    <NodeWrapper id={id} color={NODE_COLORS.startSequenceAction} label="Start Sequence" icon={Play} selected={selected} data={data} type="startSequenceAction" hideNextStep width={260}>
+    <NodeWrapper id={id} color={NODE_COLORS.startSequenceAction} label="Start Sequence" icon={Play} selected={selected} data={data} type="startSequenceAction" hideNextStep>
       <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
       <div className="fb-node-body">
         {data.sequenceName ? (
@@ -5119,6 +5328,669 @@ function StopSequenceActionNode({ id, data, selected }) {
   );
 }
 
+/* ── Automation picker modal (Start Automation) ─────────────────────
+   Lists the bot flows that already exist for this channel. Plain
+   black/white/grey on purpose — no accent colour. */
+function AutomationPickerModal({ flows, currentFlowId, platform, selectedId, onSelect, onClose }) {
+  const [search, setSearch] = useState('');
+  const p = (platform || '').toUpperCase();
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const available = flows.filter(
+    (f) => f.id !== currentFlowId && (!p || (f.platform || '').toUpperCase() === p)
+  );
+  const q = search.trim().toLowerCase();
+  const visible = q ? available.filter((f) => (f.name || '').toLowerCase().includes(q)) : available;
+
+  return createPortal(
+    <div
+      className="nodrag nopan"
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(15, 23, 42, 0.45)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: 440, maxWidth: '100%', maxHeight: '80vh', display: 'flex', flexDirection: 'column',
+          background: '#ffffff', borderRadius: 14, border: '1px solid #e2e8f0',
+          boxShadow: '0 20px 50px rgba(0,0,0,0.25)', overflow: 'hidden',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', padding: '14px 16px', borderBottom: '1px solid #f1f5f9' }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>Start Automation</div>
+            <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 1 }}>Pick the flow this contact should be moved into.</div>
+          </div>
+          <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', padding: 4, display: 'flex' }}>
+            <X size={18} />
+          </button>
+        </div>
+        <div style={{ padding: '10px 16px 6px' }}>
+          <input
+            autoFocus
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search automations..."
+            style={{ width: '100%', fontSize: 13, padding: '8px 10px', borderRadius: 8, border: '1px solid #e2e8f0', background: '#f8fafc', outline: 'none' }}
+          />
+        </div>
+        <div style={{ overflowY: 'auto', padding: '6px 10px 12px' }}>
+          {visible.length === 0 ? (
+            <div style={{ padding: '28px 12px', textAlign: 'center', fontSize: 12.5, color: '#94a3b8' }}>
+              {available.length === 0
+                ? `No other ${p || ''} flows yet — create one first, then come back and pick it here.`
+                : 'No automations match your search.'}
+            </div>
+          ) : visible.map((f) => {
+            const on = f.id === selectedId;
+            return (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => onSelect(f)}
+                style={{
+                  width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 10px',
+                  marginTop: 4, borderRadius: 10, cursor: 'pointer', textAlign: 'left',
+                  border: `1.5px solid ${on ? '#0f172a' : '#e2e8f0'}`, background: on ? '#f8fafc' : '#ffffff',
+                }}
+              >
+                <div style={{ width: 30, height: 30, borderRadius: 8, background: '#f1f5f9', color: '#334155', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Workflow size={15} />
+                </div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</div>
+                  <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 1 }}>{f.is_active === 0 || f.is_active === false ? 'Draft' : 'Published'}</div>
+                </div>
+                {on && <Check size={16} color="#0f172a" />}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* Small "seq" tag on a canvas button/list item that also enrolls the contact in a
+   Sequence when tapped (btn.sequenceId). Neutral grey. */
+function SeqBadge({ inline = false }) {
+  return (
+    <span
+      title="Enrolls the contact in a Sequence when tapped"
+      style={{
+        ...(inline ? {} : { position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }),
+        flexShrink: 0, fontSize: 9, fontWeight: 800, letterSpacing: 0.3, textTransform: 'uppercase', lineHeight: 1,
+        padding: '3px 5px', borderRadius: 4, background: '#f1f5f9', border: '1px solid #cbd5e1', color: '#334155',
+      }}
+    >
+      seq
+    </span>
+  );
+}
+
+/* ── Message Block Node ───────────────────────────────────────── */
+// Same URL rule the standalone Image/Video cards use for uploaded files.
+function blockMediaSrc(url) {
+  if (!url) return '';
+  const backendUrl = import.meta.env.VITE_API_URL
+    ? import.meta.env.VITE_API_URL.replace('/api/v1', '')
+    : 'http://localhost:5000';
+  return url.startsWith('http') ? url : `${backendUrl}${url}`;
+}
+
+// A tappable option (button) drawn like the standalone cards' buttons. Its
+// connector id is prefixed with the element id ("<itemId>:btn-0") so the backend
+// can route each option of each element separately.
+function BlockButtonRow({ title, handleId, connected, seq = false, icon: OwnIcon = null }) {
+  return (
+    <div
+      style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '9px 14px', borderRadius: 12,
+        background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.03)', position: 'relative',
+      }}
+    >
+      <span style={{ fontSize: 12, fontWeight: 700, color: '#334155', textAlign: 'center', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {title}
+      </span>
+      {seq && <SeqBadge />}
+      {OwnIcon ? (
+        <OwnIcon size={14} style={{ position: 'absolute', right: 12, color: '#334155' }} />
+      ) : (
+        <Handle
+          type="source"
+          position={Position.Right}
+          id={handleId}
+          className={`btn-handle${connected ? ' connected' : ''}`}
+          style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)' }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Dashed "+ ..." control drawn on the card itself. `nodrag` keeps a click from starting a canvas drag.
+function BlockAddButton({ label, onClick, align = 'stretch', pill = false }) {
+  return (
+    <button
+      type="button"
+      className="nodrag"
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, alignSelf: align,
+        padding: pill ? '5px 14px' : '8px 12px', borderRadius: pill ? 999 : 12, background: '#f8fafc',
+        border: '1.5px dashed #cbd5e1', color: '#334155', fontSize: pill ? 11.5 : 11.5, fontWeight: 700, cursor: 'pointer',
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#64748b'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#cbd5e1'; }}
+    >
+      <Plus size={13} /> {label}
+    </button>
+  );
+}
+
+// One "Add Element" button on the card; its menu floats in a portal so neighbouring
+// cards can't cover it. groups: [[title, [type...], disabled]]
+function BlockAddElementMenu({ groups, onPick }) {
+  const [rect, setRect] = useState(null);
+  const triggerRef = useRef(null);
+  const menuRef = useRef(null);
+  const open = !!rect;
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = () => setRect(null);
+    const onDown = (e) => {
+      if (triggerRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
+      close();
+    };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const openUp = rect && rect.bottom + 330 > window.innerHeight && rect.top > 330;
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="nodrag"
+        onClick={(e) => {
+          e.stopPropagation();
+          setRect(open ? null : triggerRef.current.getBoundingClientRect());
+        }}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '9px 12px', borderRadius: 12,
+          background: '#f8fafc', border: '1.5px dashed #cbd5e1', color: '#334155', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+        }}
+      >
+        <Plus size={14} /> Add Element
+      </button>
+      {open && createPortal(
+        <div
+          ref={menuRef}
+          className="nodrag nopan"
+          style={{
+            position: 'fixed', left: rect.left, width: Math.max(rect.width, 220), zIndex: 10001,
+            ...(openUp ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 }),
+            maxHeight: 320, overflowY: 'auto', background: '#ffffff', border: '1px solid #e2e8f0',
+            borderRadius: 10, boxShadow: '0 10px 30px rgba(0,0,0,0.18)', padding: 6,
+          }}
+        >
+          {groups.map(([title, types, disabled]) => (
+            <div key={title}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.4, padding: '6px 8px 2px' }}>{title}</div>
+              {disabled && <div style={{ fontSize: 11, color: '#94a3b8', padding: '2px 8px 4px' }}>This block already ends with one.</div>}
+              {types.map((type) => {
+                const Icon = NODE_ICONS[type];
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => { setRect(null); onPick(type); }}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 8px', background: 'none', border: 'none', borderRadius: 6, cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.45 : 1, fontSize: 12.5, color: '#1e293b', textAlign: 'left' }}
+                    onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.background = '#f1f5f9'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
+                  >
+                    <Icon size={13} style={{ color: NODE_COLORS[type] }} /> {BLOCK_ITEM_LABELS[type]}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
+function BlockItemView({ item, connectedHandles, onAddButton, onAddReply, attachedToPrev = false }) {
+  const d = item.data || {};
+  const color = NODE_COLORS[item.type];
+  const bubble = { padding: '12px 14px', borderRadius: 14, background: '#f8fafc', border: '1px solid #f1f5f9', fontSize: 12, color: '#334155', lineHeight: 1.4, whiteSpace: 'pre-wrap', wordBreak: 'break-word' };
+  const hint = { color: '#94a3b8' };
+  const emptyMedia = (Icon, label) => (
+    <div style={{ padding: '24px 12px', borderRadius: 12, background: '#f8fafc', border: '1.5px dashed #cbd5e1', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, color: '#94a3b8' }}>
+      <Icon size={24} style={{ color, opacity: 0.6 }} />
+      <span style={{ fontSize: 11, fontWeight: 600 }}>{label}</span>
+    </div>
+  );
+  const caption = (text) => (text ? <div style={{ ...bubble, padding: '8px 12px', marginBottom: 8 }}>{text}</div> : null);
+  const actionOf = (b) => (typeof b === 'string' ? 'flow' : (b?.action || 'flow'));
+  const titleOf = (b, fallback) => (typeof b === 'string' ? b : (b?.title || fallback));
+  const ownIconOf = (a) => (a === 'phone' ? Phone : a === 'url' ? ExternalLink : a === 'goToFlow' ? Workflow : null);
+
+  const canAddButton = !!onAddButton && ['buttons', 'text', 'image'].includes(item.type);
+  const buttonRows = (list) => ((list.length > 0 || canAddButton) && (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+      {list.map((b, i) => (
+        <BlockButtonRow
+          key={i}
+          title={titleOf(b, `Button ${i + 1}`)}
+          handleId={`${item.id}:btn-${i}`}
+          connected={connectedHandles.has(`${item.id}:btn-${i}`)}
+          icon={ownIconOf(actionOf(b))}
+          seq={!!(typeof b === 'object' && b?.sequenceId)}
+        />
+      ))}
+      {canAddButton && list.length < 3 && <BlockAddButton label="Add Button" onClick={() => onAddButton(item.id)} />}
+    </div>
+  ));
+
+  const cardImage = (url, height) => (url ? (
+    <div style={{ width: '100%', height, borderRadius: 8, background: `url(${blockMediaSrc(url)}) center/cover no-repeat #f8fafc` }} />
+  ) : (
+    <div style={{ width: '100%', height, borderRadius: 8, background: '#f8fafc', border: '1px dashed #cbd5e1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <Image size={18} style={{ opacity: 0.4, color: '#64748b' }} />
+    </div>
+  ));
+
+  switch (item.type) {
+    case 'text':
+      return <div style={bubble}>{(d.message || '').trim() || <span style={hint}>Enter message...</span>}</div>;
+
+    case 'delay': {
+      const secs = Number(d.seconds) || (d.delay ? (Number(d.delay.hours) || 0) * 3600 + (Number(d.delay.minutes) || 0) * 60 + (Number(d.delay.seconds) || 0) : 0);
+      return <DelayPill data={{ delay: { seconds: secs || 0 } }} always style={{ marginBottom: 0 }} />;
+    }
+
+    case 'image': {
+      const src = blockMediaSrc(d.imageUrl || d.mediaUrl);
+      return (
+        <div>
+          {caption(d.caption || d.message)}
+          {src ? (
+            <img draggable={false} onContextMenu={(e) => e.preventDefault()} src={src} alt="Preview" style={{ width: '100%', maxHeight: 150, objectFit: 'cover', borderRadius: 12, border: '1px solid #e2e8f0', display: 'block' }} />
+          ) : emptyMedia(Image, 'Image')}
+          {buttonRows(d.buttons || [])}
+        </div>
+      );
+    }
+
+    case 'video': {
+      const src = blockMediaSrc(d.mediaUrl || d.videoUrl);
+      return (
+        <div>
+          {caption(d.caption)}
+          {src ? (
+            <video controlsList="nodownload noremoteplayback" disablePictureInPicture onContextMenu={(e) => e.preventDefault()} src={src} controls muted style={{ width: '100%', maxHeight: 160, borderRadius: 12, background: '#000', display: 'block' }} />
+          ) : emptyMedia(Video, 'Video')}
+          {buttonRows(d.buttons || [])}
+        </div>
+      );
+    }
+
+    case 'audio': {
+      const src = blockMediaSrc(d.audioUrl || d.mediaUrl);
+      return (
+        <div>
+          <div style={{ padding: '14px 12px', borderRadius: 12, background: '#f8fafc', border: '1.5px dashed #cbd5e1', display: 'flex', alignItems: 'center', gap: 10, color: '#94a3b8' }}>
+            <Music size={22} style={{ color, flexShrink: 0 }} />
+            <span style={{ fontSize: 11.5, fontWeight: 700, color: src ? '#334155' : '#94a3b8' }}>{src ? 'Audio Attached' : 'Audio Clip'}</span>
+          </div>
+          {src && <audio controlsList="nodownload noremoteplayback" onContextMenu={(e) => e.preventDefault()} src={src} controls style={{ width: '100%', height: 32, marginTop: 6, display: 'block' }} />}
+        </div>
+      );
+    }
+
+    case 'file':
+      return (
+        <div style={{ padding: '16px 12px', borderRadius: 12, background: '#f8fafc', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 10, color: '#334155' }}>
+          <FileText size={22} style={{ color, flexShrink: 0 }} />
+          <span style={{ fontSize: 11.5, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.filename || 'Document'}</span>
+        </div>
+      );
+
+    case 'card':
+      return (
+        <div style={{ padding: 10, borderRadius: 14, background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+          {cardImage(d.imageUrl, 90)}
+          <div style={{ fontWeight: 700, fontSize: 12.5, color: '#1e293b', marginTop: 8 }}>
+            {d.title || <span style={{ ...hint, fontWeight: 500, fontStyle: 'italic' }}>No title</span>}
+          </div>
+          {d.subtitle && <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{d.subtitle}</div>}
+          {buttonRows(d.buttons || [])}
+        </div>
+      );
+
+    case 'carousel': {
+      const cards = d.cards || [];
+      return (
+        <div>
+          <div style={{ display: 'flex', gap: 8, overflow: 'hidden' }}>
+            {cards.slice(0, 3).map((c, i) => (
+              <div key={i} style={{ flex: '0 0 116px', padding: 8, borderRadius: 12, background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+                {cardImage(c.imageUrl, 62)}
+                <div style={{ fontWeight: 700, fontSize: 11.5, color: '#1e293b', marginTop: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title || `Card ${i + 1}`}</div>
+                {c.subtitle && <div style={{ fontSize: 10, color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.subtitle}</div>}
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 10.5, fontWeight: 600, color: '#94a3b8', marginTop: 6 }}>
+            {cards.length} card{cards.length === 1 ? '' : 's'}{cards.length > 3 ? ` · +${cards.length - 3} more` : ''}
+          </div>
+        </div>
+      );
+    }
+
+    case 'buttons':
+      return (
+        <div>
+          <div style={bubble}>{(d.message || '').trim() || <span style={hint}>Enter message...</span>}</div>
+          {buttonRows(d.buttons || [])}
+        </div>
+      );
+
+    case 'interactive': {
+      const headerType = d.headerType && d.headerType !== 'none' ? d.headerType : null;
+      const headerSrc = blockMediaSrc(d.headerMediaUrl);
+      return (
+        <div>
+          <div style={{ ...bubble, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {headerType && (
+              <div style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: 6 }}>
+                {headerType === 'text' ? (
+                  <span style={{ fontSize: 12, fontWeight: 600, color: '#0f172a' }}>{d.headerText || 'Header Text'}</span>
+                ) : headerType === 'image' && headerSrc ? (
+                  <img draggable={false} onContextMenu={(e) => e.preventDefault()} src={headerSrc} alt="Header" style={{ width: '100%', maxHeight: 110, objectFit: 'cover', borderRadius: 8, display: 'block' }} />
+                ) : headerType === 'video' && headerSrc ? (
+                  <video controlsList="nodownload noremoteplayback" disablePictureInPicture onContextMenu={(e) => e.preventDefault()} src={headerSrc} controls muted style={{ width: '100%', maxHeight: 110, borderRadius: 8, background: '#000', display: 'block' }} />
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#94a3b8', fontSize: 11, fontWeight: 600 }}>
+                    {headerType === 'image' && <Image size={14} />}
+                    {headerType === 'video' && <Video size={14} />}
+                    {headerType === 'document' && <FileText size={14} />}
+                    <span style={{ textTransform: 'capitalize' }}>{headerSrc ? `${headerType} attached` : `Header ${headerType} — not uploaded yet`}</span>
+                  </div>
+                )}
+              </div>
+            )}
+            <div style={{ minHeight: 24, color: d.message ? '#334155' : '#94a3b8' }}>{d.message || 'Enter message body...'}</div>
+            {d.footerText && <div style={{ fontSize: 10.5, color: '#94a3b8', fontStyle: 'italic', borderTop: '1px solid #f1f5f9', paddingTop: 4 }}>{d.footerText}</div>}
+          </div>
+          {buttonRows(d.buttons || [])}
+        </div>
+      );
+    }
+
+    case 'quickReplies':
+      return (
+        <div>
+          {!attachedToPrev && <div style={bubble}>{(d.message || '').trim() || <span style={hint}>Enter message...</span>}</div>}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, marginTop: 8 }}>
+            {(d.replies || []).map((r, i) => (
+              <div key={i} style={{ position: 'relative', display: 'flex', alignItems: 'center', padding: '6px 34px 6px 14px', borderRadius: 999, background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)', fontSize: 12, fontWeight: 600, color: '#1e293b', maxWidth: '100%' }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{titleOf(r, `Reply ${i + 1}`)}</span>
+                <Handle
+                  type="source"
+                  position={Position.Right}
+                  id={`${item.id}:qr-${i}`}
+                  className={`btn-handle${connectedHandles.has(`${item.id}:qr-${i}`) ? ' connected' : ''}`}
+                  style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)' }}
+                />
+              </div>
+            ))}
+            {onAddReply && (d.replies || []).length < 10 && <BlockAddButton label="Quick reply" pill align="flex-end" onClick={() => onAddReply(item.id)} />}
+          </div>
+        </div>
+      );
+
+    case 'listMenu': {
+      let gi = -1;
+      return (
+        <div>
+          {normalizeListMenuData(d).map((list, li) => (
+            <div key={li} style={{ marginTop: li > 0 ? 8 : 0 }}>
+              <div style={{ fontWeight: 700, fontSize: 11, color: '#1e293b', marginBottom: 4 }}>{list.title || `Menu ${li + 1}`}</div>
+              {list.sections.map((section, si) => (
+                <div key={si}>
+                  {(section.title || '').trim() && (
+                    <div style={{ padding: '3px 0 2px', fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.3 }}>{section.title}</div>
+                  )}
+                  <div className="fb-node-btn-list" style={{ padding: 0, marginTop: 2 }}>
+                    {section.items.map((it, ii) => {
+                      gi += 1;
+                      const own = it.action === 'goToFlow';
+                      return (
+                        <div key={ii} className="fb-node-btn-chip">
+                          <span style={{ fontSize: 11, fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.title || `Option ${ii + 1}`}</span>
+                          {it.sequenceId && <SeqBadge inline />}
+                          {own ? (
+                            <Workflow size={12} style={{ flexShrink: 0, color: '#334155' }} />
+                          ) : (
+                            <>
+                              <ChevronRight size={12} style={{ opacity: 0.6, flexShrink: 0 }} />
+                              <Handle
+                                type="source"
+                                position={Position.Right}
+                                id={`${item.id}:item-${gi}`}
+                                className={`btn-handle${connectedHandles.has(`${item.id}:item-${gi}`) ? ' connected' : ''}`}
+                                style={{ top: '50%', right: -7, transform: 'translateY(-50%)', position: 'absolute' }}
+                              />
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    default:
+      return null;
+  }
+}
+
+function MessageBlockNode({ id, data, selected }) {
+  const items = Array.isArray(data.items) ? data.items : [];
+  const connectedHandles = useConnectedHandles(id);
+  const { currentPlatform, onUpdateNodeData } = useContext(FlowNodeActionsContext);
+  const validationError = data?._validationError;
+
+  const setItems = (next) => onUpdateNodeData(id, { ...data, items: next });
+  const patchItem = (itemId, fn) => setItems(items.map((it) => (it.id === itemId ? { ...it, data: fn(it.data || {}) } : it)));
+  const addButton = (itemId) => patchItem(itemId, (d) => {
+    const list = d.buttons || [];
+    return { ...d, buttons: [...list, { title: `Button ${list.length + 1}`, action: 'flow', url: '', phone: '', reply_text: '' }] };
+  });
+  const addReply = (itemId) => patchItem(itemId, (d) => {
+    const list = d.replies || [];
+    return { ...d, replies: [...list, `Reply ${list.length + 1}`] };
+  });
+  const addElement = (type) => {
+    const item = newBlockItem(type);
+    if (type === 'quickReplies') item.data = { ...item.data, replies: ['Reply 1'] };
+    const endIdx = items.findIndex((i) => BLOCK_ENDING_TYPES.includes(i.type));
+    setItems(BLOCK_ENDING_TYPES.includes(type) || endIdx < 0
+      ? [...items, item]
+      : [...items.slice(0, endIdx), item, ...items.slice(endIdx)]);
+  };
+  const hasEnding = items.some((i) => BLOCK_ENDING_TYPES.includes(i.type));
+  const addGroups = [
+    ['Content', BLOCK_CONTENT_TYPES.filter((t) => isNodeSupportedOnPlatform(t, currentPlatform)), false],
+    ['Wait for a reply (closes the block)', BLOCK_ENDING_TYPES.filter((t) => isNodeSupportedOnPlatform(t, currentPlatform)), hasEnding],
+  ].filter(([, types]) => types.length > 0);
+  const platformLabel = getPlatformMeta(currentPlatform).label || '';
+  return (
+    <div
+      className={`fb-node${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
+      style={{
+        borderRadius: 20, background: '#ffffff', width: 320, minWidth: 320, maxWidth: 320,
+        border: validationError ? '1.5px solid #ef4444' : selected ? `1.5px solid ${NODE_COLORS.messageBlock}` : '1.5px solid #e2e8f0',
+        boxShadow: selected ? `0 0 0 3px ${NODE_COLORS.messageBlock}26, 0 6px 24px rgba(0,0,0,0.10)` : '0 4px 20px rgba(0,0,0,0.06)',
+        overflow: 'visible', position: 'relative', padding: '14px 14px 10px 14px',
+      }}
+    >
+      <NodeHoverActions nodeId={id} nodeType="messageBlock" />
+      <DelayPill data={data} />
+      {validationError && (
+        <div className="fb-node-warning" style={{ background: '#ef4444' }} title={`Missing Data: ${validationError}`}>
+          <AlertTriangle size={12} color="#fff" />
+        </div>
+      )}
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 24 }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <PlatformIcon platform={currentPlatform} size={22} />
+        <div style={{ minWidth: 0, lineHeight: 1.2 }}>
+          {platformLabel && <div style={{ fontSize: 10, color: '#94a3b8', fontWeight: 600 }}>{platformLabel}</div>}
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>{data.label || 'Send Message'}</div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {items.length === 0 ? (
+          <div style={{ padding: '18px 10px', borderRadius: 12, border: '1.5px dashed #cbd5e1', background: '#f8fafc', color: '#94a3b8', fontSize: 11.5, fontWeight: 600, textAlign: 'center' }}>
+            Empty — click to add elements
+          </div>
+        ) : items.map((item, idx) => (
+          <BlockItemView
+            key={item.id}
+            item={item}
+            connectedHandles={connectedHandles}
+            onAddButton={addButton}
+            onAddReply={addReply}
+            attachedToPrev={item.type === 'quickReplies' && !(item.data?.message || '').trim() && isPlainBlockText(items[idx - 1])}
+          />
+        ))}
+        <BlockAddElementMenu groups={addGroups} onPick={addElement} />
+      </div>
+      <div className="fb-next-step-row" style={{ marginTop: 8, marginRight: -14, marginLeft: -14, paddingLeft: 14 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
+        <Handle type="source" position={Position.Right} id="next-step" className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`} />
+      </div>
+    </div>
+  );
+}
+
+/* ── Actions Node ─────────────────────────────────────────────── */
+function ActionsNode({ id, data, selected }) {
+  const list = Array.isArray(data.actions) ? data.actions : [];
+  return (
+    <NodeWrapper id={id} color={NODE_COLORS.actions} label="Actions" icon={Zap} selected={selected} data={data} type="actions" headerBg="#fdebb0" iconColor="#d9480f">
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
+      <div className="fb-node-body" style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: 96, padding: '14px 14px' }}>
+        {list.length === 0 ? (
+          <div style={{
+            padding: '22px 10px', borderRadius: 8, border: '1.5px dashed #cbd5e1', background: '#f8fafc',
+            color: '#94a3b8', fontSize: 11.5, fontWeight: 600, textAlign: 'center',
+          }}>
+            No actions yet — click to add
+          </div>
+        ) : list.map((a) => {
+          const t = ACTION_TYPES[a.type];
+          if (!t) return null;
+          const Icon = t.icon;
+          const detail = describeAction(a);
+          return (
+            <div key={a.id} style={{
+              display: 'flex', alignItems: 'center', gap: 8, padding: '9px 10px', borderRadius: 8,
+              background: '#f8fafc', border: '1px solid #e2e8f0',
+            }}>
+              <Icon size={13} style={{ color: '#475569', flexShrink: 0 }} />
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: '#1e293b' }}>{t.label}</div>
+                <div style={{ fontSize: 10.5, color: detail ? '#64748b' : '#ef4444', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {detail || 'Not set'}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </NodeWrapper>
+  );
+}
+
+/* ── Start Automation Node ────────────────────────────────────── */
+// Hands the contact over to another existing flow, so nothing continues from
+// this card (hideNextStep) — same reasoning as Start/Stop Sequence above.
+function StartAutomationNode({ id, data, selected }) {
+  const { flowsList, currentFlowId, currentPlatform, onUpdateNodeData } = useContext(FlowNodeActionsContext);
+  const [open, setOpen] = useState(false);
+  const target = flowsList.find((f) => f.id === data.flowId);
+  const name = target?.name || data.flowName;
+
+  return (
+    <NodeWrapper id={id} color={NODE_COLORS.startAutomation} label="Start Automation" icon={Workflow} selected={selected} data={data} type="startAutomation" hideNextStep headerBg="#e7f7a8" iconColor="#4d7c0f">
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
+      <div className="fb-node-body" style={{ padding: '14px 14px' }}>
+        <button
+          type="button"
+          className="nodrag"
+          onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+          style={{
+            width: '100%', minHeight: 64, display: 'flex', alignItems: 'center', gap: 8, padding: '16px 12px', borderRadius: 8, cursor: 'pointer',
+            border: name ? '1px solid #e2e8f0' : '1.5px dashed #cbd5e1', background: name ? '#f8fafc' : '#ffffff', textAlign: 'left',
+          }}
+        >
+          <Workflow size={14} style={{ color: name ? '#475569' : '#94a3b8', flexShrink: 0 }} />
+          <span style={{
+            fontSize: 12, fontWeight: 700, color: name ? '#1e293b' : '#94a3b8', flex: 1, minWidth: 0,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            {name || 'Choose an automation'}
+          </span>
+          <ChevronRight size={14} style={{ color: '#94a3b8', flexShrink: 0 }} />
+        </button>
+      </div>
+      {open && (
+        <AutomationPickerModal
+          flows={flowsList}
+          currentFlowId={currentFlowId}
+          platform={currentPlatform}
+          selectedId={data.flowId}
+          onClose={() => setOpen(false)}
+          onSelect={(f) => {
+            onUpdateNodeData(id, { ...data, flowId: f.id, flowName: f.name });
+            setOpen(false);
+          }}
+        />
+      )}
+    </NodeWrapper>
+  );
+}
+
 /* ── Final Answer Node (only used inside a User Input Flow) ────── */
 function FinalAnswerNode({ id, data, selected }) {
   return (
@@ -5141,7 +6013,7 @@ function RunUserInputFlowNode({ id, data, selected }) {
   // separate reusable form, not a one-line message, so it needs room to show
   // which one is selected at a glance rather than just an id/name in small type.
   return (
-    <NodeWrapper id={id} color={NODE_COLORS.runUserInputFlow} label="Run User Input Flow" icon={ClipboardList} selected={selected} data={data} type="runUserInputFlow" width={300}>
+    <NodeWrapper id={id} color={NODE_COLORS.runUserInputFlow} label="Run User Input Flow" icon={ClipboardList} selected={selected} data={data} type="runUserInputFlow">
       <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
       <div className="fb-node-body" style={{ padding: '10px 12px' }}>
         {data.userInputFlowId ? (
@@ -5235,7 +6107,7 @@ function ImageUploadField({ label = 'Image', value, onChange, placeholder = 'htt
       {/* Image Preview Thumbnail if value exists */}
       {value ? (
         <div style={{ position: 'relative', marginBottom: 8, borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)' }}>
-          <img
+          <img draggable={false} onContextMenu={(e) => e.preventDefault()}
             src={fullUrl}
             alt="Preview"
             style={{ width: '100%', maxHeight: 130, objectFit: 'cover', display: 'block' }}
@@ -5321,9 +6193,9 @@ function MediaUploadField({ label = 'Media File', value, onChange, accept = '*/*
 
       {/* Preview once uploaded — video/audio players, same idea as the image thumbnail above */}
       {value && isVideo ? (
-        <video src={fullUrl} controls style={{ width: '100%', maxHeight: 160, borderRadius: 8, background: '#000', marginBottom: 8, display: 'block' }} />
+        <video controlsList="nodownload noremoteplayback" disablePictureInPicture onContextMenu={(e) => e.preventDefault()} src={fullUrl} controls style={{ width: '100%', maxHeight: 160, borderRadius: 8, background: '#000', marginBottom: 8, display: 'block' }} />
       ) : value && isAudio ? (
-        <audio src={fullUrl} controls style={{ width: '100%', marginBottom: 8, display: 'block' }} />
+        <audio controlsList="nodownload noremoteplayback" onContextMenu={(e) => e.preventDefault()} src={fullUrl} controls style={{ width: '100%', marginBottom: 8, display: 'block' }} />
       ) : null}
 
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -5405,7 +6277,8 @@ function StartNodeProperties({ data = {}, onUpdateNode, sequences = [], onSequen
         triggers: nextTriggers,
       });
     }
-  }, [data.triggers, data._addTriggerNow]);
+    // Intentionally keyed on the one-shot "add a trigger now" request only — re-running on every data change would keep adding triggers.
+  }, [data.triggers, data._addTriggerNow]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const syncTriggers = (newTriggers) => {
     setTriggers(newTriggers);
@@ -5745,6 +6618,7 @@ function StartNodeProperties({ data = {}, onUpdateNode, sequences = [], onSequen
 // of Start — one to the flow's own first step (untouched), one to this
 // Sequence — rather than inserting a step into the conversation path itself.
 function StartNodeSequenceAttach({ sequences, onSequenceCreated, platform, onAttachSequence, attachedSequenceNode, onSelectSequenceNode }) {
+  const { currentIntegrationId } = useContext(FlowNodeActionsContext);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [saving, setSaving] = useState(false);
@@ -5755,7 +6629,7 @@ function StartNodeSequenceAttach({ sequences, onSequenceCreated, platform, onAtt
     setSaving(true);
     setError('');
     try {
-      const res = await sequenceAPI.create({ name: newName.trim(), platform });
+      const res = await sequenceAPI.create({ name: newName.trim(), platform, integrationId: currentIntegrationId });
       const created = res.data?.sequence;
       onSequenceCreated?.(created);
       onAttachSequence(created.id, created.name);
@@ -5856,6 +6730,7 @@ function ButtonActionEditor({
                        // just with a Description field and (on WhatsApp) a
                        // narrower action set — see the isWA exclusion below.
 }) {
+  const { currentIntegrationId } = useContext(FlowNodeActionsContext);
   const p = (platform || 'WEBCHAT').toUpperCase();
   const isItem = variant === 'item';
   const [menuOpen, setMenuOpen] = useState(false);
@@ -5870,8 +6745,6 @@ function ButtonActionEditor({
 
   const isFB = p === 'FACEBOOK';
   const isWA = p === 'WHATSAPP';
-  const isTG = p === 'TELEGRAM';
-  const isIG = p === 'INSTAGRAM';
 
   // Same-platform flows only — jumping into a flow built for a different
   // channel would just fail to send there. Excludes the flow being edited:
@@ -5915,7 +6788,7 @@ function ButtonActionEditor({
     if (!newSeqName.trim() || savingSeq) return;
     setSavingSeq(true);
     try {
-      const res = await sequenceAPI.create({ name: newSeqName.trim(), platform: p });
+      const res = await sequenceAPI.create({ name: newSeqName.trim(), platform: p, integrationId: currentIntegrationId });
       const seq = res.data?.sequence;
       if (seq) {
         onSequenceCreated?.(seq);
@@ -6176,20 +7049,16 @@ function ButtonActionEditor({
                   <label style={{ fontSize: 10, fontWeight: 700, color: '#475569' }}>
                     Flow to open
                   </label>
-                  <select
-                    value={btnObj.flowId || ''}
-                    onChange={(e) => {
-                      const fid = e.target.value ? Number(e.target.value) : null;
+                  <DropdownSelect
+                    placeholder="Select a flow…"
+                    options={availableFlows.map((f) => ({ value: f.id, label: f.name }))}
+                    value={btnObj.flowId || null}
+                    emptyText={`No other ${p} flows yet.`}
+                    onChange={(fid) => {
                       const target = availableFlows.find((f) => f.id === fid);
                       onChange({ ...btnObj, flowId: fid, flowName: target?.name || '' });
                     }}
-                    style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, background: '#ffffff' }}
-                  >
-                    <option value="">Select a flow…</option>
-                    {availableFlows.map((f) => (
-                      <option key={f.id} value={f.id}>{f.name}</option>
-                    ))}
-                  </select>
+                  />
                   {availableFlows.length === 0 && (
                     <span style={{ fontSize: 9.5, color: '#94a3b8', fontStyle: 'italic', marginTop: 2 }}>
                       No other {p} flows yet — create one first, then come back and pick it here.
@@ -6422,6 +7291,7 @@ function NewCustomFieldInline({ fieldType, options, onCreated, onCancel }) {
 
 /* ── "Run User Input Flow" node config: pick an existing one or create new ── */
 function RunUserInputFlowFields({ data, updateFields, userInputFlows, onCreated, platform, onDrillIn }) {
+  const { currentIntegrationId } = useContext(FlowNodeActionsContext);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [saving, setSaving] = useState(false);
@@ -6438,6 +7308,7 @@ function RunUserInputFlowFields({ data, updateFields, userInputFlows, onCreated,
       const res = await userInputFlowAPI.create({
         name: newName.trim(),
         platform,
+        integrationId: currentIntegrationId,
         nodesJson: [],
         edgesJson: [],
       });
@@ -6549,6 +7420,7 @@ function RunUserInputFlowFields({ data, updateFields, userInputFlows, onCreated,
    scoped-down triggering design. `stop` distinguishes the two node types;
    both just pick a sequenceId. */
 function SequenceActionFields({ data, updateFields, sequences, onCreated, platform, stop = false }) {
+  const { currentIntegrationId } = useContext(FlowNodeActionsContext);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [saving, setSaving] = useState(false);
@@ -6559,7 +7431,7 @@ function SequenceActionFields({ data, updateFields, sequences, onCreated, platfo
     setSaving(true);
     setError('');
     try {
-      const res = await sequenceAPI.create({ name: newName.trim(), platform });
+      const res = await sequenceAPI.create({ name: newName.trim(), platform, integrationId: currentIntegrationId });
       const created = res.data?.sequence;
       onCreated?.(created);
       updateFields({ sequenceId: created.id, sequenceName: created.name });
@@ -6633,6 +7505,351 @@ function SequenceActionFields({ data, updateFields, sequences, onCreated, platfo
   );
 }
 
+/* ── Message Block properties ──────────────────────────────────── */
+function MessageBlockFields({ data, updateFields, platform, renderItemEditor }) {
+  const items = Array.isArray(data.items) ? data.items : [];
+  const [openId, setOpenId] = useState(data._errorItemId || items[0]?.id || null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  // Save / validation pointed at one element → open exactly that one.
+  useEffect(() => {
+    if (data._errorItemId) setOpenId(data._errorItemId);
+  }, [data._errorItemId]);
+  const hasEnding = items.some((i) => BLOCK_ENDING_TYPES.includes(i.type));
+  const setItems = (next) => updateFields({ items: next });
+
+  const add = (type) => {
+    const item = newBlockItem(type);
+    const endIdx = items.findIndex((i) => BLOCK_ENDING_TYPES.includes(i.type));
+    // Content goes before the ending element; the ending element always closes the block.
+    const next = BLOCK_ENDING_TYPES.includes(type) || endIdx < 0
+      ? [...items, item]
+      : [...items.slice(0, endIdx), item, ...items.slice(endIdx)];
+    setItems(next);
+    setOpenId(item.id);
+    setMenuOpen(false);
+  };
+
+  const move = (idx, dir) => {
+    const j = idx + dir;
+    if (j < 0 || j >= items.length) return;
+    if (BLOCK_ENDING_TYPES.includes(items[idx].type) || BLOCK_ENDING_TYPES.includes(items[j].type)) return;
+    const next = [...items];
+    [next[idx], next[j]] = [next[j], next[idx]];
+    setItems(next);
+  };
+
+  const groups = [
+    ['Content', BLOCK_CONTENT_TYPES, false],
+    ['Wait for a reply (closes the block)', BLOCK_ENDING_TYPES, hasEnding],
+  ];
+
+  return (
+    <div className="fb-field">
+      <label>Elements</label>
+      <span className="fb-hint">Sent one after another, in this order. Buttons can sit on any text or image. Quick replies and lists wait for the contact&apos;s reply, so they always come last.</span>
+      {items.map((item, idx) => {
+        const Icon = NODE_ICONS[item.type];
+        const open = openId === item.id;
+        const ending = BLOCK_ENDING_TYPES.includes(item.type);
+        const iconBtn = { background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', display: 'flex', padding: 2 };
+        return (
+          <div key={item.id} style={{ border: '1px solid #e2e8f0', borderRadius: 10, marginTop: 8, background: '#ffffff' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', cursor: 'pointer' }} onClick={() => setOpenId(open ? null : item.id)}>
+              <Icon size={14} style={{ color: NODE_COLORS[item.type], flexShrink: 0 }} />
+              <span style={{ flex: 1, fontSize: 12, fontWeight: 700, color: '#1e293b' }}>{BLOCK_ITEM_LABELS[item.type]}</span>
+              {!ending && (
+                <>
+                  <button type="button" title="Move up" style={iconBtn} onClick={(e) => { e.stopPropagation(); move(idx, -1); }}><ChevronRight size={14} style={{ transform: 'rotate(-90deg)' }} /></button>
+                  <button type="button" title="Move down" style={iconBtn} onClick={(e) => { e.stopPropagation(); move(idx, 1); }}><ChevronRight size={14} style={{ transform: 'rotate(90deg)' }} /></button>
+                </>
+              )}
+              <button type="button" title="Remove element" style={iconBtn} onClick={(e) => { e.stopPropagation(); setItems(items.filter((x) => x.id !== item.id)); }}><Trash2 size={14} /></button>
+            </div>
+            {open && (
+              <div style={{ padding: '4px 10px 10px', borderTop: '1px solid #f1f5f9' }}>
+                {item.type === 'quickReplies' && (
+                  <span className="fb-hint" style={{ display: 'block', margin: '6px 0' }}>Leave the message empty to attach these replies to the text just above.</span>
+                )}
+                {renderItemEditor(item, (d) => setItems(items.map((x) => (x.id === item.id ? { ...x, data: d } : x))))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <div style={{ position: 'relative', marginTop: 8 }}>
+        <button type="button" className="fb-add-btn" onClick={() => setMenuOpen((v) => !v)}>
+          <Plus size={13} /> Add Element
+        </button>
+        {menuOpen && (
+          <div style={{ position: 'absolute', left: 0, right: 0, top: '100%', marginTop: 4, zIndex: 20, background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 10, boxShadow: '0 10px 30px rgba(0,0,0,0.15)', padding: 6 }}>
+            {groups.map(([title, types, disabled]) => {
+              const shown = types.filter((t) => isNodeSupportedOnPlatform(t, platform));
+              if (shown.length === 0) return null;
+              return (
+                <div key={title}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.4, padding: '6px 8px 2px' }}>{title}</div>
+                  {disabled && <div style={{ fontSize: 11, color: '#94a3b8', padding: '2px 8px 4px' }}>This block already ends with one.</div>}
+                  {shown.map((type) => {
+                    const Icon = NODE_ICONS[type];
+                    return (
+                      <button key={type} type="button" disabled={disabled} onClick={() => add(type)}
+                        style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 8px', background: 'none', border: 'none', borderRadius: 6, cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.45 : 1, fontSize: 12.5, color: '#1e293b', textAlign: 'left' }}
+                        onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.background = '#f1f5f9'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}>
+                        <Icon size={13} style={{ color: NODE_COLORS[type] }} /> {BLOCK_ITEM_LABELS[type]}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Start Automation properties ─────────────────────────────── */
+function StartAutomationFields({ data, updateFields, flows, currentFlowId, platform }) {
+  const [open, setOpen] = useState(false);
+  const target = flows.find((f) => f.id === data.flowId);
+  const name = target?.name || data.flowName;
+  return (
+    <div className="fb-field">
+      <label>Automation</label>
+      <button type="button" className="fb-add-btn" style={{ justifyContent: 'space-between', width: '100%' }} onClick={() => setOpen(true)}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name || 'Choose an automation...'}</span>
+        <ChevronRight size={14} />
+      </button>
+      <span className="fb-hint">
+        Ends this flow and starts the chosen one for this contact, from its beginning. Custom field values already collected carry over.
+      </span>
+      {open && (
+        <AutomationPickerModal
+          flows={flows}
+          currentFlowId={currentFlowId}
+          platform={platform}
+          selectedId={data.flowId}
+          onClose={() => setOpen(false)}
+          onSelect={(f) => { updateFields({ flowId: f.id, flowName: f.name }); setOpen(false); }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ── Actions properties (ManyChat-style action list) ─────────── */
+function ActionsFields({ data, updateFields, sequences, customFields }) {
+  const labels = useAvailableLabels();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const list = Array.isArray(data.actions) ? data.actions : [];
+  const setList = (next) => updateFields({ actions: next });
+  const patch = (aid, changes) => setList(list.map((a) => (a.id === aid ? { ...a, ...changes } : a)));
+
+  const addAction = (type) => {
+    setList([...list, { id: `act_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, type }]);
+    setMenuOpen(false);
+  };
+
+  const groups = Object.entries(ACTION_TYPES).reduce((acc, [type, t]) => {
+    (acc[t.group] = acc[t.group] || []).push([type, t]);
+    return acc;
+  }, {});
+
+  return (
+    <div className="fb-field">
+      <label>Actions</label>
+      {list.length === 0 && <span className="fb-hint">Runs silently when a contact reaches this step, then continues to the next one.</span>}
+      {list.map((a) => {
+        const t = ACTION_TYPES[a.type];
+        if (!t) return null;
+        const Icon = t.icon;
+        return (
+          <div key={a.id} style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: 10, marginBottom: 8, background: '#ffffff' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <Icon size={14} style={{ color: '#475569' }} />
+              <span style={{ flex: 1, fontSize: 12, fontWeight: 700, color: '#1e293b' }}>{t.label}</span>
+              <button type="button" title="Remove action" onClick={() => setList(list.filter((x) => x.id !== a.id))}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', display: 'flex', padding: 2 }}>
+                <Trash2 size={14} />
+              </button>
+            </div>
+            {t.target === 'label' && (
+              <select value={a.labelId || ''} onChange={(e) => {
+                const l = labels.find((x) => x.id === Number(e.target.value));
+                patch(a.id, { labelId: l?.id || null, labelName: l?.name || '' });
+              }}>
+                <option value="">Select a label...</option>
+                {labels.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+            )}
+            {t.target === 'sequence' && (
+              <select value={a.sequenceId || ''} onChange={(e) => {
+                const s = sequences.find((x) => x.id === Number(e.target.value));
+                patch(a.id, { sequenceId: s?.id || null, sequenceName: s?.name || '' });
+              }}>
+                <option value="">Select a Sequence...</option>
+                {sequences.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            )}
+            {t.target === 'field' && (
+              <>
+                <select value={a.fieldId || ''} onChange={(e) => {
+                  const f = customFields.find((x) => x.id === Number(e.target.value));
+                  patch(a.id, { fieldId: f?.id || null, fieldName: f?.name || '' });
+                }}>
+                  <option value="">Select a Custom Field...</option>
+                  {customFields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                </select>
+                {t.hasValue && (
+                  <input style={{ marginTop: 6 }} value={a.value ?? ''} onChange={(e) => patch(a.id, { value: e.target.value })}
+                    placeholder="Value (variables like {{name}} work)" />
+                )}
+              </>
+            )}
+          </div>
+        );
+      })}
+      <div style={{ position: 'relative' }}>
+        <button type="button" className="fb-add-btn" onClick={() => setMenuOpen((v) => !v)}>
+          <Plus size={13} /> Add Action
+        </button>
+        {menuOpen && (
+          <div style={{
+            position: 'absolute', left: 0, right: 0, top: '100%', marginTop: 4, zIndex: 20, background: '#ffffff',
+            border: '1px solid #e2e8f0', borderRadius: 10, boxShadow: '0 10px 30px rgba(0,0,0,0.15)', padding: 6,
+          }}>
+            {Object.entries(groups).map(([group, items]) => (
+              <div key={group}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.4, padding: '6px 8px 2px' }}>{group}</div>
+                {items.map(([type, t]) => (
+                  <button key={type} type="button" onClick={() => addAction(type)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 8px', background: 'none', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12.5, color: '#1e293b', textAlign: 'left' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = '#f1f5f9'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}>
+                    <t.icon size={13} style={{ color: '#64748b' }} /> {t.label}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Shared: custom dropdown (single or multi select) ───────────────────
+   Trigger button + floating menu, rendered in a portal so it isn't clipped by
+   a scrolling modal/panel. options: [{ value, label, dot? }]. Neutral
+   grey/black styling. multi: `value` is an array, menu stays open per click. */
+function DropdownSelect({ options, value, onChange, placeholder = 'Select...', multi = false, emptyText = 'Nothing to choose from yet.' }) {
+  const [open, setOpen] = useState(false);
+  const [rect, setRect] = useState(null);
+  const triggerRef = useRef(null);
+  const menuRef = useRef(null);
+
+  const openMenu = () => {
+    if (triggerRef.current) setRect(triggerRef.current.getBoundingClientRect());
+    setOpen((v) => !v);
+  };
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => {
+      if (triggerRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const selected = multi ? (Array.isArray(value) ? value : []) : (value == null || value === '' ? [] : [value]);
+  const chosen = options.filter((o) => selected.includes(o.value));
+  const pick = (v) => {
+    if (multi) {
+      onChange(selected.includes(v) ? selected.filter((x) => x !== v) : [...selected, v]);
+    } else {
+      onChange(v);
+      setOpen(false);
+    }
+  };
+  const openUp = rect && rect.bottom + 260 > window.innerHeight && rect.top > 260;
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={openMenu}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: 6, minHeight: 34, padding: '5px 10px',
+          background: '#ffffff', border: `1px solid ${open ? '#64748b' : '#cbd5e1'}`, borderRadius: 8,
+          cursor: 'pointer', textAlign: 'left', fontSize: 12.5, color: '#1e293b',
+        }}
+      >
+        <span style={{ flex: 1, minWidth: 0, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {chosen.length === 0 ? (
+            <span style={{ color: '#94a3b8' }}>{placeholder}</span>
+          ) : multi ? chosen.map((o) => (
+            <span key={o.value} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px', borderRadius: 999, background: '#f1f5f9', border: '1px solid #e2e8f0', fontSize: 11.5, fontWeight: 600 }}>
+              {o.dot && <span style={{ width: 7, height: 7, borderRadius: '50%', background: o.dot }} />}
+              {o.label}
+            </span>
+          )) : (
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{chosen[0].label}</span>
+          )}
+        </span>
+        <ChevronRight size={14} style={{ color: '#64748b', transform: `rotate(${open ? -90 : 90}deg)`, flexShrink: 0 }} />
+      </button>
+      {open && rect && createPortal(
+        <div
+          ref={menuRef}
+          className="nodrag nopan"
+          style={{
+            position: 'fixed', left: rect.left, width: rect.width, zIndex: 10001,
+            ...(openUp ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 }),
+            maxHeight: 250, overflowY: 'auto', background: '#ffffff', border: '1px solid #e2e8f0',
+            borderRadius: 10, boxShadow: '0 10px 30px rgba(0,0,0,0.18)', padding: 4,
+          }}
+        >
+          {options.length === 0 ? (
+            <div style={{ padding: '10px 10px', fontSize: 12, color: '#94a3b8' }}>{emptyText}</div>
+          ) : options.map((o) => {
+            const on = selected.includes(o.value);
+            return (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => pick(o.value)}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 8px', background: on ? '#f1f5f9' : 'none', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12.5, color: '#1e293b', textAlign: 'left' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = '#f1f5f9'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = on ? '#f1f5f9' : 'none'; }}
+              >
+                {multi && (
+                  <span style={{ width: 15, height: 15, borderRadius: 4, border: `1.5px solid ${on ? '#0f172a' : '#cbd5e1'}`, background: on ? '#0f172a' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    {on && <Check size={10} color="#fff" strokeWidth={3} />}
+                  </span>
+                )}
+                {o.dot && <span style={{ width: 8, height: 8, borderRadius: '50%', background: o.dot, flexShrink: 0 }} />}
+                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.label}</span>
+                {!multi && on && <Check size={14} color="#0f172a" />}
+              </button>
+            );
+          })}
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
 /* ── Shared: contact-label tag picker ("Tag with Label") ──────────────
    Same pill-toggle pattern UserInputFlowStartProperties already uses for its
    "Tag Subscriber With Label" field, pulled out so ButtonActionEditor
@@ -6652,29 +7869,19 @@ function LabelTagPicker({ labels, selectedIds, onToggle, hint }) {
   }
   return (
     <>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-        {labels.map((l) => {
-          const on = selectedIds.includes(l.id);
-          return (
-            <button
-              key={l.id}
-              type="button"
-              onClick={() => onToggle(l.id)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 5,
-                padding: '4px 10px', borderRadius: 999, cursor: 'pointer',
-                fontSize: 11, fontWeight: 700,
-                border: `1.5px solid ${on ? (l.color || '#4f46e5') : '#e2e8f0'}`,
-                background: on ? `${l.color || '#4f46e5'}18` : '#fff',
-                color: on ? (l.color || '#4f46e5') : '#64748b',
-              }}
-            >
-              <span style={{ width: 7, height: 7, borderRadius: '50%', background: l.color || '#4f46e5' }} />
-              {l.name}
-            </button>
-          );
-        })}
-      </div>
+      <DropdownSelect
+        multi
+        placeholder="Select labels..."
+        options={labels.map((l) => ({ value: l.id, label: l.name, dot: l.color || '#64748b' }))}
+        value={selectedIds}
+        onChange={(next) => {
+          // Callers expose a per-label toggle, so apply whichever id was added/removed.
+          const changed = next.length > selectedIds.length
+            ? next.find((id) => !selectedIds.includes(id))
+            : selectedIds.find((id) => !next.includes(id));
+          if (changed !== undefined) onToggle(changed);
+        }}
+      />
       {hint && <span className="fb-hint">{hint}</span>}
     </>
   );
@@ -6717,6 +7924,36 @@ function DelaySettings({ value, onChange }) {
 // Formats a {hours,minutes,seconds} delay as a short badge string, e.g. "1h 30m" —
 // omits zero units, returns null when there's nothing to show (used by every
 // node card that carries an optional delay).
+/* "Delay 5s" row shown on any card whose step has a delay before it — the same look
+   as the Delay element inside a Message Block. Renders nothing when no delay is set. */
+function DelayPill({ data, style, always = false }) {
+  const d = data?.delay;
+  const label = formatDelayBadge(d) ? formatDelayLong(d.hours, d.minutes, d.seconds) : (always ? formatDelayLong(0, 0, data?.seconds) : null);
+  if (!label) return null;
+  return (
+    <div
+      title={`Waits ${label} before continuing`}
+      style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '8px 12px', marginBottom: 10,
+        borderRadius: 12, background: '#f1f5f9', border: '1px solid #e2e8f0', fontSize: 12, fontWeight: 600, color: '#475569',
+        ...style,
+      }}
+    >
+      <Clock size={14} style={{ color: NODE_COLORS.delay }} /> Delay {label}
+    </div>
+  );
+}
+
+/* "1 hr 30 min" / "5 min" / "3 sec" — one wording for every Delay display. */
+function formatDelayLong(hours = 0, minutes = 0, seconds = 0) {
+  const total = (Number(hours) || 0) * 3600 + (Number(minutes) || 0) * 60 + (Number(seconds) || 0);
+  if (total <= 0) return '0 sec';
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  return [h && `${h} hr`, m && `${m} min`, sec && `${sec} sec`].filter(Boolean).join(' ');
+}
+
 function formatDelayBadge(delay) {
   if (!delay || typeof delay !== 'object') return null;
   const { hours = 0, minutes = 0, seconds = 0 } = delay;
@@ -6923,7 +8160,7 @@ function UserInputFlowStartProperties({ data, updateField, platform, flowName, o
   );
 }
 
-function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFields = [], onCustomFieldCreated, userInputFlows = [], onUserInputFlowCreated, isUserInputFlow = false, sequences = [], onSequenceCreated, isSequence = false, isBroadcastFlow = false, isChatWidgetFlow = false, linkedWidget = null, widgetAppearanceForm = null, onWidgetAppearanceChange = null, onAddReplyNode = null, flows = [], httpApiCampaigns = [], currentFlowId = null, flowName, onFlowNameChange, onDrillIn, onAttachSequence, attachedSequenceNode, onSelectSequenceNode }) {
+function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFields = [], onCustomFieldCreated, userInputFlows = [], onUserInputFlowCreated, isUserInputFlow = false, sequences = [], onSequenceCreated, isSequence = false, isBroadcastFlow = false, isChatWidgetFlow = false, linkedWidget = null, widgetAppearanceForm = null, onWidgetAppearanceChange = null, onAddReplyNode = null, flows = [], httpApiCampaigns = [], currentFlowId = null, flowName, onFlowNameChange, onDrillIn, onAttachSequence, attachedSequenceNode, onSelectSequenceNode, embedded = false }) {
   if (!node) return null;
 
   const { data, type } = node;
@@ -8451,6 +9688,42 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
           />
         );
 
+      case 'messageBlock':
+        return (
+          <MessageBlockFields
+            data={data}
+            updateFields={updateFields}
+            platform={platform}
+            renderItemEditor={(item, onItemData) => (
+              <PropertiesPanel
+                key={item.id}
+                embedded
+                node={{ id: node.id, type: item.type, data: item.data || {} }}
+                onUpdate={(_nodeId, nextData) => onItemData(nextData)}
+                onClose={() => {}}
+                onDelete={() => {}}
+                platform={platform}
+                customFields={customFields}
+                onCustomFieldCreated={onCustomFieldCreated}
+                sequences={sequences}
+                onSequenceCreated={onSequenceCreated}
+                flows={flows}
+                currentFlowId={currentFlowId}
+                isUserInputFlow={isUserInputFlow}
+                isSequence={isSequence}
+                isBroadcastFlow={isBroadcastFlow}
+                isChatWidgetFlow={isChatWidgetFlow}
+              />
+            )}
+          />
+        );
+
+      case 'actions':
+        return <ActionsFields data={data} updateFields={updateFields} sequences={sequences} customFields={customFields} />;
+
+      case 'startAutomation':
+        return <StartAutomationFields data={data} updateFields={updateFields} flows={flows} currentFlowId={currentFlowId} platform={platform} />;
+
       case 'wait': {
         const preset = data.preset || '5m';
         return (
@@ -8493,8 +9766,10 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
     }
   };
 
-  const nodeColor = NODE_COLORS[type] || '#6366f1';
   const NodeIcon = NODE_ICONS[type] || Settings2;
+
+  // Used by Message Block: edit one element with that element's own fields, no panel chrome.
+  if (embedded) return <div className="fb-props-embedded">{renderFields()}</div>;
 
   return (
     <div className="fb-props">
@@ -8552,7 +9827,16 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
    NODE PALETTE (Left Sidebar)
    ═══════════════════════════════════════════════════════════════════ */
 
-function NodePalette({ platform, isUserInputFlow = false, isSequence = false }) {
+// A picker that quietly shows "nothing" when its list failed to load looks like "you have none".
+function notifyPickerLoadError(what) {
+  console.error(`[Flow Builder] Could not load ${what}`);
+  Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: `Couldn't load ${what}`, text: 'Reload the page to try again.', timer: 4000, showConfirmButton: false });
+}
+
+// A broadcast has no live conversation to act on, so it can't run these.
+const BROADCAST_HIDDEN_TYPES = new Set(['actions', 'startAutomation']);
+
+function NodePalette({ platform, isUserInputFlow = false, isSequence = false, isBroadcastFlow = false }) {
   const onDragStart = (event, nodeType) => {
     event.dataTransfer.setData('application/reactflow', nodeType);
     event.dataTransfer.effectAllowed = 'move';
@@ -8562,9 +9846,9 @@ function NodePalette({ platform, isUserInputFlow = false, isSequence = false }) 
     const source = isSequence ? SEQUENCE_PALETTE : (isUserInputFlow ? USER_INPUT_FLOW_PALETTE : PALETTE_CATEGORIES);
     return source.map((cat) => ({
       ...cat,
-      items: cat.items.filter((item) => isNodeSupportedOnPlatform(item.type, platform)),
+      items: cat.items.filter((item) => isNodeSupportedOnPlatform(item.type, platform) && !(isBroadcastFlow && BROADCAST_HIDDEN_TYPES.has(item.type))),
     })).filter((cat) => cat.items.length > 0);
-  }, [platform, isUserInputFlow, isSequence]);
+  }, [platform, isUserInputFlow, isSequence, isBroadcastFlow]);
 
   const channelLabel = (platform || 'WEBCHAT').toUpperCase();
 
@@ -8576,8 +9860,8 @@ function NodePalette({ platform, isUserInputFlow = false, isSequence = false }) 
           style={{
             fontSize: '9.5px',
             fontWeight: 700,
-            color: '#4f46e5',
-            background: 'rgba(79, 70, 229, 0.08)',
+            color: '#475569',
+            background: '#f1f5f9',
             padding: '2px 7px',
             borderRadius: '4px',
             letterSpacing: '0.4px',
@@ -8600,8 +9884,8 @@ function NodePalette({ platform, isUserInputFlow = false, isSequence = false }) 
                 onDragStart={(e) => onDragStart(e, item.type)}
                 title={item.label}
               >
-                <div className="fb-palette-item-icon" style={{ background: `${color}14`, color }}>
-                  <Icon size={15} style={{ color }} />
+                <div className="fb-palette-item-icon">
+                  <Icon size={13} style={{ color }} />
                 </div>
                 <span>{item.label}</span>
                 <span className="fb-palette-item-grip">
@@ -8647,25 +9931,23 @@ const nodeTypes = {
   startSequenceAction: StartSequenceActionNode,
   stopSequenceAction: StopSequenceActionNode,
   wait: WaitNode,
+  actions: ActionsNode,
+  startAutomation: StartAutomationNode,
+  messageBlock: MessageBlockNode,
 };
 
 /* ── Removable / Deletable Edge ────────────────────────────── */
 function RemovableEdge({
   id,
-  source,
   sourceX,
   sourceY,
   targetX,
   targetY,
   style = {},
-  markerEnd,
   selected,
 }) {
   const { setEdges } = useReactFlow();
-  const { emptySourceNodes } = useContext(FlowNodeActionsContext);
   const [isHovered, setIsHovered] = useState(false);
-
-  const isEmpty = emptySourceNodes?.has(source);
 
   // Plain curve straight from the connector — no straight exit stub (that's
   // being revisited separately, per-element, later). Keep the bow modest so
@@ -8676,20 +9958,30 @@ function RemovableEdge({
   let pull;
   let bow = 0;
   if (gapX >= 0) {
-    pull = Math.min(Math.max(gapX * 0.4, 30), 90);
+    // Reach is half the gap but never under 60px, so a tight gap makes the wire
+    // swing out and back in (ManyChat's S-curve) while a wide gap opens up smoothly.
+    pull = Math.min(Math.max(gapX * 0.5, 60), 220);
   } else {
     // Target sits behind the source: needs a loop wide enough to swing clear.
     pull = Math.min(Math.abs(gapX) * 0.3 + 60, 150);
     bow = Math.abs(gapY) < 90 ? 50 : 0;
   }
 
+  // The wire ends at the BASE of the arrowhead, and the arrowhead's tip touches
+  // the edge of the target connector. The last control point shares the target's
+  // y, so the wire always arrives horizontally — exactly the direction the arrow
+  // points — and the two read as one continuous line.
+  const ARROW_LEN = 9;
+  const ARROW_HALF = 5;
+  const tipX = targetX;
+  const baseX = tipX - ARROW_LEN;
   const edgePath =
     `M ${sourceX},${sourceY} ` +
-    `C ${sourceX + pull},${sourceY + bow} ${targetX - pull},${targetY + bow} ${targetX},${targetY}`;
+    `C ${sourceX + pull},${sourceY + bow} ${baseX - pull},${targetY} ${baseX},${targetY}`;
 
   // Midpoint of that cubic, used to park the delete button on the wire.
-  const labelX = (sourceX + targetX) / 2;
-  const labelY = (sourceY + targetY) / 2 + bow * 0.5;
+  const labelX = (sourceX + baseX) / 2;
+  const labelY = (sourceY + targetY) / 2 + bow * 0.375;
 
   const onEdgeDelete = (e) => {
     e.stopPropagation();
@@ -8713,13 +10005,23 @@ function RemovableEdge({
       />
       <BaseEdge
         path={edgePath}
-        markerEnd={markerEnd}
         style={{
           ...style,
-          strokeWidth: (isHovered || selected) ? 2.5 : 2,
-          stroke: (isHovered || selected) ? '#0f172a' : (style.stroke || '#64748b'),
+          strokeWidth: (isHovered || selected) ? 2.25 : 1.75,
+          strokeLinecap: 'round',
+          stroke: selected ? '#0f172a' : isHovered ? '#475569' : '#94a3b8',
           strokeDasharray: 'none',
         }}
+      />
+      {/* Arrowhead: starts exactly where the wire ends (baseX) and its tip meets
+          the connector, so it is the end of the wire rather than a separate mark. */}
+      <path
+        d={`M ${tipX},${targetY} L ${baseX},${targetY - ARROW_HALF} L ${baseX},${targetY + ARROW_HALF} Z`}
+        fill={selected ? '#0f172a' : isHovered ? '#475569' : '#94a3b8'}
+        stroke={selected ? '#0f172a' : isHovered ? '#475569' : '#94a3b8'}
+        strokeWidth={1.5}
+        strokeLinejoin="round"
+        style={{ pointerEvents: 'none' }}
       />
       {(isHovered || selected) && (
         <EdgeLabelRenderer>
@@ -8785,7 +10087,7 @@ const edgeTypes = {
 };
 
 /* ── Floating Quick Component Picker (drag-to-connect) ──────── */
-function QuickComponentPicker({ position, onClose, onSelect, platform, isUserInputFlow = false, isSequence = false }) {
+function QuickComponentPicker({ position, onClose, onSelect, platform, isUserInputFlow = false, isSequence = false, isBroadcastFlow = false }) {
   const [search, setSearch] = useState('');
   const pickerRef = useRef(null);
 
@@ -8813,6 +10115,7 @@ function QuickComponentPicker({ position, onClose, onSelect, platform, isUserInp
       items: cat.items.filter((item) => {
         if (item.type === 'start') return false; // don't spawn multiple start nodes
         if (!isNodeSupportedOnPlatform(item.type, platform)) return false; // strictly only permitted on platform
+        if (isBroadcastFlow && BROADCAST_HIDDEN_TYPES.has(item.type)) return false;
         if (search.trim()) {
           return (
             item.label.toLowerCase().includes(search.toLowerCase()) ||
@@ -8822,7 +10125,7 @@ function QuickComponentPicker({ position, onClose, onSelect, platform, isUserInp
         return true;
       }),
     })).filter((cat) => cat.items.length > 0);
-  }, [search, platform, isUserInputFlow, isSequence]);
+  }, [search, platform, isUserInputFlow, isSequence, isBroadcastFlow]);
 
   return (
     <div
@@ -8983,13 +10286,7 @@ function QuickComponentPicker({ position, onClose, onSelect, platform, isUserInp
 const defaultEdgeOptions = {
   type: 'default',
   animated: false,
-  style: { stroke: '#64748b', strokeWidth: 2 },
-  markerEnd: {
-    type: MarkerType.ArrowClosed,
-    width: 14,
-    height: 14,
-    color: '#64748b',
-  },
+  style: { stroke: '#94a3b8', strokeWidth: 2 },
 };
 
 function getPlatformUrl(account, platform, flowData = null) {
@@ -9132,7 +10429,7 @@ function FlowBuilderInner() {
       ) {
         return cached;
       }
-    } catch {}
+    } catch { /* sessionStorage unavailable (private mode / blocked) — ignoring is intended */ }
     return null;
   }, [referrerState, id]);
 
@@ -9149,7 +10446,7 @@ function FlowBuilderInner() {
           sessionStorage.setItem('flow_builder_return_label', referrerState.label);
         }
       }
-    } catch {}
+    } catch { /* sessionStorage unavailable (private mode / blocked) — ignoring is intended */ }
   }, [referrerState, id]);
 
   // Dynamic breadcrumb label matching the source page
@@ -9158,7 +10455,7 @@ function FlowBuilderInner() {
     try {
       const cachedLabel = sessionStorage.getItem('flow_builder_return_label');
       if (cachedLabel) return cachedLabel;
-    } catch {}
+    } catch { /* sessionStorage unavailable (private mode / blocked) — ignoring is intended */ }
 
     const dest = returnUrl || '';
     if (dest.startsWith('/flows')) return 'Flows';
@@ -9249,11 +10546,14 @@ function FlowBuilderInner() {
   // only ever offers same-channel flows (see the userInputFlows note above).
   useEffect(() => {
     if (isUserInputFlow || isSequence) return; // neither can run/reference another one
+    // BOT SCOPE: only this bot account's own forms — never another bot's.
+    setScopeReady((r) => ({ ...r, uif: false }));
+    if (!integrationId) { setUserInputFlows([]); return; }
     userInputFlowAPI
-      .getAll(platform ? { platform } : undefined)
-      .then((res) => setUserInputFlows(res.data?.userInputFlows || []))
-      .catch(() => {});
-  }, [platform, isUserInputFlow, isSequence]);
+      .getAll({ ...(platform ? { platform } : {}), integrationId })
+      .then((res) => { setUserInputFlows(res.data?.userInputFlows || []); setScopeReady((r) => ({ ...r, uif: true })); })
+      .catch(() => { setUserInputFlows([]); notifyPickerLoadError('User Input Flows'); });
+  }, [platform, integrationId, isUserInputFlow, isSequence]);
 
   // Agency's reusable Sequences — offered as a target on "Start Sequence" /
   // "Stop Sequence" action nodes (main Flow Builder only, per the Sequence
@@ -9261,18 +10561,26 @@ function FlowBuilderInner() {
   const [sequencesList, setSequencesList] = useState([]);
   useEffect(() => {
     if (isUserInputFlow || isSequence) return;
-    sequenceAPI.getAll().then((res) => setSequencesList(res.data?.sequences || [])).catch(() => {});
-  }, [isUserInputFlow, isSequence]);
+    // BOT SCOPE: only this bot account's own sequences — never another bot's.
+    setScopeReady((r) => ({ ...r, seq: false }));
+    if (!integrationId) { setSequencesList([]); return; }
+    sequenceAPI.getAll({ integrationId }).then((res) => { setSequencesList(res.data?.sequences || []); setScopeReady((r) => ({ ...r, seq: true })); }).catch(() => { setSequencesList([]); notifyPickerLoadError('Sequences'); });
+  }, [integrationId, isUserInputFlow, isSequence]);
 
   // Other bot Flows — offered on a button's "Go to Existing Flow" action so a
   // tap can jump the subscriber straight into a different flow, independent
   // of any canvas wire. Same reasoning as sequencesList above: not meaningful
   // from inside a User Input Flow or a Sequence canvas.
   const [flowsList, setFlowsList] = useState([]);
+  // Which bot-scoped lists have actually loaded (an unloaded list must never cause a false "foreign" flag).
+  const [scopeReady, setScopeReady] = useState({ seq: false, uif: false, flows: false });
   useEffect(() => {
     if (isUserInputFlow || isSequence) return;
-    flowAPI.getAll().then((res) => setFlowsList(res.data?.flows || [])).catch(() => {});
-  }, [isUserInputFlow, isSequence]);
+    // BOT SCOPE: only this bot account's own flows (Go to Flow / Start Automation targets).
+    setScopeReady((r) => ({ ...r, flows: false }));
+    if (!integrationId) { setFlowsList([]); return; }
+    flowAPI.getAll({ integrationId }).then((res) => { setFlowsList(res.data?.flows || []); setScopeReady((r) => ({ ...r, flows: true })); }).catch(() => { setFlowsList([]); notifyPickerLoadError('flows'); });
+  }, [integrationId, isUserInputFlow, isSequence]);
 
   // HTTP API Campaigns (Automation module) — offered on an "HTTP API" node,
   // same reasoning as flowsList/sequencesList above.
@@ -9601,13 +10909,6 @@ function FlowBuilderInner() {
           ...e,
           type: 'default',
           animated: false,
-          style: { stroke: '#64748b', strokeWidth: 2 },
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            width: 14,
-            height: 14,
-            color: '#64748b',
-          },
           sourceHandle: (e.sourceHandle === 'default' || e.sourceHandle === 'bottom') ? undefined : e.sourceHandle,
           targetHandle: (e.targetHandle === 'default' || e.targetHandle === 'top') ? undefined : e.targetHandle,
         }));
@@ -9628,7 +10929,8 @@ function FlowBuilderInner() {
     } else {
       setLoading(false);
     }
-  }, [id, setNodes, setEdges]);
+    // Intentionally loads once per flow id — re-running when the platform / history callbacks change would reload the canvas and drop unsaved edits.
+  }, [id, setNodes, setEdges]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Auto-save disabled on user request ─────────────────── */
   const triggerAutoSave = useCallback(() => {
@@ -9663,7 +10965,7 @@ function FlowBuilderInner() {
         }
 
         const serializedNodes = JSON.stringify(currentNodes.map((n) => {
-          const { _unsupported, _validationError, ...rest } = n.data;
+          const { _unsupported, _validationError, _errorItemId, ...rest } = n.data;
           return { ...n, data: rest };
         }));
 
@@ -9702,7 +11004,7 @@ function FlowBuilderInner() {
         console.error('Save before exit error:', err);
       }
     }
-  }, [id, flowName, platform, integrationId, flowData, linkedWidget, widgetAppearanceForm]);
+  }, [id, flowName, platform, integrationId, flowData, linkedWidget, widgetAppearanceForm, isChatWidgetFlow, isSequence, isUserInputFlow]);
 
   /* ── Go back to origin page ───────────────────────────────── */
   const handleGoBack = useCallback(async () => {
@@ -9713,7 +11015,7 @@ function FlowBuilderInner() {
       try {
         sessionStorage.removeItem('flow_builder_return_url');
         sessionStorage.removeItem('flow_builder_return_label');
-      } catch {}
+      } catch { /* sessionStorage unavailable (private mode / blocked) — ignoring is intended */ }
       navigate(returnUrl, { state: referrerState });
       return;
     }
@@ -9739,13 +11041,6 @@ function FlowBuilderInner() {
         ...e,
         type: 'default',
         animated: false,
-        style: { stroke: '#64748b', strokeWidth: 2 },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          width: 14,
-          height: 14,
-          color: '#64748b',
-        },
         sourceHandle: (e.sourceHandle === 'default' || e.sourceHandle === 'bottom') ? undefined : e.sourceHandle,
         targetHandle: (e.targetHandle === 'default' || e.targetHandle === 'top') ? undefined : e.targetHandle,
       }))
@@ -9754,6 +11049,65 @@ function FlowBuilderInner() {
       fitView({ padding: 0.25, duration: 400 });
     }, 50);
   }, [nodes, edges, setNodes, setEdges, fitView]);
+
+  /* ── Show the exact element(s) with a problem ─────────────────
+     Every failure that belongs to an element — missing data, or a reference to another bot's
+     Sequence / form / flow, whether caught here or refused by the server — ends up here, so the
+     element is ALWAYS flagged red, selected, opened in the panel (for a Message Block: the exact
+     element inside it) and brought into view. problems: [{ nodeId, itemId?, message }] */
+  const scopeRef = useRef({});
+  scopeRef.current = { sequencesList, userInputFlows, flowsList, scopeReady };
+
+  const surfaceProblems = useCallback((problems, { title, intro, confirmText = 'Show me' }) => {
+    if (!problems.length) return;
+    const byNode = new Map();
+    problems.forEach((pr) => { if (pr.nodeId && !byNode.has(pr.nodeId)) byNode.set(pr.nodeId, pr); });
+
+    setNodes((nds) => nds.map((n) => {
+      const pr = byNode.get(n.id);
+      return { ...n, data: { ...n.data, _validationError: pr ? pr.message : null, _errorItemId: pr ? (pr.itemId || null) : null } };
+    }));
+
+    const first = problems.find((pr) => nodesRef.current?.some((n) => n.id === pr.nodeId)) || problems[0];
+    const target = (nodesRef.current || []).find((n) => n.id === first.nodeId);
+    if (target) {
+      setSelectedNode({ ...target, data: { ...target.data, _validationError: first.message, _errorItemId: first.itemId || null } });
+      // let the red state render, then bring the element into view
+      setTimeout(() => fitView({ nodes: [{ id: first.nodeId }], padding: 0.6, maxZoom: 1, duration: 450 }), 80);
+    }
+
+    const shown = problems.slice(0, 5);
+    Swal.fire({
+      title,
+      html: `
+        <div style="text-align: left; font-size: 13px; color: #475569; line-height: 1.5;">
+          <p style="margin-bottom: 8px;">${escapeHtml(intro)}</p>
+          <div style="background: #fef2f2; border: 1px solid #fee2e2; border-radius: 8px; padding: 10px 12px; color: #b91c1c; font-weight: 600;">
+            ${shown.map((pr) => `<div style="margin-bottom: 4px;">${escapeHtml(pr.message)}</div>`).join('')}
+          </div>
+          <p style="margin-top: 8px; font-size: 11px; color: #94a3b8;">The first one is selected on the canvas${problems.length > 1 ? ` — ${problems.length - 1} more are marked in red.` : '.'}</p>
+        </div>`,
+      icon: 'warning',
+      confirmButtonText: confirmText,
+      confirmButtonColor: '#4f46e5',
+    });
+  }, [setNodes, fitView]);
+
+  // As soon as this bot's own lists are loaded, mark elements that point at another bot's component.
+  const scopeCheckedFor = useRef('');
+  useEffect(() => {
+    if (loading || isUserInputFlow || isSequence) return;
+    if (!(scopeReady.seq && scopeReady.uif && scopeReady.flows)) return;
+    const key = `${id}:${integrationId}`;
+    if (scopeCheckedFor.current === key) return;
+    scopeCheckedFor.current = key;
+    const foreign = findForeignRefs(nodesRef.current || [], { sequences: sequencesList, userInputFlows, flows: flowsList });
+    if (!foreign.length) return;
+    const byNode = new Map(foreign.map((f) => [f.nodeId, f]));
+    setNodes((nds) => nds.map((n) => (byNode.has(n.id) && !n.data._validationError
+      ? { ...n, data: { ...n.data, _validationError: byNode.get(n.id).message, _errorItemId: byNode.get(n.id).itemId || null } }
+      : n)));
+  }, [loading, id, integrationId, isUserInputFlow, isSequence, scopeReady, sequencesList, userInputFlows, flowsList, setNodes]);
 
   /* ── Manual save (with strict data validation) ─────────── */
   // Memoised because drillBackToMain depends on it; an inline function here
@@ -9787,39 +11141,25 @@ function FlowBuilderInner() {
         }
       }
 
-      if (invalidList.length > 0) {
-        // Highlight invalid nodes on canvas
-        setNodes((nds) =>
-          nds.map((n) => {
-            const err = validateNodeData(n);
-            return {
-              ...n,
-              data: {
-                ...n.data,
-                _validationError: err || null,
-              },
-            };
-          })
-        );
+      // Same bot-scope rule the server enforces — caught here so the exact element is shown before any request.
+      const scope = scopeRef.current;
+      const foreign = (isSequence || isUserInputFlow) ? [] : findForeignRefs(currentNodes, {
+        sequences: scope.scopeReady?.seq ? scope.sequencesList : null,
+        userInputFlows: scope.scopeReady?.uif ? scope.userInputFlows : null,
+        flows: scope.scopeReady?.flows ? scope.flowsList : null,
+      });
 
-        const first = invalidList[0];
-        setSelectedNode(first.node);
+      const problems = invalidList.map(({ node, error }) => ({
+        nodeId: node.id,
+        itemId: node.type === 'messageBlock' ? validateMessageBlock(node.data || {}).itemId : null,
+        message: `${node.data?.label || node.type}: ${error}`,
+      }));
+      foreign.forEach((f) => { if (!problems.some((pr) => pr.nodeId === f.nodeId)) problems.push(f); });
 
-        Swal.fire({
-          title: 'Missing Component Data',
-          html: `
-            <div style="text-align: left; font-size: 13px; color: #475569; line-height: 1.5;">
-              <p style="margin-bottom: 8px;">The flow cannot be saved because some components have missing data:</p>
-              <div style="background: #fef2f2; border: 1px solid #fee2e2; border-radius: 8px; padding: 10px 12px; color: #b91c1c; font-weight: 600;">
-                <strong>${first.node.data?.label || first.node.type}</strong>: ${first.error}
-              </div>
-              ${invalidList.length > 1 ? `<p style="margin-top: 8px; font-size: 11px; color: #94a3b8;">+ ${invalidList.length - 1} other component(s) need attention.</p>` : ''}
-            </div>
-          `,
-          icon: 'warning',
-          confirmButtonText: 'Fill In Data',
-          confirmButtonColor: '#4f46e5',
-        });
+      if (problems.length > 0) {
+        surfaceProblems(problems, invalidList.length > 0
+          ? { title: 'Missing Component Data', intro: 'The flow cannot be saved because some components have missing data:', confirmText: 'Fill In Data' }
+          : { title: 'Wrong bot account', intro: "The flow cannot be saved because it uses components that don't belong to this bot account:", confirmText: 'Fix it' });
         return;
       }
 
@@ -9841,7 +11181,7 @@ function FlowBuilderInner() {
       }
 
       const serializedNodes = JSON.stringify(currentNodes.map((n) => {
-        const { _unsupported, _validationError, ...rest } = n.data;
+        const { _unsupported, _validationError, _errorItemId, ...rest } = n.data;
         return { ...n, data: rest };
       }));
 
@@ -9930,6 +11270,11 @@ function FlowBuilderInner() {
       });
     } catch (err) {
       console.error('Save failed:', err);
+      const refused = err?.response?.data;
+      if (refused?.code === 'BOT_SCOPE_VIOLATION' && Array.isArray(refused.violations) && refused.violations.length) {
+        surfaceProblems(refused.violations, { title: 'Wrong bot account', intro: "The flow cannot be saved because it uses components that don't belong to this bot account:", confirmText: 'Fix it' });
+        return;
+      }
       Swal.fire({
         title: 'Save Failed',
         text: err?.response?.data?.message || err.message || 'Could not save flow.',
@@ -9941,7 +11286,7 @@ function FlowBuilderInner() {
     }
   }, [
     id, isSequence, isUserInputFlow, edges, flowName, flowData,
-    platform, integrationId, drilledIn, setNodes, linkedWidget, widgetAppearanceForm,
+    platform, integrationId, drilledIn, linkedWidget, widgetAppearanceForm, isChatWidgetFlow, surfaceProblems,
   ]);
 
   // Fresh Start + Question pair for a brand-new User Input Flow — matches what a
@@ -9961,8 +11306,6 @@ function FlowBuilderInner() {
       id: `e_${startId}_${qId}`,
       source: startId, sourceHandle: 'next-step', target: qId,
       type: 'default', animated: false,
-      style: { stroke: '#64748b', strokeWidth: 2 },
-      markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#64748b' },
     }];
     return { nodes: seededNodes, edges: seededEdges };
   }, []);
@@ -10088,13 +11431,6 @@ function FlowBuilderInner() {
           ...params,
           type: 'default',
           animated: false,
-          style: { stroke: '#64748b', strokeWidth: 2 },
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            width: 14,
-            height: 14,
-            color: '#64748b',
-          },
         }, filtered);
       });
     },
@@ -10144,6 +11480,26 @@ function FlowBuilderInner() {
       // an existing node. Only the exact pane element itself should count.
       const targetIsPane = event.target?.classList?.contains('react-flow__pane');
 
+      // Dropped on an existing element: connect straight to it — never open
+      // the quick-add menu. Landing exactly on a target handle is already
+      // wired by React Flow's own onConnect; dropping anywhere else on the
+      // node's card (body, header, hover actions…) is wired here.
+      const dropEl = document.elementFromPoint(
+        event.clientX ?? event.changedTouches?.[0]?.clientX ?? 0,
+        event.clientY ?? event.changedTouches?.[0]?.clientY ?? 0,
+      ) || event.target;
+      const dropNodeEl = dropEl?.closest?.('.react-flow__node');
+      if (dropNodeEl && !targetIsPane) {
+        const targetNodeId = dropNodeEl.getAttribute('data-id');
+        const src = connectingNodeRef.current;
+        const onHandle = !!dropEl.closest('.react-flow__handle');
+        if (!onHandle && targetNodeId && src.handleType === 'source' && targetNodeId !== src.nodeId) {
+          onConnect({ source: src.nodeId, sourceHandle: src.handleId || null, target: targetNodeId, targetHandle: null });
+        }
+        connectingNodeRef.current = null;
+        return;
+      }
+
       if (targetIsPane) {
         const clientX = event.clientX || ('changedTouches' in event ? event.changedTouches[0]?.clientX : 0);
         const clientY = event.clientY || ('changedTouches' in event ? event.changedTouches[0]?.clientY : 0);
@@ -10160,7 +11516,7 @@ function FlowBuilderInner() {
       }
       connectingNodeRef.current = null;
     },
-    [screenToFlowPosition, addSectionToListNode]
+    [screenToFlowPosition, addSectionToListNode, onConnect]
   );
 
   const handleSelectQuickPicker = useCallback(
@@ -10187,13 +11543,6 @@ function FlowBuilderInner() {
         target: newNodeId,
         type: 'default',
         animated: false,
-        style: { stroke: '#64748b', strokeWidth: 2 },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          width: 14,
-          height: 14,
-          color: '#64748b',
-        },
       };
 
       setNodes((nds) => [...nds, newNode]);
@@ -10380,8 +11729,6 @@ function FlowBuilderInner() {
         id: `e_${sourceNodeId}_${newId}_${Date.now()}`,
         source: sourceNodeId, sourceHandle: 'next-step', target: newId,
         type: 'default', animated: false,
-        style: { stroke: '#64748b', strokeWidth: 2 },
-        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#64748b' },
       };
 
       const nextNodes = nodes.concat(newNode);
@@ -10430,8 +11777,6 @@ function FlowBuilderInner() {
         type: 'default', animated: false,
         // Same neutral slate as every other wire on the canvas — no special
         // color for this connection.
-        style: { stroke: '#64748b', strokeWidth: 2 },
-        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#64748b' },
       };
 
       const nextNodes = nodes.concat(newNode);
@@ -10541,6 +11886,9 @@ function FlowBuilderInner() {
       buttonTargetNodes,
       emptySourceNodes,
       sequencesList,
+      flowsList,
+      currentIntegrationId: integrationId,
+      currentFlowId: (!isUserInputFlow && !isSequence) ? Number(id) : null,
       currentPlatform: platform,
       isChatWidgetFlow,
     }}>
@@ -10877,7 +12225,7 @@ function FlowBuilderInner() {
       {/* ── Main Area ───────────────────────────────────────── */}
       <div className="fb-main" style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
         {/* Left: Component Palette (always present) */}
-        <NodePalette platform={platform} isUserInputFlow={isUserInputFlow} isSequence={isSequence} />
+        <NodePalette platform={platform} isUserInputFlow={isUserInputFlow} isSequence={isSequence} isBroadcastFlow={isBroadcastFlow} />
 
         {/* Canvas */}
         <div className="fb-canvas" style={{ flex: 1, position: 'relative', height: '100%' }}>
@@ -10902,7 +12250,7 @@ function FlowBuilderInner() {
             edgeTypes={edgeTypes}
             defaultEdgeOptions={defaultEdgeOptions}
             connectionLineType="default"
-            connectionLineStyle={{ stroke: '#64748b', strokeWidth: 2 }}
+            connectionLineStyle={{ stroke: '#94a3b8', strokeWidth: 2, strokeLinecap: 'round' }}
             defaultSourcePosition={Position.Right}
             defaultTargetPosition={Position.Left}
             fitView
@@ -10932,6 +12280,7 @@ function FlowBuilderInner() {
               platform={platform}
               isUserInputFlow={isUserInputFlow}
               isSequence={isSequence}
+              isBroadcastFlow={isBroadcastFlow}
             />
           )}
         </div>

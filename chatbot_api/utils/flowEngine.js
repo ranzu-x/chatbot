@@ -2,13 +2,17 @@ import pool from "../db.js";
 import { sendPlatformMessage, sendTypingIndicator } from "./platformSender.js";
 import { emitToAgency, emitToConversation } from "./socket.js";
 import { logBotError, extractErrorMessage } from "./botLogger.js";
-import { applyLabelToContact } from "../routes/labels.js";
+import { applyLabelToContact, removeLabelFromContact } from "../routes/labels.js";
 import { sendWebhook } from "./outboundWebhook.js";
 import * as googleSheetsUtil from "./googleSheets.js";
-import { resolveNextNodeId, resolveNextStepNodeId } from "./flowGraph.js";
+import { resolveNextNodeId, resolveNextStepNodeId, expandMessageBlocks } from "./flowGraph.js";
 import { enrollContactsInSequence, unsubscribeContactFromSequence } from "../routes/sequences.js";
 import { executeHttpApiCampaign } from "../services/httpApiExecutor.js";
 import { scheduleFlowDelayResume } from "./flowDelayScheduler.js";
+
+// BOT SCOPE (see utils/botScope.js): a flow may only use Sequences, User Input Flows and
+// other Flows of ITS OWN bot account (same integration_id) — every lookup below is scoped
+// to the running flow's integration, so even bad data saved some other way can't cross bots.
 
 // Mirrors FlowBuilderPage.jsx's TYPING_ELIGIBLE_NODE_TYPES — only node types
 // that actually send a message to the contact offer "Show typing before
@@ -64,8 +68,7 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
         if (widgetStart) {
           return {
             flow: targetFlow,
-            nodes: widgetNodes,
-            edges: JSON.parse(targetFlow.edges_json || "[]"),
+            ...expandMessageBlocks(widgetNodes, JSON.parse(targetFlow.edges_json || "[]")),
             startNode: widgetStart,
           };
         }
@@ -85,8 +88,7 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
       if (prefill && (msgText === prefill || msgText.startsWith(prefill))) {
         return {
           flow: f,
-          nodes: widgetNodes,
-          edges: JSON.parse(f.edges_json || "[]"),
+          ...expandMessageBlocks(widgetNodes, JSON.parse(f.edges_json || "[]")),
           startNode: widgetStart,
         };
       }
@@ -212,8 +214,7 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
     if (isMatch) {
       return {
         flow: f,
-        nodes: flowNodes,
-        edges: JSON.parse(f.edges_json || "[]"),
+        ...expandMessageBlocks(flowNodes, JSON.parse(f.edges_json || "[]")),
         startNode,
       };
     }
@@ -239,8 +240,7 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
         if (sNode) {
           return {
             flow: widgetFlow,
-            nodes: fNodes,
-            edges: JSON.parse(widgetFlow.edges_json || "[]"),
+            ...expandMessageBlocks(fNodes, JSON.parse(widgetFlow.edges_json || "[]")),
             startNode: sNode,
           };
         }
@@ -296,8 +296,10 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         [decodedRoute.flowId, agencyId]
       );
       if (routedFlow) {
-        const routedNodes = JSON.parse(routedFlow.nodes_json || "[]");
-        const routedEdges = JSON.parse(routedFlow.edges_json || "[]");
+        const { nodes: routedNodes, edges: routedEdges } = expandMessageBlocks(
+          JSON.parse(routedFlow.nodes_json || "[]"),
+          JSON.parse(routedFlow.edges_json || "[]")
+        );
         const sourceNode = routedNodes.find((n) => n.id === decodedRoute.nodeId);
         if (sourceNode) {
           // A listMenu node's items now live under data.lists (see
@@ -326,7 +328,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           // own Attach Sequence branch already has to the rest of that flow.
           if (tappedButton?.sequenceId) {
             try {
-              await enrollContactsInSequence(tappedButton.sequenceId, agencyId, { contactId: contact?.id, enrolledVia: "button-tap" });
+              await enrollContactsInSequence(tappedButton.sequenceId, agencyId, { contactId: contact?.id, enrolledVia: "button-tap", integrationId: routedFlow.integration_id ?? null });
             } catch (err) {
               console.error(`[Flow Engine] Attach-Sequence ${tappedButton.sequenceId} on button tap failed:`, err.message);
             }
@@ -347,8 +349,8 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           // priority over) the same-flow edge lookup below.
           if (tappedButton?.action === "goToFlow" && tappedButton?.flowId) {
             const [[targetFlow]] = await pool.query(
-              "SELECT * FROM flows WHERE id = ? AND agency_id = ? AND is_active = 1",
-              [tappedButton.flowId, agencyId]
+              "SELECT * FROM flows WHERE id = ? AND agency_id = ? AND integration_id = ? AND is_active = 1",
+              [tappedButton.flowId, agencyId, routedFlow.integration_id ?? null]
             );
             const targetStart = targetFlow
               ? JSON.parse(targetFlow.nodes_json || "[]").find((n) => n.type === "start")
@@ -449,13 +451,12 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
     if (session) {
       // Load flow details
       const [flows] = await pool.query(
-        "SELECT * FROM flows WHERE id = ? AND is_active = 1 LIMIT 1",
-        [session.flow_id]
+        "SELECT * FROM flows WHERE id = ? AND agency_id = ? AND is_active = 1 LIMIT 1",
+        [session.flow_id, agencyId]
       );
       flow = flows[0];
       if (flow) {
-        nodes = JSON.parse(flow.nodes_json || "[]");
-        edges = JSON.parse(flow.edges_json || "[]");
+        ({ nodes, edges } = expandMessageBlocks(JSON.parse(flow.nodes_json || "[]"), JSON.parse(flow.edges_json || "[]")));
       } else {
         // Flow deleted or inactive, close session
         await pool.query("UPDATE flow_sessions SET status = 'COMPLETED', delay_next_run_at = NULL WHERE id = ?", [session.id]);
@@ -520,8 +521,8 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
 
     if (session.active_context === "USER_INPUT_FLOW" && session.user_input_flow_id) {
       const [[uifRow]] = await pool.query(
-        "SELECT * FROM user_input_flows WHERE id = ? AND agency_id = ? AND is_active = 1",
-        [session.user_input_flow_id, agencyId]
+        "SELECT * FROM user_input_flows WHERE id = ? AND agency_id = ? AND integration_id = ? AND is_active = 1",
+        [session.user_input_flow_id, agencyId, flow?.integration_id ?? null]
       );
       if (uifRow) {
         nodes = JSON.parse(uifRow.nodes_json || "[]");
@@ -1090,7 +1091,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             const sequenceId = seqNode?.data?.sequenceId;
             if (sequenceId) {
               try {
-                await enrollContactsInSequence(sequenceId, agencyId, { contactId: contact?.id, enrolledVia: "flow-start" });
+                await enrollContactsInSequence(sequenceId, agencyId, { contactId: contact?.id, enrolledVia: "flow-start", integrationId: flow?.integration_id ?? null });
               } catch (err) {
                 console.error(`[Flow Engine] Auto-attach Sequence ${sequenceId} on flow start failed:`, err.message);
               }
@@ -1528,8 +1529,8 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           }
 
           const [[uifRow]] = await pool.query(
-            "SELECT * FROM user_input_flows WHERE id = ? AND agency_id = ? AND is_active = 1",
-            [uifId, agencyId]
+            "SELECT * FROM user_input_flows WHERE id = ? AND agency_id = ? AND integration_id = ? AND is_active = 1",
+            [uifId, agencyId, flow?.integration_id ?? null]
           );
           if (!uifRow) {
             console.warn(`[Flow Engine] "Run User Input Flow" node "${node.id}" references missing/inactive flow ${uifId}.`);
@@ -1671,7 +1672,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           const sequenceId = node.data?.sequenceId;
           if (sequenceId) {
             try {
-              await enrollContactsInSequence(sequenceId, agencyId, { contactId: contact?.id, enrolledVia: "flow-node" });
+              await enrollContactsInSequence(sequenceId, agencyId, { contactId: contact?.id, enrolledVia: "flow-node", integrationId: flow?.integration_id ?? null });
             } catch (seqErr) {
               console.error(`[Flow Engine] Start Sequence node "${node.id}" failed:`, seqErr.message);
             }
@@ -1686,7 +1687,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           const sequenceId = node.data?.sequenceId;
           if (sequenceId) {
             try {
-              await unsubscribeContactFromSequence(sequenceId, agencyId, contact?.id);
+              await unsubscribeContactFromSequence(sequenceId, agencyId, contact?.id, { integrationId: flow?.integration_id ?? null });
             } catch (seqErr) {
               console.error(`[Flow Engine] Stop Sequence node "${node.id}" failed:`, seqErr.message);
             }
@@ -1694,6 +1695,133 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             console.warn(`[Flow Engine] Stop Sequence node "${node.id}" has no sequence selected.`);
           }
           currentNodeId = getNextNodeId(node.id);
+          break;
+        }
+
+        // Actions node: an ordered list of silent side-effects (labels, sequences,
+        // custom fields), then straight on to the next step. One failing action is
+        // logged and skipped so it can't stop the rest of the flow.
+        case "actions": {
+          const actionList = Array.isArray(node.data?.actions) ? node.data.actions : [];
+          for (const act of actionList) {
+            try {
+              switch (act?.type) {
+                case "add_label":
+                  if (act.labelId && contact?.id) await applyLabelToContact(agencyId, contact.id, act.labelId);
+                  break;
+                case "remove_label":
+                  if (act.labelId && contact?.id) await removeLabelFromContact(agencyId, contact.id, act.labelId);
+                  break;
+                case "add_sequence":
+                  if (act.sequenceId) await enrollContactsInSequence(act.sequenceId, agencyId, { contactId: contact?.id, enrolledVia: "flow-actions", integrationId: flow?.integration_id ?? null });
+                  break;
+                case "remove_sequence":
+                  if (act.sequenceId) await unsubscribeContactFromSequence(act.sequenceId, agencyId, contact?.id, { integrationId: flow?.integration_id ?? null });
+                  break;
+                case "set_field":
+                case "clear_field": {
+                  if (!act.fieldId || !contact?.id) break;
+                  const [[fieldDef]] = await pool.query(
+                    "SELECT id FROM custom_field_definitions WHERE id = ? AND agency_id = ?",
+                    [act.fieldId, agencyId]
+                  );
+                  if (!fieldDef) break;
+                  if (act.type === "set_field") {
+                    const newValue = replaceVariables(String(act.value ?? ""), variables, contact);
+                    await pool.query(
+                      `INSERT INTO contact_custom_field_values (contact_id, field_id, value)
+                       VALUES (?, ?, ?)
+                       ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = NOW()`,
+                      [contact.id, act.fieldId, newValue]
+                    );
+                    emitToAgency(agencyId, "contact_custom_field_updated", { contactId: contact.id, fieldId: Number(act.fieldId), value: newValue });
+                  } else {
+                    await pool.query(
+                      "DELETE FROM contact_custom_field_values WHERE contact_id = ? AND field_id = ?",
+                      [contact.id, act.fieldId]
+                    );
+                    emitToAgency(agencyId, "contact_custom_field_updated", { contactId: contact.id, fieldId: Number(act.fieldId), value: null });
+                  }
+                  break;
+                }
+                default:
+                  break;
+              }
+            } catch (actErr) {
+              console.error(`[Flow Engine] Actions node "${node.id}" action "${act?.type}" failed:`, actErr.message);
+            }
+          }
+          currentNodeId = getNextNodeId(node.id);
+          break;
+        }
+
+        // Start Automation: ends this flow's session and begins another existing
+        // flow from its Start node, in the same conversation. Session/nodes/edges
+        // are swapped in place so the loop keeps running the new flow; the hop
+        // counter stops two flows that start each other from looping forever.
+        case "startAutomation": {
+          const targetFlowId = node.data?.flowId;
+          const hops = Number(variables.__automationHops || 0);
+          if (!targetFlowId) {
+            console.warn(`[Flow Engine] Start Automation node "${node.id}" has no flow selected.`);
+            currentNodeId = null;
+            break;
+          }
+          if (hops >= 5) {
+            console.warn(`[Flow Engine] Start Automation node "${node.id}" stopped: too many chained automations.`);
+            currentNodeId = null;
+            break;
+          }
+          const [[targetFlow]] = await pool.query(
+            "SELECT * FROM flows WHERE id = ? AND agency_id = ? AND integration_id = ? AND is_active = 1",
+            [targetFlowId, agencyId, flow?.integration_id ?? null]
+          );
+          const { nodes: targetNodes, edges: targetEdges } = targetFlow
+            ? expandMessageBlocks(JSON.parse(targetFlow.nodes_json || "[]"), JSON.parse(targetFlow.edges_json || "[]"))
+            : { nodes: [], edges: [] };
+          const targetStart = targetNodes.find((n) => n.type === "start");
+          if (!targetStart) {
+            console.warn(`[Flow Engine] Start Automation node "${node.id}" target flow ${targetFlowId} is missing, inactive or has no Start node.`);
+            currentNodeId = null;
+            break;
+          }
+
+          await pool.query(
+            "UPDATE flow_sessions SET status = 'COMPLETED', delay_next_run_at = NULL, current_node_id = ? WHERE id = ?",
+            [node.id, session.id]
+          );
+          variables.__automationHops = hops + 1;
+          const [handoverSess] = await pool.query(
+            "INSERT INTO flow_sessions (agency_id, conversation_id, flow_id, current_node_id, variables, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')",
+            [agencyId, conversationId, targetFlow.id, targetStart.id, JSON.stringify(variables)]
+          );
+          session = {
+            id: handoverSess.insertId,
+            agency_id: agencyId,
+            conversation_id: conversationId,
+            flow_id: targetFlow.id,
+            current_node_id: targetStart.id,
+            variables,
+            status: "ACTIVE",
+          };
+          flow = targetFlow;
+          nodes = targetNodes;
+          edges = targetEdges;
+          mainNodes = targetNodes;
+          mainEdges = targetEdges;
+          inUIF = false;
+          activeUifId = null;
+          returnNodeId = null;
+          mainParkedNodeId = targetStart.id;
+
+          // Same as a fresh trigger: the target's own Start-node label is applied.
+          const targetLabelIds = Array.isArray(targetStart.data?.labelIds) ? targetStart.data.labelIds : [];
+          if (contact?.id) {
+            for (const labelId of targetLabelIds) {
+              await applyLabelToContact(agencyId, contact.id, labelId);
+            }
+          }
+          currentNodeId = getNextNodeId(targetStart.id);
           break;
         }
 

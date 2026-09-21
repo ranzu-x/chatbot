@@ -457,7 +457,7 @@ export const followupAPI = {
 };
 
 export const sequenceAPI = {
-  getAll: () => api.get('/sequences'),
+  getAll: (params) => api.get('/sequences', { params }),
   getOne: (id) => api.get(`/sequences/${id}`),
   create: (data) => api.post('/sequences', data),
   update: (id, data) => api.put(`/sequences/${id}`, data),

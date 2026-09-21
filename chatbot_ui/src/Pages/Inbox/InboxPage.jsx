@@ -3001,8 +3001,8 @@ export default function InboxPage() {
                               fontWeight: 700,
                               padding: '1px 5px',
                               borderRadius: 4,
-                              background: pInfo.bg,
-                              color: pInfo.color,
+                              background: '#f1f5f9',
+                              color: '#334155',
                               flexShrink: 0,
                             }}
                           >
@@ -3080,21 +3080,6 @@ export default function InboxPage() {
                           </button>
                         </div>
                       </div>
-                      {Array.isArray(conv.contactLabels) && conv.contactLabels.length > 0 && (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, marginTop: 2 }}>
-                          {conv.contactLabels.map((lb) => (
-                            <span
-                              key={lb.id}
-                              style={{
-                                fontSize: '0.58rem', fontWeight: 700, padding: '0 4px', borderRadius: 6,
-                                background: `${lb.color}18`, color: lb.color,
-                              }}
-                            >
-                              {lb.name}
-                            </span>
-                          ))}
-                        </div>
-                      )}
                     </div>
                   </div>
                 );
@@ -4526,7 +4511,10 @@ export default function InboxPage() {
                     style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: '0.82rem', background: '#ffffff', marginBottom: 8 }}
                   >
                     <option value="">Select a Sequence...</option>
-                    {availableSequences.map((s) => (
+                    {availableSequences
+                      // BOT SCOPE: only the sequences of the bot account this conversation is on
+                      .filter((s) => Number(s.integration_id) === Number(selectedConv?.integration_id ?? selectedConv?.integrationId))
+                      .map((s) => (
                       <option key={s.id} value={s.id}>{s.name} ({s.platform})</option>
                     ))}
                   </select>

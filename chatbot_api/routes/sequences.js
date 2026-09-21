@@ -41,17 +41,30 @@ async function validateIntegration(agencyId, platform, integrationId) {
  *    ever touches rows for `sequenceId`.
  * Returns the number of contacts actually (re)started.
  */
-export async function enrollContactsInSequence(sequenceId, agencyId, { contactId, targetPlatform, enrolledVia = null } = {}) {
+export async function enrollContactsInSequence(sequenceId, agencyId, { contactId, targetPlatform, enrolledVia = null, integrationId = undefined } = {}) {
   const [seqRows] = await pool.query("SELECT * FROM sequences WHERE id = ? AND agency_id = ?", [sequenceId, agencyId]);
   if (!seqRows.length) return { enrolled: 0, error: "Sequence not found" };
 
+  // BOT SCOPE (utils/botScope.js). A caller that acts on behalf of one bot account (a
+  // running flow) passes its integrationId — that bot may only use ITS OWN sequences.
+  // Answers "not found", same as a cross-tenant lookup.
+  if (integrationId !== undefined && Number(seqRows[0].integration_id) !== Number(integrationId)) {
+    return { enrolled: 0, error: "Sequence not found" };
+  }
+
+  // A sequence sends from ONE bot account, so it can only ever enroll contacts who are
+  // subscribers of THAT bot (have a conversation on it) — never another bot's audience.
+  const ownAudience = "EXISTS (SELECT 1 FROM conversations cv WHERE cv.contact_id = contacts.id AND cv.agency_id = contacts.agency_id AND cv.integration_id = ?)";
   let targetContacts = [];
   if (contactId) {
-    const [c] = await pool.query("SELECT id FROM contacts WHERE id = ? AND agency_id = ?", [contactId, agencyId]);
+    const [c] = await pool.query(
+      `SELECT id FROM contacts WHERE id = ? AND agency_id = ? AND ${ownAudience}`,
+      [contactId, agencyId, seqRows[0].integration_id]
+    );
     targetContacts = c;
   } else {
-    let q = "SELECT id FROM contacts WHERE agency_id = ?";
-    const p = [agencyId];
+    let q = `SELECT id FROM contacts WHERE agency_id = ? AND ${ownAudience}`;
+    const p = [agencyId, seqRows[0].integration_id];
     if (targetPlatform) { q += " AND platform = ?"; p.push(targetPlatform); }
     const [c] = await pool.query(q, p);
     targetContacts = c;
@@ -89,9 +102,12 @@ export async function enrollContactsInSequence(sequenceId, agencyId, { contactId
 
 /** Stops a contact's enrollment in a Sequence. Shared by the HTTP unsubscribe
  * route and the "Stop Sequence" Flow Builder node / button action. */
-export async function unsubscribeContactFromSequence(sequenceId, agencyId, contactId) {
-  const [seqRows] = await pool.query("SELECT id FROM sequences WHERE id = ? AND agency_id = ?", [sequenceId, agencyId]);
+export async function unsubscribeContactFromSequence(sequenceId, agencyId, contactId, { integrationId = undefined } = {}) {
+  const [seqRows] = await pool.query("SELECT id, integration_id FROM sequences WHERE id = ? AND agency_id = ?", [sequenceId, agencyId]);
   if (!seqRows.length) return { stopped: 0, error: "Sequence not found" };
+  if (integrationId !== undefined && Number(seqRows[0].integration_id) !== Number(integrationId)) {
+    return { stopped: 0, error: "Sequence not found" };
+  }
 
   const [result] = await pool.query(
     "UPDATE sequence_subscribers SET status = 'STOPPED' WHERE sequence_id = ? AND contact_id = ? AND status = 'ACTIVE'",
@@ -273,6 +289,11 @@ router.put("/sequences/:id", async (req, res) => {
     if (edges_json !== undefined) { fields.push("edges_json = ?"); params.push(edges_json); }
     if (isActive !== undefined) { fields.push("is_active = ?"); params.push(isActive ? 1 : 0); }
     if (integrationId !== undefined) {
+      // BOT SCOPE: a sequence's bot account is set once. Only a sequence with NO bot yet
+      // (older data) may be given one — after that it can never be moved to another bot.
+      if (owned[0].integration_id && Number(owned[0].integration_id) !== Number(integrationId)) {
+        return res.status(403).json({ success: false, code: "BOT_SCOPE_VIOLATION", message: "A sequence can't be moved to a different bot account." });
+      }
       const validated = await validateIntegration(agencyId, owned[0].platform, integrationId);
       if (!validated) {
         return res.status(400).json({ success: false, message: "That account isn't a valid, active integration for this platform." });

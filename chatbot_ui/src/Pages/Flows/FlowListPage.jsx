@@ -645,7 +645,7 @@ export default function FlowListPage() {
         setFlows(prev => prev.map(f => f.id === flow.id ? { ...f, is_active: !f.is_active } : f));
         toast(`"${flow.name}" ${flow.is_active ? 'deactivated' : 'activated'}`);
       }
-    } catch (err) {
+    } catch {
       toast('Failed to toggle flow', 'error');
     }
   };
@@ -658,7 +658,7 @@ export default function FlowListPage() {
         setFlows(prev => prev.filter(f => f.id !== deleteTarget.id));
         toast(`"${deleteTarget.name}" deleted`);
       }
-    } catch (err) {
+    } catch {
       toast('Failed to delete flow', 'error');
     } finally {
       setDeleteTarget(null);

@@ -214,6 +214,14 @@ router.post("/comments/campaigns", async (req, res) => {
       });
     }
 
+    // BOT SCOPE: a rule may only start a flow of its OWN bot account.
+    if (flowId) {
+      const [[ownFlow]] = await pool.query("SELECT id FROM flows WHERE id = ? AND agency_id = ? AND integration_id = ?", [flowId, agencyId, integrationId]);
+      if (!ownFlow) {
+        return res.status(403).json({ success: false, code: "BOT_SCOPE_VIOLATION", message: "That flow belongs to a different bot account." });
+      }
+    }
+
     const [result] = await pool.query(
       `INSERT INTO comment_automation_rules (
         agency_id, integration_id, platform, campaign_name, post_id, post_data,
@@ -294,12 +302,20 @@ router.put("/comments/campaigns/:id", async (req, res) => {
     } = req.body;
 
     const [rows] = await pool.query(
-      "SELECT id FROM comment_automation_rules WHERE id = ? AND agency_id = ?",
+      "SELECT id, integration_id FROM comment_automation_rules WHERE id = ? AND agency_id = ?",
       [req.params.id, agencyId]
     );
 
     if (!rows.length) {
       return res.status(404).json({ success: false, message: "Campaign not found" });
+    }
+
+    // BOT SCOPE: a rule may only start a flow of its OWN bot account.
+    if (flowId) {
+      const [[ownFlow]] = await pool.query("SELECT id FROM flows WHERE id = ? AND agency_id = ? AND integration_id = ?", [flowId, agencyId, rows[0].integration_id]);
+      if (!ownFlow) {
+        return res.status(403).json({ success: false, code: "BOT_SCOPE_VIOLATION", message: "That flow belongs to a different bot account." });
+      }
     }
 
     await pool.query(

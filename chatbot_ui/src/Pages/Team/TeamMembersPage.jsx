@@ -456,7 +456,7 @@ export default function TeamMembersPage() {
               }}
             >
               <UserPlus size={16} />
-              Invite Team Member
+              Add Team Member
             </button>
           </div>
         </div>
@@ -786,7 +786,7 @@ export default function TeamMembersPage() {
                   cursor: 'pointer',
                 }}
               >
-                + Invite Member
+                + Add Team Member
               </button>
             </div>
           ) : (
@@ -1122,7 +1122,7 @@ export default function TeamMembersPage() {
                 }}
               >
                 <UserPlus size={20} color="#6366f1" />
-                Invite New Team Member
+                Add New Team Member
               </h3>
               <button
                 onClick={() => setShowCreateModal(false)}

@@ -12,6 +12,7 @@ import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { requireModule, assertLimit } from "../utils/entitlements.js";
+import { findOutOfScopeRefs, getOwnedIntegration } from "../utils/botScope.js";
 
 const router = express.Router();
 router.use("/user-input-flows", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_user_input_flows"));
@@ -22,15 +23,21 @@ router.use("/user-input-flows", authMiddleware, roleMiddleware("RESELLER", "ADMI
 // a flow on that channel (used by the "Run User Input Flow" node's picker).
 router.get("/user-input-flows", async (req, res) => {
   try {
-    const { platform } = req.query;
+    const { platform, integrationId } = req.query;
     const conditions = ["agency_id = ?"];
     const params = [req.user.agencyId];
+    // BOT SCOPE: asking for one bot's forms returns ONLY that bot's (a form with no bot
+    // assigned is never returned here, so no bot can pick it up by accident).
+    if (integrationId && integrationId !== "all") {
+      conditions.push("integration_id = ?");
+      params.push(Number(integrationId));
+    }
     if (platform && platform !== "ALL") {
       conditions.push("platform = ?");
       params.push(String(platform).toUpperCase());
     }
     const [rows] = await pool.query(
-      `SELECT id, agency_id, name, platform, is_active, created_at, updated_at,
+      `SELECT id, agency_id, name, platform, integration_id, is_active, created_at, updated_at,
               JSON_LENGTH(nodes_json) AS nodeCount,
               (SELECT COUNT(*) FROM user_input_flow_responses r WHERE r.user_input_flow_id = user_input_flows.id) AS responseCount
        FROM user_input_flows WHERE ${conditions.join(" AND ")} ORDER BY updated_at DESC`,
@@ -59,6 +66,7 @@ router.post("/user-input-flows", async (req, res) => {
   const name = (req.body.name || "").trim();
   if (!name) return res.status(400).json({ success: false, message: "Name is required" });
   const platform = (req.body.platform || "WHATSAPP").toUpperCase();
+  const integrationId = req.body.integrationId || req.body.integration_id || null;
 
   const nodes = req.body.nodesJson !== undefined ? req.body.nodesJson : req.body.nodes_json;
   const edges = req.body.edgesJson !== undefined ? req.body.edgesJson : req.body.edges_json;
@@ -66,10 +74,17 @@ router.post("/user-input-flows", async (req, res) => {
   const edgesStr = typeof edges === "string" ? edges : JSON.stringify(edges || []);
 
   try {
+    // A form belongs to ONE bot account of THIS workspace, on the same channel — chosen at creation.
+    if (!integrationId) {
+      return res.status(400).json({ success: false, message: "Choose which bot account this form belongs to." });
+    }
+    if (!(await getOwnedIntegration(req.user.agencyId, integrationId, platform))) {
+      return res.status(403).json({ success: false, code: "BOT_SCOPE_VIOLATION", message: "That bot account isn't available to you for this channel." });
+    }
     await assertLimit(req.user.agencyId, "max_user_input_flows", 1, req.user?.id);
     const [result] = await pool.query(
-      "INSERT INTO user_input_flows (agency_id, name, platform, nodes_json, edges_json) VALUES (?, ?, ?, ?, ?)",
-      [req.user.agencyId, name, platform, nodesStr, edgesStr]
+      "INSERT INTO user_input_flows (agency_id, name, platform, integration_id, nodes_json, edges_json) VALUES (?, ?, ?, ?, ?, ?)",
+      [req.user.agencyId, name, platform, Number(integrationId), nodesStr, edgesStr]
     );
     return res.status(201).json({ success: true, message: "User Input Flow created", userInputFlowId: result.insertId });
   } catch (err) { console.error(err); return res.status(err.status || 500).json({ success: false, message: err.message || "Server error", code: err.code }); }
@@ -83,14 +98,43 @@ router.put("/user-input-flows/:id", async (req, res) => {
   const name = req.body.name;
   const nodes = req.body.nodesJson !== undefined ? req.body.nodesJson : req.body.nodes_json;
   const edges = req.body.edgesJson !== undefined ? req.body.edgesJson : req.body.edges_json;
-  const isActive = req.body.isActive !== undefined ? req.body.isActive : (req.body.is_active !== undefined ? req.body.is_active : 1);
-  const nodesStr = typeof nodes === "string" ? nodes : JSON.stringify(nodes || []);
-  const edgesStr = typeof edges === "string" ? edges : JSON.stringify(edges || []);
+  const isActive = req.body.isActive !== undefined ? req.body.isActive : (req.body.is_active !== undefined ? req.body.is_active : null);
+  // A rename (name only) must not wipe the canvas or flip the active flag: anything not sent is kept.
+  const nodesStr = nodes === undefined ? null : (typeof nodes === "string" ? nodes : JSON.stringify(nodes || []));
+  const edgesStr = edges === undefined ? null : (typeof edges === "string" ? edges : JSON.stringify(edges || []));
 
   try {
+    const [[owned]] = await pool.query("SELECT id, platform, integration_id FROM user_input_flows WHERE id = ? AND agency_id = ?", [req.params.id, req.user.agencyId]);
+    if (!owned) return res.status(404).json({ success: false, message: "User Input Flow not found" });
+
+    // The bot account is set once. Only a form with NO bot yet (older data) may be given one;
+    // after that it can never be moved to another bot.
+    let assignIntegrationId = null;
+    const wanted = req.body.integrationId || req.body.integration_id || null;
+    if (wanted) {
+      if (owned.integration_id && Number(owned.integration_id) !== Number(wanted)) {
+        return res.status(403).json({ success: false, code: "BOT_SCOPE_VIOLATION", message: "A form can't be moved to a different bot account." });
+      }
+      if (!owned.integration_id) {
+        if (!(await getOwnedIntegration(req.user.agencyId, wanted, owned.platform))) {
+          return res.status(403).json({ success: false, code: "BOT_SCOPE_VIOLATION", message: "That bot account isn't available to you for this channel." });
+        }
+        assignIntegrationId = Number(wanted);
+      }
+    }
+
+    // Forms never reference other components, but check anyway so nothing can be smuggled in.
+    const effectiveIntegrationId = assignIntegrationId || owned.integration_id;
+    let parsedNodes = [];
+    try { parsedNodes = JSON.parse(nodesStr || "[]"); } catch { parsedNodes = []; }
+    const bad = await findOutOfScopeRefs({ agencyId: req.user.agencyId, integrationId: effectiveIntegrationId, nodes: parsedNodes });
+    if (bad.length) {
+      return res.status(403).json({ success: false, code: "BOT_SCOPE_VIOLATION", message: "A form can only reference its own bot's components." });
+    }
+
     await pool.query(
-      "UPDATE user_input_flows SET name = COALESCE(?, name), nodes_json = ?, edges_json = ?, is_active = ? WHERE id = ? AND agency_id = ?",
-      [name || null, nodesStr, edgesStr, isActive, req.params.id, req.user.agencyId]
+      "UPDATE user_input_flows SET name = COALESCE(?, name), integration_id = COALESCE(?, integration_id), nodes_json = COALESCE(?, nodes_json), edges_json = COALESCE(?, edges_json), is_active = COALESCE(?, is_active) WHERE id = ? AND agency_id = ?",
+      [name || null, assignIntegrationId, nodesStr, edgesStr, isActive, req.params.id, req.user.agencyId]
     );
     return res.json({ success: true, message: "User Input Flow saved" });
   } catch (err) { console.error("User Input Flow save error:", err); return res.status(500).json({ success: false, message: "Server error" }); }

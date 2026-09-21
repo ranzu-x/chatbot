@@ -94,7 +94,7 @@ function SequenceLogRows({ sequenceId }) {
  * query. Lives inside Bot Manager → Automation now — no longer a separate
  * page reached from the main sidebar.
  */
-export default function SequenceMessageReport() {
+export default function SequenceMessageReport({ integrationId = null }) {
   const navigate = useNavigate();
   const [sequences, setSequences] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -113,11 +113,11 @@ export default function SequenceMessageReport() {
 
   const load = useCallback(() => {
     setLoading(true);
-    sequenceAPI.getAll()
+    sequenceAPI.getAll(integrationId ? { integrationId } : undefined)
       .then((res) => setSequences(res.data?.sequences || []))
       .catch(() => setSequences([]))
       .finally(() => setLoading(false));
-  }, []);
+  }, [integrationId]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { integrationAPI.getAll().then((res) => setIntegrations(res.data?.integrations || [])).catch(() => {}); }, []);
@@ -129,6 +129,18 @@ export default function SequenceMessageReport() {
   useEffect(() => {
     setCreateIntegrationId(integrationsForNewPlatform.length === 1 ? String(integrationsForNewPlatform[0].id) : '');
   }, [integrationsForNewPlatform]);
+
+  // Opened from one bot account → new sequences belong to THAT account, fixed.
+  const lockedIntegration = useMemo(
+    () => (integrationId ? integrations.find((i) => String(i.id) === String(integrationId)) || null : null),
+    [integrationId, integrations]
+  );
+  useEffect(() => {
+    if (lockedIntegration) {
+      setNewPlatform(lockedIntegration.platform);
+      setCreateIntegrationId(String(lockedIntegration.id));
+    }
+  }, [lockedIntegration]);
 
   const integrationsForPickerPlatform = useMemo(
     () => integrations.filter((i) => i.platform === accountPickerFor?.platform && i.is_active),
@@ -222,7 +234,7 @@ export default function SequenceMessageReport() {
           onClick={() => setShowCreate(true)}
           style={{
             display: 'flex', alignItems: 'center', gap: 6, padding: '7px 16px', borderRadius: 8, border: 'none',
-            background: 'linear-gradient(135deg, #0891b2 0%, #0e7490 100%)',
+            background: '#0f172a',
             color: '#fff', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer',
           }}
         >
@@ -295,8 +307,8 @@ export default function SequenceMessageReport() {
                       <td style={{ padding: '10px 14px' }}>
                         <button
                           type="button"
-                          onClick={() => openAccountPicker(s)}
-                          title="Change sending account"
+                          onClick={() => { if (!s.integration_id) openAccountPicker(s); }}
+                          title={s.integration_id ? 'This sequence belongs to this bot account and can\'t be moved' : 'Assign a bot account'}
                           style={{
                             display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', borderRadius: 999,
                             border: s.integration_id ? '1px solid transparent' : '1px solid #fca5a5',
@@ -366,7 +378,14 @@ export default function SequenceMessageReport() {
               placeholder="e.g. Welcome Series"
               style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #e2e8f0', fontSize: '0.86rem', boxSizing: 'border-box' }}
             />
-            <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: 700, color: '#475569', margin: '14px 0 5px' }}>Channel</label>
+            {lockedIntegration ? (
+              <div style={{ margin: '14px 0 0', padding: '10px 12px', borderRadius: 9, background: '#f8fafc', border: '1px solid #e2e8f0', fontSize: '0.8rem', color: '#334155' }}>
+                <strong>Belongs to:</strong> {integrationLabel(lockedIntegration)}
+                <div style={{ color: '#94a3b8', marginTop: 2 }}>Only this bot account can use it. This can't be changed later.</div>
+              </div>
+            ) : (
+              <>
+                <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: 700, color: '#475569', margin: '14px 0 5px' }}>Channel</label>
             <select value={newPlatform} onChange={(e) => setNewPlatform(e.target.value)} style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #e2e8f0', fontSize: '0.86rem', boxSizing: 'border-box' }}>
               {PLATFORM_OPTIONS.map((p) => <option key={p} value={p}>{getPlatformMeta(p).label}</option>)}
             </select>
@@ -381,6 +400,8 @@ export default function SequenceMessageReport() {
                 {integrationsForNewPlatform.map((i) => <option key={i.id} value={i.id}>{integrationLabel(i)}</option>)}
               </select>
             )}
+              </>
+            )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 22 }}>
               <button type="button" onClick={() => setShowCreate(false)} style={{ padding: '9px 18px', borderRadius: 9, border: 'none', fontSize: '0.84rem', fontWeight: 700, cursor: 'pointer', background: '#f1f5f9', color: '#475569' }}>
                 Cancel
@@ -392,7 +413,7 @@ export default function SequenceMessageReport() {
                 style={{
                   padding: '9px 18px', borderRadius: 9, border: 'none', fontSize: '0.84rem', fontWeight: 700,
                   cursor: !newName.trim() || !createIntegrationId || creating ? 'not-allowed' : 'pointer',
-                  background: !newName.trim() || !createIntegrationId || creating ? '#67e8f9' : 'linear-gradient(135deg, #0891b2 0%, #0e7490 100%)',
+                  background: !newName.trim() || !createIntegrationId || creating ? '#94a3b8' : '#0f172a',
                   color: '#fff',
                 }}
               >
@@ -434,7 +455,7 @@ export default function SequenceMessageReport() {
                 style={{
                   padding: '9px 18px', borderRadius: 9, border: 'none', fontSize: '0.84rem', fontWeight: 700,
                   cursor: !accountPickerValue || savingAccount ? 'not-allowed' : 'pointer',
-                  background: !accountPickerValue || savingAccount ? '#67e8f9' : 'linear-gradient(135deg, #0891b2 0%, #0e7490 100%)',
+                  background: !accountPickerValue || savingAccount ? '#94a3b8' : '#0f172a',
                   color: '#fff',
                 }}
               >

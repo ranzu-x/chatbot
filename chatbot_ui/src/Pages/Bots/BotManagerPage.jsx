@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
 import { useAuth } from '../../Provider/AuthContext';
-import { flowAPI, integrationAPI, channelAPI, botAPI, templateAPI } from '../../services/api';
+import { flowAPI, integrationAPI, botAPI, templateAPI } from '../../services/api';
 import WhatsAppTemplateManager from '../../Components/Templates/WhatsAppTemplateManager';
 import FacebookUtilityTemplateManager from '../../Components/Templates/FacebookUtilityTemplateManager';
 import ChatWidgetManager from '../../Components/Engagement/ChatWidgetManager';
@@ -100,7 +100,6 @@ const SUB_TABS = {
     { id: 'messageTemplates', label: 'Message Templates' },
     { id: 'clickAds',         label: 'Click Ads' },
     { id: 'httpApiCampaigns', label: 'HTTP API Campaigns' },
-    { id: 'followUpSequences',label: 'Sequences' },
     { id: 'quickActions',     label: 'Quick Actions' },
     { id: 'outboundActions',  label: 'Outbound Actions' },
     { id: 'webhookWorkflows', label: 'Webhook Workflows' },
@@ -121,6 +120,7 @@ const SUB_TABS = {
   engagement: [
     // Comment Automation moved out to its own top-level page
     // (/comment-automation, Sidebar.jsx) — see CommentAutomationPage.jsx.
+    { id: 'followUpSequences', label: 'Sequences' },
     { id: 'iceBreakers',       label: 'Ice Breakers & Welcome' },
     { id: 'storyMentions',     label: 'Story Mentions Reply' },
     { id: 'actionMenus',       label: 'Action Buttons & Menus' },
@@ -201,7 +201,7 @@ const STARTER_TEMPLATES = [
     description: 'Collects visitor Name, Email, and Phone number automatically.',
     icon: UserCheck,
     color: '#f59e0b',
-    nodes: (name) => [
+    nodes: () => [
       {
         id: 'start_1',
         type: 'start',
@@ -272,7 +272,7 @@ export default function BotManagerPage() {
   // Data
   const [integrations, setIntegrations] = useState([]);
   const [flows, setFlows] = useState([]);
-  const [templates, setTemplates] = useState([]);
+  const [, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Selected State
@@ -324,7 +324,7 @@ export default function BotManagerPage() {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState('blank');
   const [newFlowName, setNewFlowName] = useState('');
-  const [newFlowPlatform, setNewFlowPlatform] = useState('WHATSAPP');
+  const [newFlowPlatform] = useState('WHATSAPP');
   const [creating, setCreating] = useState(false);
   const [showOptionsDropdown, setShowOptionsDropdown] = useState(false);
 
@@ -1907,7 +1907,7 @@ export default function BotManagerPage() {
                   on the same channel with a "Run User Input Flow" node.
                 </p>
               </div>
-              <UserInputFlowManagerList />
+              <UserInputFlowManagerList integrationId={selectedAccount?.id && selectedAccount.id !== 'all' ? selectedAccount.id : null} />
             </div>
           )}
 
@@ -1931,7 +1931,7 @@ export default function BotManagerPage() {
               delivery report (sent / skipped-by-window / failed, with a
               per-subscriber drill-down) right alongside it so a stuck
               enrollment is diagnosable without a database query. */}
-          {activeCategory === 'automation' && activeSubTab === 'followUpSequences' && (
+          {activeCategory === 'engagement' && activeSubTab === 'followUpSequences' && (
             <div className="bm-content-card">
               <div className="bm-card-header">
                 <h3 className="bm-card-title">Sequence Messages</h3>
@@ -1941,7 +1941,7 @@ export default function BotManagerPage() {
                   messaging-window rules are respected automatically — a skipped send shows why below.
                 </p>
               </div>
-              <SequenceMessageReport />
+              <SequenceMessageReport integrationId={selectedAccount?.id && selectedAccount.id !== 'all' ? selectedAccount.id : null} />
             </div>
           )}
 
@@ -1976,7 +1976,7 @@ export default function BotManagerPage() {
             </div>
           )}
 
-          {!['keywordReplies', 'messageTemplates'].includes(activeSubTab) && !(activeCategory === 'dataCollection' && activeSubTab === 'userInputFlows') && !(activeCategory === 'automation' && activeSubTab === 'httpApiCampaigns') && !(activeCategory === 'automation' && activeSubTab === 'followUpSequences') && !(activeCategory === 'dataCollection' && activeSubTab === 'whatsappFlows') && !(activeCategory === 'commerce' && activeSubTab === 'storeConnections') && !(activeCategory === 'engagement' && activeSubTab === 'chatWidget') && activeCategory !== 'ai' && (
+          {!['keywordReplies', 'messageTemplates'].includes(activeSubTab) && !(activeCategory === 'dataCollection' && activeSubTab === 'userInputFlows') && !(activeCategory === 'automation' && activeSubTab === 'httpApiCampaigns') && !(activeCategory === 'engagement' && activeSubTab === 'followUpSequences') && !(activeCategory === 'dataCollection' && activeSubTab === 'whatsappFlows') && !(activeCategory === 'commerce' && activeSubTab === 'storeConnections') && !(activeCategory === 'engagement' && activeSubTab === 'chatWidget') && activeCategory !== 'ai' && (
             <div className="bm-content-card">
               <div className="bm-card-header">
                 <h3 className="bm-card-title">{activeSubTab.replace(/([A-Z])/g, ' $1').trim()}</h3>

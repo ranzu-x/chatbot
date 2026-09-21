@@ -6,7 +6,7 @@ import { useAuth } from '../../Provider/AuthContext';
 import { showAlert, showLimitModal, notify } from '../../utils/alerts';
 import {
   Radio, MessageCircle, Facebook, Instagram, Send, Globe, Video,
-  Plus, Search, RefreshCw, Trash2, Copy, Check, SlidersHorizontal, ShieldCheck,
+  Plus, Search, RefreshCw, Trash2, SlidersHorizontal, ShieldCheck,
 } from 'lucide-react';
 
 /**
@@ -91,18 +91,6 @@ function identifier(item) {
   if (p === 'TELEGRAM') return item.tg_bot_username ? `@${item.tg_bot_username}` : `ID ${item.id}`;
   if (p === 'TIKTOK') return item.tiktok_username ? `@${item.tiktok_username}` : (item.tiktok_open_id || `ID ${item.id}`);
   return `ID ${item.id}`;
-}
-
-/** Only the Meta channels actually receive inbound traffic on the
- * per-integration webhook URL. Telegram runs on polling (see
- * utils/telegramPoller.js, which calls deleteWebhook on start) and Webchat
- * arrives over the widget's own socket — showing them a webhook URL, as the
- * original page does for every row, is misleading. */
-const WEBHOOK_CHANNELS = new Set(['WHATSAPP', 'FACEBOOK', 'INSTAGRAM']);
-
-function webhookUrl(item) {
-  const base = import.meta.env.VITE_API_URL || 'http://localhost:5000/api/v1';
-  return `${base}/webhook/${item.agency_id}/${item.id}`;
 }
 
 const cardStyle = {
@@ -206,7 +194,6 @@ export default function ConnectAccountsPage() {
   const [integrations, setIntegrations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [copiedId, setCopiedId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
   const tableRef = useRef(null);
 
@@ -260,12 +247,6 @@ export default function ConnectAccountsPage() {
       return;
     }
     navigate(channel.route);
-  };
-
-  const handleCopy = (id, url) => {
-    navigator.clipboard.writeText(url);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
   };
 
   const handleDisconnect = async (item) => {
@@ -394,10 +375,10 @@ export default function ConnectAccountsPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.84rem' }}>
               <thead>
                 <tr style={{ background: 'var(--bg-base)', borderBottom: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                  <th style={{ padding: "10px 14px", fontWeight: 700, width: 48 }}>#</th>
                   <th style={{ padding: '10px 14px', fontWeight: 700 }}>Channel</th>
                   <th style={{ padding: '10px 14px', fontWeight: 700 }}>Account name</th>
                   <th style={{ padding: '10px 14px', fontWeight: 700 }}>Identifier</th>
-                  <th style={{ padding: '10px 14px', fontWeight: 700 }}>Inbound</th>
                   <th style={{ padding: '10px 14px', fontWeight: 700 }}>Status</th>
                   <th style={{ padding: '10px 14px', fontWeight: 700, textAlign: 'right' }}>Actions</th>
                 </tr>
@@ -418,14 +399,13 @@ export default function ConnectAccountsPage() {
                         : 'No accounts match that search.'}
                     </td>
                   </tr>
-                ) : visible.map((item) => {
+                ) : visible.map((item, index) => {
                   const channel = channelOf(item.platform);
                   const { Icon } = channel;
-                  const hasWebhook = WEBHOOK_CHANNELS.has((item.platform || '').toUpperCase());
-                  const url = webhookUrl(item);
 
                   return (
                     <tr key={item.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '12px 14px', color: 'var(--text-muted)', fontWeight: 700 }}>{index + 1}</td>
                       <td style={{ padding: '12px 14px' }}>
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.75rem', fontWeight: 700, padding: '3px 8px', borderRadius: 10, background: channel.tint, color: channel.color }}>
                           <Icon size={12} /> {channel.label}
@@ -446,34 +426,15 @@ export default function ConnectAccountsPage() {
                               <Icon size={14} />
                             </div>
                           )}
-                          <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{displayName(item)}</span>
+                          <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                            <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>{displayName(item)}</span>
+                            <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>ID {item.id}</span>
+                          </div>
                         </div>
                       </td>
 
                       <td style={{ padding: '12px 14px', color: 'var(--text-secondary)', fontSize: '0.8rem', fontFamily: 'var(--font-mono)' }}>
                         {identifier(item)}
-                      </td>
-
-                      <td style={{ padding: '12px 14px' }}>
-                        {hasWebhook ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', maxWidth: 170, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {url}
-                            </span>
-                            <button
-                              onClick={() => handleCopy(item.id, url)}
-                              title="Copy webhook URL"
-                              className="btn btn-secondary btn-sm"
-                              style={{ padding: '3px 7px', fontSize: '0.72rem' }}
-                            >
-                              {copiedId === item.id ? <Check size={11} color="var(--success)" /> : <Copy size={11} />}
-                            </button>
-                          </div>
-                        ) : (
-                          <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
-                            {(item.platform || '').toUpperCase() === 'TELEGRAM' ? 'Polling — no webhook' : 'Widget embed'}
-                          </span>
-                        )}
                       </td>
 
                       <td style={{ padding: '12px 14px' }}><StatusPill active={!!item.is_active} /></td>

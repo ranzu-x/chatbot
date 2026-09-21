@@ -1,0 +1,99 @@
+.app-toast {
+  --toast-bg: #d5e8d8;
+  --toast-fg: #1f2a24;
+  --toast-accent: #1f2a24;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 390px;
+  max-width: calc(100vw - 32px);
+  padding: 16px 16px 16px 18px;
+  border-radius: 8px;
+  background: var(--toast-bg);
+  color: var(--toast-fg);
+  font-size: 0.92rem;
+  line-height: 1.45;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.18), 0 1px 3px rgba(15, 23, 42, 0.12);
+  pointer-events: auto;
+}
+
+.app-toast--success { --toast-bg: #c8e6cf; --toast-fg: #1b2b21; --toast-accent: #1f2a24; }
+.app-toast--error   { --toast-bg: #f6d3d3; --toast-fg: #3a1717; --toast-accent: #7f1d1d; }
+.app-toast--loading { --toast-bg: #dbe6f7; --toast-fg: #16233a; --toast-accent: #1e3a8a; }
+.app-toast--blank   { --toast-bg: #dbe6f7; --toast-fg: #16233a; --toast-accent: #1e3a8a; }
+
+.app-toast.is-in  { animation: app-toast-in 0.25s cubic-bezier(0.21, 1.02, 0.73, 1) forwards; }
+.app-toast.is-out { animation: app-toast-out 0.2s ease-in forwards; }
+
+.app-toast__icon {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  color: var(--toast-accent);
+}
+
+.app-toast__emoji {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+
+.app-toast__msg {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.app-toast__msg b,
+.app-toast__msg strong {
+  font-weight: 700;
+}
+
+.app-toast__close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--toast-fg);
+  opacity: 0.75;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.app-toast__close:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.app-toast__spinner {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(30, 58, 138, 0.25);
+  border-top-color: var(--toast-accent);
+  animation: app-toast-spin 0.8s linear infinite;
+}
+
+@keyframes app-toast-in {
+  from { opacity: 0; transform: translate3d(0, -14px, 0) scale(0.96); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes app-toast-out {
+  from { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  to   { opacity: 0; transform: translate3d(0, -10px, 0) scale(0.96); }
+}
+@keyframes app-toast-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-toast.is-in, .app-toast.is-out { animation-duration: 0.01ms; }
+}

@@ -89,7 +89,7 @@ import CommentAutomationPage from './Pages/Engagement/CommentAutomationPage';
 import AppointmentList       from './Pages/Appointment/AppointmentList';
 import SlotManager           from './Pages/Appointment/SlotManager';
 
-import { Toaster } from 'react-hot-toast';
+import AppToaster from './Components/Common/AppToaster';
 
 const ADMIN_AGENCY = ['ADMIN', 'RESELLER'];
 const ALL_ROLES    = ['ADMIN', 'RESELLER', 'USER'];
@@ -97,7 +97,7 @@ const ALL_ROLES    = ['ADMIN', 'RESELLER', 'USER'];
 export default function App() {
   return (
     <AuthProvider>
-      <Toaster position="top-right" reverseOrder={false} />
+      <AppToaster />
       <BrowserRouter>
         <LayoutProvider>
           <NotificationProvider>
