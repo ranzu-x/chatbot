@@ -2,6 +2,7 @@ import express from "express";
 import pool from "../db.js";
 import { processFlow } from "../utils/flowEngine.js";
 import { runAIReply } from "../utils/aiReplyEngine.js";
+import { getBusinessHoursStatus } from "../utils/businessHours.js";
 import {
   findOrCreateContact,
   findOrCreateConversation,
@@ -344,22 +345,32 @@ router.post("/webchat/message", async (req, res) => {
 
     const effectivePrefill = await resolveWidgetPrefill(widget);
 
+    // Business Hours (Bot Manager → Bot Settings → Business Hours) — a no-op
+    // unless this bot's own schedule says so. See the equivalent gate in
+    // routes/webhook.js for the full reasoning.
+    const bh = await getBusinessHoursStatus(agencyId, integration?.id);
+    const offHours = bh.enabled && !bh.withinHours;
+    const allowBotNow = !offHours || bh.allowBotReplies;
+    const allowAiNow = !offHours || bh.allowAiReplies;
+
     // Run Flow engine
     const flowRan = await processFlow(agencyId, "WEBCHAT", conversation, contact, body, integration, "TEXT", null, null, {
       widgetId: widget.id,
       widgetFlowId: widget.flow_id,
       widgetPrefillMessage: effectivePrefill || widget.prefill_message,
+      suppressNewTrigger: offHours && !allowBotNow,
+      offHoursFlowId: offHours ? bh.offHoursFlowId : null,
     });
     if (!flowRan) {
       // AI Reply "Always trigger" mode gets first refusal (no-op unless
       // this bot's trigger mode is actually ALWAYS — see aiReplyEngine.js).
-      const aiRanEarly = await runAIReply(agencyId, "WEBCHAT", conversation, contact, body, integration, "TEXT", "always");
+      const aiRanEarly = allowAiNow && await runAIReply(agencyId, "WEBCHAT", conversation, contact, body, integration, "TEXT", "always");
       if (!aiRanEarly) {
         // Run bot rules fallback
-        const ruleRan = await matchBotRules(agencyId, "WEBCHAT", conversation, contact, body, integration);
+        const ruleRan = allowBotNow && await matchBotRules(agencyId, "WEBCHAT", conversation, contact, body, integration);
         if (!ruleRan) {
           // AI Reply "Only when nothing else matches" mode (the default).
-          await runAIReply(agencyId, "WEBCHAT", conversation, contact, body, integration, "TEXT", "fallback");
+          if (allowAiNow) await runAIReply(agencyId, "WEBCHAT", conversation, contact, body, integration, "TEXT", "fallback");
         }
       }
     }

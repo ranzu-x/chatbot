@@ -109,6 +109,36 @@ function resolveMediaUrl(url) {
   return `${baseUrl}${url.startsWith('/') ? '' : '/'}${url}`;
 }
 
+// A subscriber with no photo gets an initials avatar with a light, colorful
+// background and a bolder, DIFFERENT-hued color for the letters — picked from
+// two separate palettes (not a matched same-hue pair) so the initials stand
+// out against the background instead of blending into a pastel-on-pastel
+// look. Both are picked by hashing the name (two different hashes, so the
+// background hue and the letter hue don't line up), so the same subscriber
+// always lands on the same combination everywhere they appear (list row,
+// chat header, drawer) — not re-randomized per render.
+const AVATAR_BG_COLORS = [
+  '#FFE4E9', '#FFE8D6', '#FEF3C7', '#DCFCE7', '#CCFBF1', '#CFFAFE',
+  '#DBEAFE', '#E0E7FF', '#EDE9FE', '#F3E8FF', '#FCE7F3', '#FAE8FF',
+];
+const AVATAR_TEXT_COLORS = [
+  '#E11D48', '#EA580C', '#B45309', '#15803D', '#0F766E', '#0E7490',
+  '#1D4ED8', '#4338CA', '#6D28D9', '#9333EA', '#BE185D', '#A21CAF',
+];
+function hashStr(s, multiplier) {
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) hash = (hash * multiplier + s.charCodeAt(i)) >>> 0;
+  return hash;
+}
+function avatarColorsFor(name) {
+  const s = name || '?';
+  const bg = AVATAR_BG_COLORS[hashStr(s, 31) % AVATAR_BG_COLORS.length];
+  // A different multiplier (and offset) than the background hash, so the two
+  // picks are decorrelated rather than always landing on the same index.
+  const text = AVATAR_TEXT_COLORS[hashStr(`${s}#`, 17) % AVATAR_TEXT_COLORS.length];
+  return { bg, text };
+}
+
 function ContactAvatar({ avatar, name, size = 38, pInfo, style = {} }) {
   const [imgError, setImgError] = useState(false);
   const mediaUrl = resolveMediaUrl(avatar);
@@ -122,6 +152,7 @@ function ContactAvatar({ avatar, name, size = 38, pInfo, style = {} }) {
   const badgeSize = size <= 36 ? 15 : (size <= 40 ? 16 : 18);
   const iconSize = size <= 36 ? 9 : (size <= 40 ? 10 : 12);
   const fontSize = size <= 32 ? '0.72rem' : (size <= 40 ? '0.85rem' : '1rem');
+  const initialsColors = avatarColorsFor(name);
 
   return (
     <div style={{ position: 'relative', width: size, height: size, flexShrink: 0, ...style }}>
@@ -146,8 +177,8 @@ function ContactAvatar({ avatar, name, size = 38, pInfo, style = {} }) {
             width: size,
             height: size,
             borderRadius: '50%',
-            background: '#f1f5f9',
-            color: '#0f172a',
+            background: initialsColors.bg,
+            color: initialsColors.text,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -1877,25 +1908,11 @@ export default function InboxPage() {
     }
   };
 
-  // Live Chat Translator — per-conversation toggle + target language.
   // Translation of individual messages happens on demand (see
-  // handleTranslateMessage on each message bubble), not eagerly here.
-  const [translatingChat, setTranslatingChat] = useState(false);
-  const handleToggleTranslate = async () => {
-    if (!selectedId) return;
-    const nextEnabled = !selectedConv?.translate_enabled;
-    const targetLang = selectedConv?.translate_target_lang || 'en';
-    setTranslatingChat(true);
-    try {
-      const res = await conversationAPI.toggleTranslate(selectedId, nextEnabled, targetLang);
-      setSelectedConv((prev) => (prev ? { ...prev, translate_enabled: res.data?.translateEnabled ? 1 : 0, translate_target_lang: res.data?.translateTargetLang } : prev));
-    } catch (err) {
-      console.error('Failed to toggle translator', err);
-    } finally {
-      setTranslatingChat(false);
-    }
-  };
-
+  // handleTranslateMessage on each message bubble) — the header's own
+  // per-conversation toggle button was removed; a conversation that already
+  // had translate_enabled=1 saved from before still shows the per-message
+  // translate option below, it just can no longer be turned on/off from here.
   const handleTranslateMessage = async (message) => {
     if (!selectedId || !message?.id) return;
     try {
@@ -2592,7 +2609,7 @@ export default function InboxPage() {
 
   return (
     <AppLayout>
-      <div className="inbox-layout" style={{ display: 'flex', height: '100vh', width: '100%', overflow: 'hidden', background: '#f8fafc' }}>
+      <div className="inbox-layout" style={{ display: 'flex', height: '100vh', width: '100%', overflow: 'hidden', background: '#ffffff' }}>
         {/* ── 0. Views & Channels Rail ──────────────────────────────────
             Icon-only — deliberately thin (52px) so the conversation list
             keeps the space. Same statusFilter/agentFilter/platformFilter
@@ -2726,9 +2743,6 @@ export default function InboxPage() {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <FollowUpAlerts user={user} onOpenConversation={handleOpenFollowUpConversation} />
-                <span style={{ fontSize: '0.72rem', fontWeight: 600, padding: '2px 8px', borderRadius: 12, background: 'rgba(37, 99, 235, 0.08)', color: '#2563eb' }}>
-                  {filteredConversations.length} {viewFilter === 'archived' ? 'Archived' : viewFilter === 'blocked' ? 'Blocked' : 'Active'}
-                </span>
               </div>
             </div>
 
@@ -3101,12 +3115,12 @@ export default function InboxPage() {
         </aside>
 
         {/* ── 2. Active Chat Messages Area ── */}
-        <main className="chat-area" style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#f8fafc', overflow: 'hidden', position: 'relative' }}>
+        <main className="chat-area" style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#ffffff', overflow: 'hidden', position: 'relative' }}>
           {selectedConv ? (
             <>
               {/* Chat Header */}
-              <div className="chat-header" style={{ height: 56, padding: '0 20px', background: '#ffffff', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div className="chat-header" style={{ height: 56, padding: '0 20px', background: '#ffffff', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
                   <ContactAvatar
                     avatar={selectedConv.contactAvatar || selectedConv.avatar}
                     name={selectedConv.contactName || selectedConv.contact_name || selectedConv.external_id}
@@ -3114,43 +3128,12 @@ export default function InboxPage() {
                     pInfo={activePlatformInfo}
                   />
 
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: '0.92rem', color: '#0f172a' }}>
-                      {selectedConv.contactName || selectedConv.contact_name || selectedConv.external_id || 'Subscriber'}
-                    </div>
-                    <div style={{ fontSize: '0.72rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ fontWeight: 700, color: activePlatformInfo.color }}>
-                        {selectedConv.integrationName || selectedConv.integration_name || activePlatformInfo.label}
-                      </span>
-                      <span>•</span>
-                      <span>{activePlatformInfo.label}</span>
-                      {currentAgentName && (
-                        <>
-                          <span>•</span>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontWeight: 600, color: '#334155' }}>
-                            <User size={11} color="#64748b" /> {currentAgentName}
-                          </span>
-                        </>
-                      )}
-                      <span>•</span>
-                      <span style={{ color: botPaused ? '#ef4444' : '#10b981', fontWeight: 700 }}>
-                        {botPaused ? '🔴 Bot / AI Paused' : '🟢 Bot / AI Active'}
-                        {botPaused && selectedConv.pause_reason === 'HUMAN_TAKEOVER' && (
-                          <span style={{ fontWeight: 600, color: '#64748b' }}>
-                            {' '}— takeover active
-                          </span>
-                        )}
-                        {botPaused && selectedConv.pause_reason === 'OVER_LIMIT' && (
-                          <span style={{ fontWeight: 600, color: '#f59e0b' }}>
-                            {' '}— over your subscriber limit, upgrade to re-enable
-                          </span>
-                        )}
-                      </span>
-                    </div>
+                  <div style={{ fontWeight: 700, fontSize: '0.92rem', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+                    {selectedConv.contactName || selectedConv.contact_name || selectedConv.external_id || 'Subscriber'}
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, overflowX: 'auto' }}>
                   {(selectedConv.platform || selectedConv.integrationPlatform || selectedConv.contactPlatform || '').toUpperCase() === 'WHATSAPP' && (
                     <button
                       onClick={() => whatsappCall.placeCall(
@@ -3174,6 +3157,8 @@ export default function InboxPage() {
                         color: '#15803d',
                         fontSize: '0.74rem',
                         fontWeight: 700,
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0,
                         cursor: whatsappCall.callState !== 'idle' ? 'default' : 'pointer',
                         opacity: whatsappCall.callState !== 'idle' ? 0.6 : 1,
                         boxShadow: '0 1px 3px rgba(34, 197, 94, 0.12)',
@@ -3201,6 +3186,8 @@ export default function InboxPage() {
                       color: botPaused ? '#b91c1c' : '#15803d',
                       fontSize: '0.74rem',
                       fontWeight: 700,
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0,
                       cursor: togglingBot ? 'default' : 'pointer',
                       opacity: togglingBot ? 0.6 : 1,
                       boxShadow: botPaused ? '0 1px 3px rgba(239, 68, 68, 0.12)' : '0 1px 3px rgba(34, 197, 94, 0.12)',
@@ -3214,6 +3201,7 @@ export default function InboxPage() {
                         borderRadius: '50%',
                         background: botPaused ? '#ef4444' : '#22c55e',
                         display: 'inline-block',
+                        flexShrink: 0,
                       }}
                     />
                     {botPaused ? <Play size={10} fill="#b91c1c" /> : <Pause size={10} />}
@@ -3221,52 +3209,26 @@ export default function InboxPage() {
                   </button>
 
                   <button
-                    onClick={handleToggleTranslate}
-                    disabled={translatingChat}
-                    title={selectedConv?.translate_enabled ? 'Click to turn off message translation' : 'Click to translate incoming messages'}
-                    className="transition-all duration-150 hover:brightness-95 active:scale-95"
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 5,
-                      padding: '4px 11px',
-                      height: 28,
-                      borderRadius: 16,
-                      border: selectedConv?.translate_enabled ? '1px solid #c7d2fe' : '1px solid #e2e8f0',
-                      background: selectedConv?.translate_enabled ? '#eef2ff' : '#ffffff',
-                      color: selectedConv?.translate_enabled ? '#4338ca' : '#475569',
-                      fontSize: '0.74rem',
-                      fontWeight: 700,
-                      cursor: translatingChat ? 'default' : 'pointer',
-                      opacity: translatingChat ? 0.6 : 1,
-                      transition: 'all 0.15s ease',
-                    }}
-                  >
-                    <Languages size={12} />
-                    <span>Translate</span>
-                  </button>
-
-                  <button
                     onClick={() => setShowSubscriberPanel((p) => !p)}
+                    title={showSubscriberPanel ? 'Hide subscriber info' : 'Show subscriber info'}
                     className="transition-all duration-150 hover:brightness-95 active:scale-95"
                     style={{
-                      padding: '7px 14px',
-                      borderRadius: 20,
+                      width: 32,
+                      height: 32,
+                      flexShrink: 0,
+                      borderRadius: '50%',
                       border: '1px solid',
                       borderColor: showSubscriberPanel ? '#c7d2fe' : '#e2e8f0',
                       background: showSubscriberPanel ? '#eef2ff' : '#ffffff',
                       color: showSubscriberPanel ? '#4338ca' : '#475569',
-                      fontSize: '0.8rem',
-                      fontWeight: 700,
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: 6,
+                      justifyContent: 'center',
                       transition: 'transform 0.12s ease, background 0.12s ease',
                     }}
                   >
-                    <SlidersHorizontal size={14} />
-                    {showSubscriberPanel ? 'Hide Drawer' : 'Subscriber Info'}
+                    <MoreVertical size={16} />
                   </button>
                 </div>
               </div>
@@ -3442,7 +3404,7 @@ export default function InboxPage() {
                                   gap: 8,
                                   padding: '8px 12px',
                                   borderRadius: 8,
-                                  background: '#f8fafc',
+                                  background: '#ffffff',
                                   border: '1px solid #e2e8f0',
                                   color: '#0f172a',
                                   textDecoration: 'none',
@@ -3606,7 +3568,7 @@ export default function InboxPage() {
                 <div style={{
                   padding: '9px 18px',
                   borderTop: '1px solid #e2e8f0',
-                  background: 'linear-gradient(90deg, #f8fafc 0%, #f1f5f9 100%)',
+                  background: 'linear-gradient(90deg, #ffffff 0%, #f8fafc 100%)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
@@ -3766,7 +3728,7 @@ export default function InboxPage() {
                       height: 38,
                       borderRadius: '50%',
                       border: '1px solid #e2e8f0',
-                      background: '#f8fafc',
+                      background: '#ffffff',
                       color: '#64748b',
                       display: 'flex',
                       alignItems: 'center',
@@ -3791,7 +3753,7 @@ export default function InboxPage() {
                       style={{
                         width: 38, height: 38, borderRadius: '50%',
                         border: `1px solid ${showSendMenuPicker || showSendMenu ? '#c7d2fe' : '#e2e8f0'}`,
-                        background: showSendMenuPicker || showSendMenu ? '#eef2ff' : '#f8fafc',
+                        background: showSendMenuPicker || showSendMenu ? '#eef2ff' : '#ffffff',
                         color: showSendMenuPicker || showSendMenu ? '#4338ca' : '#64748b',
                         display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: 'pointer',
                       }}
@@ -3863,7 +3825,7 @@ export default function InboxPage() {
                         height: 38,
                         borderRadius: '50%',
                         border: `1px solid ${showQuickCannedMenu ? '#bfdbfe' : '#e2e8f0'}`,
-                        background: showQuickCannedMenu ? '#eff6ff' : '#f8fafc',
+                        background: showQuickCannedMenu ? '#eff6ff' : '#ffffff',
                         color: showQuickCannedMenu ? '#2563eb' : '#64748b',
                         display: 'flex',
                         alignItems: 'center',
@@ -4022,7 +3984,7 @@ export default function InboxPage() {
                             gap: 6,
                             width: '100%',
                             padding: '8px 12px',
-                            background: '#f8fafc',
+                            background: '#ffffff',
                             borderTop: '1px solid #e2e8f0',
                             borderLeft: 'none',
                             borderRight: 'none',
@@ -4084,7 +4046,7 @@ export default function InboxPage() {
                       style={{
                         width: 38, height: 38, borderRadius: '50%',
                         border: `1px solid ${showRewriteMenu ? '#c7d2fe' : '#e2e8f0'}`,
-                        background: showRewriteMenu ? '#eef2ff' : '#f8fafc',
+                        background: showRewriteMenu ? '#eef2ff' : '#ffffff',
                         color: showRewriteMenu ? '#4338ca' : '#64748b',
                         display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                         cursor: (!botPaused || !messageText.trim() || rewriting) ? 'default' : 'pointer',
@@ -4192,7 +4154,7 @@ export default function InboxPage() {
         {selectedConv && showSubscriberPanel && (
           <aside style={{ width: 330, flexShrink: 0, borderLeft: '1px solid #e2e8f0', background: '#ffffff', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
             {/* Subscriber Header Card */}
-            <div style={{ padding: '16px 18px', borderBottom: '1px solid #e2e8f0', background: '#fafbfe' }}>
+            <div style={{ padding: '16px 18px', borderBottom: '1px solid #e2e8f0', background: '#ffffff' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                 <span
                   style={{
@@ -4378,7 +4340,7 @@ export default function InboxPage() {
                 scrolling horizontally, so every tab is visible at once.
                 Labels is deliberately not here — see the pinned section at
                 the bottom of the drawer. */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, padding: '6px 8px', borderBottom: '1px solid #e2e8f0', background: '#fafbfe' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, padding: '6px 8px', borderBottom: '1px solid #e2e8f0', background: '#ffffff' }}>
               {DRAWER_TABS.map((tab) => (
                 <button
                   key={tab}
@@ -4739,7 +4701,7 @@ export default function InboxPage() {
                   <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
                     System Variables (read-only)
                   </span>
-                  <div style={{ fontSize: '0.8rem', color: '#64748b', background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px solid #e2e8f0', marginTop: 8 }}>
+                  <div style={{ fontSize: '0.8rem', color: '#64748b', background: '#ffffff', padding: 12, borderRadius: 8, border: '1px solid #e2e8f0', marginTop: 8 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                       <strong style={{ color: '#0f172a' }}>Platform:</strong>
                       <span>{activePlatformInfo.label}</span>
@@ -4800,7 +4762,7 @@ export default function InboxPage() {
                         <div
                           key={n.id}
                           style={{
-                            background: '#f8fafc',
+                            background: '#ffffff',
                             border: '1px solid #e2e8f0',
                             borderRadius: 8,
                             padding: '10px 12px',
@@ -4825,7 +4787,7 @@ export default function InboxPage() {
                 no colors, per the layout requirement. Fills the empty
                 space below short tab contents and keeps labels reachable
                 no matter which tab is open. */}
-            <div style={{ padding: '14px 18px', borderTop: '1px solid #e2e8f0', marginTop: 'auto', background: '#fafbfe' }}>
+            <div style={{ padding: '14px 18px', borderTop: '1px solid #e2e8f0', marginTop: 'auto', background: '#ffffff' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                 <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase' }}>
                   Labels ({contactLabels.length})

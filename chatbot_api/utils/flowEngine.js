@@ -9,6 +9,7 @@ import { resolveNextNodeId, resolveNextStepNodeId, expandMessageBlocks } from ".
 import { enrollContactsInSequence, unsubscribeContactFromSequence } from "../routes/sequences.js";
 import { executeHttpApiCampaign } from "../services/httpApiExecutor.js";
 import { scheduleFlowDelayResume } from "./flowDelayScheduler.js";
+import { getBusinessHoursStatus } from "./businessHours.js";
 
 // BOT SCOPE (see utils/botScope.js): a flow may only use Sequences, User Input Flows and
 // other Flows of ITS OWN bot account (same integration_id) — every lookup below is scoped
@@ -43,14 +44,10 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
   const queryParams = integId ? [agencyId, platform, integId] : [agencyId, platform];
   const [flows] = await pool.query(query, queryParams);
 
-  // A chat-widget / deep-link hand-off arrives carrying the widget's own
-  // prefilled text, which identifies the click far more precisely than a
-  // substring keyword match — so it is resolved first, ahead of the ordering
-  // above. Without this the widget's flow is unreachable in practice: a
-  // generic "hi" keyword flow sorts first and swallows every visitor (the
-  // stock prefill "Hi, i would like to know more about you." contains "hi"),
-  // and a returning contact never qualifies as a first-contact either,
-  // because their conversation already has history.
+  // Business Hours (utils/businessHours.js): "Allow Bot/Flow Replies outside
+  // business hours" turned off — skip normal trigger matching for a brand-new
+  // session entirely; only the off-hours flow fallback further down may start one.
+  if (!extraContext?.suppressNewTrigger) {
   if (msgText) {
     const contextPrefill = (extraContext?.widgetPrefillMessage || "").trim().toLowerCase();
     if (contextPrefill && (msgText === contextPrefill || msgText.startsWith(contextPrefill))) {
@@ -219,6 +216,7 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
       };
     }
   }
+  } // !extraContext?.suppressNewTrigger
 
   // If no trigger matched yet, but this is a chat widget conversation on its first
   // inbound message and has a designated widget flow, launch that flow!
@@ -244,6 +242,29 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
             startNode: sNode,
           };
         }
+      }
+    }
+  }
+
+  if (extraContext?.offHoursFlowId) {
+    let offHoursFlow = flows.find((f) => f.id === extraContext.offHoursFlowId);
+    if (!offHoursFlow) {
+      const [[fRow]] = await pool.query(
+        "SELECT * FROM flows WHERE id = ? AND agency_id = ? AND integration_id = ? AND is_active = 1",
+        [extraContext.offHoursFlowId, agencyId, integId]
+      );
+      if (fRow) offHoursFlow = fRow;
+    }
+    if (offHoursFlow) {
+      let ohNodes = [];
+      try { ohNodes = JSON.parse(offHoursFlow.nodes_json || "[]"); } catch {}
+      const ohStart = ohNodes.find((n) => n.type === "start");
+      if (ohStart) {
+        return {
+          flow: offHoursFlow,
+          ...expandMessageBlocks(ohNodes, JSON.parse(offHoursFlow.edges_json || "[]")),
+          startNode: ohStart,
+        };
       }
     }
   }

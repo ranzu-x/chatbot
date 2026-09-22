@@ -5,6 +5,7 @@ import { resolveMetaAppSettings } from "../utils/appCredentials.js";
 import { isValidMetaSignature } from "../utils/metaSignature.js";
 import { processFlow } from "../utils/flowEngine.js";
 import { runAIReply } from "../utils/aiReplyEngine.js";
+import { getBusinessHoursStatus } from "../utils/businessHours.js";
 import {
   findOrCreateContact,
   findOrCreateConversation,
@@ -1350,23 +1351,35 @@ async function handleIncomingPayload({
       });
     }
 
+    // 4b. Business Hours (Bot Manager → Bot Settings → Business Hours) — a no-op
+    // (bh.enabled === false) unless the bot's own schedule says so. An already
+    // in-progress flow session is never affected by any of this; see the note
+    // on findMatchingFlow's suppressNewTrigger in utils/flowEngine.js.
+    const bh = await getBusinessHoursStatus(agencyId, integration?.id);
+    const offHours = bh.enabled && !bh.withinHours;
+    const allowBotNow = !offHours || bh.allowBotReplies;
+    const allowAiNow = !offHours || bh.allowAiReplies;
+
     // 5. Run Flow Execution Engine
-    const flowRan = await processFlow(agencyId, platform, conversation, contact, msgBody, integration, msgType, buttonRoute);
+    const flowRan = await processFlow(agencyId, platform, conversation, contact, msgBody, integration, msgType, buttonRoute, null, {
+      suppressNewTrigger: offHours && !allowBotNow,
+      offHoursFlowId: offHours ? bh.offHoursFlowId : null,
+    });
     if (flowRan) return;
 
     // 6. AI Reply in "Always trigger" mode gets first refusal, ahead of
     // simple keyword Bot Rules (a no-op unless this bot's AI Reply trigger
     // mode is actually set to ALWAYS — see utils/aiReplyEngine.js).
-    const aiRanEarly = await runAIReply(agencyId, platform, conversation, contact, msgBody, integration, msgType, "always");
+    const aiRanEarly = allowAiNow && await runAIReply(agencyId, platform, conversation, contact, msgBody, integration, msgType, "always");
     if (aiRanEarly) return;
 
     // 7. Fallback: Run standard bot rules
-    const ruleRan = await matchBotRules(agencyId, platform, conversation, contact, msgBody, integration, msgType);
+    const ruleRan = allowBotNow && await matchBotRules(agencyId, platform, conversation, contact, msgBody, integration, msgType);
     if (ruleRan) return;
 
     // 8. AI Reply in "Only when nothing else matches" mode (the default) —
     // also a no-op if AI Replies aren't enabled on this bot at all.
-    await runAIReply(agencyId, platform, conversation, contact, msgBody, integration, msgType, "fallback");
+    if (allowAiNow) await runAIReply(agencyId, platform, conversation, contact, msgBody, integration, msgType, "fallback");
   } catch (err) {
     console.error("[Webhook Incoming Payload Error]:", err);
     await logBotError({

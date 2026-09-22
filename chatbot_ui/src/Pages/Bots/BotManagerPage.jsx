@@ -14,6 +14,7 @@ import StoreConnectionsManager from '../../Components/Commerce/StoreConnectionsM
 import { humanizeBotError, cleanRawMessage } from '../../utils/humanizeBotError';
 import AIAgentManagerList from '../../Components/AIAgents/AIAgentManagerList';
 import AIReplySettingsPanel from '../../Components/AIAgents/AIReplySettingsPanel';
+import BusinessHoursSettings from '../../Components/Bots/BusinessHoursSettings';
 import Swal from 'sweetalert2';
 import {
   Bot,
@@ -322,6 +323,7 @@ export default function BotManagerPage() {
   // Modals
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [settingsModalTab, setSettingsModalTab] = useState('general');
   const [selectedTemplate, setSelectedTemplate] = useState('blank');
   const [newFlowName, setNewFlowName] = useState('');
   const [newFlowPlatform] = useState('WHATSAPP');
@@ -2289,8 +2291,11 @@ export default function BotManagerPage() {
         >
           <div
             style={{
-              width: 500,
+              width: settingsModalTab === 'businessHours' ? 620 : 500,
               maxWidth: '92vw',
+              maxHeight: '88vh',
+              display: 'flex',
+              flexDirection: 'column',
               background: '#ffffff',
               borderRadius: 16,
               padding: 24,
@@ -2298,9 +2303,9 @@ export default function BotManagerPage() {
               border: '1px solid #e4e4f0',
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
               <h3 style={{ fontSize: '1.15rem', fontWeight: 800, margin: 0, color: '#1a1a2e', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Settings size={18} color="var(--primary)" /> Bot Configuration
+                <Settings size={18} color="var(--primary)" /> Bot Settings
               </h3>
               <button
                 onClick={() => setShowSettingsModal(false)}
@@ -2321,57 +2326,86 @@ export default function BotManagerPage() {
               </button>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 5 }}>
-                  Welcome Greeting Message
-                </label>
-                <textarea
-                  rows={2}
-                  className="form-input w-full"
-                  defaultValue="Hello! Welcome to our official support. How can we help you today?"
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 5 }}>
-                  Away / Offline Auto-reply
-                </label>
-                <textarea
-                  rows={2}
-                  className="form-input w-full"
-                  defaultValue="We are currently away. Our team will get back to you during business hours."
-                />
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+            {/* Tabs — General is the original (mock) bot-config form, left as-is;
+                Business Hours is the real, wired-up feature. */}
+            <div style={{ display: 'flex', gap: 4, padding: 4, background: '#f1f5f9', borderRadius: 10, marginBottom: 16, flexShrink: 0 }}>
+              {[{ id: 'general', label: 'General' }, { id: 'businessHours', label: 'Business Hours' }].map((t) => (
                 <button
+                  key={t.id}
                   type="button"
-                  onClick={() => setShowSettingsModal(false)}
-                  style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid #e4e4f0', background: '#ffffff', cursor: 'pointer', fontSize: '0.85rem' }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowSettingsModal(false);
-                    showToast('Bot settings updated!');
-                  }}
+                  onClick={() => setSettingsModalTab(t.id)}
                   style={{
-                    padding: '8px 20px',
-                    borderRadius: 8,
-                    background: 'var(--primary)',
-                    color: '#ffffff',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: '0.85rem',
-                    fontWeight: 700,
+                    flex: 1, padding: '7px 10px', borderRadius: 7, border: 'none', cursor: 'pointer',
+                    fontSize: '0.8rem', fontWeight: 700,
+                    background: settingsModalTab === t.id ? '#ffffff' : 'transparent',
+                    color: settingsModalTab === t.id ? '#1a1a2e' : '#64748b',
+                    boxShadow: settingsModalTab === t.id ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
                   }}
                 >
-                  Save Settings
+                  {t.label}
                 </button>
-              </div>
+              ))}
+            </div>
+
+            <div style={{ overflowY: 'auto', paddingRight: 2 }}>
+              {settingsModalTab === 'general' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 5 }}>
+                      Welcome Greeting Message
+                    </label>
+                    <textarea
+                      rows={2}
+                      className="form-input w-full"
+                      defaultValue="Hello! Welcome to our official support. How can we help you today?"
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 5 }}>
+                      Away / Offline Auto-reply
+                    </label>
+                    <textarea
+                      rows={2}
+                      className="form-input w-full"
+                      defaultValue="We are currently away. Our team will get back to you during business hours."
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+                    <button
+                      type="button"
+                      onClick={() => setShowSettingsModal(false)}
+                      style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid #e4e4f0', background: '#ffffff', cursor: 'pointer', fontSize: '0.85rem' }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowSettingsModal(false);
+                        showToast('Bot settings updated!');
+                      }}
+                      style={{
+                        padding: '8px 20px',
+                        borderRadius: 8,
+                        background: 'var(--primary)',
+                        color: '#ffffff',
+                        border: 'none',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem',
+                        fontWeight: 700,
+                      }}
+                    >
+                      Save Settings
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {settingsModalTab === 'businessHours' && (
+                <BusinessHoursSettings integrationId={selectedAccount?.id && selectedAccount.id !== 'all' ? selectedAccount.id : null} />
+              )}
             </div>
           </div>
         </div>

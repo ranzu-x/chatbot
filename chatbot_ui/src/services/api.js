@@ -148,6 +148,12 @@ export const aiReplySettingsAPI = {
   deactivateAgent: (integrationId, agentId) => api.delete(`/ai/reply-settings/${integrationId}/active-agents/${agentId}`),
 };
 
+// ─── Business Hours (per-bot) ──────────────────────────────────────
+export const businessHoursAPI = {
+  getForIntegration: (integrationId) => api.get(`/business-hours/${integrationId}`),
+  save: (integrationId, data) => api.put(`/business-hours/${integrationId}`, data),
+};
+
 // ─── Admin ────────────────────────────────────────────────────────
 export const adminAPI = {
   getStats: () => api.get("/admin/stats"),
