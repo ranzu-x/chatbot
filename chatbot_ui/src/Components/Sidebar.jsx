@@ -224,12 +224,12 @@ export default function Sidebar() {
                   width: 34,
                   height: 34,
                   borderRadius: 8,
-                  background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
+                  background: 'linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   color: '#ffffff',
-                  boxShadow: '0 2px 6px rgba(37, 99, 235, 0.25)',
+                  boxShadow: '0 2px 6px var(--primary-ring)',
                 }}
               >
                 <Sparkles size={17} />
@@ -295,9 +295,9 @@ export default function Sidebar() {
                         borderRadius: 7,
                         textDecoration: 'none',
                         fontSize: '0.84rem',
-                        fontWeight: active ? 600 : 500,
-                        color: active ? '#2563eb' : '#475569',
-                        background: active ? 'rgba(37, 99, 235, 0.08)' : 'transparent',
+                        fontWeight: active ? 700 : 500,
+                        color: active ? 'var(--text-primary)' : '#475569',
+                        background: active ? 'var(--border)' : 'transparent',
                         transition: 'all 0.12s ease',
                         marginBottom: 2,
                       }}
@@ -314,7 +314,7 @@ export default function Sidebar() {
                         }
                       }}
                     >
-                      <Icon size={17} color={active ? '#2563eb' : '#64748b'} style={{ flexShrink: 0 }} />
+                      <Icon size={17} color={active ? 'var(--text-primary)' : '#64748b'} style={{ flexShrink: 0 }} />
                       <span style={{ whiteSpace: 'nowrap' }}>{item.label}</span>
                     </Link>
                   );
@@ -373,12 +373,12 @@ export default function Sidebar() {
               width: 36,
               height: 36,
               borderRadius: 10,
-              background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
+              background: 'linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               color: '#ffffff',
-              boxShadow: '0 2px 8px rgba(37, 99, 235, 0.25)',
+              boxShadow: '0 2px 8px var(--primary-ring)',
               flexShrink: 0,
             }}
           >
@@ -450,9 +450,9 @@ export default function Sidebar() {
                     borderRadius: 7,
                     textDecoration: 'none',
                     fontSize: '0.84rem',
-                    fontWeight: active ? 600 : 500,
-                    color: active ? '#2563eb' : '#475569',
-                    background: active ? 'rgba(37, 99, 235, 0.08)' : 'transparent',
+                    fontWeight: active ? 700 : 500,
+                    color: active ? 'var(--text-primary)' : '#475569',
+                    background: active ? 'var(--border)' : 'transparent',
                     transition: 'all 0.12s ease',
                     marginBottom: 2,
                   }}
@@ -471,7 +471,7 @@ export default function Sidebar() {
                 >
                   <Icon
                     size={17}
-                    color={active ? '#2563eb' : '#64748b'}
+                    color={active ? 'var(--text-primary)' : '#64748b'}
                     style={{ flexShrink: 0 }}
                   />
                   {!collapsed && <span style={{ whiteSpace: 'nowrap' }}>{item.label}</span>}

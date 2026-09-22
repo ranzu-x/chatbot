@@ -3,6 +3,14 @@
 
 /* ═══════════════════════════════════════════════════════════════════
    LIGHT THEME (Clean Enterprise White & Slate Gray, Blue Primary)
+   Primary/background/text here is THE color system — change a value once
+   and every component that reads the variable (not a hardcoded hex)
+   follows. See theme/appearance.js for the runtime accent-swap mechanism
+   (Settings → Appearance) that overwrites --primary/-dark/-light/-soft/-ring
+   on top of these defaults; DEFAULT_APPEARANCE.accent there must stay in
+   sync with the values below. (Indigo was tried and reverted — Blue is
+   the decided primary for now; the Indigo swatches are still available
+   from the accent picker for anyone who wants them personally.)
 ═══════════════════════════════════════════════════════════════════ */
 :root {
   --primary: #2563eb;
@@ -14,7 +22,10 @@
   --warning: #f59e0b;
   --danger: #ef4444;
 
-  --bg-base: #f8fafc;
+  /* Primary background is pure white; --bg-input/--bg-hover are the
+     secondary/tertiary greys used for input fields, nested panels and
+     hover/active states (see CLAUDE.md's color-system notes). */
+  --bg-base: #ffffff;
   --bg-surface: #ffffff;
   --bg-card: #ffffff;
   --bg-hover: #f1f5f9;
@@ -23,13 +34,28 @@
   --border: #e2e8f0;
   --border-light: #cbd5e1;
 
+  /* Four-tier text scale — darkest/most-emphasis to lightest/least. */
   --text-primary: #0f172a;
-  --text-secondary: #475569;
+  --text-secondary: #334155;
+  --text-tertiary: #64748b;
   --text-muted: #94a3b8;
 
-  --whatsapp: #25d366;
-  --facebook: #1877f2;
-  --instagram: #e1306c;
+  /* Channel/brand colors — WhatsApp/Facebook/Instagram/Telegram/TikTok are
+     real external brand colors and are never affected by the accent
+     picker above; Webchat is this app's own widget, not a third-party
+     brand, but is still centralized here rather than re-typed per file.
+     Components/Common/PlatformIcon.jsx is the single JS-side reader of
+     these — point any new "which color for this channel" code at it
+     instead of hardcoding hex again. */
+  --channel-whatsapp: #25d366;
+  --channel-facebook: #1877f2;
+  --channel-instagram: #e1306c;
+  --channel-telegram: #229ed9;
+  --channel-tiktok: #fe2c55;
+  --channel-webchat: #6366f1;
+  --whatsapp: var(--channel-whatsapp);
+  --facebook: var(--channel-facebook);
+  --instagram: var(--channel-instagram);
 
   /* Derived from --primary; Settings → Appearance rewrites these at runtime */
   --primary-soft: rgba(37, 99, 235, 0.09);
@@ -63,7 +89,8 @@
   --border-light: #475569;
 
   --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
+  --text-secondary: #cbd5e1;
+  --text-tertiary: #94a3b8;
   --text-muted: #64748b;
 
   --shadow: 0 4px 20px rgba(0,0,0,0.4);
@@ -361,9 +388,9 @@ tr:hover td { background: var(--bg-hover); }
 }
 .nav-item:hover { background: var(--bg-hover); color: var(--text-primary); }
 .nav-item.active {
-  background: rgba(37, 99, 235, 0.08);
-  color: var(--primary);
-  font-weight: 600;
+  background: var(--border);
+  color: var(--text-primary);
+  font-weight: 700;
 }
 
 .sidebar-footer { padding: 12px; border-top: 1px solid var(--border); }

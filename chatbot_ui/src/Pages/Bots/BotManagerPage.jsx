@@ -77,12 +77,12 @@ const PLATFORM_MAP = {
   INSTAGRAM: { label: 'Instagram', icon: Instagram,     color: '#e1306c', bg: 'rgba(225, 48, 108, 0.12)', border: '#e1306c' },
   TELEGRAM:  { label: 'Telegram',  icon: Send,          color: '#229ed9', bg: 'rgba(34, 158, 217, 0.12)', border: '#229ed9' },
   TIKTOK:    { label: 'TikTok',    icon: Video,         color: '#FE2C55', bg: 'rgba(254, 44, 85, 0.12)',   border: '#FE2C55' },
-  WEBCHAT:   { label: 'Webchat',   icon: Globe,         color: '#6366f1', bg: 'rgba(99, 102, 241, 0.12)', border: '#6366f1' },
+  WEBCHAT:   { label: 'Webchat',   icon: Globe,         color: 'var(--channel-webchat)', bg: 'rgba(99, 102, 241, 0.12)', border: 'var(--channel-webchat)' },
 };
 
 function getPlatformInfo(p) {
   const norm = (p || 'WHATSAPP').toUpperCase();
-  return PLATFORM_MAP[norm] || { label: norm, icon: MessageSquare, color: '#64748b', bg: 'rgba(100, 116, 139, 0.12)', border: '#64748b' };
+  return PLATFORM_MAP[norm] || { label: norm, icon: MessageSquare, color: 'var(--text-tertiary)', bg: 'rgba(100, 116, 139, 0.12)', border: 'var(--text-tertiary)' };
 }
 
 /* ─── Primary Categories & Sub-tabs ─── */
@@ -410,7 +410,7 @@ export default function BotManagerPage() {
       icon: 'warning',
       showCancelButton: true,
       confirmButtonColor: '#ef4444',
-      cancelButtonColor: '#64748b',
+      cancelButtonColor: 'var(--text-tertiary)',
       confirmButtonText: 'Yes, Clear',
     });
     if (result.isConfirmed) {
@@ -847,7 +847,7 @@ export default function BotManagerPage() {
           width: 100%;
           margin: 0;
           padding: 0;
-          background: #f4f6fb;
+          background: var(--bg-hover);
           overflow: hidden;
           font-family: 'Inter', system-ui, sans-serif;
         }
@@ -856,8 +856,8 @@ export default function BotManagerPage() {
         .bm-accounts-nav {
           width: 280px;
           flex-shrink: 0;
-          background: #ffffff;
-          border-right: 1px solid #e4e4f0;
+          background: var(--bg-surface);
+          border-right: 1px solid var(--border);
           display: flex;
           flex-direction: column;
           box-shadow: 2px 0 6px rgba(0,0,0,0.02);
@@ -867,19 +867,19 @@ export default function BotManagerPage() {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          border-bottom: 1px solid #f0f0fa;
+          border-bottom: 1px solid var(--border);
         }
         .bm-nav-title {
           font-size: 0.96rem;
           font-weight: 800;
-          color: #1a1a2e;
+          color: var(--text-primary);
         }
         .bm-add-bot-btn {
           font-size: 0.78rem;
           font-weight: 700;
           color: var(--primary);
-          background: rgba(37, 99, 235, 0.08);
-          border: 1px solid rgba(37, 99, 235, 0.2);
+          background: rgba(79, 70, 229, 0.08);
+          border: 1px solid rgba(79, 70, 229, 0.2);
           border-radius: 6px;
           padding: 5px 10px;
           cursor: pointer;
@@ -900,10 +900,10 @@ export default function BotManagerPage() {
           width: 100%;
           padding: 7px 10px 7px 32px;
           border-radius: 8px;
-          border: 1px solid #e4e4f0;
-          background: #f8f8fc;
+          border: 1px solid var(--border);
+          background: var(--bg-input);
           font-size: 0.8rem;
-          color: #1a1a2e;
+          color: var(--text-primary);
           outline: none;
         }
         .bm-channel-pills {
@@ -911,7 +911,7 @@ export default function BotManagerPage() {
           gap: 4px;
           padding: 0 14px 10px;
           overflow-x: auto;
-          border-bottom: 1px solid #f0f0fa;
+          border-bottom: 1px solid var(--border);
           scrollbar-width: none;
         }
         .bm-channel-pills::-webkit-scrollbar { display: none; }
@@ -920,9 +920,9 @@ export default function BotManagerPage() {
           border-radius: 14px;
           font-size: 0.72rem;
           font-weight: 600;
-          border: 1px solid #e4e4f0;
-          background: #ffffff;
-          color: #5c5c80;
+          border: 1px solid var(--border);
+          background: var(--bg-surface);
+          color: var(--text-tertiary);
           cursor: pointer;
           white-space: nowrap;
           display: flex;
@@ -931,9 +931,9 @@ export default function BotManagerPage() {
           transition: all 0.15s;
         }
         .bm-pill.active {
-          background: #1a1a2e;
+          background: var(--text-primary);
           color: #ffffff;
-          border-color: #1a1a2e;
+          border-color: var(--text-primary);
         }
         .bm-account-list {
           flex: 1;
@@ -955,11 +955,11 @@ export default function BotManagerPage() {
           transition: all 0.15s;
         }
         .bm-account-item:hover {
-          background: #f8f8fc;
+          background: var(--bg-hover);
         }
         .bm-account-item.active {
-          background: #f0f2ff;
-          border-color: #c7d2fe;
+          background: var(--primary-soft);
+          border-color: var(--primary-light);
         }
         .bm-avatar-circle {
           width: 36px;
@@ -998,14 +998,14 @@ export default function BotManagerPage() {
           font-size: 1.15rem;
           font-weight: 800;
           margin: 0;
-          color: #1a1a2e;
+          color: var(--text-primary);
           display: flex;
           align-items: center;
           gap: 8px;
         }
         .bm-account-details .sub {
           font-size: 0.78rem;
-          color: #5c5c80;
+          color: var(--text-tertiary);
           margin-top: 2px;
         }
         .bm-status-badge {
@@ -1024,7 +1024,7 @@ export default function BotManagerPage() {
         .bm-category-tabs {
           display: flex;
           gap: 24px;
-          border-bottom: 1px solid #e4e4f0;
+          border-bottom: 1px solid var(--border);
           margin-bottom: 14px;
         }
         .bm-cat-tab {
@@ -1034,7 +1034,7 @@ export default function BotManagerPage() {
           padding: 10px 0;
           font-size: 0.88rem;
           font-weight: 600;
-          color: #5c5c80;
+          color: var(--text-tertiary);
           border: none;
           background: none;
           cursor: pointer;
@@ -1042,7 +1042,7 @@ export default function BotManagerPage() {
           transition: all 0.15s;
         }
         .bm-cat-tab:hover {
-          color: #1a1a2e;
+          color: var(--text-primary);
         }
         .bm-cat-tab.active {
           color: var(--primary);
@@ -1065,28 +1065,28 @@ export default function BotManagerPage() {
           border-radius: 8px;
           font-size: 0.8rem;
           font-weight: 600;
-          border: 1px solid #e4e4f0;
-          background: #ffffff;
-          color: #5c5c80;
+          border: 1px solid var(--border);
+          background: var(--bg-surface);
+          color: var(--text-tertiary);
           cursor: pointer;
           white-space: nowrap;
           transition: all 0.15s;
         }
         .bm-subtab-pill:hover {
-          background: #f8f8fc;
-          color: #1a1a2e;
+          background: var(--bg-hover);
+          color: var(--text-primary);
         }
         .bm-subtab-pill.active {
           background: var(--primary);
           color: #ffffff;
           border-color: var(--primary);
-          box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
+          box-shadow: 0 2px 8px rgba(79, 70, 229, 0.25);
         }
 
         /* ── Work Area Content Box ── */
         .bm-content-card {
-          background: #ffffff;
-          border: 1px solid #e4e4f0;
+          background: var(--bg-surface);
+          border: 1px solid var(--border);
           border-radius: 14px;
           box-shadow: 0 1px 4px rgba(0,0,0,0.03);
           flex: 1;
@@ -1096,17 +1096,17 @@ export default function BotManagerPage() {
         }
         .bm-card-header {
           padding: 16px 20px;
-          border-bottom: 1px solid #f0f0fa;
+          border-bottom: 1px solid var(--border);
         }
         .bm-card-title {
           font-size: 1rem;
           font-weight: 800;
-          color: #1a1a2e;
+          color: var(--text-primary);
           margin: 0;
         }
         .bm-card-sub {
           font-size: 0.78rem;
-          color: #5c5c80;
+          color: var(--text-tertiary);
           margin: 3px 0 0 0;
         }
         .bm-action-bar {
@@ -1114,8 +1114,8 @@ export default function BotManagerPage() {
           align-items: center;
           justify-content: space-between;
           padding: 12px 20px;
-          background: #fafbfe;
-          border-bottom: 1px solid #e4e4f0;
+          background: var(--bg-input);
+          border-bottom: 1px solid var(--border);
           gap: 12px;
           flex-wrap: wrap;
         }
@@ -1124,29 +1124,29 @@ export default function BotManagerPage() {
           font-size: 0.74rem;
           font-weight: 700;
           letter-spacing: 0.5px;
-          color: #5c5c80;
-          border-bottom: 1px solid #e4e4f0;
-          background: #f8f8fc;
+          color: var(--text-tertiary);
+          border-bottom: 1px solid var(--border);
+          background: var(--bg-input);
           white-space: nowrap;
           text-align: left;
         }
         .bm-table td {
           padding: 13px 16px;
           font-size: 0.82rem;
-          border-bottom: 1px solid #e4e4f0;
+          border-bottom: 1px solid var(--border);
           vertical-align: middle;
-          background: #ffffff;
+          background: var(--bg-surface);
         }
         .bm-table tr:hover td {
-          background: #fbfbfe;
+          background: var(--bg-hover);
         }
         .bm-row-action {
           width: 28px;
           height: 28px;
           border-radius: 6px;
-          border: 1px solid #e4e4f0;
-          background: #ffffff;
-          color: #5c5c80;
+          border: 1px solid var(--border);
+          background: var(--bg-surface);
+          color: var(--text-tertiary);
           display: inline-flex;
           align-items: center;
           justify-content: center;
@@ -1156,7 +1156,7 @@ export default function BotManagerPage() {
         .bm-row-action:hover {
           border-color: var(--primary);
           color: var(--primary);
-          background: rgba(37, 99, 235, 0.08);
+          background: rgba(79, 70, 229, 0.08);
           transform: translateY(-1px);
         }
         .bm-row-action.delete:hover {
@@ -1196,7 +1196,7 @@ export default function BotManagerPage() {
 
           {/* Search Box */}
           <div className="bm-search-wrap">
-            <Search size={14} color="#9999bb" style={{ position: 'absolute', left: 24, top: '50%', transform: 'translateY(-50%)' }} />
+            <Search size={14} color="var(--text-muted)" style={{ position: 'absolute', left: 24, top: '50%', transform: 'translateY(-50%)' }} />
             <input
               type="text"
               placeholder="Search by name or number..."
@@ -1242,14 +1242,14 @@ export default function BotManagerPage() {
               className={`bm-pill ${channelFilter === 'WEBCHAT' ? 'active' : ''}`}
               onClick={() => handleChannelFilterChange('WEBCHAT')}
             >
-              <Globe size={12} color="#6366f1" /> {channelCounts.WEBCHAT}
+              <Globe size={12} color="var(--channel-webchat)" /> {channelCounts.WEBCHAT}
             </button>
           </div>
 
           {/* Accounts List */}
           <div className="bm-account-list">
             {filteredAccounts.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '30px 14px', color: '#9999bb', fontSize: '0.8rem' }}>
+              <div style={{ textAlign: 'center', padding: '30px 14px', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
                 No accounts found.
               </div>
             ) : (
@@ -1273,10 +1273,10 @@ export default function BotManagerPage() {
                     </div>
 
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#1a1a2e', truncate: true }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-primary)', truncate: true }}>
                         {acc.name || acc.fb_page_name || 'Nexa Bot'}
                       </div>
-                      <div style={{ fontSize: '0.72rem', color: '#5c5c80', marginTop: 1, truncate: true }}>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', marginTop: 1, truncate: true }}>
                         {identifier}
                       </div>
                     </div>
@@ -1327,9 +1327,9 @@ export default function BotManagerPage() {
                   gap: 6,
                   padding: '7px 14px',
                   borderRadius: 8,
-                  border: errorLogs.length > 0 ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid #e4e4f0',
-                  background: errorLogs.length > 0 ? 'rgba(239, 68, 68, 0.06)' : '#ffffff',
-                  color: errorLogs.length > 0 ? '#dc2626' : '#1a1a2e',
+                  border: errorLogs.length > 0 ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid var(--border)',
+                  background: errorLogs.length > 0 ? 'rgba(239, 68, 68, 0.06)' : 'var(--bg-surface)',
+                  color: errorLogs.length > 0 ? '#dc2626' : 'var(--text-primary)',
                   fontSize: '0.82rem',
                   fontWeight: 600,
                   cursor: 'pointer',
@@ -1337,7 +1337,7 @@ export default function BotManagerPage() {
                 }}
                 title="View Bot Error Log"
               >
-                <AlertCircle size={15} color={errorLogs.length > 0 ? '#ef4444' : '#64748b'} />
+                <AlertCircle size={15} color={errorLogs.length > 0 ? '#ef4444' : 'var(--text-tertiary)'} />
                 <span>Error Log</span>
                 {errorLogs.length > 0 && (
                   <span
@@ -1364,9 +1364,9 @@ export default function BotManagerPage() {
                   gap: 6,
                   padding: '7px 14px',
                   borderRadius: 8,
-                  border: '1px solid #e4e4f0',
-                  background: '#ffffff',
-                  color: '#1a1a2e',
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-surface)',
+                  color: 'var(--text-primary)',
                   fontSize: '0.82rem',
                   fontWeight: 600,
                   cursor: 'pointer',
@@ -1384,9 +1384,9 @@ export default function BotManagerPage() {
                     gap: 6,
                     padding: '7px 14px',
                     borderRadius: 8,
-                    border: '1px solid #e4e4f0',
-                    background: '#ffffff',
-                    color: '#5c5c80',
+                    border: '1px solid var(--border)',
+                    background: 'var(--bg-surface)',
+                    color: 'var(--text-tertiary)',
                     fontSize: '0.82rem',
                     fontWeight: 500,
                     cursor: 'pointer',
@@ -1401,8 +1401,8 @@ export default function BotManagerPage() {
                       position: 'absolute',
                       right: 0,
                       top: '115%',
-                      background: '#ffffff',
-                      border: '1px solid #e4e4f0',
+                      background: 'var(--bg-surface)',
+                      border: '1px solid var(--border)',
                       borderRadius: 8,
                       boxShadow: '0 8px 24px rgba(0,0,0,0.1)',
                       zIndex: 100,
@@ -1415,9 +1415,9 @@ export default function BotManagerPage() {
                         setShowOptionsDropdown(false);
                         setShowCreateModal(true);
                       }}
-                      style={{ padding: '9px 14px', fontSize: '0.82rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: '#1a1a2e' }}
-                      onMouseOver={(e) => e.currentTarget.style.background = '#f8f8fc'}
-                      onMouseOut={(e) => e.currentTarget.style.background = '#ffffff'}
+                      style={{ padding: '9px 14px', fontSize: '0.82rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-primary)' }}
+                      onMouseOver={(e) => e.currentTarget.style.background = 'var(--bg-hover)'}
+                      onMouseOut={(e) => e.currentTarget.style.background = 'var(--bg-surface)'}
                     >
                       <Plus size={13} color="var(--primary)" /> Create Flow
                     </div>
@@ -1426,9 +1426,9 @@ export default function BotManagerPage() {
                         setShowOptionsDropdown(false);
                         openErrorLogModal();
                       }}
-                      style={{ padding: '9px 14px', fontSize: '0.82rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: '#dc2626', borderTop: '1px solid #f0f0fa' }}
+                      style={{ padding: '9px 14px', fontSize: '0.82rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: '#dc2626', borderTop: '1px solid var(--border)' }}
                       onMouseOver={(e) => e.currentTarget.style.background = '#fef2f2'}
-                      onMouseOut={(e) => e.currentTarget.style.background = '#ffffff'}
+                      onMouseOut={(e) => e.currentTarget.style.background = 'var(--bg-surface)'}
                     >
                       <AlertCircle size={13} color="#ef4444" /> Bot Error Log {errorLogs.length > 0 ? `(${errorLogs.length})` : ''}
                     </div>
@@ -1438,9 +1438,9 @@ export default function BotManagerPage() {
                         loadAllData();
                         showToast('Refreshed all bot flows');
                       }}
-                      style={{ padding: '9px 14px', fontSize: '0.82rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: '#1a1a2e', borderTop: '1px solid #f0f0fa' }}
-                      onMouseOver={(e) => e.currentTarget.style.background = '#f8f8fc'}
-                      onMouseOut={(e) => e.currentTarget.style.background = '#ffffff'}
+                      style={{ padding: '9px 14px', fontSize: '0.82rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-primary)', borderTop: '1px solid var(--border)' }}
+                      onMouseOver={(e) => e.currentTarget.style.background = 'var(--bg-hover)'}
+                      onMouseOut={(e) => e.currentTarget.style.background = 'var(--bg-surface)'}
                     >
                       <RefreshCw size={13} color="#10b981" /> Refresh Account
                     </div>
@@ -1502,10 +1502,10 @@ export default function BotManagerPage() {
                     style={{
                       padding: '7px 28px 7px 10px',
                       borderRadius: 8,
-                      border: '1px solid #e4e4f0',
-                      background: '#ffffff',
+                      border: '1px solid var(--border)',
+                      background: 'var(--bg-surface)',
                       fontSize: '0.82rem',
-                      color: '#1a1a2e',
+                      color: 'var(--text-primary)',
                       cursor: 'pointer',
                     }}
                   >
@@ -1516,7 +1516,7 @@ export default function BotManagerPage() {
                   </select>
 
                   <div style={{ position: 'relative', flex: 1, maxWidth: 360 }}>
-                    <Search size={14} color="#9999bb" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+                    <Search size={14} color="var(--text-muted)" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
                     <input
                       type="text"
                       placeholder="Search & Enter..."
@@ -1526,10 +1526,10 @@ export default function BotManagerPage() {
                         width: '100%',
                         padding: '7px 10px 7px 30px',
                         borderRadius: 8,
-                        border: '1px solid #e4e4f0',
-                        background: '#ffffff',
+                        border: '1px solid var(--border)',
+                        background: 'var(--bg-surface)',
                         fontSize: '0.82rem',
-                        color: '#1a1a2e',
+                        color: 'var(--text-primary)',
                         outline: 'none',
                       }}
                     />
@@ -1543,9 +1543,9 @@ export default function BotManagerPage() {
                       width: 34,
                       height: 34,
                       borderRadius: 8,
-                      border: '1px solid #e4e4f0',
-                      background: '#ffffff',
-                      color: '#5c5c80',
+                      border: '1px solid var(--border)',
+                      background: 'var(--bg-surface)',
+                      color: 'var(--text-tertiary)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -1569,7 +1569,7 @@ export default function BotManagerPage() {
                       fontWeight: 700,
                       fontSize: '0.84rem',
                       cursor: 'pointer',
-                      boxShadow: '0 2px 6px rgba(37, 99, 235, 0.3)',
+                      boxShadow: '0 2px 6px rgba(79, 70, 229, 0.3)',
                     }}
                   >
                     <Plus size={15} /> Create
@@ -1595,17 +1595,17 @@ export default function BotManagerPage() {
                       <tr>
                         <td colSpan={6} style={{ padding: 60, textAlign: 'center' }}>
                           <div className="loading-spinner" style={{ margin: '0 auto 8px' }} />
-                          <p style={{ color: '#5c5c80', fontSize: '0.82rem' }}>Loading keyword bot replies...</p>
+                          <p style={{ color: 'var(--text-tertiary)', fontSize: '0.82rem' }}>Loading keyword bot replies...</p>
                         </td>
                       </tr>
                     ) : displayedFlows.length === 0 ? (
                       <tr>
                         <td colSpan={6} style={{ padding: 60, textAlign: 'center' }}>
-                          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6, color: '#94a3b8' }}><Bot size={32} strokeWidth={1.5} /></div>
-                          <h4 style={{ fontSize: '0.94rem', fontWeight: 700, margin: '0 0 4px 0', color: '#1a1a2e' }}>
+                          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6, color: 'var(--text-muted)' }}><Bot size={32} strokeWidth={1.5} /></div>
+                          <h4 style={{ fontSize: '0.94rem', fontWeight: 700, margin: '0 0 4px 0', color: 'var(--text-primary)' }}>
                             No keyword reply flows yet
                           </h4>
-                          <p style={{ color: '#5c5c80', fontSize: '0.8rem', margin: '0 0 14px 0' }}>
+                          <p style={{ color: 'var(--text-tertiary)', fontSize: '0.8rem', margin: '0 0 14px 0' }}>
                             Click "+ Create" to build your first interactive visual chat bot flow.
                           </p>
                           <button
@@ -1630,21 +1630,21 @@ export default function BotManagerPage() {
                         const isFlowActive = flow.is_active !== 0 && flow.is_active !== false;
                         return (
                         <tr key={flow.id} style={{ cursor: 'pointer' }} onClick={() => openFlowBuilder(flow.id)}>
-                          <td style={{ fontWeight: 700, color: '#5c5c80' }}>
+                          <td style={{ fontWeight: 700, color: 'var(--text-tertiary)' }}>
                             {idx + 1}
                           </td>
 
                           <td>
-                            <code style={{ fontSize: '0.8rem', color: 'var(--primary)', background: '#f0f2ff', padding: '3px 8px', borderRadius: 6, fontWeight: 600 }}>
+                            <code style={{ fontSize: '0.8rem', color: 'var(--primary)', background: 'var(--primary-soft)', padding: '3px 8px', borderRadius: 6, fontWeight: 600 }}>
                               {formatUniqueId(flow.id)}
                             </code>
                           </td>
 
                           <td>
-                            <div style={{ fontWeight: 700, color: '#1a1a2e', fontSize: '0.86rem' }}>
+                            <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.86rem' }}>
                               {flow.name}
                             </div>
-                            <div style={{ fontSize: '0.72rem', color: '#9999bb', marginTop: 1 }}>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 1 }}>
                               Trigger: <strong>{flow.trigger_keyword || 'hi, hello'}</strong> ({flow.platform || 'WHATSAPP'})
                             </div>
                           </td>
@@ -1688,7 +1688,7 @@ export default function BotManagerPage() {
                             )}
                           </td>
 
-                          <td style={{ color: '#5c5c80', fontSize: '0.8rem' }}>
+                          <td style={{ color: 'var(--text-tertiary)', fontSize: '0.8rem' }}>
                             {formatDate(flow.updated_at || flow.created_at)}
                           </td>
 
@@ -1767,17 +1767,17 @@ export default function BotManagerPage() {
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   padding: '12px 20px',
-                  borderTop: '1px solid #e4e4f0',
-                  background: '#fafbfe',
+                  borderTop: '1px solid var(--border)',
+                  background: 'var(--bg-input)',
                   fontSize: '0.8rem',
-                  color: '#5c5c80',
+                  color: 'var(--text-tertiary)',
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <select
                     value={pageSize}
                     onChange={(e) => setPageSize(Number(e.target.value))}
-                    style={{ padding: '3px 8px', borderRadius: 6, border: '1px solid #e4e4f0', background: '#ffffff' }}
+                    style={{ padding: '3px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)' }}
                   >
                     <option value={10}>10</option>
                     <option value={25}>25</option>
@@ -1787,13 +1787,13 @@ export default function BotManagerPage() {
                 </div>
 
                 <div style={{ display: 'flex', gap: 4 }}>
-                  <button style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #e4e4f0', background: '#ffffff', cursor: 'pointer' }}>
+                  <button style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer' }}>
                     Previous
                   </button>
                   <button style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--primary)', background: 'var(--primary)', color: '#fff', fontWeight: 700 }}>
                     1
                   </button>
-                  <button style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #e4e4f0', background: '#ffffff', cursor: 'pointer' }}>
+                  <button style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer' }}>
                     Next
                   </button>
                 </div>
@@ -1881,11 +1881,11 @@ export default function BotManagerPage() {
               ═════════════════════════════════════════════════════════════════ */}
           {activeCategory === 'automation' && activeSubTab === 'messageTemplates' && !selectedAccount && (
             <div className="bm-content-card" style={{ padding: '60px 20px', textAlign: 'center' }}>
-              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12, color: '#94a3b8' }}><FileText size={40} strokeWidth={1.5} /></div>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#1a1a2e', marginBottom: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12, color: 'var(--text-muted)' }}><FileText size={40} strokeWidth={1.5} /></div>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: 6 }}>
                 Select a Bot Account to View Templates
               </h3>
-              <p style={{ fontSize: '0.86rem', color: '#64748b', maxWidth: 440, margin: '0 auto 16px' }}>
+              <p style={{ fontSize: '0.86rem', color: 'var(--text-tertiary)', maxWidth: 440, margin: '0 auto 16px' }}>
                 Please select a connected <strong>WhatsApp</strong> or <strong>Facebook Page</strong> from the left panel to manage its message templates.
               </p>
             </div>
@@ -1987,9 +1987,9 @@ export default function BotManagerPage() {
                 </p>
               </div>
 
-              <div style={{ textAlign: 'center', padding: '60px 20px', color: '#5c5c80' }}>
-                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10, color: '#94a3b8' }}><Zap size={40} strokeWidth={1.5} /></div>
-                <h4 style={{ fontSize: '1.05rem', fontWeight: 800, margin: '0 0 6px 0', color: '#1a1a2e' }}>
+              <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-tertiary)' }}>
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10, color: 'var(--text-muted)' }}><Zap size={40} strokeWidth={1.5} /></div>
+                <h4 style={{ fontSize: '1.05rem', fontWeight: 800, margin: '0 0 6px 0', color: 'var(--text-primary)' }}>
                   {activeSubTab.replace(/([A-Z])/g, ' $1').trim()} Module
                 </h4>
                 <p style={{ fontSize: '0.84rem', maxWidth: 400, margin: '0 auto 16px' }}>
@@ -2033,15 +2033,15 @@ export default function BotManagerPage() {
             style={{
               width: 580,
               maxWidth: '92vw',
-              background: '#ffffff',
+              background: 'var(--bg-surface)',
               borderRadius: 16,
               padding: 24,
               boxShadow: '0 16px 40px rgba(0,0,0,0.15)',
-              border: '1px solid #e4e4f0',
+              border: '1px solid var(--border)',
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-              <h3 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: '#1a1a2e', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <h3 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Sparkles size={20} color="var(--primary)" /> Create Conversational Flow
               </h3>
               <button
@@ -2050,13 +2050,13 @@ export default function BotManagerPage() {
                   width: 28,
                   height: 28,
                   borderRadius: '50%',
-                  border: '1px solid #e4e4f0',
-                  background: '#f8f8fc',
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-input)',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  color: '#5c5c80',
+                  color: 'var(--text-tertiary)',
                 }}
               >
                 <X size={14} />
@@ -2081,7 +2081,7 @@ export default function BotManagerPage() {
                 <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 5 }}>
                   Target Bot Account
                 </label>
-                <div style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #e2e8f0', background: '#f8fafc', fontSize: '0.82rem', color: '#334155', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-input)', fontSize: '0.82rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e' }} />
                   <strong>{selectedAccount?.name || 'Selected Bot'}</strong> ({getPlatformInfo(selectedAccount?.platform).label} — {selectedAccount?.wa_display_phone || selectedAccount?.wa_phone_number_id || selectedAccount?.fb_page_name || 'Channel Account'})
                 </div>
@@ -2102,15 +2102,15 @@ export default function BotManagerPage() {
                         style={{
                           padding: 12,
                           borderRadius: 10,
-                          border: `1.5px solid ${isSel ? 'var(--primary)' : '#e4e4f0'}`,
-                          background: isSel ? '#f0f2ff' : '#ffffff',
+                          border: `1.5px solid ${isSel ? 'var(--primary)' : 'var(--border)'}`,
+                          background: isSel ? 'var(--primary-soft)' : 'var(--bg-surface)',
                           cursor: 'pointer',
                         }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: '0.84rem', color: isSel ? '#4f46e5' : '#1a1a2e', marginBottom: 4 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: '0.84rem', color: isSel ? '#4f46e5' : 'var(--text-primary)', marginBottom: 4 }}>
                           <TIcon size={16} color={tmpl.color} /> {tmpl.title}
                         </div>
-                        <div style={{ fontSize: '0.74rem', color: '#5c5c80', lineHeight: 1.4 }}>
+                        <div style={{ fontSize: '0.74rem', color: 'var(--text-tertiary)', lineHeight: 1.4 }}>
                           {tmpl.description}
                         </div>
                       </div>
@@ -2123,7 +2123,7 @@ export default function BotManagerPage() {
                 <button
                   type="button"
                   onClick={() => setShowCreateModal(false)}
-                  style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid #e4e4f0', background: '#ffffff', cursor: 'pointer', fontSize: '0.85rem' }}
+                  style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', fontSize: '0.85rem' }}
                 >
                   Cancel
                 </button>
@@ -2168,16 +2168,16 @@ export default function BotManagerPage() {
             style={{
               width: 520,
               maxWidth: '92vw',
-              background: '#ffffff',
+              background: 'var(--bg-surface)',
               borderRadius: 16,
               padding: 24,
               boxShadow: '0 16px 40px rgba(0,0,0,0.15)',
-              border: '1px solid #e4e4f0',
+              border: '1px solid var(--border)',
             }}
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-              <h3 style={{ fontSize: '1.15rem', fontWeight: 800, margin: 0, color: '#1a1a2e', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <h3 style={{ fontSize: '1.15rem', fontWeight: 800, margin: 0, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Copy size={18} color="var(--primary)" /> Clone Bot Flow
               </h3>
               <button
@@ -2187,13 +2187,13 @@ export default function BotManagerPage() {
                   width: 28,
                   height: 28,
                   borderRadius: '50%',
-                  border: '1px solid #e4e4f0',
-                  background: '#f8f8fc',
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-input)',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  color: '#5c5c80',
+                  color: 'var(--text-tertiary)',
                 }}
               >
                 <X size={14} />
@@ -2201,12 +2201,12 @@ export default function BotManagerPage() {
             </div>
 
             <form onSubmit={handleCloneFlow} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div style={{ padding: '10px 14px', background: '#f8f8fc', borderRadius: 8, border: '1px solid #e4e4f0', fontSize: '0.8rem', color: '#5c5c80' }}>
-                Cloning source flow: <strong style={{ color: '#1a1a2e' }}>{flowToClone.name}</strong> ({flowToClone.platform})
+              <div style={{ padding: '10px 14px', background: 'var(--bg-input)', borderRadius: 8, border: '1px solid var(--border)', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
+                Cloning source flow: <strong style={{ color: 'var(--text-primary)' }}>{flowToClone.name}</strong> ({flowToClone.platform})
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 5, color: '#1a1a2e' }}>
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 5, color: 'var(--text-primary)' }}>
                   New Flow Name <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <input
@@ -2219,7 +2219,7 @@ export default function BotManagerPage() {
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 5, color: '#1a1a2e' }}>
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 5, color: 'var(--text-primary)' }}>
                   Target Bot Account <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <select
@@ -2241,7 +2241,7 @@ export default function BotManagerPage() {
                       );
                     })}
                 </select>
-                <p style={{ margin: '4px 0 0', fontSize: '0.72rem', color: '#94a3b8' }}>
+                <p style={{ margin: '4px 0 0', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                   The cloned flow will be strictly isolated and attached only to this bot account.
                 </p>
               </div>
@@ -2250,7 +2250,7 @@ export default function BotManagerPage() {
                 <button
                   type="button"
                   onClick={() => setShowCloneModal(false)}
-                  style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid #e4e4f0', background: '#ffffff', cursor: 'pointer', fontSize: '0.85rem' }}
+                  style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', fontSize: '0.85rem' }}
                 >
                   Cancel
                 </button>
@@ -2296,15 +2296,15 @@ export default function BotManagerPage() {
               maxHeight: '88vh',
               display: 'flex',
               flexDirection: 'column',
-              background: '#ffffff',
+              background: 'var(--bg-surface)',
               borderRadius: 16,
               padding: 24,
               boxShadow: '0 16px 40px rgba(0,0,0,0.15)',
-              border: '1px solid #e4e4f0',
+              border: '1px solid var(--border)',
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-              <h3 style={{ fontSize: '1.15rem', fontWeight: 800, margin: 0, color: '#1a1a2e', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <h3 style={{ fontSize: '1.15rem', fontWeight: 800, margin: 0, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Settings size={18} color="var(--primary)" /> Bot Settings
               </h3>
               <button
@@ -2313,13 +2313,13 @@ export default function BotManagerPage() {
                   width: 28,
                   height: 28,
                   borderRadius: '50%',
-                  border: '1px solid #e4e4f0',
-                  background: '#f8f8fc',
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-input)',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  color: '#5c5c80',
+                  color: 'var(--text-tertiary)',
                 }}
               >
                 <X size={14} />
@@ -2328,7 +2328,7 @@ export default function BotManagerPage() {
 
             {/* Tabs — General is the original (mock) bot-config form, left as-is;
                 Business Hours is the real, wired-up feature. */}
-            <div style={{ display: 'flex', gap: 4, padding: 4, background: '#f1f5f9', borderRadius: 10, marginBottom: 16, flexShrink: 0 }}>
+            <div style={{ display: 'flex', gap: 4, padding: 4, background: 'var(--bg-hover)', borderRadius: 10, marginBottom: 16, flexShrink: 0 }}>
               {[{ id: 'general', label: 'General' }, { id: 'businessHours', label: 'Business Hours' }].map((t) => (
                 <button
                   key={t.id}
@@ -2337,8 +2337,8 @@ export default function BotManagerPage() {
                   style={{
                     flex: 1, padding: '7px 10px', borderRadius: 7, border: 'none', cursor: 'pointer',
                     fontSize: '0.8rem', fontWeight: 700,
-                    background: settingsModalTab === t.id ? '#ffffff' : 'transparent',
-                    color: settingsModalTab === t.id ? '#1a1a2e' : '#64748b',
+                    background: settingsModalTab === t.id ? 'var(--bg-surface)' : 'transparent',
+                    color: settingsModalTab === t.id ? 'var(--text-primary)' : 'var(--text-tertiary)',
                     boxShadow: settingsModalTab === t.id ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
                   }}
                 >
@@ -2376,7 +2376,7 @@ export default function BotManagerPage() {
                     <button
                       type="button"
                       onClick={() => setShowSettingsModal(false)}
-                      style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid #e4e4f0', background: '#ffffff', cursor: 'pointer', fontSize: '0.85rem' }}
+                      style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', fontSize: '0.85rem' }}
                     >
                       Cancel
                     </button>
@@ -2440,10 +2440,10 @@ export default function BotManagerPage() {
               // is tall — the modal was resizing between the two).
               height: '80vh',
               maxHeight: '88vh',
-              background: '#ffffff',
+              background: 'var(--bg-surface)',
               borderRadius: 16,
               boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-              border: '1px solid #e2e8f0',
+              border: '1px solid var(--border)',
               display: 'flex',
               flexDirection: 'column',
               overflow: 'hidden',
@@ -2454,11 +2454,11 @@ export default function BotManagerPage() {
             <div
               style={{
                 padding: '18px 24px',
-                borderBottom: '1px solid #f1f5f9',
+                borderBottom: '1px solid var(--bg-hover)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                background: '#ffffff',
+                background: 'var(--bg-surface)',
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -2467,12 +2467,12 @@ export default function BotManagerPage() {
                     width: 40,
                     height: 40,
                     borderRadius: 10,
-                    background: '#f8fafc',
-                    border: '1px solid #e2e8f0',
+                    background: 'var(--bg-input)',
+                    border: '1px solid var(--border)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: '#64748b',
+                    color: 'var(--text-tertiary)',
                     flexShrink: 0,
                   }}
                 >
@@ -2480,15 +2480,15 @@ export default function BotManagerPage() {
                 </div>
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <h3 style={{ margin: 0, fontSize: '1.08rem', fontWeight: 700, color: '#0f172a' }}>
+                    <h3 style={{ margin: 0, fontSize: '1.08rem', fontWeight: 700, color: 'var(--text-primary)' }}>
                       Error Log
                     </h3>
                     {errorLogs.length > 0 && (
                       <span
                         style={{
-                          background: '#f1f5f9',
-                          color: '#475569',
-                          border: '1px solid #e2e8f0',
+                          background: 'var(--bg-hover)',
+                          color: 'var(--text-secondary)',
+                          border: '1px solid var(--border)',
                           fontSize: '0.72rem',
                           fontWeight: 600,
                           padding: '2px 8px',
@@ -2499,9 +2499,9 @@ export default function BotManagerPage() {
                       </span>
                     )}
                   </div>
-                  <p style={{ margin: '3px 0 0 0', fontSize: '0.78rem', color: '#64748b' }}>
+                  <p style={{ margin: '3px 0 0 0', fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>
                     {selectedAccount?.id && selectedAccount.id !== 'all'
-                      ? <>Showing errors for <strong style={{ color: '#334155' }}>{selectedAccount.name || getPlatformInfo(selectedAccount.platform).label}</strong> only.</>
+                      ? <>Showing errors for <strong style={{ color: 'var(--text-secondary)' }}>{selectedAccount.name || getPlatformInfo(selectedAccount.platform).label}</strong> only.</>
                       : 'Showing errors across every connected account.'}
                   </p>
                 </div>
@@ -2518,16 +2518,16 @@ export default function BotManagerPage() {
                     gap: 6,
                     padding: '6px 12px',
                     borderRadius: 8,
-                    border: '1px dashed #cbd5e1',
-                    background: '#f8fafc',
-                    color: '#475569',
+                    border: '1px dashed var(--border-light)',
+                    background: 'var(--bg-input)',
+                    color: 'var(--text-secondary)',
                     fontSize: '0.76rem',
                     fontWeight: 600,
                     cursor: 'pointer',
                     transition: 'all 0.15s',
                   }}
-                  onMouseOver={(e) => { e.currentTarget.style.background = '#f1f5f9'; }}
-                  onMouseOut={(e) => { e.currentTarget.style.background = '#f8fafc'; }}
+                  onMouseOver={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                  onMouseOut={(e) => { e.currentTarget.style.background = 'var(--bg-input)'; }}
                 >
                   <Sparkles size={13} color="var(--primary)" />
                   <span>Simulate Test Error</span>
@@ -2544,15 +2544,15 @@ export default function BotManagerPage() {
                       gap: 6,
                       padding: '6px 12px',
                       borderRadius: 8,
-                      border: '1px solid #e2e8f0',
-                      background: '#ffffff',
-                      color: '#475569',
+                      border: '1px solid var(--border)',
+                      background: 'var(--bg-surface)',
+                      color: 'var(--text-secondary)',
                       fontSize: '0.76rem',
                       fontWeight: 500,
                       cursor: 'pointer',
                     }}
-                    onMouseOver={(e) => { e.currentTarget.style.background = '#f8fafc'; }}
-                    onMouseOut={(e) => { e.currentTarget.style.background = '#ffffff'; }}
+                    onMouseOver={(e) => { e.currentTarget.style.background = 'var(--bg-input)'; }}
+                    onMouseOut={(e) => { e.currentTarget.style.background = 'var(--bg-surface)'; }}
                   >
                     <Trash2 size={13} />
                     <span>Clear All</span>
@@ -2560,7 +2560,7 @@ export default function BotManagerPage() {
                 )}
 
                 {/* Plain-language vs raw channel error */}
-                <div style={{ display: 'inline-flex', gap: 2, padding: 2, borderRadius: 8, border: '1px solid #e2e8f0', background: '#f8fafc' }}>
+                <div style={{ display: 'inline-flex', gap: 2, padding: 2, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-input)' }}>
                   {[['simple', 'Simple'], ['developer', 'Developer']].map(([mode, label]) => (
                     <button
                       key={mode}
@@ -2571,8 +2571,8 @@ export default function BotManagerPage() {
                         padding: '4px 11px',
                         borderRadius: 6,
                         border: 'none',
-                        background: errorLogView === mode ? '#ffffff' : 'transparent',
-                        color: errorLogView === mode ? '#0f172a' : '#64748b',
+                        background: errorLogView === mode ? 'var(--bg-surface)' : 'transparent',
+                        color: errorLogView === mode ? 'var(--text-primary)' : 'var(--text-tertiary)',
                         fontSize: '0.75rem',
                         fontWeight: errorLogView === mode ? 600 : 500,
                         cursor: 'pointer',
@@ -2593,12 +2593,12 @@ export default function BotManagerPage() {
                     width: 32,
                     height: 32,
                     borderRadius: 8,
-                    border: '1px solid #e2e8f0',
-                    background: '#ffffff',
+                    border: '1px solid var(--border)',
+                    background: 'var(--bg-surface)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: '#64748b',
+                    color: 'var(--text-tertiary)',
                     cursor: 'pointer',
                   }}
                 >
@@ -2613,11 +2613,11 @@ export default function BotManagerPage() {
                     height: 32,
                     borderRadius: 8,
                     border: 'none',
-                    background: '#f1f5f9',
+                    background: 'var(--bg-hover)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: '#64748b',
+                    color: 'var(--text-tertiary)',
                     cursor: 'pointer',
                   }}
                 >
@@ -2633,14 +2633,14 @@ export default function BotManagerPage() {
             <div
               style={{
                 padding: '12px 24px',
-                borderBottom: '1px solid #f1f5f9',
-                background: '#f8fafc',
+                borderBottom: '1px solid var(--bg-hover)',
+                background: 'var(--bg-input)',
                 display: 'flex',
                 alignItems: 'center',
               }}
             >
               <div style={{ position: 'relative', width: '100%' }}>
-                <Search size={14} color="#94a3b8" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+                <Search size={14} color="var(--text-muted)" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
                 <input
                   type="text"
                   placeholder="Search errors, contacts, bots..."
@@ -2650,10 +2650,10 @@ export default function BotManagerPage() {
                     width: '100%',
                     padding: '6px 10px 6px 30px',
                     borderRadius: 8,
-                    border: '1px solid #e2e8f0',
-                    background: '#ffffff',
+                    border: '1px solid var(--border)',
+                    background: 'var(--bg-surface)',
                     fontSize: '0.78rem',
-                    color: '#0f172a',
+                    color: 'var(--text-primary)',
                     outline: 'none',
                   }}
                 />
@@ -2667,7 +2667,7 @@ export default function BotManagerPage() {
                 minHeight: 0,
                 overflowY: 'auto',
                 padding: '16px 24px',
-                background: '#f8fafc',
+                background: 'var(--bg-input)',
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 12,
@@ -2681,16 +2681,16 @@ export default function BotManagerPage() {
               {errorLogsLoading && errorLogs.length === 0 ? (
                 <div style={{ padding: '60px 0', textAlign: 'center' }}>
                   <div className="loading-spinner" style={{ margin: '0 auto 10px' }} />
-                  <p style={{ color: '#64748b', fontSize: '0.82rem', margin: 0 }}>Fetching bot error logs...</p>
+                  <p style={{ color: 'var(--text-tertiary)', fontSize: '0.82rem', margin: 0 }}>Fetching bot error logs...</p>
                 </div>
               ) : filteredErrorLogs.length === 0 ? (
                 <div
                   style={{
                     padding: '60px 20px',
                     textAlign: 'center',
-                    background: '#ffffff',
+                    background: 'var(--bg-surface)',
                     borderRadius: 12,
-                    border: '1px solid #e2e8f0',
+                    border: '1px solid var(--border)',
                   }}
                 >
                   <div
@@ -2708,10 +2708,10 @@ export default function BotManagerPage() {
                   >
                     <CheckCircle2 size={26} />
                   </div>
-                  <h4 style={{ margin: '0 0 6px 0', fontSize: '0.96rem', fontWeight: 700, color: '#0f172a' }}>
+                  <h4 style={{ margin: '0 0 6px 0', fontSize: '0.96rem', fontWeight: 700, color: 'var(--text-primary)' }}>
                     {errorLogs.length === 0 ? 'No Bot Errors Detected' : 'No Errors Matching Filter'}
                   </h4>
-                  <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b', maxWidth: 380, marginInline: 'auto' }}>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-tertiary)', maxWidth: 380, marginInline: 'auto' }}>
                     {errorLogs.length === 0
                       ? 'All bots and automated flows are running smoothly. Any future delivery or API failures will appear here.'
                       : 'Try resetting your search query or channel filter to view other error entries.'}
@@ -2731,8 +2731,8 @@ export default function BotManagerPage() {
                     <div
                       key={errItem.id}
                       style={{
-                        background: '#ffffff',
-                        border: '1px solid #e2e8f0',
+                        background: 'var(--bg-surface)',
+                        border: '1px solid var(--border)',
                         borderRadius: 10,
                         padding: '14px 18px',
                       }}
@@ -2740,14 +2740,14 @@ export default function BotManagerPage() {
                       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14 }}>
                         {/* Error Icon & Main Message */}
                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11, flex: 1, minWidth: 0 }}>
-                          <AlertTriangle size={15} color="#94a3b8" style={{ flexShrink: 0, marginTop: 3 }} />
+                          <AlertTriangle size={15} color="var(--text-muted)" style={{ flexShrink: 0, marginTop: 3 }} />
 
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div
                               style={{
                                 fontSize: '0.86rem',
                                 fontWeight: 600,
-                                color: '#0f172a',
+                                color: 'var(--text-primary)',
                                 lineHeight: 1.45,
                                 wordBreak: 'break-word',
                                 fontFamily: isDev ? 'Consolas, Monaco, "Courier New", monospace' : 'inherit',
@@ -2757,10 +2757,10 @@ export default function BotManagerPage() {
                             </div>
 
                             {!isDev && (
-                              <div style={{ fontSize: '0.8rem', color: '#475569', lineHeight: 1.5, marginTop: 4 }}>
+                              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: 4 }}>
                                 {human.detail}
                                 {human.action && (
-                                  <span style={{ display: 'block', marginTop: 5, color: '#0f172a', fontWeight: 500 }}>
+                                  <span style={{ display: 'block', marginTop: 5, color: 'var(--text-primary)', fontWeight: 500 }}>
                                     {human.action}
                                   </span>
                                 )}
@@ -2768,25 +2768,25 @@ export default function BotManagerPage() {
                             )}
 
                             {/* Tags row — neutral, no per-type colour coding */}
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 9, flexWrap: 'wrap', fontSize: '0.72rem', color: '#64748b' }}>
-                              <span style={{ padding: '2px 7px', borderRadius: 5, border: '1px solid #e2e8f0', fontWeight: 500 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 9, flexWrap: 'wrap', fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>
+                              <span style={{ padding: '2px 7px', borderRadius: 5, border: '1px solid var(--border)', fontWeight: 500 }}>
                                 {pInfo.label}
                               </span>
 
                               {errItem.flow_name && (
-                                <span style={{ padding: '2px 7px', borderRadius: 5, border: '1px solid #e2e8f0', fontWeight: 500 }}>
+                                <span style={{ padding: '2px 7px', borderRadius: 5, border: '1px solid var(--border)', fontWeight: 500 }}>
                                   Flow: {errItem.flow_name}
                                 </span>
                               )}
 
                               {errItem.bot_name && (
-                                <span style={{ padding: '2px 7px', borderRadius: 5, border: '1px solid #e2e8f0', fontWeight: 500 }}>
+                                <span style={{ padding: '2px 7px', borderRadius: 5, border: '1px solid var(--border)', fontWeight: 500 }}>
                                   Bot: {errItem.bot_name}
                                 </span>
                               )}
 
                               {isDev && human.code && (
-                                <span style={{ padding: '2px 7px', borderRadius: 5, border: '1px solid #e2e8f0', fontWeight: 500, fontFamily: 'Consolas, Monaco, monospace' }}>
+                                <span style={{ padding: '2px 7px', borderRadius: 5, border: '1px solid var(--border)', fontWeight: 500, fontFamily: 'Consolas, Monaco, monospace' }}>
                                   Code {human.code}
                                 </span>
                               )}
@@ -2803,10 +2803,10 @@ export default function BotManagerPage() {
                         {/* Date / Time & Actions */}
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
                           <div style={{ textAlign: 'right' }}>
-                            <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 500 }}>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', fontWeight: 500 }}>
                               {relative}
                             </div>
-                            <div style={{ fontSize: '0.71rem', color: '#94a3b8', marginTop: 2 }}>
+                            <div style={{ fontSize: '0.71rem', color: 'var(--text-muted)', marginTop: 2 }}>
                               {date} • {time}
                             </div>
                           </div>
@@ -2819,9 +2819,9 @@ export default function BotManagerPage() {
                                 style={{
                                   padding: '4px 10px',
                                   borderRadius: 6,
-                                  border: '1px solid #e2e8f0',
-                                  background: isExpanded ? '#f8fafc' : '#ffffff',
-                                  color: '#475569',
+                                  border: '1px solid var(--border)',
+                                  background: isExpanded ? 'var(--bg-input)' : 'var(--bg-surface)',
+                                  color: 'var(--text-secondary)',
                                   fontSize: '0.73rem',
                                   fontWeight: 500,
                                   cursor: 'pointer',
@@ -2849,16 +2849,16 @@ export default function BotManagerPage() {
                                 width: 28,
                                 height: 28,
                                 borderRadius: 6,
-                                border: '1px solid #e2e8f0',
-                                background: '#ffffff',
-                                color: '#64748b',
+                                border: '1px solid var(--border)',
+                                background: 'var(--bg-surface)',
+                                color: 'var(--text-tertiary)',
                                 display: 'inline-flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 cursor: 'pointer',
                               }}
-                              onMouseOver={(e) => { e.currentTarget.style.background = '#f8fafc'; }}
-                              onMouseOut={(e) => { e.currentTarget.style.background = '#ffffff'; }}
+                              onMouseOver={(e) => { e.currentTarget.style.background = 'var(--bg-input)'; }}
+                              onMouseOut={(e) => { e.currentTarget.style.background = 'var(--bg-surface)'; }}
                             >
                               <Trash2 size={13} />
                             </button>
@@ -2868,9 +2868,9 @@ export default function BotManagerPage() {
 
                       {/* Raw diagnostic payload — developer view only */}
                       {isDev && isExpanded && (
-                        <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #f1f5f9' }}>
+                        <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--bg-hover)' }}>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b' }}>
+                            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-tertiary)' }}>
                               Diagnostic payload
                             </span>
                             <button
@@ -2882,9 +2882,9 @@ export default function BotManagerPage() {
                                 gap: 5,
                                 padding: '3px 8px',
                                 borderRadius: 5,
-                                border: '1px solid #e2e8f0',
-                                background: '#ffffff',
-                                color: '#475569',
+                                border: '1px solid var(--border)',
+                                background: 'var(--bg-surface)',
+                                color: 'var(--text-secondary)',
                                 fontSize: '0.7rem',
                                 fontWeight: 500,
                                 cursor: 'pointer',
@@ -2900,9 +2900,9 @@ export default function BotManagerPage() {
                               margin: 0,
                               padding: 10,
                               borderRadius: 6,
-                              background: '#f8fafc',
-                              border: '1px solid #e2e8f0',
-                              color: '#334155',
+                              background: 'var(--bg-input)',
+                              border: '1px solid var(--border)',
+                              color: 'var(--text-secondary)',
                               fontSize: '0.72rem',
                               lineHeight: 1.45,
                               overflowX: 'auto',
@@ -2933,14 +2933,14 @@ export default function BotManagerPage() {
             <div
               style={{
                 padding: '12px 24px',
-                borderTop: '1px solid #f1f5f9',
-                background: '#ffffff',
+                borderTop: '1px solid var(--bg-hover)',
+                background: 'var(--bg-surface)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
               }}
             >
-              <div style={{ fontSize: '0.74rem', color: '#94a3b8' }}>
+              <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
                 Showing {filteredErrorLogs.length} of {errorLogs.length} recorded error{errorLogs.length === 1 ? '' : 's'}.
               </div>
 
@@ -2950,8 +2950,8 @@ export default function BotManagerPage() {
                 style={{
                   padding: '7px 18px',
                   borderRadius: 8,
-                  border: '1px solid #e2e8f0',
-                  background: '#ffffff',
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-surface)',
                   color: '#1e293b',
                   fontSize: '0.82rem',
                   fontWeight: 600,

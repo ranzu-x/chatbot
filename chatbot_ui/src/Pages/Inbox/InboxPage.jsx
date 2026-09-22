@@ -83,13 +83,21 @@ import {
   UserMinus,
 } from 'lucide-react';
 
-/* ─── Platform Map ─── */
+/* ─── Platform Map ───────────────────────────────────────────────
+   Colors here are the same CSS variables Components/Common/PlatformIcon.jsx
+   reads (index.css's --channel-*) — one place to change a channel's color,
+   not two. Webchat previously reused the app's own primary blue (var(--primary))
+   here specifically, unlike PlatformIcon's dedicated --channel-webchat
+   (var(--primary-light)) — kept exactly as it was rather than silently reconciling the
+   two, since that's a real (if accidental-looking) difference, not
+   obviously a bug; ask if you'd like it unified with the other Webchat
+   badges. */
 const PLATFORM_MAP = {
-  WHATSAPP:  { label: 'WhatsApp',  icon: MessageCircle, color: '#25d366', bg: 'rgba(37, 211, 102, 0.12)' },
-  FACEBOOK:  { label: 'Facebook',  icon: Facebook,      color: '#1877f2', bg: 'rgba(24, 119, 242, 0.12)' },
-  INSTAGRAM: { label: 'Instagram', icon: Instagram,     color: '#e1306c', bg: 'rgba(225, 48, 108, 0.12)' },
-  TELEGRAM:  { label: 'Telegram',  icon: Send,          color: '#229ed9', bg: 'rgba(34, 158, 217, 0.12)' },
-  WEBCHAT:   { label: 'Webchat',   icon: Globe,         color: '#2563eb', bg: 'rgba(37, 99, 235, 0.12)' },
+  WHATSAPP:  { label: 'WhatsApp',  icon: MessageCircle, color: 'var(--channel-whatsapp)', bg: 'rgba(37, 211, 102, 0.12)' },
+  FACEBOOK:  { label: 'Facebook',  icon: Facebook,      color: 'var(--channel-facebook)', bg: 'rgba(24, 119, 242, 0.12)' },
+  INSTAGRAM: { label: 'Instagram', icon: Instagram,     color: 'var(--channel-instagram)', bg: 'rgba(225, 48, 108, 0.12)' },
+  TELEGRAM:  { label: 'Telegram',  icon: Send,          color: 'var(--channel-telegram)', bg: 'rgba(34, 158, 217, 0.12)' },
+  WEBCHAT:   { label: 'Webchat',   icon: Globe,         color: 'var(--primary)', bg: 'rgba(79, 70, 229, 0.12)' },
 };
 
 function getPlatformInfo(p) {
@@ -547,7 +555,7 @@ function WhatsAppWindowTimer({ lastInboundAt, onSendTemplate }) {
             marginTop: 10,
             width: '100%',
             padding: '7px 12px',
-            background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
+            background: 'linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%)',
             color: '#ffffff',
             border: 'none',
             borderRadius: 7,
@@ -558,7 +566,7 @@ function WhatsAppWindowTimer({ lastInboundAt, onSendTemplate }) {
             justifyContent: 'center',
             gap: 6,
             cursor: 'pointer',
-            boxShadow: '0 2px 6px rgba(37, 99, 235, 0.25)',
+            boxShadow: '0 2px 6px rgba(79, 70, 229, 0.25)',
           }}
         >
           <FileText size={13} /> Send Message Template
@@ -734,7 +742,7 @@ function getInitials(name = '') {
 function MessageTick({ status, failureStage, isRead, deliveredAt, size = 12 }) {
   if (status === 'FAILED' && failureStage === 'SEND') return <Check size={size} color="#ef4444" />;
   if (status === 'FAILED' && failureStage === 'DELIVERY') return <Check size={size} color="#f59e0b" />;
-  if (isRead) return <CheckCheck size={size} color="#2563eb" />;
+  if (isRead) return <CheckCheck size={size} color="var(--primary)" />;
   if (deliveredAt) return <CheckCheck size={size} color="#94a3b8" />;
   return <Check size={size} color="#94a3b8" />;
 }
@@ -763,9 +771,9 @@ const DRAWER_TABS = ['Overview', 'Sequences', 'Follow-ups', 'Custom Fields', 'No
 // conversation-list header (see below) — one per currently-applied filter.
 function FilterChip({ label, onRemove }) {
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 5px 3px 8px', borderRadius: 6, background: 'rgba(37, 99, 235, 0.08)', color: '#2563eb', fontSize: '0.7rem', fontWeight: 600, height: 22 }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 5px 3px 8px', borderRadius: 6, background: 'rgba(79, 70, 229, 0.08)', color: 'var(--primary)', fontSize: '0.7rem', fontWeight: 600, height: 22 }}>
       {label}
-      <button type="button" onClick={onRemove} title="Remove filter" style={{ display: 'flex', border: 'none', background: 'transparent', color: '#2563eb', cursor: 'pointer', padding: 1 }}>
+      <button type="button" onClick={onRemove} title="Remove filter" style={{ display: 'flex', border: 'none', background: 'transparent', color: 'var(--primary)', cursor: 'pointer', padding: 1 }}>
         <X size={11} />
       </button>
     </span>
@@ -831,8 +839,8 @@ function InboxRangeCalendar({ month, from, to, onNavigate, onPick }) {
                 height: 26, border: 'none', cursor: 'pointer', fontSize: '0.72rem',
                 fontWeight: edge ? 700 : 500,
                 borderRadius: edge ? 99 : 0,
-                color: !c.inMonth ? '#cbd5e1' : edge ? '#fff' : within ? '#2563eb' : '#334155',
-                background: edge ? '#2563eb' : within ? 'rgba(37, 99, 235, 0.1)' : 'transparent',
+                color: !c.inMonth ? '#cbd5e1' : edge ? '#fff' : within ? 'var(--primary)' : '#334155',
+                background: edge ? 'var(--primary)' : within ? 'rgba(79, 70, 229, 0.1)' : 'transparent',
               }}
             >
               {c.day}
@@ -2624,7 +2632,7 @@ export default function InboxPage() {
               width: 34, height: 34, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
               border: 'none', background: 'transparent', color: '#475569', cursor: 'pointer', marginBottom: 10,
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = '#2563eb'; e.currentTarget.style.background = '#f8fafc'; }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--primary)'; e.currentTarget.style.background = '#f8fafc'; }}
             onMouseLeave={(e) => { e.currentTarget.style.color = '#475569'; e.currentTarget.style.background = 'transparent'; }}
           >
             <Menu size={17} />
@@ -2648,8 +2656,8 @@ export default function InboxPage() {
               style={{
                 width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 3,
                 border: 'none', borderRadius: 8, cursor: disabled ? 'default' : 'pointer',
-                background: active ? 'rgba(37, 99, 235, 0.1)' : 'transparent',
-                color: disabled ? '#cbd5e1' : (active ? '#2563eb' : '#94a3b8'),
+                background: active ? 'rgba(79, 70, 229, 0.1)' : 'transparent',
+                color: disabled ? '#cbd5e1' : (active ? 'var(--primary)' : '#94a3b8'),
               }}
               onMouseEnter={(e) => { if (!active && !disabled) e.currentTarget.style.background = '#f8fafc'; }}
               onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent'; }}
@@ -2674,8 +2682,8 @@ export default function InboxPage() {
               style={{
                 width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 3,
                 border: 'none', borderRadius: 8, cursor: disabled ? 'default' : 'pointer',
-                background: active ? 'rgba(37, 99, 235, 0.1)' : 'transparent',
-                color: disabled ? '#cbd5e1' : (active ? '#2563eb' : '#94a3b8'),
+                background: active ? 'rgba(79, 70, 229, 0.1)' : 'transparent',
+                color: disabled ? '#cbd5e1' : (active ? 'var(--primary)' : '#94a3b8'),
               }}
               onMouseEnter={(e) => { if (!active && !disabled) e.currentTarget.style.background = '#f8fafc'; }}
               onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent'; }}
@@ -2691,7 +2699,7 @@ export default function InboxPage() {
             { key: 'FACEBOOK', label: 'Messenger', icon: <Facebook size={16} color="#1877f2" /> },
             { key: 'INSTAGRAM', label: 'Instagram', icon: <Instagram size={16} color="#e1306c" /> },
             { key: 'TELEGRAM', label: 'Telegram', icon: <Send size={16} color="#229ed9" /> },
-            { key: 'WEBCHAT', label: 'Webchat', icon: <Globe size={16} color="#6366f1" /> },
+            { key: 'WEBCHAT', label: 'Webchat', icon: <Globe size={16} color="var(--channel-webchat)" /> },
           ].map(({ key, label, icon }) => {
             const active = platformFilter === key;
             return (
@@ -2703,7 +2711,7 @@ export default function InboxPage() {
                 style={{
                   width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 3,
                   border: 'none', borderRadius: 8, cursor: 'pointer',
-                  background: active ? 'rgba(37, 99, 235, 0.1)' : 'transparent',
+                  background: active ? 'rgba(79, 70, 229, 0.1)' : 'transparent',
                   opacity: active || !platformFilter ? 1 : 0.45,
                 }}
                 onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = '#f8fafc'; }}
@@ -2724,7 +2732,7 @@ export default function InboxPage() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 800, fontSize: '0.92rem', color: '#0f172a' }}>
                 {viewFilter === 'unread' ? (
-                  <><Mail size={16} color="#2563eb" /> Unread Chats</>
+                  <><Mail size={16} color="var(--primary)" /> Unread Chats</>
                 ) : viewFilter === 'important' ? (
                   <><Star size={16} color="#eab308" /> Important Chats</>
                 ) : viewFilter === 'resolved' || statusFilter === 'RESOLVED' ? (
@@ -2734,11 +2742,11 @@ export default function InboxPage() {
                 ) : viewFilter === 'blocked' ? (
                   <><Ban size={16} color="#ef4444" /> Blocked Subscribers</>
                 ) : agentFilter === myProfileId ? (
-                  <><User size={16} color="#2563eb" /> Assigned to Me</>
+                  <><User size={16} color="var(--primary)" /> Assigned to Me</>
                 ) : agentFilter === 'unassigned' ? (
-                  <><UserX size={16} color="#2563eb" /> Unassigned Chats</>
+                  <><UserX size={16} color="var(--primary)" /> Unassigned Chats</>
                 ) : (
-                  <><MessageSquare size={16} color="#2563eb" /> Conversations</>
+                  <><MessageSquare size={16} color="var(--primary)" /> Conversations</>
                 )}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2812,7 +2820,7 @@ export default function InboxPage() {
                 >
                   <SlidersHorizontal size={14} />
                   {(agentFilterLabel || labelFilterLabel || isDateFilterActive) && (
-                    <span style={{ position: 'absolute', top: 4, right: 4, width: 6, height: 6, borderRadius: 99, background: '#2563eb' }} />
+                    <span style={{ position: 'absolute', top: 4, right: 4, width: 6, height: 6, borderRadius: 99, background: 'var(--primary)' }} />
                   )}
                 </button>
 
@@ -2864,9 +2872,9 @@ export default function InboxPage() {
                               onClick={() => { setStagedDatePreset(value); setStagedDateFrom(''); setStagedDateTo(''); }}
                               style={{
                                 flex: 1, padding: '5px 0', borderRadius: 6, fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
-                                border: `1px solid ${active ? '#2563eb' : '#e2e8f0'}`,
-                                background: active ? 'rgba(37, 99, 235, 0.08)' : '#fff',
-                                color: active ? '#2563eb' : '#64748b',
+                                border: `1px solid ${active ? 'var(--primary)' : '#e2e8f0'}`,
+                                background: active ? 'rgba(79, 70, 229, 0.08)' : '#fff',
+                                color: active ? 'var(--primary)' : '#64748b',
                               }}
                             >
                               {label}
@@ -2954,7 +2962,7 @@ export default function InboxPage() {
                       cursor: 'pointer',
                       borderBottom: '1px solid #f1f5f9',
                       background: isSelected ? '#f0f4ff' : 'transparent',
-                      borderLeft: isSelected ? '3px solid #2563eb' : '3px solid transparent',
+                      borderLeft: isSelected ? '3px solid var(--primary)' : '3px solid transparent',
                       transition: 'background 0.15s ease',
                     }}
                   >
@@ -2996,7 +3004,7 @@ export default function InboxPage() {
                         {conv.unread_count > 0 && (
                           <span style={{
                             flexShrink: 0, minWidth: 17, height: 17, borderRadius: 9, padding: '0 4px',
-                            background: '#2563eb', color: '#fff', fontSize: '0.65rem', fontWeight: 800,
+                            background: 'var(--primary)', color: '#fff', fontSize: '0.65rem', fontWeight: 800,
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
                           }}>
                             {conv.unread_count > 99 ? '99+' : conv.unread_count}
@@ -3060,7 +3068,7 @@ export default function InboxPage() {
                           {conv.status && (
                             <span style={{
                               fontSize: '0.62rem',
-                              color: conv.status === 'OPEN' ? '#16a34a' : conv.status === 'ASSIGNED' ? '#2563eb' : '#94a3b8',
+                              color: conv.status === 'OPEN' ? '#16a34a' : conv.status === 'ASSIGNED' ? 'var(--primary)' : '#94a3b8',
                               fontWeight: 700,
                               textTransform: 'capitalize',
                               flexShrink: 0,
@@ -3105,7 +3113,7 @@ export default function InboxPage() {
                   type="button"
                   onClick={loadMoreConversations}
                   disabled={loadingMoreConvs}
-                  style={{ fontSize: '0.78rem', fontWeight: 700, color: '#6366f1', background: 'none', border: 'none', cursor: loadingMoreConvs ? 'wait' : 'pointer' }}
+                  style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--primary-light)', background: 'none', border: 'none', cursor: loadingMoreConvs ? 'wait' : 'pointer' }}
                 >
                   {loadingMoreConvs ? 'Loading…' : 'Load more chats'}
                 </button>
@@ -3218,9 +3226,9 @@ export default function InboxPage() {
                       flexShrink: 0,
                       borderRadius: '50%',
                       border: '1px solid',
-                      borderColor: showSubscriberPanel ? '#c7d2fe' : '#e2e8f0',
-                      background: showSubscriberPanel ? '#eef2ff' : '#ffffff',
-                      color: showSubscriberPanel ? '#4338ca' : '#475569',
+                      borderColor: showSubscriberPanel ? 'var(--primary-light)' : '#e2e8f0',
+                      background: showSubscriberPanel ? 'var(--primary-soft)' : '#ffffff',
+                      color: showSubscriberPanel ? 'var(--primary-dark)' : '#475569',
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
@@ -3256,7 +3264,7 @@ export default function InboxPage() {
                         <button
                           type="button"
                           onClick={loadOlderMessages}
-                          style={{ fontSize: '0.74rem', color: '#6366f1', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                          style={{ fontSize: '0.74rem', color: 'var(--primary-light)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
                         >
                           Load older messages
                         </button>
@@ -3429,7 +3437,7 @@ export default function InboxPage() {
                           {/* ── Live Chat Translator: on-demand per-message translation ── */}
                           {!isMediaOnly && text && selectedConv?.translate_enabled === 1 && (
                             msg.translated_text ? (
-                              <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px dashed #e2e8f0', color: '#4338ca', fontSize: '0.82rem', display: 'flex', alignItems: 'flex-start', gap: 5 }}>
+                              <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px dashed #e2e8f0', color: 'var(--primary-dark)', fontSize: '0.82rem', display: 'flex', alignItems: 'flex-start', gap: 5 }}>
                                 <Languages size={12} style={{ marginTop: 3, flexShrink: 0 }} />
                                 <span>{msg.translated_text}</span>
                               </div>
@@ -3437,7 +3445,7 @@ export default function InboxPage() {
                               <button
                                 type="button"
                                 onClick={() => handleTranslateMessage(msg)}
-                                style={{ marginTop: 6, background: 'none', border: 'none', color: '#6366f1', fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 4 }}
+                                style={{ marginTop: 6, background: 'none', border: 'none', color: 'var(--primary-light)', fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 4 }}
                               >
                                 <Languages size={11} /> See translation
                               </button>
@@ -3527,7 +3535,7 @@ export default function InboxPage() {
                                   alignItems: 'center',
                                   gap: 3.5,
                                   fontWeight: 600,
-                                  color: isBot ? '#64748b' : '#2563eb',
+                                  color: isBot ? '#64748b' : 'var(--primary)',
                                 }}
                               >
                                 {isBot ? <Bot size={11} /> : <User size={11} />}
@@ -3538,7 +3546,7 @@ export default function InboxPage() {
                               {msg.status === 'FAILED' ? (
                                 <FailedMessageStatus msg={msg} />
                               ) : msg.is_read ? (
-                                <CheckCheck size={12} color="#2563eb" title="Read" />
+                                <CheckCheck size={12} color="var(--primary)" title="Read" />
                               ) : msg.delivered_at ? (
                                 <CheckCheck size={12} color="#94a3b8" title="Delivered" />
                               ) : (
@@ -3575,7 +3583,7 @@ export default function InboxPage() {
                   gap: 12,
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.78rem', color: '#475569' }}>
-                    <Bot size={15} color="#6366f1" style={{ flexShrink: 0 }} />
+                    <Bot size={15} color="var(--primary-light)" style={{ flexShrink: 0 }} />
                     <span>
                       <strong>Bot/AI is active:</strong> Join this chat to pause automated replies and type manual messages.
                     </span>
@@ -3586,7 +3594,7 @@ export default function InboxPage() {
                     className="transition-all duration-150 hover:brightness-95 active:scale-95"
                     style={{
                       display: 'flex', alignItems: 'center', gap: 6, padding: '5px 14px', borderRadius: 16,
-                      border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4338ca',
+                      border: '1px solid var(--primary-light)', background: 'var(--primary-soft)', color: 'var(--primary-dark)',
                       fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer',
                       boxShadow: '0 1px 3px rgba(67, 56, 202, 0.12)',
                       flexShrink: 0,
@@ -3670,7 +3678,7 @@ export default function InboxPage() {
                         type="button"
                         onClick={handleOpenTemplatePicker}
                         style={{
-                          background: '#2563eb',
+                          background: 'var(--primary)',
                           color: '#ffffff',
                           border: 'none',
                           borderRadius: 6,
@@ -3682,7 +3690,7 @@ export default function InboxPage() {
                           alignItems: 'center',
                           gap: 4,
                           whiteSpace: 'nowrap',
-                          boxShadow: '0 1px 3px rgba(37,99,235,0.25)',
+                          boxShadow: '0 1px 3px rgba(79, 70, 229, 0.25)',
                         }}
                       >
                         <FileText size={12} /> Send Template →
@@ -3752,9 +3760,9 @@ export default function InboxPage() {
                       className="transition-all duration-150 hover:bg-slate-100 active:scale-90"
                       style={{
                         width: 38, height: 38, borderRadius: '50%',
-                        border: `1px solid ${showSendMenuPicker || showSendMenu ? '#c7d2fe' : '#e2e8f0'}`,
-                        background: showSendMenuPicker || showSendMenu ? '#eef2ff' : '#ffffff',
-                        color: showSendMenuPicker || showSendMenu ? '#4338ca' : '#64748b',
+                        border: `1px solid ${showSendMenuPicker || showSendMenu ? 'var(--primary-light)' : '#e2e8f0'}`,
+                        background: showSendMenuPicker || showSendMenu ? 'var(--primary-soft)' : '#ffffff',
+                        color: showSendMenuPicker || showSendMenu ? 'var(--primary-dark)' : '#64748b',
                         display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: 'pointer',
                       }}
                     >
@@ -3791,7 +3799,7 @@ export default function InboxPage() {
                           onMouseEnter={(e) => (e.currentTarget.style.background = '#f8fafc')}
                           onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                         >
-                          <Layers size={16} color="#6366f1" /> Flows & Templates
+                          <Layers size={16} color="var(--primary-light)" /> Flows & Templates
                         </button>
                         <button
                           type="button"
@@ -3824,9 +3832,9 @@ export default function InboxPage() {
                         width: 38,
                         height: 38,
                         borderRadius: '50%',
-                        border: `1px solid ${showQuickCannedMenu ? '#bfdbfe' : '#e2e8f0'}`,
-                        background: showQuickCannedMenu ? '#eff6ff' : '#ffffff',
-                        color: showQuickCannedMenu ? '#2563eb' : '#64748b',
+                        border: `1px solid ${showQuickCannedMenu ? 'var(--primary-light)' : '#e2e8f0'}`,
+                        background: showQuickCannedMenu ? 'var(--primary-soft)' : '#ffffff',
+                        color: showQuickCannedMenu ? 'var(--primary)' : '#64748b',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -3862,9 +3870,9 @@ export default function InboxPage() {
                               setShowCreateCannedModal(true);
                             }}
                             style={{
-                              background: '#eff6ff',
-                              border: '1px solid #bfdbfe',
-                              color: '#2563eb',
+                              background: 'var(--primary-soft)',
+                              border: '1px solid var(--primary-light)',
+                              color: 'var(--primary)',
                               borderRadius: 5,
                               padding: '3px 8px',
                               fontSize: '0.72rem',
@@ -3919,7 +3927,7 @@ export default function InboxPage() {
                                 onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                               >
                                 <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#0f172a' }}>
-                                  {c.shortcut && <span style={{ color: '#6366f1', fontFamily: 'monospace', marginRight: 5 }}>/{c.shortcut}</span>}
+                                  {c.shortcut && <span style={{ color: 'var(--primary-light)', fontFamily: 'monospace', marginRight: 5 }}>/{c.shortcut}</span>}
                                   {c.title}
                                 </div>
                                 <div style={{ fontSize: '0.71rem', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -3964,7 +3972,7 @@ export default function InboxPage() {
                               onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                             >
                               <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#0f172a' }}>
-                                {c.shortcut && <span style={{ color: '#6366f1', fontFamily: 'monospace', marginRight: 6 }}>/{c.shortcut}</span>}
+                                {c.shortcut && <span style={{ color: 'var(--primary-light)', fontFamily: 'monospace', marginRight: 6 }}>/{c.shortcut}</span>}
                                 {c.title}
                               </div>
                               <div style={{ fontSize: '0.72rem', color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.body}</div>
@@ -3989,7 +3997,7 @@ export default function InboxPage() {
                             borderLeft: 'none',
                             borderRight: 'none',
                             borderBottom: 'none',
-                            color: '#2563eb',
+                            color: 'var(--primary)',
                             fontSize: '0.76rem',
                             fontWeight: 700,
                             cursor: 'pointer',
@@ -4045,9 +4053,9 @@ export default function InboxPage() {
                       className="transition-all duration-150 hover:bg-slate-100 active:scale-90"
                       style={{
                         width: 38, height: 38, borderRadius: '50%',
-                        border: `1px solid ${showRewriteMenu ? '#c7d2fe' : '#e2e8f0'}`,
-                        background: showRewriteMenu ? '#eef2ff' : '#ffffff',
-                        color: showRewriteMenu ? '#4338ca' : '#64748b',
+                        border: `1px solid ${showRewriteMenu ? 'var(--primary-light)' : '#e2e8f0'}`,
+                        background: showRewriteMenu ? 'var(--primary-soft)' : '#ffffff',
+                        color: showRewriteMenu ? 'var(--primary-dark)' : '#64748b',
                         display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                         cursor: (!botPaused || !messageText.trim() || rewriting) ? 'default' : 'pointer',
                         opacity: (!botPaused || !messageText.trim()) ? 0.5 : 1,
@@ -4208,7 +4216,7 @@ export default function InboxPage() {
                         disabled={subscriberActionBusy}
                         style={subscriberMenuItemStyle}
                       >
-                        <LogOut size={14} color="#2563eb" /> Leave Chat
+                        <LogOut size={14} color="var(--primary)" /> Leave Chat
                       </button>
                       <button
                         onClick={handleResetFlow}
@@ -4306,7 +4314,7 @@ export default function InboxPage() {
                     style={{
                       border: 'none',
                       background: 'none',
-                      color: '#2563eb',
+                      color: 'var(--primary)',
                       fontSize: '0.68rem',
                       fontWeight: 700,
                       cursor: 'pointer',
@@ -4351,9 +4359,9 @@ export default function InboxPage() {
                     fontSize: '0.71rem',
                     fontWeight: 700,
                     color: activeDrawerTab === tab ? '#fff' : '#64748b',
-                    background: activeDrawerTab === tab ? '#2563eb' : 'transparent',
+                    background: activeDrawerTab === tab ? 'var(--primary)' : 'transparent',
                     border: '1px solid',
-                    borderColor: activeDrawerTab === tab ? '#2563eb' : '#e2e8f0',
+                    borderColor: activeDrawerTab === tab ? 'var(--primary)' : '#e2e8f0',
                     cursor: 'pointer',
                     whiteSpace: 'nowrap',
                   }}
@@ -4371,7 +4379,7 @@ export default function InboxPage() {
                     Assigned Agent
                   </span>
                   <div style={{ fontSize: '0.82rem', color: '#0f172a', fontWeight: 600, marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <User size={12} color="#2563eb" /> {currentAgentName || 'Unassigned'}
+                    <User size={12} color="var(--primary)" /> {currentAgentName || 'Unassigned'}
                   </div>
                 </div>
 
@@ -4447,7 +4455,7 @@ export default function InboxPage() {
                     <User size={12} color="#64748b" />
                     <span>Assigned: <strong style={{ color: currentAgentName ? '#0f172a' : '#94a3b8' }}>{currentAgentName || 'Unassigned'}</strong></span>
                     {botPaused && selectedConv.pause_reason === 'HUMAN_TAKEOVER' && (
-                      <span style={{ fontSize: '0.68rem', color: '#2563eb', fontWeight: 600 }}> (Takeover active)</span>
+                      <span style={{ fontSize: '0.68rem', color: 'var(--primary)', fontWeight: 600 }}> (Takeover active)</span>
                     )}
                   </div>
                   {botPaused && selectedConv.pause_reason === 'OVER_LIMIT' && (
@@ -4545,8 +4553,8 @@ export default function InboxPage() {
                       onClick={() => setShowNewFieldForm((p) => !p)}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 7,
-                        border: '1px solid #c7d2fe', background: showNewFieldForm ? '#eef2ff' : '#fff',
-                        color: '#4338ca', fontSize: '0.74rem', fontWeight: 700, cursor: 'pointer',
+                        border: '1px solid var(--primary-light)', background: showNewFieldForm ? 'var(--primary-soft)' : '#fff',
+                        color: 'var(--primary-dark)', fontSize: '0.74rem', fontWeight: 700, cursor: 'pointer',
                       }}
                     >
                       <Plus size={12} /> New Field

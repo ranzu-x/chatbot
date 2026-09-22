@@ -82,6 +82,87 @@ function isLocalHostUrl(url) {
   return /localhost|127\.0\.0\.1|0\.0\.0\.0|::1/i.test(url);
 }
 
+let cachedTunnelUrl = null;
+let lastTunnelCheck = 0;
+
+export async function getPublicBackendUrl() {
+  const envUrl = process.env.BACKEND_URL || process.env.PUBLIC_URL;
+  if (envUrl && !isLocalHostUrl(envUrl)) {
+    return envUrl.replace(/\/+$/, "");
+  }
+
+  // Check ngrok tunnel if running locally
+  const now = Date.now();
+  if (cachedTunnelUrl && (now - lastTunnelCheck < 30000)) {
+    return cachedTunnelUrl;
+  }
+
+  try {
+    const res = await axios.get("http://127.0.0.1:4040/api/tunnels", { timeout: 1500 });
+    const httpsTunnel = res.data?.tunnels?.find((t) => t.proto === "https") || res.data?.tunnels?.[0];
+    if (httpsTunnel?.public_url) {
+      cachedTunnelUrl = httpsTunnel.public_url.replace(/\/+$/, "");
+      lastTunnelCheck = now;
+      return cachedTunnelUrl;
+    }
+  } catch (e) {
+    // ngrok not running or not reachable
+  }
+
+  return envUrl ? envUrl.replace(/\/+$/, "") : "http://localhost:5000";
+}
+
+export function resolvePublicImageUrl(rawUrl, publicBackendUrl) {
+  if (!rawUrl || typeof rawUrl !== "string") return null;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+
+  const base = (publicBackendUrl && !isLocalHostUrl(publicBackendUrl))
+    ? publicBackendUrl.replace(/\/+$/, "")
+    : (process.env.BACKEND_URL || "http://localhost:5000").replace(/\/+$/, "");
+
+  // If already an absolute URL
+  if (/^https?:\/\//i.test(trimmed)) {
+    if (!isLocalHostUrl(trimmed)) {
+      return trimmed;
+    }
+    // Rewrite localhost URL with public host if available
+    if (base && !isLocalHostUrl(base)) {
+      try {
+        const parsed = new URL(trimmed);
+        return `${base}${parsed.pathname}${parsed.search}`;
+      } catch (e) {
+        return trimmed.replace(/^https?:\/\/[^/]+/i, base);
+      }
+    }
+    return trimmed;
+  }
+
+  // Relative path (e.g. /uploads/image.jpg)
+  const normalizedPath = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return `${base}${normalizedPath}`;
+}
+
+export function normalizeMessengerButton(btn) {
+  if (!btn) return null;
+  const isUrl = btn.type === "URL" || btn.action === "url" || (Boolean(btn.url) && !btn.payload);
+  const title = String(typeof btn === "string" ? btn : (btn.title || btn.label || "Select")).trim().slice(0, 20) || "Select";
+  if (isUrl) {
+    let url = btn.url || "https://example.com";
+    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+    return {
+      type: "web_url",
+      title,
+      url,
+    };
+  }
+  return {
+    type: "postback",
+    title,
+    payload: String(btn.payload || btn.id || btn.sequenceId || btn.title || "select").slice(0, 1000),
+  };
+}
+
 function resolveLocalMediaPath(mediaUrl) {
   if (!mediaUrl || typeof mediaUrl !== "string") return null;
   let urlPath = mediaUrl.trim();
@@ -220,8 +301,8 @@ export async function sendPlatformMessage(platform, integration, contactExternal
     whatsappFlow,
   } = messageData;
   const accessToken = integration.access_token;
-  const backendUrl = process.env.BACKEND_URL || "http://localhost:5000";
-  const fullMediaUrl = mediaUrl && !mediaUrl.startsWith("http") ? `${backendUrl}${mediaUrl}` : mediaUrl;
+  const backendUrl = await getPublicBackendUrl();
+  const fullMediaUrl = resolvePublicImageUrl(mediaUrl, backendUrl);
 
   const upperType = (type || "TEXT").toUpperCase();
   const isMedia = ["IMAGE", "VIDEO", "AUDIO", "VOICE", "DOCUMENT", "FILE"].includes(upperType);
@@ -540,7 +621,77 @@ export async function sendPlatformMessage(platform, integration, contactExternal
         message: {},
       };
 
-      if (upperType === "IMAGE" && buttons && buttons.length > 0) {
+      if (carousel && carousel.length > 0) {
+        const resolvedCarouselImages = carousel.slice(0, 10).map((item) => {
+          const raw = item.imageUrl || item.mediaUrl || item.image;
+          if (!raw) return null;
+          const resolved = resolvePublicImageUrl(raw, backendUrl);
+          if (isLocalHostUrl(resolved)) {
+            console.warn(`[FB Carousel] Local image_url without public domain: ${resolved}`);
+            return null;
+          }
+          return resolved;
+        });
+
+        payload.message = {
+          attachment: {
+            type: "template",
+            payload: {
+              template_type: "generic",
+              elements: carousel.slice(0, 10).map((item, idx) => {
+                const element = {
+                  title: String(item.title || "Option").trim().slice(0, 80) || "Option",
+                };
+                if (item.subtitle && String(item.subtitle).trim()) {
+                  element.subtitle = String(item.subtitle).trim().slice(0, 80);
+                }
+                if (resolvedCarouselImages[idx]) {
+                  element.image_url = resolvedCarouselImages[idx];
+                }
+                const rawButtons = Array.isArray(item.buttons) ? item.buttons : [];
+                const formattedButtons = rawButtons.map(normalizeMessengerButton).filter(Boolean).slice(0, 3);
+                if (formattedButtons.length > 0) {
+                  element.buttons = formattedButtons;
+                }
+                return element;
+              }),
+            },
+          },
+        };
+      } else if (card) {
+        const rawCardImage = card.imageUrl || card.mediaUrl || card.image;
+        let resolvedCardImage = rawCardImage ? resolvePublicImageUrl(rawCardImage, backendUrl) : null;
+        if (resolvedCardImage && isLocalHostUrl(resolvedCardImage)) {
+          console.warn(`[FB Card] Local image_url without public domain: ${resolvedCardImage}`);
+          resolvedCardImage = null;
+        }
+
+        const rawButtons = Array.isArray(card.buttons) ? card.buttons : [];
+        const formattedButtons = rawButtons.map(normalizeMessengerButton).filter(Boolean).slice(0, 3);
+
+        const element = {
+          title: String(card.title || "Option").trim().slice(0, 80) || "Option",
+        };
+        if (card.subtitle && String(card.subtitle).trim()) {
+          element.subtitle = String(card.subtitle).trim().slice(0, 80);
+        }
+        if (resolvedCardImage) {
+          element.image_url = resolvedCardImage;
+        }
+        if (formattedButtons.length > 0) {
+          element.buttons = formattedButtons;
+        }
+
+        payload.message = {
+          attachment: {
+            type: "template",
+            payload: {
+              template_type: "generic",
+              elements: [element],
+            },
+          },
+        };
+      } else if (upperType === "IMAGE" && buttons && buttons.length > 0) {
         const localPath = resolveLocalMediaPath(mediaUrl);
         const hasCaption = Boolean(caption && caption.trim());
 
@@ -719,25 +870,6 @@ export async function sendPlatformMessage(platform, integration, contactExternal
             payload: { url: fullMediaUrl, is_reusable: true },
           },
         };
-      } else if (carousel && carousel.length > 0) {
-        payload.message = {
-          attachment: {
-            type: "template",
-            payload: {
-              template_type: "generic",
-              elements: carousel.slice(0, 10).map((item) => ({
-                title: item.title || "Option",
-                subtitle: item.subtitle || undefined,
-                image_url: item.imageUrl || undefined,
-                buttons: item.buttons && item.buttons.length > 0 ? item.buttons.slice(0, 3).map((btn) => ({
-                  type: btn.type === "URL" ? "web_url" : "postback",
-                  title: (btn.title || "Select").slice(0, 20),
-                  [btn.type === "URL" ? "url" : "payload"]: btn.url || btn.payload || btn.title || "select",
-                })) : undefined,
-              })),
-            },
-          },
-        };
       } else if (listMenu && getListMenuSections(listMenu).some((s) => (s.rows || []).length > 0)) {
         // Messenger/Instagram have no native "list message" type — the closest
         // real equivalent is a Generic Template carousel, one element per list
@@ -772,35 +904,32 @@ export async function sendPlatformMessage(platform, integration, contactExternal
             },
           },
         };
-      } else if (card) {
-        payload.message = {
-          attachment: {
-            type: "template",
-            payload: {
-              template_type: "generic",
-              elements: [
-                {
-                  title: card.title || "Option",
-                  subtitle: card.subtitle || undefined,
-                  image_url: card.imageUrl || undefined,
-                  buttons: card.buttons && card.buttons.length > 0 ? card.buttons.slice(0, 3).map((btn) => ({
-                    type: btn.type === "URL" ? "web_url" : "postback",
-                    title: (btn.title || "Select").slice(0, 20),
-                    [btn.type === "URL" ? "url" : "payload"]: btn.url || btn.payload || btn.title || "select",
-                  })) : undefined,
-                },
-              ],
-            },
-          },
-        };
       } else if (quickReplies && quickReplies.length > 0) {
+        // Meta's own quick-reply docs (max 13 per message):
+        //   content_type "text" — needs title (<=20 chars) + payload (our own
+        //   routing token, <=1000 chars).
+        //   content_type "user_phone_number"/"user_email" — "no additional
+        //   fields required": Meta renders its own built-in chip and
+        //   auto-fills it from the visitor's profile, so title/payload are
+        //   deliberately left OUT below, not just empty — including them has
+        //   been reported to make Meta reject the whole call.
+        // Instagram's own quick-reply docs only list "text"/"user_phone_number"
+        // (no "user_email" — IG profiles don't expose email this way), so an
+        // email kind saved for an Instagram flow is downgraded to "text" here
+        // rather than sent as a content_type IG doesn't support.
         payload.message = {
           text: body || "Select an option:",
-          quick_replies: quickReplies.slice(0, 13).map((qr, index) => ({
-            content_type: "text",
-            title: (qr.title || `Option ${index + 1}`).slice(0, 20),
-            payload: qr.payload || qr.title || `qr_${index}`,
-          })),
+          quick_replies: quickReplies.slice(0, 13).map((qr, index) => {
+            const kind = (platform === "INSTAGRAM" && qr.kind === "user_email") ? "text" : (qr.kind || "text");
+            if (kind === "user_phone_number" || kind === "user_email") {
+              return { content_type: kind };
+            }
+            return {
+              content_type: "text",
+              title: (qr.title || `Option ${index + 1}`).slice(0, 20),
+              payload: qr.payload || qr.title || `qr_${index}`,
+            };
+          }),
         };
       } else if (buttons && buttons.length > 0) {
         const formattedBtnText = ((headerText ? `${headerText}\n\n` : '') + (body || "Please select an option:") + (footerText ? `\n\n${footerText}` : '')).trim();
@@ -850,6 +979,22 @@ export async function sendPlatformMessage(platform, integration, contactExternal
         console.log(`[FB Send] Message sent to ${contactExternalId}, msgId:`, response.data?.message_id);
         return response.data?.message_id || null;
       } catch (err) {
+        const fbErr = err.response?.data?.error;
+        const errMsg = String(fbErr?.message || err.message || "");
+        // If Meta failed specifically on fetching an image_url, retry once without image_url so user at least gets the card/text
+        if ((card || (carousel && carousel.length > 0)) && (errMsg.includes("image") || errMsg.includes("URL") || fbErr?.error_subcode === 2018001) && payload.message?.attachment?.payload?.elements) {
+          console.warn(`[FB Send Retry] Retrying generic template without image_url due to Meta fetch error: ${errMsg}`);
+          payload.message.attachment.payload.elements.forEach((el) => {
+            delete el.image_url;
+          });
+          try {
+            const retryRes = await axios.post(url, payload);
+            console.log(`[FB Send Retry] Sent without image to ${contactExternalId}, msgId:`, retryRes.data?.message_id);
+            return retryRes.data?.message_id || null;
+          } catch (retryErr) {
+            console.error(`[FB Send Retry Failed]:`, retryErr.response?.data || retryErr.message);
+          }
+        }
         console.error(`[FB Send Error] Failed to send message to ${contactExternalId}:`, err.response?.data || err.message);
         throw err;
       }
@@ -886,12 +1031,23 @@ export async function sendPlatformMessage(platform, integration, contactExternal
           }),
         };
       } else if (quickReplies && quickReplies.length > 0) {
+        // Telegram's own KeyboardButton docs: `request_contact`/
+        // `request_location` are additional flags on top of the button's
+        // normal `text` label (never a replacement for it — unlike Meta's
+        // phone/email kinds, Telegram still shows and needs a label), and are
+        // mutually exclusive with each other on the same button. Only
+        // available in private chats, same restriction Telegram itself
+        // applies. Tapping sends the contact/location as Telegram's own
+        // message type, not a text reply matching the label.
         payload.reply_markup = {
-          keyboard: quickReplies.map((qr) => [
-            {
-              text: typeof qr === "string" ? qr : (qr.title || qr.label || "Option"),
-            },
-          ]),
+          keyboard: quickReplies.map((qr) => {
+            const kind = typeof qr === "string" ? "text" : (qr.kind || "text");
+            const text = typeof qr === "string" ? qr : (qr.title || qr.label || "Option");
+            const button = { text };
+            if (kind === "request_contact") button.request_contact = true;
+            else if (kind === "request_location") button.request_location = true;
+            return [button];
+          }),
           one_time_keyboard: true,
           resize_keyboard: true,
         };

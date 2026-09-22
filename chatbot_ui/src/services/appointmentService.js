@@ -1,33 +1,26 @@
 import api from "./api";
 
-/**
- * Appointment Service
- * Centralized API calls for appointment management
- * Uses axios with global baseURL and withCredentials configuration from useFetch.js
- */
-
 const API_BASE = "/api/v1/appointments";
 
 /**
- * Fetch paginated appointments with optional search
- * @param {number} page - Current page number (1-indexed)
- * @param {number} limit - Items per page
- * @param {string} searchTerm - Optional search query
- * @returns {Promise<{appointments, pagination}>}
+ * Fetch paginated appointments with all filter criteria
  */
-export const fetchAppointments = async (page = 1, limit = 10, searchTerm = "") => {
+export const fetchAppointments = async (params = {}) => {
   try {
-    const params = new URLSearchParams({
-      page: page.toString(),
-      limit: limit.toString(),
-      ...(searchTerm && { search: searchTerm }),
-    });
+    const queryParams = new URLSearchParams();
 
-    const response = await api.get(`${API_BASE}?${params}`, {
-      withCredentials: true,
-    });
+    if (params.page) queryParams.append("page", params.page.toString());
+    if (params.limit) queryParams.append("limit", params.limit.toString());
+    if (params.search) queryParams.append("search", params.search);
+    if (params.status && params.status !== "all") queryParams.append("status", params.status);
+    if (params.channel && params.channel !== "all") queryParams.append("channel", params.channel);
+    if (params.staffId && params.staffId !== "all") queryParams.append("staffId", params.staffId);
+    if (params.serviceId && params.serviceId !== "all") queryParams.append("serviceId", params.serviceId);
+    if (params.date) queryParams.append("date", params.date);
+    if (params.fromDate) queryParams.append("fromDate", params.fromDate);
+    if (params.toDate) queryParams.append("toDate", params.toDate);
 
-    console.log("✅ Appointments fetched:", response.data);
+    const response = await api.get(`${API_BASE}?${queryParams.toString()}`);
     return response.data;
   } catch (error) {
     console.error("❌ Error fetching appointments:", error);
@@ -36,22 +29,53 @@ export const fetchAppointments = async (page = 1, limit = 10, searchTerm = "") =
 };
 
 /**
+ * Fetch single appointment by ID
+ */
+export const fetchAppointmentById = async (id) => {
+  try {
+    const response = await api.get(`${API_BASE}/${id}`);
+    return response.data;
+  } catch (error) {
+    console.error("❌ Error fetching appointment:", error);
+    throw error;
+  }
+};
+
+/**
+ * Create a new appointment internally
+ */
+export const createAppointment = async (appointmentData) => {
+  try {
+    const response = await api.post(API_BASE, appointmentData);
+    return response.data;
+  } catch (error) {
+    console.error("❌ Error creating appointment:", error);
+    throw error;
+  }
+};
+
+/**
+ * Update an existing appointment (reschedule, notes, service, staff)
+ */
+export const updateAppointment = async (id, appointmentData) => {
+  try {
+    const response = await api.put(`${API_BASE}/${id}`, appointmentData);
+    return response.data;
+  } catch (error) {
+    console.error("❌ Error updating appointment:", error);
+    throw error;
+  }
+};
+
+/**
  * Update appointment status
- * @param {string|number} id - Appointment ID
- * @param {string} newStatus - New status (scheduled, confirmed, completed, cancelled)
- * @param {string} reason - Optional cancellation reason
- * @returns {Promise<response>}
  */
 export const updateAppointmentStatus = async (id, newStatus, reason = null) => {
   try {
     const payload = { status: newStatus };
     if (reason) payload.cancellation_reason = reason;
 
-    const response = await api.put(`${API_BASE}/${id}/status`, payload, {
-      withCredentials: true,
-    });
-
-    console.log(`✅ Status updated to ${newStatus}:`, response.data);
+    const response = await api.put(`${API_BASE}/${id}/status`, payload);
     return response.data;
   } catch (error) {
     console.error("❌ Error updating appointment status:", error);
@@ -61,76 +85,13 @@ export const updateAppointmentStatus = async (id, newStatus, reason = null) => {
 
 /**
  * Delete an appointment by ID
- * @param {string|number} id - Appointment ID
- * @returns {Promise<response>}
  */
 export const deleteAppointment = async (id) => {
   try {
-    const response = await api.delete(`${API_BASE}/${id}`, {
-      withCredentials: true,
-    });
-
-    console.log("✅ Appointment deleted:", response.data);
+    const response = await api.delete(`${API_BASE}/${id}`);
     return response.data;
   } catch (error) {
     console.error("❌ Error deleting appointment:", error);
-    throw error;
-  }
-};
-
-/**
- * Fetch single appointment by ID
- * @param {string|number} id - Appointment ID
- * @returns {Promise<appointment>}
- */
-export const fetchAppointmentById = async (id) => {
-  try {
-    const response = await api.get(`${API_BASE}/${id}`, {
-      withCredentials: true,
-    });
-
-    return response.data;
-  } catch (error) {
-    console.error("❌ Error fetching appointment:", error);
-    throw error;
-  }
-};
-
-/**
- * Create a new appointment
- * @param {object} appointmentData - Appointment object
- * @returns {Promise<appointment>}
- */
-export const createAppointment = async (appointmentData) => {
-  try {
-    const response = await api.post(API_BASE, appointmentData, {
-      withCredentials: true,
-    });
-
-    console.log("✅ Appointment created:", response.data);
-    return response.data;
-  } catch (error) {
-    console.error("❌ Error creating appointment:", error);
-    throw error;
-  }
-};
-
-/**
- * Update an appointment
- * @param {string|number} id - Appointment ID
- * @param {object} appointmentData - Updated appointment data
- * @returns {Promise<appointment>}
- */
-export const updateAppointment = async (id, appointmentData) => {
-  try {
-    const response = await api.put(`${API_BASE}/${id}`, appointmentData, {
-      withCredentials: true,
-    });
-
-    console.log("✅ Appointment updated:", response.data);
-    return response.data;
-  } catch (error) {
-    console.error("❌ Error updating appointment:", error);
     throw error;
   }
 };
@@ -148,9 +109,8 @@ export const fetchAppointmentStats = async () => {
   }
 };
 
-/**
- * Slot Services
- */
+// ─── SLOT SERVICES ────────────────────────────────────────────────────────────
+
 export const fetchSlots = async (params = {}) => {
   try {
     const query = new URLSearchParams(params).toString();
@@ -168,6 +128,16 @@ export const createSlots = async (slotData) => {
     return res.data;
   } catch (error) {
     console.error("❌ Error creating slots:", error);
+    throw error;
+  }
+};
+
+export const updateSlot = async (id, slotData) => {
+  try {
+    const res = await api.put(`/api/v1/slots/${id}`, slotData);
+    return res.data;
+  } catch (error) {
+    console.error("❌ Error updating slot:", error);
     throw error;
   }
 };
@@ -192,6 +162,36 @@ export const toggleSlot = async (id) => {
   }
 };
 
+export const bulkDeleteSlots = async (ids) => {
+  try {
+    const res = await api.post("/api/v1/slots/bulk-delete", { ids });
+    return res.data;
+  } catch (error) {
+    console.error("❌ Error bulk deleting slots:", error);
+    throw error;
+  }
+};
+
+export const bulkToggleSlots = async (ids, is_active) => {
+  try {
+    const res = await api.post("/api/v1/slots/bulk-toggle", { ids, is_active });
+    return res.data;
+  } catch (error) {
+    console.error("❌ Error bulk toggling slots:", error);
+    throw error;
+  }
+};
+
+export const purgePastSlots = async () => {
+  try {
+    const res = await api.delete("/api/v1/slots/purge-past");
+    return res.data;
+  } catch (error) {
+    console.error("❌ Error purging past slots:", error);
+    throw error;
+  }
+};
+
 export const fetchAvailableSlots = async (agencyId, date = null, staffId = null) => {
   try {
     const params = new URLSearchParams({ agencyId });
@@ -205,3 +205,78 @@ export const fetchAvailableSlots = async (agencyId, date = null, staffId = null)
   }
 };
 
+export const fetchAvailableDates = async (agencyId, fromDate = null, staffId = null, daysAhead = 30) => {
+  try {
+    const params = new URLSearchParams({ agencyId });
+    if (fromDate) params.append("fromDate", fromDate);
+    if (staffId) params.append("staffId", staffId);
+    if (daysAhead) params.append("daysAhead", daysAhead.toString());
+    const res = await api.get(`/api/v1/slots/availability/dates?${params}`);
+    return res.data;
+  } catch (error) {
+    console.error("❌ Error fetching available dates:", error);
+    throw error;
+  }
+};
+
+// ─── SERVICES CATALOG ─────────────────────────────────────────────────────────
+
+export const fetchAppointmentServices = async () => {
+  try {
+    const res = await api.get("/api/v1/appointment-services");
+    return res.data;
+  } catch (error) {
+    console.error("❌ Error fetching services:", error);
+    throw error;
+  }
+};
+
+export const createAppointmentService = async (serviceData) => {
+  try {
+    const res = await api.post("/api/v1/appointment-services", serviceData);
+    return res.data;
+  } catch (error) {
+    console.error("❌ Error creating service:", error);
+    throw error;
+  }
+};
+
+export const updateAppointmentService = async (id, serviceData) => {
+  try {
+    const res = await api.put(`/api/v1/appointment-services/${id}`, serviceData);
+    return res.data;
+  } catch (error) {
+    console.error("❌ Error updating service:", error);
+    throw error;
+  }
+};
+
+export const deleteAppointmentService = async (id) => {
+  try {
+    const res = await api.delete(`/api/v1/appointment-services/${id}`);
+    return res.data;
+  } catch (error) {
+    console.error("❌ Error deleting service:", error);
+    throw error;
+  }
+};
+
+export const fetchPublicServices = async (agencyId) => {
+  try {
+    const res = await api.get(`/api/v1/appointment-services/public?agencyId=${agencyId}`);
+    return res.data;
+  } catch (error) {
+    console.error("❌ Error fetching public services:", error);
+    throw error;
+  }
+};
+
+export const bookAppointmentPublic = async (bookingData) => {
+  try {
+    const res = await api.post("/api/v1/appointments/book-public", bookingData);
+    return res.data;
+  } catch (error) {
+    console.error("❌ Error booking public appointment:", error);
+    throw error;
+  }
+};

@@ -46,7 +46,7 @@ export const TEAM_ROLES = [
     label: 'Bot & Flow Specialist',
     badgeClass: 'bg-indigo-100 text-indigo-700 border-indigo-200',
     icon: Bot,
-    color: '#6366f1',
+    color: 'var(--primary)',
     description: 'Designs visual flow bots, manages keyword triggers, sequences, and AI knowledge bases.',
   },
   {
@@ -62,7 +62,7 @@ export const TEAM_ROLES = [
     label: 'Analyst / Viewer',
     badgeClass: 'bg-slate-100 text-slate-700 border-slate-200',
     icon: Eye,
-    color: '#64748b',
+    color: 'var(--text-tertiary)',
     description: 'Read-only access to conversation logs, analytics dashboards, and campaign reporting.',
   },
 ];
@@ -75,7 +75,7 @@ function getRoleInfo(roleKey) {
       label: norm.replace('_', ' '),
       badgeClass: 'bg-gray-100 text-gray-700 border-gray-200',
       icon: Users,
-      color: '#64748b',
+      color: 'var(--text-tertiary)',
       description: 'Standard team member access.',
     }
   );
@@ -402,14 +402,14 @@ export default function TeamMembersPage() {
               style={{
                 fontSize: '1.6rem',
                 fontWeight: 800,
-                color: '#1a1a2e',
+                color: 'var(--text-primary)',
                 margin: '0 0 4px 0',
                 display: 'flex',
                 alignItems: 'center',
                 gap: 10,
               }}
             >
-              <Users size={26} color="#6366f1" />
+              <Users size={26} color="var(--primary)" />
               Team Members
             </h1>
             <p style={{ margin: 0, fontSize: '0.86rem', color: '#5c5c80' }}>
@@ -426,9 +426,9 @@ export default function TeamMembersPage() {
                 gap: 6,
                 padding: '9px 15px',
                 borderRadius: 9,
-                border: '1px solid #e2e8f0',
-                background: '#ffffff',
-                color: '#475569',
+                border: '1px solid var(--border)',
+                background: 'var(--bg-surface)',
+                color: 'var(--text-secondary)',
                 fontSize: '0.84rem',
                 fontWeight: 600,
                 cursor: 'pointer',
@@ -446,7 +446,7 @@ export default function TeamMembersPage() {
                 gap: 7,
                 padding: '9px 18px',
                 borderRadius: 9,
-                background: '#6366f1',
+                background: 'var(--primary)',
                 color: '#ffffff',
                 border: 'none',
                 fontSize: '0.86rem',
@@ -477,8 +477,8 @@ export default function TeamMembersPage() {
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <Zap size={18} color={planStats.canAddMore ? '#6366f1' : '#f59e0b'} />
-              <div style={{ fontSize: '0.84rem', color: '#1e293b' }}>
+              <Zap size={18} color={planStats.canAddMore ? 'var(--primary)' : '#f59e0b'} />
+              <div style={{ fontSize: '0.84rem', color: 'var(--text-primary)' }}>
                 <strong>Plan Allowance:</strong>{' '}
                 {planStats.maxTeamMembers === null
                   ? 'Unlimited team members supported on your plan.'
@@ -514,10 +514,10 @@ export default function TeamMembersPage() {
         >
           <div
             style={{
-              background: '#ffffff',
+              background: 'var(--bg-surface)',
               padding: 16,
               borderRadius: 12,
-              border: '1px solid #e4e4f0',
+              border: '1px solid var(--border)',
               boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
               display: 'flex',
               alignItems: 'center',
@@ -530,7 +530,7 @@ export default function TeamMembersPage() {
                 height: 44,
                 borderRadius: 10,
                 background: '#eef2ff',
-                color: '#6366f1',
+                color: 'var(--primary)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -539,10 +539,10 @@ export default function TeamMembersPage() {
               <Users size={22} />
             </div>
             <div>
-              <div style={{ fontSize: '1.35rem', fontWeight: 800, color: '#1a1a2e' }}>
+              <div style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--text-primary)' }}>
                 {metrics.total}
               </div>
-              <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>
+              <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)' }}>
                 Total Members
               </div>
             </div>
@@ -550,10 +550,10 @@ export default function TeamMembersPage() {
 
           <div
             style={{
-              background: '#ffffff',
+              background: 'var(--bg-surface)',
               padding: 16,
               borderRadius: 12,
-              border: '1px solid #e4e4f0',
+              border: '1px solid var(--border)',
               boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
               display: 'flex',
               alignItems: 'center',
@@ -575,10 +575,10 @@ export default function TeamMembersPage() {
               <UserCheck size={22} />
             </div>
             <div>
-              <div style={{ fontSize: '1.35rem', fontWeight: 800, color: '#1a1a2e' }}>
+              <div style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--text-primary)' }}>
                 {members.filter((m) => m.is_active).length}
               </div>
-              <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>
+              <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)' }}>
                 Active Members
               </div>
             </div>
@@ -586,10 +586,10 @@ export default function TeamMembersPage() {
 
           <div
             style={{
-              background: '#ffffff',
+              background: 'var(--bg-surface)',
               padding: 16,
               borderRadius: 12,
-              border: '1px solid #e4e4f0',
+              border: '1px solid var(--border)',
               boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
               display: 'flex',
               alignItems: 'center',
@@ -611,10 +611,10 @@ export default function TeamMembersPage() {
               <Shield size={22} />
             </div>
             <div>
-              <div style={{ fontSize: '1.35rem', fontWeight: 800, color: '#1a1a2e' }}>
+              <div style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--text-primary)' }}>
                 {metrics.managers}
               </div>
-              <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>
+              <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)' }}>
                 Managers & Admins
               </div>
             </div>
@@ -622,10 +622,10 @@ export default function TeamMembersPage() {
 
           <div
             style={{
-              background: '#ffffff',
+              background: 'var(--bg-surface)',
               padding: 16,
               borderRadius: 12,
-              border: '1px solid #e4e4f0',
+              border: '1px solid var(--border)',
               boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
               display: 'flex',
               alignItems: 'center',
@@ -647,10 +647,10 @@ export default function TeamMembersPage() {
               <Bot size={22} />
             </div>
             <div>
-              <div style={{ fontSize: '1.35rem', fontWeight: 800, color: '#1a1a2e' }}>
+              <div style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--text-primary)' }}>
                 {metrics.builders + metrics.agents}
               </div>
-              <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>
+              <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-tertiary)' }}>
                 Users & Flow Builders
               </div>
             </div>
@@ -660,10 +660,10 @@ export default function TeamMembersPage() {
         {/* ── Filters & Search Bar ── */}
         <div
           style={{
-            background: '#ffffff',
+            background: 'var(--bg-surface)',
             padding: 16,
             borderRadius: 12,
-            border: '1px solid #e4e4f0',
+            border: '1px solid var(--border)',
             marginBottom: 16,
             display: 'flex',
             alignItems: 'center',
@@ -676,7 +676,7 @@ export default function TeamMembersPage() {
           <div style={{ position: 'relative', flex: 1, minWidth: 260, maxWidth: 400 }}>
             <Search
               size={15}
-              color="#94a3b8"
+              color="var(--text-muted)"
               style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }}
             />
             <input
@@ -691,7 +691,7 @@ export default function TeamMembersPage() {
                 width: '100%',
                 padding: '8px 12px 8px 36px',
                 borderRadius: 8,
-                border: '1px solid #e2e8f0',
+                border: '1px solid var(--border)',
                 fontSize: '0.84rem',
                 outline: 'none',
               }}
@@ -709,9 +709,9 @@ export default function TeamMembersPage() {
               style={{
                 padding: '8px 12px',
                 borderRadius: 8,
-                border: '1px solid #e2e8f0',
+                border: '1px solid var(--border)',
                 fontSize: '0.84rem',
-                background: '#ffffff',
+                background: 'var(--bg-surface)',
                 color: '#334155',
                 cursor: 'pointer',
               }}
@@ -733,9 +733,9 @@ export default function TeamMembersPage() {
               style={{
                 padding: '8px 12px',
                 borderRadius: 8,
-                border: '1px solid #e2e8f0',
+                border: '1px solid var(--border)',
                 fontSize: '0.84rem',
-                background: '#ffffff',
+                background: 'var(--bg-surface)',
                 color: '#334155',
                 cursor: 'pointer',
               }}
@@ -750,25 +750,25 @@ export default function TeamMembersPage() {
         {/* ── Team Members Table ── */}
         <div
           style={{
-            background: '#ffffff',
+            background: 'var(--bg-surface)',
             borderRadius: 12,
-            border: '1px solid #e4e4f0',
+            border: '1px solid var(--border)',
             overflow: 'hidden',
             boxShadow: '0 2px 8px rgba(0,0,0,0.02)',
           }}
         >
           {loading ? (
-            <div style={{ padding: '60px 20px', textAlign: 'center', color: '#94a3b8' }}>
+            <div style={{ padding: '60px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
               <RefreshCw size={28} className="animate-spin" style={{ margin: '0 auto 10px auto' }} />
               <div style={{ fontSize: '0.88rem' }}>Loading team members...</div>
             </div>
           ) : members.length === 0 ? (
-            <div style={{ padding: '60px 20px', textAlign: 'center', color: '#64748b' }}>
-              <Users size={38} color="#cbd5e1" style={{ margin: '0 auto 12px auto' }} />
-              <div style={{ fontSize: '1rem', fontWeight: 700, color: '#1e293b', marginBottom: 4 }}>
+            <div style={{ padding: '60px 20px', textAlign: 'center', color: 'var(--text-tertiary)' }}>
+              <Users size={38} color="var(--border-light)" style={{ margin: '0 auto 12px auto' }} />
+              <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>
                 No Team Members Found
               </div>
-              <p style={{ fontSize: '0.84rem', margin: '0 0 16px 0', color: '#64748b' }}>
+              <p style={{ fontSize: '0.84rem', margin: '0 0 16px 0', color: 'var(--text-tertiary)' }}>
                 {search || roleFilter !== 'ALL' || statusFilter !== 'ALL'
                   ? 'No members match your active filters.'
                   : 'Start by inviting staff members to delegate support, flow building, and marketing.'}
@@ -778,7 +778,7 @@ export default function TeamMembersPage() {
                 style={{
                   padding: '8px 18px',
                   borderRadius: 8,
-                  background: '#6366f1',
+                  background: 'var(--primary)',
                   color: '#fff',
                   border: 'none',
                   fontWeight: 700,
@@ -795,11 +795,11 @@ export default function TeamMembersPage() {
                 <thead>
                   <tr
                     style={{
-                      background: '#f8fafc',
-                      borderBottom: '1px solid #e2e8f0',
+                      background: 'var(--bg-input)',
+                      borderBottom: '1px solid var(--border)',
                       fontSize: '0.76rem',
                       fontWeight: 700,
-                      color: '#475569',
+                      color: 'var(--text-secondary)',
                       textTransform: 'uppercase',
                       letterSpacing: '0.04em',
                     }}
@@ -812,7 +812,7 @@ export default function TeamMembersPage() {
                     <th style={{ padding: '12px 18px', textAlign: 'right' }}>Actions</th>
                   </tr>
                 </thead>
-                <tbody style={{ fontSize: '0.84rem', color: '#1e293b' }}>
+                <tbody style={{ fontSize: '0.84rem', color: 'var(--text-primary)' }}>
                   {members.map((member) => {
                     const rInfo = getRoleInfo(member.team_role);
                     const RoleIcon = rInfo.icon;
@@ -825,8 +825,8 @@ export default function TeamMembersPage() {
                           borderBottom: '1px solid #f1f5f9',
                           transition: 'background 0.15s',
                         }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = '#f8fafc')}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = '#ffffff')}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-input)')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--bg-surface)')}
                       >
                         {/* Member */}
                         <td style={{ padding: '14px 18px' }}>
@@ -837,7 +837,7 @@ export default function TeamMembersPage() {
                                 height: 38,
                                 borderRadius: '50%',
                                 background: '#e0e7ff',
-                                color: '#4338ca',
+                                color: 'var(--primary-dark)',
                                 fontWeight: 800,
                                 fontSize: '0.85rem',
                                 display: 'flex',
@@ -863,8 +863,8 @@ export default function TeamMembersPage() {
                               ) : null}
                             </div>
                             <div>
-                              <div style={{ fontWeight: 700, color: '#0f172a' }}>{member.name}</div>
-                              <div style={{ fontSize: '0.74rem', color: '#64748b' }}>{member.email}</div>
+                              <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{member.name}</div>
+                              <div style={{ fontSize: '0.74rem', color: 'var(--text-tertiary)' }}>{member.email}</div>
                             </div>
                           </div>
                         </td>
@@ -891,14 +891,14 @@ export default function TeamMembersPage() {
                         </td>
 
                         {/* Contact */}
-                        <td style={{ padding: '14px 18px', color: '#475569', fontSize: '0.8rem' }}>
+                        <td style={{ padding: '14px 18px', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
                           {member.phone ? (
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <Phone size={13} color="#94a3b8" />
+                              <Phone size={13} color="var(--text-muted)" />
                               {member.phone}
                             </div>
                           ) : (
-                            <span style={{ color: '#94a3b8' }}>No phone</span>
+                            <span style={{ color: 'var(--text-muted)' }}>No phone</span>
                           )}
                         </td>
 
@@ -931,7 +931,7 @@ export default function TeamMembersPage() {
                         </td>
 
                         {/* Joined Date */}
-                        <td style={{ padding: '14px 18px', color: '#64748b', fontSize: '0.78rem' }}>
+                        <td style={{ padding: '14px 18px', color: 'var(--text-tertiary)', fontSize: '0.78rem' }}>
                           {formatDate(member.created_at)}
                         </td>
 
@@ -945,9 +945,9 @@ export default function TeamMembersPage() {
                                 width: 30,
                                 height: 30,
                                 borderRadius: 6,
-                                border: '1px solid #e2e8f0',
-                                background: '#ffffff',
-                                color: '#475569',
+                                border: '1px solid var(--border)',
+                                background: 'var(--bg-surface)',
+                                color: 'var(--text-secondary)',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
@@ -964,9 +964,9 @@ export default function TeamMembersPage() {
                                 width: 30,
                                 height: 30,
                                 borderRadius: 6,
-                                border: '1px solid #e2e8f0',
-                                background: '#ffffff',
-                                color: '#6366f1',
+                                border: '1px solid var(--border)',
+                                background: 'var(--bg-surface)',
+                                color: 'var(--primary)',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
@@ -983,8 +983,8 @@ export default function TeamMembersPage() {
                                 width: 30,
                                 height: 30,
                                 borderRadius: 6,
-                                border: '1px solid #e2e8f0',
-                                background: '#ffffff',
+                                border: '1px solid var(--border)',
+                                background: 'var(--bg-surface)',
                                 color: isActive ? '#f59e0b' : '#10b981',
                                 display: 'flex',
                                 alignItems: 'center',
@@ -1033,7 +1033,7 @@ export default function TeamMembersPage() {
                 justifyContent: 'space-between',
                 alignItems: 'center',
                 fontSize: '0.8rem',
-                color: '#64748b',
+                color: 'var(--text-tertiary)',
               }}
             >
               <div>
@@ -1046,8 +1046,8 @@ export default function TeamMembersPage() {
                   style={{
                     padding: '5px 12px',
                     borderRadius: 6,
-                    border: '1px solid #e2e8f0',
-                    background: currentPage <= 1 ? '#f8fafc' : '#ffffff',
+                    border: '1px solid var(--border)',
+                    background: currentPage <= 1 ? 'var(--bg-input)' : 'var(--bg-surface)',
                     cursor: currentPage <= 1 ? 'not-allowed' : 'pointer',
                   }}
                 >
@@ -1059,8 +1059,8 @@ export default function TeamMembersPage() {
                   style={{
                     padding: '5px 12px',
                     borderRadius: 6,
-                    border: '1px solid #e2e8f0',
-                    background: currentPage >= totalPages ? '#f8fafc' : '#ffffff',
+                    border: '1px solid var(--border)',
+                    background: currentPage >= totalPages ? 'var(--bg-input)' : 'var(--bg-surface)',
                     cursor: currentPage >= totalPages ? 'not-allowed' : 'pointer',
                   }}
                 >
@@ -1092,7 +1092,7 @@ export default function TeamMembersPage() {
             style={{
               width: 580,
               maxWidth: '96vw',
-              background: '#ffffff',
+              background: 'var(--bg-surface)',
               borderRadius: 16,
               boxShadow: '0 20px 50px rgba(0,0,0,0.2)',
               overflow: 'hidden',
@@ -1104,7 +1104,7 @@ export default function TeamMembersPage() {
             <div
               style={{
                 padding: '18px 22px',
-                borderBottom: '1px solid #e2e8f0',
+                borderBottom: '1px solid var(--border)',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
@@ -1115,13 +1115,13 @@ export default function TeamMembersPage() {
                   margin: 0,
                   fontSize: '1.15rem',
                   fontWeight: 800,
-                  color: '#0f172a',
+                  color: 'var(--text-primary)',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 8,
                 }}
               >
-                <UserPlus size={20} color="#6366f1" />
+                <UserPlus size={20} color="var(--primary)" />
                 Add New Team Member
               </h3>
               <button
@@ -1130,7 +1130,7 @@ export default function TeamMembersPage() {
                   border: 'none',
                   background: 'none',
                   cursor: 'pointer',
-                  color: '#94a3b8',
+                  color: 'var(--text-muted)',
                 }}
               >
                 <X size={20} />
@@ -1169,7 +1169,7 @@ export default function TeamMembersPage() {
                       width: '100%',
                       padding: '8px 12px',
                       borderRadius: 8,
-                      border: '1px solid #cbd5e1',
+                      border: '1px solid var(--border-light)',
                       fontSize: '0.85rem',
                     }}
                   />
@@ -1189,7 +1189,7 @@ export default function TeamMembersPage() {
                       width: '100%',
                       padding: '8px 12px',
                       borderRadius: 8,
-                      border: '1px solid #cbd5e1',
+                      border: '1px solid var(--border-light)',
                       fontSize: '0.85rem',
                     }}
                   />
@@ -1210,7 +1210,7 @@ export default function TeamMembersPage() {
                       width: '100%',
                       padding: '8px 12px',
                       borderRadius: 8,
-                      border: '1px solid #cbd5e1',
+                      border: '1px solid var(--border-light)',
                       fontSize: '0.85rem',
                     }}
                   />
@@ -1230,7 +1230,7 @@ export default function TeamMembersPage() {
                       width: '100%',
                       padding: '8px 12px',
                       borderRadius: 8,
-                      border: '1px solid #cbd5e1',
+                      border: '1px solid var(--border-light)',
                       fontSize: '0.85rem',
                     }}
                   />
@@ -1253,8 +1253,8 @@ export default function TeamMembersPage() {
                         style={{
                           padding: '10px 14px',
                           borderRadius: 10,
-                          border: `1.5px solid ${isSelected ? '#6366f1' : '#e2e8f0'}`,
-                          background: isSelected ? '#f5f7ff' : '#ffffff',
+                          border: `1.5px solid ${isSelected ? 'var(--primary)' : 'var(--border)'}`,
+                          background: isSelected ? 'var(--primary-soft)' : 'var(--bg-surface)',
                           cursor: 'pointer',
                           display: 'flex',
                           alignItems: 'center',
@@ -1277,10 +1277,10 @@ export default function TeamMembersPage() {
                           <RIcon size={16} />
                         </div>
                         <div style={{ flex: 1 }}>
-                          <div style={{ fontWeight: 700, fontSize: '0.84rem', color: isSelected ? '#4338ca' : '#0f172a' }}>
+                          <div style={{ fontWeight: 700, fontSize: '0.84rem', color: isSelected ? 'var(--primary-dark)' : 'var(--text-primary)' }}>
                             {r.label}
                           </div>
-                          <div style={{ fontSize: '0.74rem', color: '#64748b' }}>
+                          <div style={{ fontSize: '0.74rem', color: 'var(--text-tertiary)' }}>
                             {r.description}
                           </div>
                         </div>
@@ -1289,8 +1289,8 @@ export default function TeamMembersPage() {
                   })}
 
                   {agencyRoles.filter((r) => !r.is_system).length > 0 && (
-                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #e2e8f0' }}>
-                      <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#4f46e5', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--border)' }}>
+                      <div style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--primary)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 5 }}>
                         <Shield size={12} /> Custom Workspace Roles (Team Rules)
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -1303,16 +1303,16 @@ export default function TeamMembersPage() {
                               style={{
                                 padding: '8px 12px',
                                 borderRadius: 8,
-                                border: `1.5px solid ${isSelected ? '#6366f1' : '#e2e8f0'}`,
-                                background: isSelected ? '#f5f7ff' : '#ffffff',
+                                border: `1.5px solid ${isSelected ? 'var(--primary)' : 'var(--border)'}`,
+                                background: isSelected ? 'var(--primary-soft)' : 'var(--bg-surface)',
                                 cursor: 'pointer',
                                 display: 'flex',
                                 alignItems: 'center',
                                 gap: 10,
                               }}
                             >
-                              <Shield size={15} color="#4f46e5" />
-                              <div style={{ fontSize: '0.84rem', fontWeight: 700, color: isSelected ? '#4338ca' : '#0f172a' }}>
+                              <Shield size={15} color="var(--primary)" />
+                              <div style={{ fontSize: '0.84rem', fontWeight: 700, color: isSelected ? 'var(--primary-dark)' : 'var(--text-primary)' }}>
                                 {cr.name}
                               </div>
                             </div>
@@ -1329,16 +1329,16 @@ export default function TeamMembersPage() {
                 <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: 4 }}>
                   Bot / Channel Access
                 </label>
-                <p style={{ fontSize: '0.72rem', color: '#64748b', margin: '0 0 8px' }}>
+                <p style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', margin: '0 0 8px' }}>
                   Leave everything unchecked to give access to every connected account. Check specific accounts to restrict this member to only those.
                 </p>
                 {Object.keys(integrationsByPlatform).length === 0 ? (
-                  <div style={{ fontSize: '0.78rem', color: '#94a3b8' }}>No connected accounts yet.</div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>No connected accounts yet.</div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     {Object.entries(integrationsByPlatform).map(([platform, accs]) => (
                       <div key={platform}>
-                        <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>
+                        <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>
                           {platform}
                         </div>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -1347,8 +1347,8 @@ export default function TeamMembersPage() {
                             return (
                               <label key={acc.id} style={{
                                 display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', padding: '5px 10px',
-                                borderRadius: 999, border: `1px solid ${checked ? '#6366f1' : '#e2e8f0'}`,
-                                background: checked ? '#f5f7ff' : '#fff', cursor: 'pointer',
+                                borderRadius: 999, border: `1px solid ${checked ? 'var(--primary)' : 'var(--border)'}`,
+                                background: checked ? 'var(--primary-soft)' : '#fff', cursor: 'pointer',
                               }}>
                                 <input type="checkbox" checked={checked} onChange={() => toggleChannelAccess(acc.id, setChannelAccessIds)} />
                                 {integrationLabel(acc)}
@@ -1374,14 +1374,14 @@ export default function TeamMembersPage() {
                   ].map((opt) => (
                     <label key={opt.id} style={{
                       flex: 1, padding: '9px 12px', borderRadius: 10, cursor: 'pointer',
-                      border: `1.5px solid ${chatAccess === opt.id ? '#6366f1' : '#e2e8f0'}`,
-                      background: chatAccess === opt.id ? '#f5f7ff' : '#fff',
+                      border: `1.5px solid ${chatAccess === opt.id ? 'var(--primary)' : 'var(--border)'}`,
+                      background: chatAccess === opt.id ? 'var(--primary-soft)' : '#fff',
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                         <input type="radio" name="chatAccess" checked={chatAccess === opt.id} onChange={() => setChatAccess(opt.id)} />
-                        <span style={{ fontWeight: 700, fontSize: '0.8rem', color: '#0f172a' }}>{opt.label}</span>
+                        <span style={{ fontWeight: 700, fontSize: '0.8rem', color: 'var(--text-primary)' }}>{opt.label}</span>
                       </div>
-                      <div style={{ fontSize: '0.72rem', color: '#64748b', marginLeft: 20 }}>{opt.desc}</div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', marginLeft: 20 }}>{opt.desc}</div>
                     </label>
                   ))}
                 </div>
@@ -1394,9 +1394,9 @@ export default function TeamMembersPage() {
                   style={{
                     padding: '8px 16px',
                     borderRadius: 8,
-                    border: '1px solid #cbd5e1',
+                    border: '1px solid var(--border-light)',
                     background: '#fff',
-                    color: '#475569',
+                    color: 'var(--text-secondary)',
                     fontSize: '0.84rem',
                     fontWeight: 600,
                     cursor: 'pointer',
@@ -1411,7 +1411,7 @@ export default function TeamMembersPage() {
                     padding: '8px 22px',
                     borderRadius: 8,
                     border: 'none',
-                    background: '#6366f1',
+                    background: 'var(--primary)',
                     color: '#fff',
                     fontSize: '0.84rem',
                     fontWeight: 700,
@@ -1446,7 +1446,7 @@ export default function TeamMembersPage() {
             style={{
               width: 540,
               maxWidth: '96vw',
-              background: '#ffffff',
+              background: 'var(--bg-surface)',
               borderRadius: 16,
               boxShadow: '0 20px 50px rgba(0,0,0,0.2)',
               overflow: 'hidden',
@@ -1458,7 +1458,7 @@ export default function TeamMembersPage() {
             <div
               style={{
                 padding: '18px 22px',
-                borderBottom: '1px solid #e2e8f0',
+                borderBottom: '1px solid var(--border)',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
@@ -1469,13 +1469,13 @@ export default function TeamMembersPage() {
                   margin: 0,
                   fontSize: '1.15rem',
                   fontWeight: 800,
-                  color: '#0f172a',
+                  color: 'var(--text-primary)',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 8,
                 }}
               >
-                <Edit3 size={18} color="#6366f1" />
+                <Edit3 size={18} color="var(--primary)" />
                 Edit Member: {editingMember.name}
               </h3>
               <button
@@ -1484,7 +1484,7 @@ export default function TeamMembersPage() {
                   border: 'none',
                   background: 'none',
                   cursor: 'pointer',
-                  color: '#94a3b8',
+                  color: 'var(--text-muted)',
                 }}
               >
                 <X size={20} />
@@ -1522,7 +1522,7 @@ export default function TeamMembersPage() {
                       width: '100%',
                       padding: '8px 12px',
                       borderRadius: 8,
-                      border: '1px solid #cbd5e1',
+                      border: '1px solid var(--border-light)',
                       fontSize: '0.85rem',
                     }}
                   />
@@ -1541,7 +1541,7 @@ export default function TeamMembersPage() {
                       width: '100%',
                       padding: '8px 12px',
                       borderRadius: 8,
-                      border: '1px solid #cbd5e1',
+                      border: '1px solid var(--border-light)',
                       fontSize: '0.85rem',
                     }}
                   />
@@ -1561,7 +1561,7 @@ export default function TeamMembersPage() {
                       width: '100%',
                       padding: '8px 12px',
                       borderRadius: 8,
-                      border: '1px solid #cbd5e1',
+                      border: '1px solid var(--border-light)',
                       fontSize: '0.85rem',
                     }}
                   />
@@ -1580,7 +1580,7 @@ export default function TeamMembersPage() {
                       width: '100%',
                       padding: '8px 12px',
                       borderRadius: 8,
-                      border: '1px solid #cbd5e1',
+                      border: '1px solid var(--border-light)',
                       fontSize: '0.85rem',
                     }}
                   />
@@ -1603,8 +1603,8 @@ export default function TeamMembersPage() {
                         style={{
                           padding: '8px 12px',
                           borderRadius: 8,
-                          border: `1.5px solid ${isSel ? '#6366f1' : '#e2e8f0'}`,
-                          background: isSel ? '#f5f7ff' : '#ffffff',
+                          border: `1.5px solid ${isSel ? 'var(--primary)' : 'var(--border)'}`,
+                          background: isSel ? 'var(--primary-soft)' : 'var(--bg-surface)',
                           cursor: 'pointer',
                           display: 'flex',
                           alignItems: 'center',
@@ -1612,7 +1612,7 @@ export default function TeamMembersPage() {
                         }}
                       >
                         <RIcon size={15} color={r.color} />
-                        <div style={{ fontSize: '0.82rem', fontWeight: 700, color: isSel ? '#4338ca' : '#0f172a' }}>
+                        <div style={{ fontSize: '0.82rem', fontWeight: 700, color: isSel ? 'var(--primary-dark)' : 'var(--text-primary)' }}>
                           {r.label}
                         </div>
                       </div>
@@ -1620,8 +1620,8 @@ export default function TeamMembersPage() {
                   })}
 
                   {agencyRoles.filter((r) => !r.is_system).length > 0 && (
-                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #e2e8f0' }}>
-                      <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#4f46e5', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--border)' }}>
+                      <div style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--primary)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 5 }}>
                         <Shield size={12} /> Custom Workspace Roles (Team Rules)
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -1634,16 +1634,16 @@ export default function TeamMembersPage() {
                               style={{
                                 padding: '8px 12px',
                                 borderRadius: 8,
-                                border: `1.5px solid ${isSel ? '#6366f1' : '#e2e8f0'}`,
-                                background: isSel ? '#f5f7ff' : '#ffffff',
+                                border: `1.5px solid ${isSel ? 'var(--primary)' : 'var(--border)'}`,
+                                background: isSel ? 'var(--primary-soft)' : 'var(--bg-surface)',
                                 cursor: 'pointer',
                                 display: 'flex',
                                 alignItems: 'center',
                                 gap: 10,
                               }}
                             >
-                              <Shield size={15} color="#4f46e5" />
-                              <div style={{ fontSize: '0.84rem', fontWeight: 700, color: isSel ? '#4338ca' : '#0f172a' }}>
+                              <Shield size={15} color="var(--primary)" />
+                              <div style={{ fontSize: '0.84rem', fontWeight: 700, color: isSel ? 'var(--primary-dark)' : 'var(--text-primary)' }}>
                                 {cr.name}
                               </div>
                             </div>
@@ -1660,16 +1660,16 @@ export default function TeamMembersPage() {
                 <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: 4 }}>
                   Bot / Channel Access
                 </label>
-                <p style={{ fontSize: '0.72rem', color: '#64748b', margin: '0 0 8px' }}>
+                <p style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', margin: '0 0 8px' }}>
                   Leave everything unchecked for access to every connected account.
                 </p>
                 {Object.keys(integrationsByPlatform).length === 0 ? (
-                  <div style={{ fontSize: '0.78rem', color: '#94a3b8' }}>No connected accounts yet.</div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>No connected accounts yet.</div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     {Object.entries(integrationsByPlatform).map(([platform, accs]) => (
                       <div key={platform}>
-                        <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>
+                        <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>
                           {platform}
                         </div>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -1678,8 +1678,8 @@ export default function TeamMembersPage() {
                             return (
                               <label key={acc.id} style={{
                                 display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', padding: '5px 10px',
-                                borderRadius: 999, border: `1px solid ${checked ? '#6366f1' : '#e2e8f0'}`,
-                                background: checked ? '#f5f7ff' : '#fff', cursor: 'pointer',
+                                borderRadius: 999, border: `1px solid ${checked ? 'var(--primary)' : 'var(--border)'}`,
+                                background: checked ? 'var(--primary-soft)' : '#fff', cursor: 'pointer',
                               }}>
                                 <input type="checkbox" checked={checked} onChange={() => toggleChannelAccess(acc.id, setEditChannelAccessIds)} />
                                 {integrationLabel(acc)}
@@ -1705,14 +1705,14 @@ export default function TeamMembersPage() {
                   ].map((opt) => (
                     <label key={opt.id} style={{
                       flex: 1, padding: '9px 12px', borderRadius: 10, cursor: 'pointer',
-                      border: `1.5px solid ${editChatAccess === opt.id ? '#6366f1' : '#e2e8f0'}`,
-                      background: editChatAccess === opt.id ? '#f5f7ff' : '#fff',
+                      border: `1.5px solid ${editChatAccess === opt.id ? 'var(--primary)' : 'var(--border)'}`,
+                      background: editChatAccess === opt.id ? 'var(--primary-soft)' : '#fff',
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                         <input type="radio" name="editChatAccess" checked={editChatAccess === opt.id} onChange={() => setEditChatAccess(opt.id)} />
-                        <span style={{ fontWeight: 700, fontSize: '0.8rem', color: '#0f172a' }}>{opt.label}</span>
+                        <span style={{ fontWeight: 700, fontSize: '0.8rem', color: 'var(--text-primary)' }}>{opt.label}</span>
                       </div>
-                      <div style={{ fontSize: '0.72rem', color: '#64748b', marginLeft: 20 }}>{opt.desc}</div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', marginLeft: 20 }}>{opt.desc}</div>
                     </label>
                   ))}
                 </div>
@@ -1725,9 +1725,9 @@ export default function TeamMembersPage() {
                   style={{
                     padding: '8px 16px',
                     borderRadius: 8,
-                    border: '1px solid #cbd5e1',
+                    border: '1px solid var(--border-light)',
                     background: '#fff',
-                    color: '#475569',
+                    color: 'var(--text-secondary)',
                     fontSize: '0.84rem',
                     fontWeight: 600,
                     cursor: 'pointer',
@@ -1742,7 +1742,7 @@ export default function TeamMembersPage() {
                     padding: '8px 22px',
                     borderRadius: 8,
                     border: 'none',
-                    background: '#6366f1',
+                    background: 'var(--primary)',
                     color: '#fff',
                     fontSize: '0.84rem',
                     fontWeight: 700,
@@ -1777,7 +1777,7 @@ export default function TeamMembersPage() {
             style={{
               width: 520,
               maxWidth: '96vw',
-              background: '#ffffff',
+              background: 'var(--bg-surface)',
               borderRadius: 16,
               boxShadow: '0 20px 50px rgba(0,0,0,0.2)',
               overflow: 'hidden',
@@ -1786,18 +1786,18 @@ export default function TeamMembersPage() {
             <div
               style={{
                 padding: '18px 22px',
-                borderBottom: '1px solid #e2e8f0',
+                borderBottom: '1px solid var(--border)',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
               }}
             >
-              <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#0f172a' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-primary)' }}>
                 Team Member Profile
               </h3>
               <button
                 onClick={() => setViewingMember(null)}
-                style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#94a3b8' }}
+                style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
               >
                 <X size={20} />
               </button>
@@ -1812,7 +1812,7 @@ export default function TeamMembersPage() {
                     height: 60,
                     borderRadius: '50%',
                     background: '#e0e7ff',
-                    color: '#4338ca',
+                    color: 'var(--primary-dark)',
                     fontWeight: 800,
                     fontSize: '1.25rem',
                     display: 'flex',
@@ -1823,7 +1823,7 @@ export default function TeamMembersPage() {
                   {getInitials(viewingMember.name)}
                 </div>
                 <div>
-                  <h4 style={{ margin: '0 0 4px 0', fontSize: '1.2rem', fontWeight: 800, color: '#0f172a' }}>
+                  <h4 style={{ margin: '0 0 4px 0', fontSize: '1.2rem', fontWeight: 800, color: 'var(--text-primary)' }}>
                     {viewingMember.name}
                   </h4>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1861,43 +1861,43 @@ export default function TeamMembersPage() {
                   gap: 14,
                   padding: 14,
                   borderRadius: 10,
-                  background: '#f8fafc',
-                  border: '1px solid #e2e8f0',
+                  background: 'var(--bg-input)',
+                  border: '1px solid var(--border)',
                   marginBottom: 18,
                 }}
               >
                 <div>
-                  <div style={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b', marginBottom: 2 }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-tertiary)', marginBottom: 2 }}>
                     Email Address
                   </div>
-                  <div style={{ fontSize: '0.84rem', fontWeight: 700, color: '#1e293b' }}>
+                  <div style={{ fontSize: '0.84rem', fontWeight: 700, color: 'var(--text-primary)' }}>
                     {viewingMember.email}
                   </div>
                 </div>
 
                 <div>
-                  <div style={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b', marginBottom: 2 }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-tertiary)', marginBottom: 2 }}>
                     Phone Number
                   </div>
-                  <div style={{ fontSize: '0.84rem', fontWeight: 700, color: '#1e293b' }}>
+                  <div style={{ fontSize: '0.84rem', fontWeight: 700, color: 'var(--text-primary)' }}>
                     {viewingMember.phone || 'Not provided'}
                   </div>
                 </div>
 
                 <div>
-                  <div style={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b', marginBottom: 2 }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-tertiary)', marginBottom: 2 }}>
                     Live Status
                   </div>
-                  <div style={{ fontSize: '0.84rem', fontWeight: 700, color: viewingMember.is_online ? '#10b981' : '#94a3b8' }}>
+                  <div style={{ fontSize: '0.84rem', fontWeight: 700, color: viewingMember.is_online ? '#10b981' : 'var(--text-muted)' }}>
                     {viewingMember.is_online ? '● Online Now' : 'Offline'}
                   </div>
                 </div>
 
                 <div>
-                  <div style={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748b', marginBottom: 2 }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-tertiary)', marginBottom: 2 }}>
                     Member Since
                   </div>
-                  <div style={{ fontSize: '0.84rem', fontWeight: 700, color: '#1e293b' }}>
+                  <div style={{ fontSize: '0.84rem', fontWeight: 700, color: 'var(--text-primary)' }}>
                     {formatDate(viewingMember.created_at)}
                   </div>
                 </div>
@@ -1909,13 +1909,13 @@ export default function TeamMembersPage() {
                   padding: '12px 14px',
                   borderRadius: 10,
                   background: '#f1f5f9',
-                  border: '1px solid #e2e8f0',
+                  border: '1px solid var(--border)',
                   fontSize: '0.8rem',
-                  color: '#475569',
+                  color: 'var(--text-secondary)',
                   lineHeight: 1.4,
                 }}
               >
-                <div style={{ fontWeight: 700, color: '#0f172a', marginBottom: 3 }}>
+                <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 3 }}>
                   Role Responsibilities:
                 </div>
                 {getRoleInfo(viewingMember.team_role).description}
@@ -1927,7 +1927,7 @@ export default function TeamMembersPage() {
                   style={{
                     padding: '8px 20px',
                     borderRadius: 8,
-                    background: '#6366f1',
+                    background: 'var(--primary)',
                     color: '#fff',
                     border: 'none',
                     fontWeight: 700,

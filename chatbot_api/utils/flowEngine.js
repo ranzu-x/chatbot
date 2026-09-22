@@ -10,6 +10,7 @@ import { enrollContactsInSequence, unsubscribeContactFromSequence } from "../rou
 import { executeHttpApiCampaign } from "../services/httpApiExecutor.js";
 import { scheduleFlowDelayResume } from "./flowDelayScheduler.js";
 import { getBusinessHoursStatus } from "./businessHours.js";
+import { handleAppointmentBooking } from "./appointmentBookingEngine.js";
 
 // BOT SCOPE (see utils/botScope.js): a flow may only use Sequences, User Input Flows and
 // other Flows of ITS OWN bot account (same integration_id) — every lookup below is scoped
@@ -27,7 +28,7 @@ const TYPING_ELIGIBLE_TYPES = new Set([
  * Helper to find matching flow based on triggers
  */
 export async function findMatchingFlow(agencyId, platform, conversationId, integration, incomingMsgBody, msgType = "TEXT", extraContext = {}) {
-  const msgText = (incomingMsgBody || "").trim().toLowerCase();
+  const msgText = (typeof incomingMsgBody === "string" ? incomingMsgBody : "").trim().toLowerCase();
   const upperMsgType = (msgType || "TEXT").toUpperCase();
   const isMedia = ["IMAGE", "VIDEO", "AUDIO", "VOICE", "DOCUMENT", "FILE"].includes(upperMsgType);
   
@@ -50,10 +51,9 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
   if (!extraContext?.suppressNewTrigger) {
   if (msgText) {
     const contextPrefill = (extraContext?.widgetPrefillMessage || "").trim().toLowerCase();
-    if (contextPrefill && (msgText === contextPrefill || msgText.startsWith(contextPrefill))) {
-      let targetFlow = extraContext?.widgetFlowId
-        ? flows.find(f => f.id === extraContext.widgetFlowId)
-        : null;
+    const isWidgetStartMsg = msgText === "start a conversation" || msgText === "start" || msgText === "hello" || msgText === "hi";
+    if (extraContext?.widgetFlowId && (isWidgetStartMsg || (contextPrefill && (msgText === contextPrefill || msgText.startsWith(contextPrefill))) || !contextPrefill)) {
+      let targetFlow = flows.find(f => f.id === extraContext.widgetFlowId);
       if (!targetFlow && extraContext?.widgetFlowId) {
         const [[fRow]] = await pool.query("SELECT * FROM flows WHERE id = ? AND is_active = 1", [extraContext.widgetFlowId]);
         if (fRow) targetFlow = fRow;
@@ -289,6 +289,9 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
 // still applies normally).
 export async function processFlow(agencyId, platform, conversation, contact, incomingMsgBody, integration, msgType = "TEXT", buttonRoute = null, resumeContext = null, extraContext = null) {
   const conversationId = conversation.id;
+  let session = null;
+  let flow = null;
+  let currentNodeId = null;
 
   try {
     // Check if bot is paused for this conversation or contact
@@ -355,12 +358,35 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             }
           }
 
+          // "Also remove from a Sequence": the mirror of the enroll above — stops
+          // the contact's enrollment in a DIFFERENT sequence the moment this is
+          // tapped (e.g. a "Yes, I'm interested" button that both enrolls in the
+          // sales-follow-up sequence AND drops the contact out of an abandoned-
+          // cart one). Independent of enrollment above; both can fire on one tap.
+          if (tappedButton?.removeSequenceId) {
+            try {
+              await unsubscribeContactFromSequence(tappedButton.removeSequenceId, agencyId, contact?.id, { integrationId: routedFlow.integration_id ?? null });
+            } catch (err) {
+              console.error(`[Flow Engine] Remove-Sequence ${tappedButton.removeSequenceId} on button tap failed:`, err.message);
+            }
+          }
+
           // "Tag with Label": same additive, independent-of-the-action
           // relationship as the Sequence enrollment above — applyLabelToContact
           // already catches/logs its own errors, so no extra try/catch needed.
           if (Array.isArray(tappedButton?.labelIds) && contact?.id) {
             for (const labelId of tappedButton.labelIds) {
               await applyLabelToContact(agencyId, contact.id, labelId);
+            }
+          }
+
+          // "Remove Label": the mirror of the tag-with-label above — un-tags the
+          // contact the moment this is tapped, independent of any label(s) just
+          // added by the same tap (removeLabelFromContact also catches/logs its
+          // own errors).
+          if (Array.isArray(tappedButton?.removeLabelIds) && contact?.id) {
+            for (const labelId of tappedButton.removeLabelIds) {
+              await removeLabelFromContact(agencyId, contact.id, labelId);
             }
           }
 
@@ -455,8 +481,8 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
       [conversationId]
     );
 
-    let session = forcedSession || sessions[0];
-    let flow = null;
+    session = forcedSession || sessions[0];
+    flow = null;
     let nodes = [];
     let edges = [];
 
@@ -1093,33 +1119,21 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
 
       switch (node.type) {
         case "start": {
-          // "Attach Sequence" (Start node's own properties panel) wires a
-          // real "Start Sequence" node onto a dedicated `attach-sequence`
-          // branch — a second, independent connector off Start, alongside
-          // (never replacing) its normal "then"/next-step edge into the
-          // real conversation. That branch node is a visible, editable
-          // canvas element, but it is NOT part of the executed conversation
-          // path — this engine resolves "the next node" as a single
-          // pointer, not a true multi-branch walk, so making it a real step
-          // would require picking just one of the two edges (ambiguous,
-          // order-dependent). Instead: fire the enrollment as a side effect
-          // right here, then resolve the real continuation excluding this
-          // branch edge, so Start's actual "then" edge is unaffected
-          // regardless of what handle it happens to use.
-          const attachEdge = edges.find((e) => e.source === node.id && e.sourceHandle === "attach-sequence");
-          if (attachEdge) {
-            const seqNode = nodes.find((n) => n.id === attachEdge.target);
-            const sequenceId = seqNode?.data?.sequenceId;
-            if (sequenceId) {
-              try {
-                await enrollContactsInSequence(sequenceId, agencyId, { contactId: contact?.id, enrolledVia: "flow-start", integrationId: flow?.integration_id ?? null });
-              } catch (err) {
-                console.error(`[Flow Engine] Auto-attach Sequence ${sequenceId} on flow start failed:`, err.message);
-              }
+          // "Also Start a Sequence" (Start node's own properties panel) is a
+          // plain field on the Start node's own data (attachSequenceId) —
+          // not a real branch on the canvas, so there's no edge to exclude
+          // here: fire the enrollment as a side effect, then resolve the
+          // real continuation off Start's normal "then"/next-step edge as
+          // usual.
+          const attachSequenceId = node.data?.attachSequenceId;
+          if (attachSequenceId) {
+            try {
+              await enrollContactsInSequence(attachSequenceId, agencyId, { contactId: contact?.id, enrolledVia: "flow-start", integrationId: flow?.integration_id ?? null });
+            } catch (err) {
+              console.error(`[Flow Engine] Auto-attach Sequence ${attachSequenceId} on flow start failed:`, err.message);
             }
           }
-          const continuationEdges = attachEdge ? edges.filter((e) => e !== attachEdge) : edges;
-          currentNodeId = resolveNextNodeId(continuationEdges, node.id);
+          currentNodeId = resolveNextNodeId(edges, node.id);
           break;
         }
 
@@ -1356,10 +1370,16 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           const textBody = replaceVariables(node.data?.message || node.data?.text || "Choose options:", variables, contact);
           const rawQr = node.data?.quickReplies || node.data?.replies || [];
 
+          // `kind` selects a special, non-free-text Quick Reply per each
+          // channel's own docs (Messenger/Instagram "Ask for Phone Number"/
+          // "Ask for Email", Telegram "Request Contact"/"Request Location") —
+          // see platformSender.js for how each is actually built and sent.
+          // Defaults to "text" for every reply saved before this existed.
           const formattedQr = rawQr.map((qr, idx) => ({
             id: encodeButtonRoute(flow.id, node.id, idx),
             title: typeof qr === "string" ? qr : (qr.title || qr.label || `Option ${idx + 1}`),
             payload: encodeButtonRoute(flow.id, node.id, idx),
+            kind: (typeof qr === "object" && qr?.kind) || "text",
           }));
 
           await sendMsg(agencyId, conversation, textBody, "TEXT", integration, {
@@ -1450,12 +1470,13 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         case "card": {
           const title = replaceVariables(node.data?.title || "", variables, contact);
           const subtitle = replaceVariables(node.data?.subtitle || "", variables, contact);
-          const imageUrl = node.data?.imageUrl || node.data?.mediaUrl || "";
+          const imageUrl = node.data?.imageUrl || node.data?.mediaUrl || node.data?.image || "";
 
           await sendMsg(agencyId, conversation, title || "Card", "IMAGE", integration, {
             flowId: flow?.id || session?.flow_id || null,
             nodeId: node.id,
             contactIdentifier: contact?.external_id || contact?.phone || null,
+            mediaUrl: imageUrl,
             card: {
               title,
               subtitle,
@@ -1478,7 +1499,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             carousel: cards.map(c => ({
               title: replaceVariables(c.title || "", variables, contact),
               subtitle: replaceVariables(c.subtitle || "", variables, contact),
-              imageUrl: c.imageUrl || "",
+              imageUrl: c.imageUrl || c.mediaUrl || c.image || "",
               buttons: c.buttons || []
             }))
           });
@@ -1926,6 +1947,13 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           await pool.query("UPDATE flow_sessions SET variables = ? WHERE id = ?", [JSON.stringify(variables), session.id]);
 
           currentNodeId = getNextNodeId(node.id, httpResult.success ? "success" : "fail");
+          break;
+        }
+
+        case "appointment": {
+          const aptRoute = node.data?.serviceId ? `apt:svc:${node.data.serviceId}` : "book_appointment";
+          await handleAppointmentBooking(agencyId, platform, conversation, contact, "book appointment", integration, "TEXT", aptRoute);
+          stopFlow = true; // Wait for customer's interactive appointment slot selection
           break;
         }
 

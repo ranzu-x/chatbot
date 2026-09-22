@@ -2,6 +2,7 @@ import express from "express";
 import pool from "../db.js";
 import { processFlow } from "../utils/flowEngine.js";
 import { runAIReply } from "../utils/aiReplyEngine.js";
+import { handleAppointmentBooking } from "../utils/appointmentBookingEngine.js";
 import { getBusinessHoursStatus } from "../utils/businessHours.js";
 import {
   findOrCreateContact,
@@ -89,16 +90,16 @@ async function resolveWidgetPrefill(widget) {
 // visitor ever interacts) and POST /webchat/init's `widget` field below.
 // `deepLink` is only populated for a DEEPLINK widget (see buildDeepLink) —
 // null for an ordinary WEBCHAT widget, which has no external hand-off.
-function serializeWidgetConfig(widget, deepLink = null, effectivePrefill = null) {
+function serializeWidgetConfig(widget, deepLink = null, effectivePrefill = null, brandName = null) {
   return {
     widgetType: widget.widget_type || "WEBCHAT",
     targetPlatform: widget.target_platform || null,
     deepLink,
     name: widget.name,
-    primaryColor: widget.primary_color,
+    primaryColor: widget.primary_color || "#3b82f6",
     logoUrl: widget.logo_url,
     displayName: widget.display_name || widget.name,
-    headerBgColor: widget.header_bg_color || widget.primary_color,
+    headerBgColor: widget.header_bg_color || widget.primary_color || "#3b82f6",
     headerTextColor: widget.header_text_color || "#ffffff",
     greetingMessage: widget.greeting_message,
     placeholderText: widget.placeholder_text,
@@ -108,9 +109,10 @@ function serializeWidgetConfig(widget, deepLink = null, effectivePrefill = null)
     offsetX: widget.offset_x ?? 20,
     offsetY: widget.offset_y ?? 20,
     buttonText: widget.button_text,
-    buttonBgColor: widget.button_bg_color || widget.primary_color,
+    buttonBgColor: widget.button_bg_color || widget.primary_color || "#3b82f6",
     buttonTextColor: widget.button_text_color || "#ffffff",
     buttonSize: widget.button_size || "MEDIUM",
+    brandName: brandName || "Sky Free",
   };
 }
 
@@ -164,7 +166,10 @@ router.get("/webchat/config", async (req, res) => {
     if (!widgetKey) return res.status(400).json({ success: false, message: "Widget key is required" });
 
     const [widgets] = await pool.query(
-      "SELECT * FROM webchat_widgets WHERE widget_key = ? AND is_active = 1 LIMIT 1",
+      `SELECT w.*, a.name AS agency_name, a.custom_branding 
+       FROM webchat_widgets w 
+       LEFT JOIN agencies a ON a.id = w.agency_id 
+       WHERE w.widget_key = ? AND w.is_active = 1 LIMIT 1`,
       [widgetKey]
     );
     if (!widgets.length) return res.status(404).json({ success: false, message: "Widget not found or inactive" });
@@ -173,6 +178,15 @@ router.get("/webchat/config", async (req, res) => {
     const originCheck = checkWidgetOrigin(req, widget);
     if (!originCheck.ok) return res.status(originCheck.status).json({ success: false, message: originCheck.message });
 
+    let brandName = "Sky Free";
+    if (widget.agency_name) brandName = widget.agency_name;
+    if (widget.custom_branding) {
+      try {
+        const cb = typeof widget.custom_branding === "string" ? JSON.parse(widget.custom_branding) : widget.custom_branding;
+        if (cb?.brandName || cb?.companyName) brandName = cb.brandName || cb.companyName;
+      } catch {}
+    }
+
     const effectivePrefill = await resolveWidgetPrefill(widget);
     let deepLink = null;
     if (widget.widget_type === "DEEPLINK") {
@@ -180,7 +194,7 @@ router.get("/webchat/config", async (req, res) => {
       deepLink = buildDeepLink(target, { prefillMessage: effectivePrefill || widget.prefill_message });
     }
 
-    return res.json({ success: true, widget: serializeWidgetConfig(widget, deepLink, effectivePrefill) });
+    return res.json({ success: true, widget: serializeWidgetConfig(widget, deepLink, effectivePrefill, brandName) });
   } catch (err) {
     console.error("Webchat config error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -197,7 +211,10 @@ router.post("/webchat/init", async (req, res) => {
 
     // Find webchat widget config
     const [widgets] = await pool.query(
-      "SELECT * FROM webchat_widgets WHERE widget_key = ? AND is_active = 1 LIMIT 1",
+      `SELECT w.*, a.name AS agency_name, a.custom_branding 
+       FROM webchat_widgets w 
+       LEFT JOIN agencies a ON a.id = w.agency_id 
+       WHERE w.widget_key = ? AND w.is_active = 1 LIMIT 1`,
       [widgetKey]
     );
 
@@ -205,6 +222,15 @@ router.post("/webchat/init", async (req, res) => {
       return res.status(404).json({ success: false, message: "Widget not found or inactive" });
     }
     const widget = widgets[0];
+
+    let brandName = "Sky Free";
+    if (widget.agency_name) brandName = widget.agency_name;
+    if (widget.custom_branding) {
+      try {
+        const cb = typeof widget.custom_branding === "string" ? JSON.parse(widget.custom_branding) : widget.custom_branding;
+        if (cb?.brandName || cb?.companyName) brandName = cb.brandName || cb.companyName;
+      } catch {}
+    }
 
     const originCheck = checkWidgetOrigin(req, widget);
     if (!originCheck.ok) return res.status(originCheck.status).json({ success: false, message: originCheck.message });
@@ -267,7 +293,7 @@ router.post("/webchat/init", async (req, res) => {
       success: true,
       visitorId: sessId,
       conversationId: conversation.id,
-      widget: serializeWidgetConfig(widget, null, effectivePrefill),
+      widget: serializeWidgetConfig(widget, null, effectivePrefill, brandName),
       messages,
     });
   } catch (err) {
@@ -353,7 +379,21 @@ router.post("/webchat/message", async (req, res) => {
     const allowBotNow = !offHours || bh.allowBotReplies;
     const allowAiNow = !offHours || bh.allowAiReplies;
 
-    // Run Flow engine
+    // 1. Check if user is inside an ongoing interactive appointment booking session
+    const [activeSessions] = await pool.query(
+      `SELECT * FROM appointment_booking_sessions 
+       WHERE conversation_id = ? AND status = 'ACTIVE' AND expires_at > NOW() 
+       ORDER BY id DESC LIMIT 1`,
+      [conversationId]
+    );
+
+    let aptRan = false;
+    if (activeSessions.length > 0) {
+      aptRan = allowBotNow && await handleAppointmentBooking(agencyId, "WEBCHAT", conversation, contact, body, integration, "TEXT", null);
+      if (aptRan) return res.json({ success: true, message: "Appointment flow processed" });
+    }
+
+    // 2. Run Flow engine
     const flowRan = await processFlow(agencyId, "WEBCHAT", conversation, contact, body, integration, "TEXT", null, null, {
       widgetId: widget.id,
       widgetFlowId: widget.flow_id,
@@ -361,16 +401,43 @@ router.post("/webchat/message", async (req, res) => {
       suppressNewTrigger: offHours && !allowBotNow,
       offHoursFlowId: offHours ? bh.offHoursFlowId : null,
     });
-    if (!flowRan) {
-      // AI Reply "Always trigger" mode gets first refusal (no-op unless
-      // this bot's trigger mode is actually ALWAYS — see aiReplyEngine.js).
-      const aiRanEarly = allowAiNow && await runAIReply(agencyId, "WEBCHAT", conversation, contact, body, integration, "TEXT", "always");
-      if (!aiRanEarly) {
-        // Run bot rules fallback
-        const ruleRan = allowBotNow && await matchBotRules(agencyId, "WEBCHAT", conversation, contact, body, integration);
-        if (!ruleRan) {
-          // AI Reply "Only when nothing else matches" mode (the default).
-          if (allowAiNow) await runAIReply(agencyId, "WEBCHAT", conversation, contact, body, integration, "TEXT", "fallback");
+    if (flowRan) return res.json({ success: true, message });
+
+    // 3. If no flow ran and not in an active session, check for appointment trigger (e.g. "Book a demo")
+    if (!aptRan) {
+      aptRan = allowBotNow && await handleAppointmentBooking(agencyId, "WEBCHAT", conversation, contact, body, integration, "TEXT", null);
+      if (aptRan) return res.json({ success: true, message: "Appointment flow processed" });
+    }
+
+    // 4. AI Reply "Always trigger" mode
+    const aiRanEarly = allowAiNow && await runAIReply(agencyId, "WEBCHAT", conversation, contact, body, integration, "TEXT", "always");
+    if (!aiRanEarly) {
+      // 5. Run bot rules fallback
+      const ruleRan = allowBotNow && await matchBotRules(agencyId, "WEBCHAT", conversation, contact, body, integration);
+      if (!ruleRan) {
+        // 6. AI Reply "Only when nothing else matches" mode
+        let aiRan = false;
+        if (allowAiNow) {
+          aiRan = await runAIReply(agencyId, "WEBCHAT", conversation, contact, body, integration, "TEXT", "fallback");
+        }
+
+        // 7. Built-in intelligent bot fallback replies for pre-built widget options
+        if (!aiRan && allowBotNow) {
+          const lowerBody = (body || "").trim().toLowerCase();
+          let botReplyText = "";
+          if (lowerBody === "product tour" || lowerBody.includes("product tour")) {
+            botReplyText = "👋 Welcome to our product tour! Here is what our platform enables for your business:\n\n✨ Omnichannel Messaging: Connect Webchat, WhatsApp, Messenger, Instagram, and Telegram in one unified inbox.\n🤖 Visual Flow Builder: Build conversational bots with zero coding.\n📅 Smart Appointments: Let visitors book demos and consultations automatically.\n⚡ AI Replies: Supercharge your customer support with 24/7 intelligent responses.\n\nType a question or ask us anything to explore more!";
+          } else if (lowerBody === "documentation" || lowerBody.includes("documentation") || lowerBody === "docs") {
+            botReplyText = "📚 Welcome to our documentation center! Here are helpful guides to get you started:\n\n📖 Getting Started: Connect your channels and configure your first chat widget.\n🤖 Flow Building: Create automated interactive sequences and triggers.\n📅 Appointment Manager: Set up your availability, booking slots, and reminders.\n\nFeel free to ask any question here, and our support team will assist you right away!";
+          } else if (lowerBody === "start a conversation" || lowerBody === "start" || lowerBody === "hello" || lowerBody === "hi") {
+            botReplyText = widget.greeting_message || "Hi there! How can we help you today? Feel free to ask any questions or choose an option above.";
+          }
+
+          if (botReplyText) {
+            const savedMsg = await saveMessage(conversationId, "OUTBOUND", "TEXT", botReplyText, null, null, { senderType: "BOT", senderName: widget.display_name || "Bot" });
+            emitToAgency(agencyId, "new_message", { conversationId, message: savedMsg });
+            emitToConversation(conversationId, "new_message", { conversationId, message: savedMsg });
+          }
         }
       }
     }

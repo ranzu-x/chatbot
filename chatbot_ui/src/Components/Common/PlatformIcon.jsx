@@ -3,6 +3,13 @@ import React from 'react';
 /**
  * Modern vector brand icons for supported chatbot platforms.
  * Replaces unicode emojis with crisp, authentic brand SVGs.
+ *
+ * Every brand color below is a CSS variable (--channel-*, index.css), not a
+ * literal hex — change a channel's color once, in one place, and both the
+ * icon tile and every getPlatformMeta().color consumer follow. These are
+ * deliberately separate from --primary/the accent picker: they're real
+ * external brand colors (Webchat excepted — this app's own widget), never
+ * affected by a workspace's chosen accent.
  */
 export function PlatformIcon({ platform, size = 16, className = '', style = {} }) {
   const p = (platform || 'WEBCHAT').toUpperCase();
@@ -18,7 +25,7 @@ export function PlatformIcon({ platform, size = 16, className = '', style = {} }
           className={className}
           style={{ display: 'inline-block', flexShrink: 0, verticalAlign: 'middle', ...style }}
         >
-          <rect width="24" height="24" rx="6" fill="#25D366" />
+          <rect width="24" height="24" rx="6" style={{ fill: 'var(--channel-whatsapp)' }} />
           <path
             fillRule="evenodd"
             clipRule="evenodd"
@@ -38,7 +45,7 @@ export function PlatformIcon({ platform, size = 16, className = '', style = {} }
           className={className}
           style={{ display: 'inline-block', flexShrink: 0, verticalAlign: 'middle', ...style }}
         >
-          <rect width="24" height="24" rx="6" fill="#1877F2" />
+          <rect width="24" height="24" rx="6" style={{ fill: 'var(--channel-facebook)' }} />
           <path
             d="M13.5 19V12.7H15.6L15.9 10.3H13.5V8.8C13.5 8.1 13.7 7.6 14.7 7.6H16V5.4C15.4 5.3 14.7 5.2 13.9 5.2C11.8 5.2 10.4 6.5 10.4 8.9V10.3H8.3V12.7H10.4V19H13.5Z"
             fill="#FFFFFF"
@@ -80,7 +87,7 @@ export function PlatformIcon({ platform, size = 16, className = '', style = {} }
           className={className}
           style={{ display: 'inline-block', flexShrink: 0, verticalAlign: 'middle', ...style }}
         >
-          <rect width="24" height="24" rx="6" fill="#229ED9" />
+          <rect width="24" height="24" rx="6" style={{ fill: 'var(--channel-telegram)' }} />
           <path
             d="M6.6 11.8L16.4 7.9C16.9 7.7 17.3 8.1 17.1 8.6L15.4 16.5C15.3 17 14.8 17.2 14.4 17L11.7 14.9L10.3 16.2C10.1 16.4 9.8 16.3 9.7 16L8.9 13.4L6.5 12.6C6.1 12.5 6.1 12 6.6 11.8Z"
             fill="#FFFFFF"
@@ -151,7 +158,7 @@ export function PlatformIcon({ platform, size = 16, className = '', style = {} }
           className={className}
           style={{ display: 'inline-block', flexShrink: 0, verticalAlign: 'middle', ...style }}
         >
-          <rect width="24" height="24" rx="6" fill="#64748B" />
+          <rect width="24" height="24" rx="6" style={{ fill: 'var(--text-tertiary)' }} />
           <circle cx="12" cy="12" r="5.5" stroke="#FFFFFF" strokeWidth="1.5" fill="none" />
           <ellipse cx="12" cy="12" rx="2.5" ry="5.5" stroke="#FFFFFF" strokeWidth="1.3" fill="none" />
           <line x1="6.5" y1="12" x2="17.5" y2="12" stroke="#FFFFFF" strokeWidth="1.3" />
@@ -164,17 +171,17 @@ export function getPlatformMeta(platform) {
   const p = (platform || 'WEBCHAT').toUpperCase();
   switch (p) {
     case 'WHATSAPP':
-      return { label: 'WhatsApp', color: '#25D366', defaultName: 'WhatsApp Channel' };
+      return { label: 'WhatsApp', color: 'var(--channel-whatsapp)', defaultName: 'WhatsApp Channel' };
     case 'FACEBOOK':
-      return { label: 'Facebook', color: '#1877F2', defaultName: 'Facebook Channel' };
+      return { label: 'Facebook', color: 'var(--channel-facebook)', defaultName: 'Facebook Channel' };
     case 'INSTAGRAM':
-      return { label: 'Instagram', color: '#E1306C', defaultName: 'Instagram Channel' };
+      return { label: 'Instagram', color: 'var(--channel-instagram)', defaultName: 'Instagram Channel' };
     case 'TELEGRAM':
-      return { label: 'Telegram', color: '#229ED9', defaultName: 'Telegram Channel' };
+      return { label: 'Telegram', color: 'var(--channel-telegram)', defaultName: 'Telegram Channel' };
     case 'TIKTOK':
-      return { label: 'TikTok', color: '#FE2C55', defaultName: 'TikTok Channel' };
+      return { label: 'TikTok', color: 'var(--channel-tiktok)', defaultName: 'TikTok Channel' };
     case 'WEBCHAT':
-      return { label: 'Live Webchat', color: '#6366F1', defaultName: 'Live Webchat' };
+      return { label: 'Live Webchat', color: 'var(--channel-webchat)', defaultName: 'Live Webchat' };
     default:
       return { label: platform || 'Channel', color: '#64748B', defaultName: `${platform} Channel` };
   }

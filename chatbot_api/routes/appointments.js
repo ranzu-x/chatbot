@@ -1,8 +1,9 @@
-﻿import express from "express";
+import express from "express";
 import pool from "../db.js";
 import { buildSearch } from "../utils/searchQuery.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { requireModule } from "../utils/entitlements.js";
+import { emitToAgency } from "../utils/socket.js";
 
 const router = express.Router();
 
@@ -11,13 +12,14 @@ const router = express.Router();
 router.post("/appointments/book-public", async (req, res) => {
   const {
     agency_id,
-    slot_id,
+    service_id = null,
+    slot_id = null,
     staff_id = null,
-    service_name = "General Consultation",
+    service_name,
     appointment_date,
     appointment_time,
-    duration = 30,
-    fee = 0.0,
+    duration,
+    fee,
     customer_name,
     customer_phone,
     customer_email = null,
@@ -38,6 +40,25 @@ router.post("/appointments/book-public", async (req, res) => {
   try {
     await conn.beginTransaction();
 
+    let finalServiceName = service_name || "General Consultation";
+    let finalDuration = parseInt(duration) || 30;
+    let finalFee = parseFloat(fee) || 0.0;
+    let finalStaffId = staff_id || null;
+
+    // If service_id provided, look up service details
+    if (service_id) {
+      const [services] = await conn.query(
+        "SELECT id, name, duration_minutes, price FROM appointment_services WHERE id = ? AND agency_id = ?",
+        [service_id, agency_id]
+      );
+      if (services.length > 0) {
+        const svc = services[0];
+        finalServiceName = svc.name;
+        if (!duration) finalDuration = svc.duration_minutes;
+        if (fee === undefined || fee === null) finalFee = svc.price;
+      }
+    }
+
     let finalDate = appointment_date;
     let finalTime = appointment_time;
     let targetSlotId = slot_id || null;
@@ -45,7 +66,7 @@ router.post("/appointments/book-public", async (req, res) => {
     // 1. If slot_id provided, verify slot availability
     if (slot_id) {
       const [slots] = await conn.query(
-        "SELECT id, slot_date, start_time, max_capacity, booked_count FROM appointment_slots WHERE id = ? AND agency_id = ? AND is_active = 1 FOR UPDATE",
+        "SELECT id, staff_id, slot_date, start_time, max_capacity, booked_count FROM appointment_slots WHERE id = ? AND agency_id = ? AND is_active = 1 FOR UPDATE",
         [slot_id, agency_id]
       );
 
@@ -62,9 +83,20 @@ router.post("/appointments/book-public", async (req, res) => {
 
       finalDate = slot.slot_date;
       finalTime = slot.start_time;
+      if (!finalStaffId && slot.staff_id) finalStaffId = slot.staff_id;
 
       // Increment booked count
       await conn.query("UPDATE appointment_slots SET booked_count = booked_count + 1 WHERE id = ?", [slot.id]);
+    } else if (finalDate && finalTime) {
+      // Try to find a matching slot for this date and time
+      const [matchingSlots] = await conn.query(
+        "SELECT id, booked_count, max_capacity FROM appointment_slots WHERE agency_id = ? AND slot_date = ? AND start_time = ? AND is_active = 1 FOR UPDATE",
+        [agency_id, finalDate, finalTime]
+      );
+      if (matchingSlots.length > 0 && matchingSlots[0].booked_count < matchingSlots[0].max_capacity) {
+        targetSlotId = matchingSlots[0].id;
+        await conn.query("UPDATE appointment_slots SET booked_count = booked_count + 1 WHERE id = ?", [targetSlotId]);
+      }
     }
 
     if (!finalDate || !finalTime) {
@@ -95,20 +127,34 @@ router.post("/appointments/book-public", async (req, res) => {
     // 3. Insert Appointment
     const [result] = await conn.query(
       `INSERT INTO appointments (
-        agency_id, contact_id, staff_id, slot_id,
+        agency_id, service_id, contact_id, staff_id, slot_id,
         customer_name, customer_phone, customer_email,
         service_name, appointment_date, appointment_time,
         duration, fee, channel, status, notes, booking_source
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)`,
       [
-        agency_id, contactId, staff_id, targetSlotId,
+        agency_id, service_id || null, contactId, finalStaffId, targetSlotId,
         customer_name, cleanPhone, customer_email,
-        service_name, finalDate, finalTime,
-        duration, fee, channel, notes, booking_source
+        finalServiceName, finalDate, finalTime,
+        finalDuration, finalFee, channel, notes, booking_source
       ]
     );
 
     await conn.commit();
+
+    // Emit real-time socket event to the agency dashboard
+    try {
+      emitToAgency(agency_id, "new_appointment", {
+        appointmentId: result.insertId,
+        customerName: customer_name,
+        date: finalDate,
+        time: finalTime,
+        service: finalServiceName,
+        channel,
+      });
+    } catch (e) {
+      // Non-blocking socket emission
+    }
 
     return res.status(201).json({
       success: true,
@@ -119,7 +165,9 @@ router.post("/appointments/book-public", async (req, res) => {
         customerName: customer_name,
         date: finalDate,
         time: finalTime,
-        service: service_name,
+        service: finalServiceName,
+        duration: finalDuration,
+        fee: finalFee,
         channel,
       },
     });
@@ -144,7 +192,13 @@ router.get("/appointments/stats", async (req, res) => {
     }
 
     const [totalRows] = await pool.query(
-      "SELECT COUNT(*) as total, SUM(CASE WHEN appointment_date = CURDATE() THEN 1 ELSE 0 END) as today, SUM(CASE WHEN status = 'scheduled' THEN 1 ELSE 0 END) as scheduled, SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) as confirmed, SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed, SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled FROM appointments WHERE agency_id = ?",
+      `SELECT COUNT(*) as total,
+              SUM(CASE WHEN appointment_date = CURDATE() THEN 1 ELSE 0 END) as today,
+              SUM(CASE WHEN status = 'scheduled' THEN 1 ELSE 0 END) as scheduled,
+              SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
+              SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+              SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled
+       FROM appointments WHERE agency_id = ?`,
       [agencyId]
     );
 
@@ -165,10 +219,10 @@ router.get("/appointments", async (req, res) => {
     }
 
     const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.max(1, parseInt(req.query.limit) || 10);
+    const limit = Math.max(1, parseInt(req.query.limit) || 15);
     const offset = (page - 1) * limit;
 
-    const { search, status, channel, staffId, date, fromDate, toDate } = req.query;
+    const { search, status, channel, staffId, serviceId, date, fromDate, toDate } = req.query;
 
     let whereSql = "WHERE a.agency_id = ?";
     const params = [agencyId];
@@ -199,9 +253,14 @@ router.get("/appointments", async (req, res) => {
       params.push(channel);
     }
 
-    if (staffId) {
+    if (staffId && staffId !== "all") {
       whereSql += " AND a.staff_id = ?";
       params.push(staffId);
+    }
+
+    if (serviceId && serviceId !== "all") {
+      whereSql += " AND a.service_id = ?";
+      params.push(serviceId);
     }
 
     if (date) {
@@ -210,6 +269,9 @@ router.get("/appointments", async (req, res) => {
     } else if (fromDate && toDate) {
       whereSql += " AND a.appointment_date BETWEEN ? AND ?";
       params.push(fromDate, toDate);
+    } else if (fromDate) {
+      whereSql += " AND a.appointment_date >= ?";
+      params.push(fromDate);
     }
 
     // Count query
@@ -219,15 +281,22 @@ router.get("/appointments", async (req, res) => {
     );
     const total = countResult[0]?.total || 0;
 
-    // Data query
+    // Data query with service details
     const dataSql = `
       SELECT a.*,
              u.name AS staff_name,
+             u.email AS staff_email,
              c.avatar AS contact_avatar,
-             c.platform AS contact_platform
+             c.platform AS contact_platform,
+             s.name AS service_catalog_name,
+             s.color AS service_color,
+             sl.start_time AS slot_start_time,
+             sl.end_time AS slot_end_time
       FROM appointments a
       LEFT JOIN users u ON u.id = a.staff_id
       LEFT JOIN contacts c ON c.id = a.contact_id
+      LEFT JOIN appointment_services s ON s.id = a.service_id
+      LEFT JOIN appointment_slots sl ON sl.id = a.slot_id
       ${whereSql}
       ORDER BY a.appointment_date DESC, a.appointment_time DESC
       LIMIT ? OFFSET ?
@@ -250,6 +319,43 @@ router.get("/appointments", async (req, res) => {
   }
 });
 
+// GET /api/v1/appointments/:id - Fetch single appointment
+router.get("/appointments/:id", async (req, res) => {
+  try {
+    const agencyId = req.user?.agencyId;
+    const { id } = req.params;
+
+    const [rows] = await pool.query(
+      `SELECT a.*,
+              u.name AS staff_name,
+              u.email AS staff_email,
+              c.avatar AS contact_avatar,
+              c.platform AS contact_platform,
+              s.name AS service_catalog_name,
+              s.color AS service_color,
+              s.description AS service_description,
+              sl.start_time AS slot_start_time,
+              sl.end_time AS slot_end_time
+       FROM appointments a
+       LEFT JOIN users u ON u.id = a.staff_id
+       LEFT JOIN contacts c ON c.id = a.contact_id
+       LEFT JOIN appointment_services s ON s.id = a.service_id
+       LEFT JOIN appointment_slots sl ON sl.id = a.slot_id
+       WHERE a.id = ? AND a.agency_id = ?`,
+      [id, agencyId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: "Appointment not found" });
+    }
+
+    return res.json({ success: true, appointment: rows[0] });
+  } catch (err) {
+    console.error("[GET SINGLE APPOINTMENT ERROR]", err);
+    return res.status(500).json({ success: false, message: "Failed to fetch appointment" });
+  }
+});
+
 // POST /api/v1/appointments - Internal booking (Live Chat agent / Workspace Manager)
 router.post("/appointments", async (req, res) => {
   const agencyId = req.user?.agencyId;
@@ -258,6 +364,7 @@ router.post("/appointments", async (req, res) => {
   }
 
   const {
+    service_id = null,
     contact_id = null,
     staff_id = null,
     slot_id = null,
@@ -295,13 +402,13 @@ router.post("/appointments", async (req, res) => {
 
     const [result] = await conn.query(
       `INSERT INTO appointments (
-        agency_id, contact_id, staff_id, slot_id,
+        agency_id, service_id, contact_id, staff_id, slot_id,
         customer_name, customer_phone, customer_email,
         service_name, appointment_date, appointment_time,
         duration, fee, payment_status, channel, status, notes, booking_source
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'AGENT')`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'AGENT')`,
       [
-        agencyId, contact_id, staff_id, slot_id,
+        agencyId, service_id || null, contact_id, staff_id, slot_id,
         customer_name, customer_phone, customer_email,
         service_name, appointment_date, appointment_time,
         duration, fee, payment_status, channel, status, notes
@@ -309,6 +416,18 @@ router.post("/appointments", async (req, res) => {
     );
 
     await conn.commit();
+
+    try {
+      emitToAgency(agencyId, "new_appointment", {
+        appointmentId: result.insertId,
+        customerName: customer_name,
+        date: appointment_date,
+        time: appointment_time,
+        service: service_name,
+        channel,
+      });
+    } catch (e) {}
+
     return res.status(201).json({
       success: true,
       message: "Appointment created successfully",
@@ -323,11 +442,104 @@ router.post("/appointments", async (req, res) => {
   }
 });
 
+// PUT /api/v1/appointments/:id - Full update (reschedule, change service, edit notes)
+router.put("/appointments/:id", async (req, res) => {
+  const agencyId = req.user?.agencyId;
+  const { id } = req.params;
+
+  const {
+    customer_name,
+    customer_phone,
+    customer_email,
+    service_id,
+    service_name,
+    appointment_date,
+    appointment_time,
+    duration,
+    fee,
+    payment_status,
+    staff_id,
+    slot_id,
+    notes,
+    status,
+  } = req.body;
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [existing] = await conn.query(
+      "SELECT * FROM appointments WHERE id = ? AND agency_id = ? FOR UPDATE",
+      [id, agencyId]
+    );
+
+    if (!existing.length) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: "Appointment not found" });
+    }
+
+    const prev = existing[0];
+
+    // If slot changed, adjust capacity on old and new slots
+    if (slot_id !== undefined && slot_id !== prev.slot_id) {
+      if (prev.slot_id && prev.status !== "cancelled") {
+        await conn.query(
+          "UPDATE appointment_slots SET booked_count = GREATEST(0, booked_count - 1) WHERE id = ?",
+          [prev.slot_id]
+        );
+      }
+      if (slot_id) {
+        await conn.query(
+          "UPDATE appointment_slots SET booked_count = booked_count + 1 WHERE id = ?",
+          [slot_id]
+        );
+      }
+    }
+
+    const updates = [];
+    const params = [];
+
+    if (customer_name !== undefined) { updates.push("customer_name = ?"); params.push(customer_name); }
+    if (customer_phone !== undefined) { updates.push("customer_phone = ?"); params.push(customer_phone); }
+    if (customer_email !== undefined) { updates.push("customer_email = ?"); params.push(customer_email); }
+    if (service_id !== undefined) { updates.push("service_id = ?"); params.push(service_id || null); }
+    if (service_name !== undefined) { updates.push("service_name = ?"); params.push(service_name); }
+    if (appointment_date !== undefined) { updates.push("appointment_date = ?"); params.push(appointment_date); }
+    if (appointment_time !== undefined) { updates.push("appointment_time = ?"); params.push(appointment_time); }
+    if (duration !== undefined) { updates.push("duration = ?"); params.push(parseInt(duration)); }
+    if (fee !== undefined) { updates.push("fee = ?"); params.push(parseFloat(fee)); }
+    if (payment_status !== undefined) { updates.push("payment_status = ?"); params.push(payment_status); }
+    if (staff_id !== undefined) { updates.push("staff_id = ?"); params.push(staff_id || null); }
+    if (slot_id !== undefined) { updates.push("slot_id = ?"); params.push(slot_id || null); }
+    if (notes !== undefined) { updates.push("notes = ?"); params.push(notes); }
+    if (status !== undefined) { updates.push("status = ?"); params.push(status); }
+
+    if (updates.length > 0) {
+      params.push(id, agencyId);
+      await conn.query(`UPDATE appointments SET ${updates.join(", ")} WHERE id = ? AND agency_id = ?`, params);
+    }
+
+    await conn.commit();
+
+    try {
+      emitToAgency(agencyId, "appointment_updated", { id, status: status || prev.status });
+    } catch (e) {}
+
+    return res.json({ success: true, message: "Appointment updated successfully" });
+  } catch (err) {
+    await conn.rollback();
+    console.error("[UPDATE APPOINTMENT ERROR]", err);
+    return res.status(500).json({ success: false, message: "Failed to update appointment" });
+  } finally {
+    conn.release();
+  }
+});
+
 // PUT /api/v1/appointments/:id/status - Update status (confirm, cancel, complete)
 router.put("/appointments/:id/status", async (req, res) => {
   const agencyId = req.user?.agencyId;
   const { id } = req.params;
-  const { status } = req.body;
+  const { status, cancellation_reason } = req.body;
 
   const validStatuses = ["scheduled", "confirmed", "completed", "cancelled", "no_show"];
   if (!validStatuses.includes(status)) {
@@ -364,9 +576,17 @@ router.put("/appointments/:id/status", async (req, res) => {
       );
     }
 
-    await conn.query("UPDATE appointments SET status = ? WHERE id = ?", [status, id]);
+    await conn.query(
+      "UPDATE appointments SET status = ?, cancellation_reason = ? WHERE id = ?",
+      [status, cancellation_reason || null, id]
+    );
 
     await conn.commit();
+
+    try {
+      emitToAgency(agencyId, "appointment_updated", { id, status });
+    } catch (e) {}
+
     return res.json({ success: true, message: `Appointment status updated to ${status}` });
   } catch (err) {
     await conn.rollback();
@@ -407,6 +627,11 @@ router.delete("/appointments/:id", async (req, res) => {
     await conn.query("DELETE FROM appointments WHERE id = ?", [id]);
 
     await conn.commit();
+
+    try {
+      emitToAgency(agencyId, "appointment_deleted", { id });
+    } catch (e) {}
+
     return res.json({ success: true, message: "Appointment deleted successfully" });
   } catch (err) {
     await conn.rollback();

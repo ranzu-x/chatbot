@@ -17,6 +17,7 @@ import { emitToAgency, emitToConversation } from "../utils/socket.js";
 import { fetchTelegramUserProfilePhoto, fetchMetaUserProfile } from "../utils/avatarFetcher.js";
 import { logBotError, extractErrorMessage } from "../utils/botLogger.js";
 import { runPrivateReplyFlow, generateCommentReply } from "../utils/commentPrivateReplyFlow.js";
+import { handleAppointmentBooking } from "../utils/appointmentBookingEngine.js";
 
 const router = express.Router();
 
@@ -1359,6 +1360,10 @@ async function handleIncomingPayload({
     const offHours = bh.enabled && !bh.withinHours;
     const allowBotNow = !offHours || bh.allowBotReplies;
     const allowAiNow = !offHours || bh.allowAiReplies;
+
+    // 4c. Interactive Appointment Booking Engine (WhatsApp & Omnichannel)
+    const aptRan = allowBotNow && await handleAppointmentBooking(agencyId, platform, conversation, contact, msgBody, integration, msgType, buttonRoute);
+    if (aptRan) return;
 
     // 5. Run Flow Execution Engine
     const flowRan = await processFlow(agencyId, platform, conversation, contact, msgBody, integration, msgType, buttonRoute, null, {

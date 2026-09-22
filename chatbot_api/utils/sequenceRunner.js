@@ -121,9 +121,12 @@ async function sendSequenceContent(node, contact, agencyId, conversation, integr
       return;
     }
     case "quickReplies": {
+      // kind selects a special, non-free-text Quick Reply — see
+      // platformSender.js's quickReplies branches for how each is built.
       const formatted = (data.replies || []).map((r, idx) => {
         const title = typeof r === "string" ? r : (r.title || r.label || `Option ${idx + 1}`);
-        return { title, payload: title };
+        const kind = (typeof r === "object" && r?.kind) || "text";
+        return { title, payload: title, kind };
       });
       await sendMsg(agencyId, conversation, replaceVars(data.message, contact), "TEXT", integration, { ...common, quickReplies: formatted.length ? formatted : undefined });
       return;

@@ -475,7 +475,14 @@ export default function ContactsPage() {
                     <input type="checkbox" checked={allSelected} onChange={toggleAll} style={{ cursor: 'pointer' }} />
                   </th>
                   <th style={{ padding: '12px 16px', fontWeight: 700 }}>ID</th>
-                  <th style={{ padding: '12px 16px', fontWeight: 700 }}>Subscriber</th>
+                  {platformFilter === 'WHATSAPP' ? (
+                    <>
+                      <th style={{ padding: '12px 16px', fontWeight: 700 }}>Name</th>
+                      <th style={{ padding: '12px 16px', fontWeight: 700 }}>WhatsApp Number</th>
+                    </>
+                  ) : (
+                    <th style={{ padding: '12px 16px', fontWeight: 700 }}>Subscriber</th>
+                  )}
                   <th style={{ padding: '12px 16px', fontWeight: 700 }}>Channel</th>
                   <th style={{ padding: '12px 16px', fontWeight: 700 }}>Labels</th>
                   <th style={{ padding: '12px 16px', fontWeight: 700 }}>Status</th>
@@ -486,11 +493,11 @@ export default function ContactsPage() {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={9} style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted)' }}>
+                  <tr><td colSpan={platformFilter === 'WHATSAPP' ? 10 : 9} style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted)' }}>
                     <div className="loading-spinner" style={{ margin: '0 auto 10px' }} /> Loading subscribers...
                   </td></tr>
                 ) : contacts.length === 0 ? (
-                  <tr><td colSpan={9} style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted)' }}>
+                  <tr><td colSpan={platformFilter === 'WHATSAPP' ? 10 : 9} style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted)' }}>
                     <Users size={36} color="var(--border-light)" style={{ margin: '0 auto 10px' }} />
                     <h3 style={{ fontSize: '0.96rem', fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px 0' }}>No subscribers found</h3>
                     <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>Try a different filter, or import/add a subscriber.</p>
@@ -520,26 +527,58 @@ export default function ContactsPage() {
                         {formatSubscriberId(c.id)}
                       </td>
 
-                      <td style={{ padding: '12px 16px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <SubscriberAvatar name={c.name} avatar={c.avatar} size={34} />
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.86rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {c.name || 'Unnamed Contact'}
-                              </span>
-                              {c.retained && (
-                                <span style={{ fontSize: '0.64rem', fontWeight: 700, padding: '1px 6px', borderRadius: 8, border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
-                                  Retained
-                                </span>
-                              )}
+                      {platformFilter === 'WHATSAPP' ? (
+                        <>
+                          <td style={{ padding: '12px 16px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <SubscriberAvatar name={c.name} avatar={c.avatar} size={34} />
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.86rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {c.name || 'Unnamed Contact'}
+                                  </span>
+                                  {c.retained && (
+                                    <span style={{ fontSize: '0.64rem', fontWeight: 700, padding: '1px 6px', borderRadius: 8, border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+                                      Retained
+                                    </span>
+                                  )}
+                                </div>
+                                {c.email && (
+                                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 1 }}>
+                                    {c.email}
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 1 }}>
-                              {c.phone || c.email || c.external_id || '—'}
+                          </td>
+                          <td style={{ padding: '12px 16px' }}>
+                            <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.84rem' }}>
+                              {c.phone || c.external_id || '—'}
+                            </span>
+                          </td>
+                        </>
+                      ) : (
+                        <td style={{ padding: '12px 16px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <SubscriberAvatar name={c.name} avatar={c.avatar} size={34} />
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.86rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {c.name || 'Unnamed Contact'}
+                                </span>
+                                {c.retained && (
+                                  <span style={{ fontSize: '0.64rem', fontWeight: 700, padding: '1px 6px', borderRadius: 8, border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+                                    Retained
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 1 }}>
+                                {c.phone || c.email || c.external_id || '—'}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      </td>
+                        </td>
+                      )}
 
                       <td style={{ padding: '12px 16px' }}>
                         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 12, border: '1px solid var(--border)', fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-secondary)' }}>

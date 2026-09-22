@@ -17,7 +17,8 @@ import {
   User, Settings2, CornerDownRight, Image, Upload,
   Video, Music, FileText, Globe, ExternalLink,
   Smartphone, RotateCcw, Undo2, Redo2, ThumbsUp, Sparkles, MoreVertical,
-  Copy, ShoppingBag, HelpCircle, Flag, ClipboardList, Workflow, Tag, Timer, Palette, Megaphone, Network, MessagesSquare
+  Copy, ShoppingBag, HelpCircle, Flag, ClipboardList, Workflow, Tag, Timer, Palette, Megaphone, Network, MessagesSquare,
+  ArrowUp, ArrowDown, MapPin, Contact
 } from 'lucide-react';
 import FlowPhonePreview from './FlowPhonePreview';
 import PlatformIcon, { getPlatformMeta } from '../../Components/Common/PlatformIcon';
@@ -193,7 +194,17 @@ const PLATFORM_RULES = {
     audio: false,
     file: false,
     buttons: false,
-    quickReplies: 3,   // Suggestions
+    // TikTok's real Business Messaging Send API only has text/image/share-post
+    // message types — verified against TikTok's own API reference and a
+    // third-party integrator's docs (Infobip), neither lists any button or
+    // quick-reply send capability. "Suggestions"/topic buttons are a Business
+    // Suite UI feature configured in TikTok's own dashboard, not something a
+    // bot can send programmatically. Offering a Quick Replies node here (this
+    // used to say `3`) built bot replies whose options silently never showed
+    // up to the TikTok user — same failure pattern as the earlier Messenger
+    // card/carousel bug, just for a capability that doesn't exist at all
+    // rather than one that was wired wrong.
+    quickReplies: false,
     listMenu: false,
     card: false,
     carousel: false,
@@ -262,6 +273,49 @@ const PLATFORM_RULES = {
     end: true,
   },
 };
+
+// A Quick Reply is normally just tappable free text (content_type "text" on
+// Meta, a plain-label ReplyKeyboardButton on Telegram) — but both platforms'
+// own docs also define special one-tap "share info" kinds that aren't free
+// text at all:
+//   - Messenger: content_type "user_phone_number" / "user_email" — Meta
+//     renders a built-in chip and auto-fills it from the visitor's profile;
+//     no title/payload of ours is used at all.
+//   - Instagram: same idea, but only "user_phone_number" — Instagram profiles
+//     don't expose email this way, so Meta's own IG quick-reply docs only
+//     list phone.
+//   - Telegram: a ReplyKeyboardButton's `request_contact`/`request_location`
+//     flags — the button keeps our own label, but tapping shares the
+//     visitor's contact/location as a native Telegram message type instead of
+//     an ordinary text reply.
+// None of these four are reliably routable to a specific canvas edge the way
+// a normal text quick reply is (see QUICK_REPLY_UNROUTABLE_HINT below) — the
+// shared value arrives as the visitor's next plain message/contact/location,
+// not a tap our engine can match back to one specific option. WhatsApp has no
+// quick-reply concept at all (PLATFORM_RULES already reflects that), and
+// TikTok's Send API has no button/quick-reply capability at all (see the
+// TikTok comment above), so neither platform gets any kind here.
+const QUICK_REPLY_KINDS = {
+  text: { label: 'Text' },
+  user_phone_number: { label: 'Ask for Phone Number', icon: Phone, platforms: ['FACEBOOK', 'INSTAGRAM'] },
+  user_email: { label: 'Ask for Email', icon: Mail, platforms: ['FACEBOOK'] },
+  request_contact: { label: 'Request Contact', icon: Contact, platforms: ['TELEGRAM'] },
+  request_location: { label: 'Request Location', icon: MapPin, platforms: ['TELEGRAM'] },
+};
+const QUICK_REPLY_UNROUTABLE_HINT = {
+  user_phone_number: `Meta shows its own built-in chip for this — no custom title. The shared phone number arrives as the visitor's next plain message, not a tap on this specific option, so nothing wired after it can branch on it.`,
+  user_email: `Meta shows its own built-in chip for this — no custom title. The shared email arrives as the visitor's next plain message, not a tap on this specific option, so nothing wired after it can branch on it.`,
+  request_contact: `Tapping shares the visitor's contact as its own Telegram message type, not a reply matching this button's label — nothing wired after it can branch on it specifically.`,
+  request_location: `Tapping shares the visitor's location as its own Telegram message type, not a reply matching this button's label — nothing wired after it can branch on it specifically.`,
+};
+function getQuickReplyKindOptions(platform) {
+  return Object.entries(QUICK_REPLY_KINDS)
+    .filter(([key, meta]) => key === 'text' || (meta.platforms || []).includes(platform))
+    .map(([value, meta]) => ({ value, label: meta.label }));
+}
+function normalizeQuickReply(r) {
+  return typeof r === 'string' ? { title: r, kind: 'text' } : { title: '', kind: 'text', ...(r || {}) };
+}
 
 const NODE_COLORS = {
   start: '#059669',        // Fresh emerald
@@ -545,8 +599,7 @@ const DEFAULT_NODE_DATA = {
 // Every node type can optionally hold `data.delay: {hours,minutes,seconds}`
 // (scheduled — see flowDelayScheduler.js on the backend, never a blocking
 // sleep) EXCEPT `start` (a trigger definition, not a runtime step) and `wait`
-// (a Sequence's own dedicated delay node — same idea, would be redundant).
-const DELAY_EXCLUDED_NODE_TYPES = new Set(['start', 'wait']);
+const DELAY_EXCLUDED_NODE_TYPES = new Set(['start', 'wait', 'delay']);
 
 // A "typing…" indicator before sending only makes sense for node types that
 // actually send a message to the contact.
@@ -760,7 +813,8 @@ const builderStyles = `
 
   /* ── Properties Panel (Right Modal / Sidebar) ─────────────── */
   .fb-props {
-    width: 320px;
+    width: 380px;
+    max-width: min(420px, 90vw);
     flex-shrink: 0;
     background: #ffffff;
     border-left: 1.5px solid #e2e8f0;
@@ -769,7 +823,9 @@ const builderStyles = `
     flex-direction: column;
     animation: fb-slide-in 0.2s ease-out;
     overflow-y: auto;
+    overflow-x: hidden;
     box-shadow: -4px 0 20px rgba(0, 0, 0, 0.05);
+    box-sizing: border-box;
   }
   @keyframes fb-slide-in {
     from { transform: translateX(20px); opacity: 0; }
@@ -784,6 +840,7 @@ const builderStyles = `
     padding: 14px 18px;
     border-bottom: 1px solid #e2e8f0;
     background: #ffffff;
+    box-sizing: border-box;
   }
   .fb-props-header h3 {
     margin: 0;
@@ -803,10 +860,37 @@ const builderStyles = `
     color: #64748b;
     cursor: pointer;
     transition: all 0.15s;
+    flex-shrink: 0;
   }
   .fb-props-close:hover { background: #f1f5f9; border-color: #cbd5e1; color: #0f172a; }
-  .fb-props-body { padding: 16px; display: flex; flex-direction: column; gap: 14px; background: #ffffff; }
-  .fb-field { display: flex; flex-direction: column; gap: 6px; }
+  .fb-props-body {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    background: #ffffff;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+    box-sizing: border-box;
+  }
+  .fb-props-embedded {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+    box-sizing: border-box;
+  }
+  .fb-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
   .fb-field label {
     font-size: 11px;
     font-weight: 700;
@@ -827,6 +911,9 @@ const builderStyles = `
     transition: all 0.15s;
     font-family: inherit;
     resize: vertical;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
   }
   .fb-field input:focus,
   .fb-field textarea:focus,
@@ -1161,7 +1248,6 @@ const builderStyles = `
   .react-flow__handle[id^="qr-"],
   .react-flow__handle[id^="item-"],
   .react-flow__handle[id="then"],
-  .react-flow__handle[id="attach-sequence"],
   .react-flow__handle[id="next-step"],
   .react-flow__handle[id="next"],
   .react-flow__handle[id="yes"],
@@ -1180,7 +1266,6 @@ const builderStyles = `
   .react-flow__handle[id^="qr-"].connected,
   .react-flow__handle[id^="item-"].connected,
   .react-flow__handle[id="then"].connected,
-  .react-flow__handle[id="attach-sequence"].connected,
   .react-flow__handle[id="next-step"].connected,
   .react-flow__handle[id="next"].connected,
   .react-flow__handle[id="yes"].connected,
@@ -1204,7 +1289,6 @@ const builderStyles = `
   .react-flow__handle[id^="qr-"]:hover,
   .react-flow__handle[id^="item-"]:hover,
   .react-flow__handle[id="then"]:hover,
-  .react-flow__handle[id="attach-sequence"]:hover,
   .react-flow__handle[id="next-step"]:hover,
   .react-flow__handle[id="next"]:hover,
   .react-flow__handle[id="yes"]:hover,
@@ -1219,7 +1303,6 @@ const builderStyles = `
   .react-flow__handle[id^="qr-"].connected:hover,
   .react-flow__handle[id^="item-"].connected:hover,
   .react-flow__handle[id="then"].connected:hover,
-  .react-flow__handle[id="attach-sequence"].connected:hover,
   .react-flow__handle[id="next-step"].connected:hover,
   .react-flow__handle[id="next"].connected:hover,
   .react-flow__handle[id="yes"].connected:hover,
@@ -2171,7 +2254,12 @@ function validateNodeData(node) {
       if (!data.message || !data.message.trim()) {
         return 'Quick replies message cannot be empty';
       }
-      if ((data.replies || []).filter((r) => (typeof r === 'string' ? r : r?.title || '').trim()).length === 0) {
+      // A special kind (Ask for Phone Number, Request Contact, ...) has no
+      // title of its own — the kind selection alone makes it a valid option.
+      if ((data.replies || []).filter((r) => {
+        const qr = normalizeQuickReply(r);
+        return qr.kind !== 'text' || qr.title.trim();
+      }).length === 0) {
         return 'At least one quick reply option is required';
       }
       return null;
@@ -3194,21 +3282,17 @@ function StartNode({ id, data = {}, selected }) {
         />
       </div>
 
-      {/* Second, independent connector for "Attach Sequence" (see
-          StartNodeSequenceAttach / handleAttachSequenceToStart) — a real
-          branch off Start, not part of the "Then" conversation path, so it
-          needs its own handle rather than sharing "then"/"next-step". Always
-          present (not just once attached) so the wire has somewhere to
-          render the moment the node is created. */}
-      <div className="fb-next-step-row" style={{ marginTop: 0, marginRight: -16, marginLeft: -16, paddingLeft: 16, paddingTop: 2, paddingBottom: 6, borderTop: 'none' }}>
-        <span>Sequence</span>
-        <Handle
-          type="source"
-          position={Position.Right}
-          id="attach-sequence"
-          className={`next-step-handle${connectedHandles.has('attach-sequence') ? ' connected' : ''}`}
-        />
-      </div>
+      {/* "Attach Sequence" (see StartNodeSequenceAttach) is a plain field on
+          this node now, set from the properties panel — not a real branch in
+          the conversation, so it no longer gets its own wire/connector. This
+          quiet summary line is the only on-canvas trace of it, so it's still
+          visible at a glance without a fake-looking branch. */}
+      {data.attachSequenceName && (
+        <div style={{ margin: '0 -16px 0', padding: '7px 16px', borderTop: '1px dashed #f1f5f9', display: 'flex', alignItems: 'center', gap: 6, fontSize: 10.5, fontWeight: 600, color: '#64748b' }}>
+          <Layers size={11} style={{ flexShrink: 0 }} />
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Also starts "{data.attachSequenceName}"</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -3357,7 +3441,6 @@ function TextNode({ id, data, selected }) {
                 {btnTitle}
               </span>
 
-              {btn?.sequenceId && <SeqBadge />}
               {isPhone && (
                 <Phone
                   size={14}
@@ -3691,7 +3774,6 @@ function InteractiveNode({ id, data, selected }) {
                 {btnTitle}
               </span>
 
-              {btn?.sequenceId && <SeqBadge />}
               {isPhone && (
                 <Phone
                   size={14}
@@ -4005,7 +4087,6 @@ function ImageNode({ id, data, selected }) {
                 {btnTitle}
               </span>
 
-              {btn?.sequenceId && <SeqBadge />}
               {isPhone && (
                 <Phone
                   size={14}
@@ -4213,7 +4294,6 @@ function VideoNode({ id, data, selected }) {
                 <span style={{ fontSize: 12, fontWeight: 700, color: '#334155', textAlign: 'center', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {btnTitle}
                 </span>
-                {btn?.sequenceId && <SeqBadge />}
                 {isPhone && <Phone size={14} style={{ position: 'absolute', right: 12, color: '#334155' }} />}
                 {isUrl && <ExternalLink size={14} style={{ position: 'absolute', right: 12, color: '#334155' }} />}
                 {isGoToFlow && <Workflow size={14} style={{ position: 'absolute', right: 12, color: '#334155' }} />}
@@ -4476,7 +4556,6 @@ function ButtonsNode({ id, data, selected }) {
                 {btnTitle}
               </span>
 
-              {btn?.sequenceId && <SeqBadge />}
               {isPhone && (
                 <Phone
                   size={14}
@@ -4622,19 +4701,35 @@ function QuickRepliesNode({ id, data, selected }) {
         </div>
       )}
       <div className="fb-node-btn-list" style={{ marginTop: 2 }}>
-        {replies.map((r, i) => (
-          <div key={i} className="fb-node-btn-chip">
-            <span style={{ fontSize: '11px', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r || `Reply ${i + 1}`}</span>
-            <ChevronRight size={12} style={{ opacity: 0.6, flexShrink: 0 }} />
-            <Handle
-              type="source"
-              position={Position.Right}
-              id={`qr-${i}`}
-              className={`btn-handle${connectedHandles.has(`qr-${i}`) ? ' connected' : ''}`}
-              style={{ top: '50%', right: -7, transform: 'translateY(-50%)', position: 'absolute' }}
-            />
-          </div>
-        ))}
+        {replies.map((r, i) => {
+          const qr = normalizeQuickReply(r);
+          const isSpecial = qr.kind !== 'text';
+          const SpecialIcon = isSpecial ? QUICK_REPLY_KINDS[qr.kind]?.icon : null;
+          return (
+            <div key={i} className="fb-node-btn-chip">
+              <span style={{ fontSize: '11px', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {isSpecial ? (QUICK_REPLY_KINDS[qr.kind]?.label || 'Special') : (qr.title || `Reply ${i + 1}`)}
+              </span>
+              {isSpecial ? (
+                // Not routable to a specific edge (see QUICK_REPLY_UNROUTABLE_HINT)
+                // — an icon instead of a connector, same as a "Go to Flow" button
+                // action elsewhere on this canvas.
+                SpecialIcon && <SpecialIcon size={12} style={{ opacity: 0.7, flexShrink: 0, color: '#334155' }} />
+              ) : (
+                <>
+                  <ChevronRight size={12} style={{ opacity: 0.6, flexShrink: 0 }} />
+                  <Handle
+                    type="source"
+                    position={Position.Right}
+                    id={`qr-${i}`}
+                    className={`btn-handle${connectedHandles.has(`qr-${i}`) ? ' connected' : ''}`}
+                    style={{ top: '50%', right: -7, transform: 'translateY(-50%)', position: 'absolute' }}
+                  />
+                </>
+              )}
+            </div>
+          );
+        })}
       </div>
     </NodeWrapper>
   );
@@ -4682,7 +4777,6 @@ function ListMenuNode({ id, data, selected }) {
                   return (
                     <div key={ii} className="fb-node-btn-chip">
                       <span style={{ fontSize: '11px', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.title || `Option ${ii + 1}`}</span>
-                      {item.sequenceId && <SeqBadge inline />}
                       {isGoToFlow ? (
                         <Workflow size={12} style={{ opacity: 0.8, flexShrink: 0, color: '#334155' }} />
                       ) : (
@@ -5421,23 +5515,6 @@ function AutomationPickerModal({ flows, currentFlowId, platform, selectedId, onS
   );
 }
 
-/* Small "seq" tag on a canvas button/list item that also enrolls the contact in a
-   Sequence when tapped (btn.sequenceId). Neutral grey. */
-function SeqBadge({ inline = false }) {
-  return (
-    <span
-      title="Enrolls the contact in a Sequence when tapped"
-      style={{
-        ...(inline ? {} : { position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }),
-        flexShrink: 0, fontSize: 9, fontWeight: 800, letterSpacing: 0.3, textTransform: 'uppercase', lineHeight: 1,
-        padding: '3px 5px', borderRadius: 4, background: '#f1f5f9', border: '1px solid #cbd5e1', color: '#334155',
-      }}
-    >
-      seq
-    </span>
-  );
-}
-
 /* ── Message Block Node ───────────────────────────────────────── */
 // Same URL rule the standalone Image/Video cards use for uploaded files.
 function blockMediaSrc(url) {
@@ -5451,7 +5528,7 @@ function blockMediaSrc(url) {
 // A tappable option (button) drawn like the standalone cards' buttons. Its
 // connector id is prefixed with the element id ("<itemId>:btn-0") so the backend
 // can route each option of each element separately.
-function BlockButtonRow({ title, handleId, connected, seq = false, icon: OwnIcon = null }) {
+function BlockButtonRow({ title, handleId, connected, icon: OwnIcon = null }) {
   return (
     <div
       style={{
@@ -5462,7 +5539,6 @@ function BlockButtonRow({ title, handleId, connected, seq = false, icon: OwnIcon
       <span style={{ fontSize: 12, fontWeight: 700, color: '#334155', textAlign: 'center', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {title}
       </span>
-      {seq && <SeqBadge />}
       {OwnIcon ? (
         <OwnIcon size={14} style={{ position: 'absolute', right: 12, color: '#334155' }} />
       ) : (
@@ -5607,7 +5683,6 @@ function BlockItemView({ item, connectedHandles, onAddButton, onAddReply, attach
           handleId={`${item.id}:btn-${i}`}
           connected={connectedHandles.has(`${item.id}:btn-${i}`)}
           icon={ownIconOf(actionOf(b))}
-          seq={!!(typeof b === 'object' && b?.sequenceId)}
         />
       ))}
       {canAddButton && list.length < 3 && <BlockAddButton label="Add Button" onClick={() => onAddButton(item.id)} />}
@@ -5627,8 +5702,14 @@ function BlockItemView({ item, connectedHandles, onAddButton, onAddReply, attach
       return <div style={bubble}>{(d.message || '').trim() || <span style={hint}>Enter message...</span>}</div>;
 
     case 'delay': {
-      const secs = Number(d.seconds) || (d.delay ? (Number(d.delay.hours) || 0) * 3600 + (Number(d.delay.minutes) || 0) * 60 + (Number(d.delay.seconds) || 0) : 0);
-      return <DelayPill data={{ delay: { seconds: secs || 0 } }} always style={{ marginBottom: 0 }} />;
+      const totalSecs = (Number(d.delay?.hours) || 0) * 3600 + (Number(d.delay?.minutes) || 0) * 60 + (Number(d.delay?.seconds) || 0) || (Number(d.seconds) || 0);
+      return (
+        <DelayPill
+          data={{ delay: d.delay || { seconds: totalSecs }, seconds: totalSecs, showTyping: d.showTyping }}
+          always
+          style={{ marginBottom: 0 }}
+        />
+      );
     }
 
     case 'image': {
@@ -5755,18 +5836,28 @@ function BlockItemView({ item, connectedHandles, onAddButton, onAddReply, attach
         <div>
           {!attachedToPrev && <div style={bubble}>{(d.message || '').trim() || <span style={hint}>Enter message...</span>}</div>}
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, marginTop: 8 }}>
-            {(d.replies || []).map((r, i) => (
-              <div key={i} style={{ position: 'relative', display: 'flex', alignItems: 'center', padding: '6px 34px 6px 14px', borderRadius: 999, background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)', fontSize: 12, fontWeight: 600, color: '#1e293b', maxWidth: '100%' }}>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{titleOf(r, `Reply ${i + 1}`)}</span>
-                <Handle
-                  type="source"
-                  position={Position.Right}
-                  id={`${item.id}:qr-${i}`}
-                  className={`btn-handle${connectedHandles.has(`${item.id}:qr-${i}`) ? ' connected' : ''}`}
-                  style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)' }}
-                />
-              </div>
-            ))}
+            {(d.replies || []).map((r, i) => {
+              const qr = normalizeQuickReply(r);
+              const isSpecial = qr.kind !== 'text';
+              const SpecialIcon = isSpecial ? QUICK_REPLY_KINDS[qr.kind]?.icon : null;
+              return (
+                <div key={i} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, padding: isSpecial ? '6px 12px' : '6px 34px 6px 14px', borderRadius: 999, background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)', fontSize: 12, fontWeight: 600, color: '#1e293b', maxWidth: '100%' }}>
+                  {SpecialIcon && <SpecialIcon size={12} style={{ flexShrink: 0, opacity: 0.75 }} />}
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {isSpecial ? (QUICK_REPLY_KINDS[qr.kind]?.label || 'Special') : (qr.title || `Reply ${i + 1}`)}
+                  </span>
+                  {!isSpecial && (
+                    <Handle
+                      type="source"
+                      position={Position.Right}
+                      id={`${item.id}:qr-${i}`}
+                      className={`btn-handle${connectedHandles.has(`${item.id}:qr-${i}`) ? ' connected' : ''}`}
+                      style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)' }}
+                    />
+                  )}
+                </div>
+              );
+            })}
             {onAddReply && (d.replies || []).length < 10 && <BlockAddButton label="Quick reply" pill align="flex-end" onClick={() => onAddReply(item.id)} />}
           </div>
         </div>
@@ -5791,7 +5882,6 @@ function BlockItemView({ item, connectedHandles, onAddButton, onAddReply, attach
                       return (
                         <div key={ii} className="fb-node-btn-chip">
                           <span style={{ fontSize: 11, fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.title || `Option ${ii + 1}`}</span>
-                          {it.sequenceId && <SeqBadge inline />}
                           {own ? (
                             <Workflow size={12} style={{ flexShrink: 0, color: '#334155' }} />
                           ) : (
@@ -5826,7 +5916,7 @@ function BlockItemView({ item, connectedHandles, onAddButton, onAddReply, attach
 function MessageBlockNode({ id, data, selected }) {
   const items = Array.isArray(data.items) ? data.items : [];
   const connectedHandles = useConnectedHandles(id);
-  const { currentPlatform, onUpdateNodeData } = useContext(FlowNodeActionsContext);
+  const { currentPlatform, onUpdateNodeData, onSelectNode } = useContext(FlowNodeActionsContext);
   const validationError = data?._validationError;
 
   const setItems = (next) => onUpdateNodeData(id, { ...data, items: next });
@@ -5846,6 +5936,8 @@ function MessageBlockNode({ id, data, selected }) {
     setItems(BLOCK_ENDING_TYPES.includes(type) || endIdx < 0
       ? [...items, item]
       : [...items.slice(0, endIdx), item, ...items.slice(endIdx)]);
+    // Auto-select newly added element
+    onSelectNode?.(id, { selectItemId: item.id });
   };
   const hasEnding = items.some((i) => BLOCK_ENDING_TYPES.includes(i.type));
   const addGroups = [
@@ -5883,16 +5975,45 @@ function MessageBlockNode({ id, data, selected }) {
           <div style={{ padding: '18px 10px', borderRadius: 12, border: '1.5px dashed #cbd5e1', background: '#f8fafc', color: '#94a3b8', fontSize: 11.5, fontWeight: 600, textAlign: 'center' }}>
             Empty — click to add elements
           </div>
-        ) : items.map((item, idx) => (
-          <BlockItemView
-            key={item.id}
-            item={item}
-            connectedHandles={connectedHandles}
-            onAddButton={addButton}
-            onAddReply={addReply}
-            attachedToPrev={item.type === 'quickReplies' && !(item.data?.message || '').trim() && isPlainBlockText(items[idx - 1])}
-          />
-        ))}
+        ) : items.map((item, idx) => {
+          const isItemSelected = selected && (data._selectedItemId === item.id || (!data._selectedItemId && idx === 0));
+          return (
+            <div
+              key={item.id}
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectNode?.(id, { selectItemId: item.id });
+              }}
+              style={{
+                cursor: 'pointer',
+                borderRadius: 14,
+                position: 'relative',
+                boxShadow: isItemSelected ? `0 0 0 2px ${NODE_COLORS[item.type] || NODE_COLORS.messageBlock}` : 'none',
+                transition: 'box-shadow 0.15s ease',
+              }}
+              title="Click to edit this element in settings"
+            >
+              <BlockItemView
+                item={item}
+                connectedHandles={connectedHandles}
+                onAddButton={(itemId) => {
+                  // Add first, select second — onSelectNode's updater merges
+                  // onto whatever's already queued, so this order is what
+                  // makes the selection land on the item that now actually
+                  // has the new button (see the onSelectNode comment above
+                  // for why the reverse order silently dropped updates).
+                  addButton(itemId);
+                  onSelectNode?.(id, { selectItemId: itemId });
+                }}
+                onAddReply={(itemId) => {
+                  addReply(itemId);
+                  onSelectNode?.(id, { selectItemId: itemId });
+                }}
+                attachedToPrev={item.type === 'quickReplies' && !(item.data?.message || '').trim() && isPlainBlockText(items[idx - 1])}
+              />
+            </div>
+          );
+        })}
         <BlockAddElementMenu groups={addGroups} onPick={addElement} />
       </div>
       <div className="fb-next-step-row" style={{ marginTop: 8, marginRight: -14, marginLeft: -14, paddingLeft: 14 }}>
@@ -6138,7 +6259,7 @@ function ImageUploadField({ label = 'Image', value, onChange, placeholder = 'htt
           value={value || ''}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          style={{ flex: 1, fontSize: 11, padding: '6px 8px' }}
+          style={{ flex: 1, minWidth: 0, fontSize: 11, padding: '6px 8px', boxSizing: 'border-box' }}
         />
       </div>
     </div>
@@ -6221,7 +6342,7 @@ function MediaUploadField({ label = 'Media File', value, onChange, accept = '*/*
           value={value || ''}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          style={{ flex: 1, fontSize: 11, padding: '6px 8px' }}
+          style={{ flex: 1, minWidth: 0, fontSize: 11, padding: '6px 8px', boxSizing: 'border-box' }}
         />
       </div>
     </div>
@@ -6229,7 +6350,7 @@ function MediaUploadField({ label = 'Media File', value, onChange, accept = '*/*
 }
 
 /* ── Start Node Properties with Multi-Trigger & Dotted Buttons ──── */
-function StartNodeProperties({ data = {}, onUpdateNode, sequences = [], onSequenceCreated, platform, onAttachSequence, attachedSequenceNode, onSelectSequenceNode }) {
+function StartNodeProperties({ data = {}, onUpdateNode, sequences = [], onSequenceCreated, platform }) {
   const rawTriggers = (data.triggers && Array.isArray(data.triggers) && data.triggers.length > 0)
     ? data.triggers
     : [
@@ -6595,12 +6716,11 @@ function StartNodeProperties({ data = {}, onUpdateNode, sequences = [], onSequen
       </div>
 
       <StartNodeSequenceAttach
+        data={data}
+        onUpdateNode={onUpdateNode}
         sequences={sequences}
         onSequenceCreated={onSequenceCreated}
         platform={platform}
-        onAttachSequence={onAttachSequence}
-        attachedSequenceNode={attachedSequenceNode}
-        onSelectSequenceNode={onSelectSequenceNode}
       />
     </div>
   );
@@ -6610,14 +6730,13 @@ function StartNodeProperties({ data = {}, onUpdateNode, sequences = [], onSequen
    A separate "Start Sequence" action node already covers mid-flow
    enrollment; this is the common shortcut for "enroll them the moment they
    trigger this flow" without needing an extra node wired after Start. */
-// Picking a sequence here doesn't hide the enrollment inside the Start node's
-// own data — it adds a real, visible "Start Sequence" node as its OWN branch
-// off Start (wired via onAttachSequence, implemented in FlowBuilderInner as
-// handleAttachSequenceToStart), on a second dedicated connector separate from
-// Start's "Then" edge into the real conversation. Two independent wires out
-// of Start — one to the flow's own first step (untouched), one to this
-// Sequence — rather than inserting a step into the conversation path itself.
-function StartNodeSequenceAttach({ sequences, onSequenceCreated, platform, onAttachSequence, attachedSequenceNode, onSelectSequenceNode }) {
+// A plain field on the Start node's own data (attachSequenceId/attachSequenceName)
+// — not a real branch on the canvas. It never was a real conversation path (the
+// engine only ever read the value off it, never walked it as a step — see the
+// "start" case in flowEngine.js), so representing it as a wire + separate node
+// was misleading more than it helped; this is the same pick/remove/build-or-edit
+// pattern a button's own "Also enroll in a Sequence" field already uses.
+function StartNodeSequenceAttach({ data, onUpdateNode, sequences, onSequenceCreated, platform }) {
   const { currentIntegrationId } = useContext(FlowNodeActionsContext);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
@@ -6632,7 +6751,7 @@ function StartNodeSequenceAttach({ sequences, onSequenceCreated, platform, onAtt
       const res = await sequenceAPI.create({ name: newName.trim(), platform, integrationId: currentIntegrationId });
       const created = res.data?.sequence;
       onSequenceCreated?.(created);
-      onAttachSequence(created.id, created.name);
+      onUpdateNode({ ...data, attachSequenceId: created.id, attachSequenceName: created.name });
       setCreating(false);
       setNewName('');
     } catch (err) {
@@ -6642,37 +6761,10 @@ function StartNodeSequenceAttach({ sequences, onSequenceCreated, platform, onAtt
     }
   };
 
-  // Already wired — the picker's job is done, editing from here on happens on
-  // the "Start Sequence" node itself (same place any other node is edited).
-  if (attachedSequenceNode) {
-    return (
-      <div style={{ paddingTop: 4, borderTop: '1px solid #e2e8f0' }}>
-        <div className="fb-field" style={{ marginTop: 10 }}>
-          <label>Attached Sequence</label>
-          <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-            padding: '8px 10px', border: '1px solid #cffafe', borderRadius: 8, background: '#ecfeff',
-          }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: '#0e7490' }}>
-              {attachedSequenceNode.data?.sequenceName || 'Sequence'}
-            </span>
-            <button type="button" className="fb-add-btn" style={{ padding: '4px 10px' }} onClick={() => onSelectSequenceNode(attachedSequenceNode.id)}>
-              Edit →
-            </button>
-          </div>
-          <span className="fb-hint">
-            That's the "Start Sequence" node wired to Start's own Sequence branch on the canvas — click Edit to
-            change or remove it (deleting that node removes the auto-enrollment; the flow itself is unaffected).
-          </span>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div style={{ paddingTop: 4, borderTop: '1px solid #e2e8f0' }}>
       <div className="fb-field" style={{ marginTop: 10 }}>
-        <label>Attach Sequence (optional)</label>
+        <label>Also Start a Sequence (optional)</label>
         {creating ? (
           <div style={{ display: 'flex', gap: 6 }}>
             <input
@@ -6690,27 +6782,48 @@ function StartNodeSequenceAttach({ sequences, onSequenceCreated, platform, onAtt
             </button>
           </div>
         ) : (
-          <select
-            value=""
-            onChange={(e) => {
-              if (e.target.value === 'CREATE_NEW') { setCreating(true); return; }
-              if (!e.target.value) return;
-              const id = Number(e.target.value);
-              const seq = sequences.find((s) => s.id === id);
-              onAttachSequence(id, seq?.name || '');
-            }}
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <select
+              value={data.attachSequenceId || ''}
+              onChange={(e) => {
+                if (e.target.value === 'CREATE_NEW') { setCreating(true); return; }
+                const id = e.target.value ? Number(e.target.value) : null;
+                const seq = sequences.find((s) => s.id === id);
+                onUpdateNode({ ...data, attachSequenceId: id, attachSequenceName: seq?.name || '' });
+              }}
+              style={{ flex: 1 }}
+            >
+              <option value="">None</option>
+              {sequences.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+              <option value="CREATE_NEW">+ Create new Sequence...</option>
+            </select>
+            {data.attachSequenceId && (
+              <button
+                type="button"
+                title="Remove sequence"
+                onClick={() => onUpdateNode({ ...data, attachSequenceId: null, attachSequenceName: '' })}
+                style={{ background: 'none', border: '1px solid #e2e8f0', borderRadius: 6, color: '#64748b', cursor: 'pointer', display: 'flex', padding: 5, flexShrink: 0 }}
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+        )}
+        {data.attachSequenceId && !creating && (
+          <button
+            type="button"
+            className="fb-add-btn"
+            style={{ marginTop: 6 }}
+            onClick={() => window.open(`/sequences/${data.attachSequenceId}/edit`, '_blank')}
           >
-            <option value="">None</option>
-            {sequences.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-            <option value="CREATE_NEW">+ Create new Sequence...</option>
-          </select>
+            Build / Edit this Sequence →
+          </button>
         )}
         {error && <span className="fb-hint" style={{ color: '#ef4444' }}>{error}</span>}
         <span className="fb-hint">
-          Adds a "Start Sequence" node as its own branch off Start (a separate wire, below) — the subscriber
-          is enrolled the moment they trigger this flow, while the flow's own conversation continues
+          Enrolls the subscriber the moment they trigger this flow, while the flow's own conversation continues
           completely unaffected. The Sequence sends its messages on its own schedule, independent of the flow.
         </span>
       </div>
@@ -6914,13 +7027,14 @@ function ButtonActionEditor({
             display: 'flex',
             alignItems: 'flex-start',
             justifyContent: 'flex-end',
-            padding: '64px 340px 24px 24px',
+            padding: '64px 400px 24px 24px',
           }}
         >
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              width: 320,
+              width: 340,
+              maxWidth: 'calc(100vw - 420px)',
               maxHeight: '80vh',
               display: 'flex',
               flexDirection: 'column',
@@ -7137,26 +7251,90 @@ function ButtonActionEditor({
                     </button>
                   </div>
                 ) : (
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <select
+                      value={btnObj.sequenceId || ''}
+                      onChange={(e) => {
+                        if (e.target.value === 'CREATE_NEW') { setCreatingSeq(true); return; }
+                        const sid = e.target.value ? Number(e.target.value) : null;
+                        const seq = sequences.find((s) => s.id === sid);
+                        onChange({ ...btnObj, sequenceId: sid, sequenceName: seq?.name || '' });
+                      }}
+                      style={{ flex: 1, fontSize: 12, padding: '5px 8px', borderRadius: 6, background: '#ffffff' }}
+                    >
+                      <option value="">None</option>
+                      {sequences.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                      <option value="CREATE_NEW">+ Create new Sequence...</option>
+                    </select>
+                    {btnObj.sequenceId && (
+                      <button
+                        type="button"
+                        title="Remove sequence"
+                        onClick={() => onChange({ ...btnObj, sequenceId: null, sequenceName: '' })}
+                        style={{ background: 'none', border: '1px solid #e2e8f0', borderRadius: 6, color: '#64748b', cursor: 'pointer', display: 'flex', padding: 5, flexShrink: 0 }}
+                      >
+                        <X size={13} />
+                      </button>
+                    )}
+                  </div>
+                )}
+                {btnObj.sequenceId && !creatingSeq && (
+                  <button
+                    type="button"
+                    className="fb-add-btn"
+                    style={{ marginTop: 6 }}
+                    onClick={() => window.open(`/sequences/${btnObj.sequenceId}/edit`, '_blank')}
+                  >
+                    Build / Edit this Sequence →
+                  </button>
+                )}
+                <span style={{ fontSize: 9.5, color: '#64748b', fontStyle: 'italic', marginTop: 4, display: 'block' }}>
+                  Enrolls the subscriber the moment this {isItem ? 'item' : 'button'} is tapped — the Sequence sends
+                  on its own schedule, separate from whatever else this {isItem ? 'item' : 'button'} does.
+                </span>
+              </div>
+
+              {/* Also remove from a Sequence — the mirror of "Also enroll" above.
+                  A separate field (not a toggle on the same one): a tap can add
+                  to one Sequence and remove from a different one in the same
+                  action, same as the Actions node's add_sequence/remove_sequence
+                  pair. No "create new" here — removing someone from a Sequence
+                  that doesn't exist yet isn't a real use case. */}
+              <div style={{ borderTop: '1px dashed #e2e8f0', paddingTop: 12 }}>
+                <label style={{ fontSize: 11, fontWeight: 700, color: '#475569', display: 'block', marginBottom: 6 }}>
+                  Also remove from a Sequence (optional)
+                </label>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                   <select
-                    value={btnObj.sequenceId || ''}
+                    value={btnObj.removeSequenceId || ''}
                     onChange={(e) => {
-                      if (e.target.value === 'CREATE_NEW') { setCreatingSeq(true); return; }
                       const sid = e.target.value ? Number(e.target.value) : null;
                       const seq = sequences.find((s) => s.id === sid);
-                      onChange({ ...btnObj, sequenceId: sid, sequenceName: seq?.name || '' });
+                      onChange({ ...btnObj, removeSequenceId: sid, removeSequenceName: seq?.name || '' });
                     }}
-                    style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, background: '#ffffff' }}
+                    style={{ flex: 1, fontSize: 12, padding: '5px 8px', borderRadius: 6, background: '#ffffff' }}
                   >
                     <option value="">None</option>
                     {sequences.map((s) => (
                       <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
-                    <option value="CREATE_NEW">+ Create new Sequence...</option>
                   </select>
-                )}
+                  {btnObj.removeSequenceId && (
+                    <button
+                      type="button"
+                      title="Clear remove-from-sequence"
+                      onClick={() => onChange({ ...btnObj, removeSequenceId: null, removeSequenceName: '' })}
+                      style={{ background: 'none', border: '1px solid #e2e8f0', borderRadius: 6, color: '#64748b', cursor: 'pointer', display: 'flex', padding: 5, flexShrink: 0 }}
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
                 <span style={{ fontSize: 9.5, color: '#64748b', fontStyle: 'italic', marginTop: 4, display: 'block' }}>
-                  Enrolls the subscriber the moment this {isItem ? 'item' : 'button'} is tapped — the Sequence sends
-                  on its own schedule, separate from whatever else this {isItem ? 'item' : 'button'} does.
+                  Stops the subscriber's enrollment in this Sequence the moment this {isItem ? 'item' : 'button'} is tapped — any
+                  scheduled messages still pending are cancelled.
                 </span>
               </div>
 
@@ -7174,6 +7352,24 @@ function ButtonActionEditor({
                     updateProp('labelIds', current.includes(labelId) ? current.filter((l) => l !== labelId) : [...current, labelId]);
                   }}
                   hint={`Tags the contact the moment this ${isItem ? 'item' : 'button'} is tapped.`}
+                />
+              </div>
+
+              {/* Remove Label — the mirror of "Tag with Label" above. A tap can
+                  add one label and remove a different one in the same action,
+                  same as the Actions node's add_label/remove_label pair. */}
+              <div style={{ borderTop: '1px dashed #e2e8f0', paddingTop: 12 }}>
+                <label style={{ fontSize: 11, fontWeight: 700, color: '#475569', display: 'block', marginBottom: 6 }}>
+                  Remove Label (optional)
+                </label>
+                <LabelTagPicker
+                  labels={availableLabels}
+                  selectedIds={Array.isArray(btnObj.removeLabelIds) ? btnObj.removeLabelIds : []}
+                  onToggle={(labelId) => {
+                    const current = Array.isArray(btnObj.removeLabelIds) ? btnObj.removeLabelIds : [];
+                    updateProp('removeLabelIds', current.includes(labelId) ? current.filter((l) => l !== labelId) : [...current, labelId]);
+                  }}
+                  hint={`Removes this label from the contact the moment this ${isItem ? 'item' : 'button'} is tapped.`}
                 />
               </div>
             </div>
@@ -7508,12 +7704,39 @@ function SequenceActionFields({ data, updateFields, sequences, onCreated, platfo
 /* ── Message Block properties ──────────────────────────────────── */
 function MessageBlockFields({ data, updateFields, platform, renderItemEditor }) {
   const items = Array.isArray(data.items) ? data.items : [];
-  const [openId, setOpenId] = useState(data._errorItemId || items[0]?.id || null);
+  const [openId, setOpenId] = useState(data._selectedItemId || data._errorItemId || items[0]?.id || null);
   const [menuOpen, setMenuOpen] = useState(false);
-  // Save / validation pointed at one element → open exactly that one.
+
+  // Auto-expand and scroll to selected item or error item
   useEffect(() => {
-    if (data._errorItemId) setOpenId(data._errorItemId);
-  }, [data._errorItemId]);
+    const targetId = data._selectedItemId || data._errorItemId;
+    if (targetId) {
+      setOpenId(targetId);
+      setTimeout(() => {
+        const el = document.getElementById(`block-item-field-${targetId}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }, 60);
+      // _errorItemId is a one-shot "jump to the broken element" cue set by a
+      // failed Save/scope-check (surfaceProblems) — nothing ever cleared it.
+      // Left stuck, EVERY later click (including the click meant to close
+      // this very element, which bumps _selectTimestamp) re-ran this effect,
+      // saw _errorItemId still pointing here, and forced it back open —
+      // so a freshly added (and so, likely still-invalid) element could
+      // never be closed, while an already-valid element (never flagged)
+      // closed normally. Consuming it here, once, fixes that; the open/close
+      // click handler's own _selectedItemId keeps working same as before.
+      if (data._errorItemId) {
+        updateFields({ _errorItemId: null });
+      }
+    }
+    // updateFields is intentionally left out below — it's recreated every
+    // render (see PropertiesPanel), so listing it would fire this effect on
+    // every render instead of only when selection/error state changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data._selectedItemId, data._selectTimestamp, data._errorItemId]);
+
   const hasEnding = items.some((i) => BLOCK_ENDING_TYPES.includes(i.type));
   const setItems = (next) => updateFields({ items: next });
 
@@ -7526,13 +7749,18 @@ function MessageBlockFields({ data, updateFields, platform, renderItemEditor }) 
       : [...items.slice(0, endIdx), item, ...items.slice(endIdx)];
     setItems(next);
     setOpenId(item.id);
+    updateFields({ items: next, _selectedItemId: item.id, _selectTimestamp: Date.now() });
     setMenuOpen(false);
   };
+
+  const isEnding = (type) => BLOCK_ENDING_TYPES.includes(type);
+  const canMoveUp = (idx) => idx > 0 && !isEnding(items[idx]?.type) && !isEnding(items[idx - 1]?.type);
+  const canMoveDown = (idx) => idx < items.length - 1 && !isEnding(items[idx]?.type) && !isEnding(items[idx + 1]?.type);
 
   const move = (idx, dir) => {
     const j = idx + dir;
     if (j < 0 || j >= items.length) return;
-    if (BLOCK_ENDING_TYPES.includes(items[idx].type) || BLOCK_ENDING_TYPES.includes(items[j].type)) return;
+    if (isEnding(items[idx]?.type) || isEnding(items[j]?.type)) return;
     const next = [...items];
     [next[idx], next[j]] = [next[j], next[idx]];
     setItems(next);
@@ -7548,29 +7776,179 @@ function MessageBlockFields({ data, updateFields, platform, renderItemEditor }) 
       <label>Elements</label>
       <span className="fb-hint">Sent one after another, in this order. Buttons can sit on any text or image. Quick replies and lists wait for the contact&apos;s reply, so they always come last.</span>
       {items.map((item, idx) => {
-        const Icon = NODE_ICONS[item.type];
+        const Icon = NODE_ICONS[item.type] || MessageSquare;
         const open = openId === item.id;
-        const ending = BLOCK_ENDING_TYPES.includes(item.type);
-        const iconBtn = { background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', display: 'flex', padding: 2 };
+        const ending = isEnding(item.type);
+        const iconBtn = { background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' };
+        const canUp = canMoveUp(idx);
+        const canDown = canMoveDown(idx);
+
         return (
-          <div key={item.id} style={{ border: '1px solid #e2e8f0', borderRadius: 10, marginTop: 8, background: '#ffffff' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', cursor: 'pointer' }} onClick={() => setOpenId(open ? null : item.id)}>
+          <div
+            key={item.id}
+            id={`block-item-field-${item.id}`}
+            style={{
+              border: open ? `1.5px solid ${NODE_COLORS[item.type] || '#4f46e5'}` : '1px solid #e2e8f0',
+              borderRadius: 10,
+              marginTop: 8,
+              background: '#ffffff',
+              boxSizing: 'border-box',
+              maxWidth: '100%',
+              overflowX: 'hidden',
+              transition: 'border-color 0.15s ease',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '8px 10px',
+                cursor: 'pointer',
+                background: open ? '#f8fafc' : '#ffffff',
+                borderBottom: open ? '1px solid #f1f5f9' : 'none',
+              }}
+              onClick={() => {
+                const nextId = open ? null : item.id;
+                setOpenId(nextId);
+                updateFields({ _selectedItemId: nextId, _selectTimestamp: Date.now() });
+              }}
+            >
               <Icon size={14} style={{ color: NODE_COLORS[item.type], flexShrink: 0 }} />
-              <span style={{ flex: 1, fontSize: 12, fontWeight: 700, color: '#1e293b' }}>{BLOCK_ITEM_LABELS[item.type]}</span>
+              <span style={{ flex: 1, fontSize: 12, fontWeight: 700, color: '#1e293b' }}>{BLOCK_ITEM_LABELS[item.type] || item.type}</span>
               {!ending && (
-                <>
-                  <button type="button" title="Move up" style={iconBtn} onClick={(e) => { e.stopPropagation(); move(idx, -1); }}><ChevronRight size={14} style={{ transform: 'rotate(-90deg)' }} /></button>
-                  <button type="button" title="Move down" style={iconBtn} onClick={(e) => { e.stopPropagation(); move(idx, 1); }}><ChevronRight size={14} style={{ transform: 'rotate(90deg)' }} /></button>
-                </>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 2 }} onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    title={canUp ? 'Move element up' : 'Already at top'}
+                    disabled={!canUp}
+                    style={{
+                      ...iconBtn,
+                      opacity: canUp ? 0.85 : 0.25,
+                      cursor: canUp ? 'pointer' : 'not-allowed',
+                      padding: '3px 4px',
+                      borderRadius: 4,
+                    }}
+                    onClick={() => move(idx, -1)}
+                  >
+                    <ArrowUp size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    title={canDown ? 'Move element down' : 'Cannot move lower'}
+                    disabled={!canDown}
+                    style={{
+                      ...iconBtn,
+                      opacity: canDown ? 0.85 : 0.25,
+                      cursor: canDown ? 'pointer' : 'not-allowed',
+                      padding: '3px 4px',
+                      borderRadius: 4,
+                    }}
+                    onClick={() => move(idx, 1)}
+                  >
+                    <ArrowDown size={13} />
+                  </button>
+                </div>
               )}
-              <button type="button" title="Remove element" style={iconBtn} onClick={(e) => { e.stopPropagation(); setItems(items.filter((x) => x.id !== item.id)); }}><Trash2 size={14} /></button>
+              <button
+                type="button"
+                title="Remove element"
+                style={{ ...iconBtn, padding: '3px 4px', borderRadius: 4 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setItems(items.filter((x) => x.id !== item.id));
+                }}
+              >
+                <Trash2 size={13} />
+              </button>
             </div>
             {open && (
-              <div style={{ padding: '4px 10px 10px', borderTop: '1px solid #f1f5f9' }}>
+              <div style={{ padding: '8px 10px 10px', boxSizing: 'border-box', maxWidth: '100%', overflowX: 'hidden' }}>
                 {item.type === 'quickReplies' && (
-                  <span className="fb-hint" style={{ display: 'block', margin: '6px 0' }}>Leave the message empty to attach these replies to the text just above.</span>
+                  <span className="fb-hint" style={{ display: 'block', margin: '4px 0 8px' }}>Leave the message empty to attach these replies to the text just above.</span>
                 )}
                 {renderItemEditor(item, (d) => setItems(items.map((x) => (x.id === item.id ? { ...x, data: d } : x))))}
+
+                {/* In-editor reorder & remove toolbar */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginTop: 12,
+                    paddingTop: 10,
+                    borderTop: '1px dashed #e2e8f0',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.3 }}>Position:</span>
+                    <button
+                      type="button"
+                      disabled={!canUp}
+                      onClick={(e) => { e.stopPropagation(); move(idx, -1); }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        padding: '4px 8px',
+                        borderRadius: 6,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        border: '1px solid #cbd5e1',
+                        background: canUp ? '#ffffff' : '#f8fafc',
+                        color: canUp ? '#334155' : '#94a3b8',
+                        cursor: canUp ? 'pointer' : 'not-allowed',
+                      }}
+                      title={canUp ? 'Move this element up' : 'Already at top'}
+                    >
+                      <ArrowUp size={12} /> Move Up
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!canDown}
+                      onClick={(e) => { e.stopPropagation(); move(idx, 1); }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        padding: '4px 8px',
+                        borderRadius: 6,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        border: '1px solid #cbd5e1',
+                        background: canDown ? '#ffffff' : '#f8fafc',
+                        color: canDown ? '#334155' : '#94a3b8',
+                        cursor: canDown ? 'pointer' : 'not-allowed',
+                      }}
+                      title={canDown ? 'Move this element down' : 'Cannot move lower'}
+                    >
+                      <ArrowDown size={12} /> Move Down
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setItems(items.filter((x) => x.id !== item.id));
+                    }}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '4px 8px',
+                      borderRadius: 6,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      border: '1px solid #fee2e2',
+                      background: '#fff5f5',
+                      color: '#ef4444',
+                      cursor: 'pointer',
+                    }}
+                    title="Remove this element from block"
+                  >
+                    <Trash2 size={12} /> Remove
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -7798,9 +8176,19 @@ function DropdownSelect({ options, value, onChange, placeholder = 'Select...', m
           {chosen.length === 0 ? (
             <span style={{ color: '#94a3b8' }}>{placeholder}</span>
           ) : multi ? chosen.map((o) => (
-            <span key={o.value} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px', borderRadius: 999, background: '#f1f5f9', border: '1px solid #e2e8f0', fontSize: 11.5, fontWeight: 600 }}>
+            <span key={o.value} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 4px 1px 8px', borderRadius: 999, background: '#f1f5f9', border: '1px solid #e2e8f0', fontSize: 11.5, fontWeight: 600 }}>
               {o.dot && <span style={{ width: 7, height: 7, borderRadius: '50%', background: o.dot }} />}
               {o.label}
+              <span
+                role="button"
+                title={`Remove ${o.label}`}
+                onClick={(e) => { e.stopPropagation(); onChange(selected.filter((x) => x !== o.value)); }}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, borderRadius: '50%', color: '#94a3b8', cursor: 'pointer' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = '#e2e8f0'; e.currentTarget.style.color = '#475569'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#94a3b8'; }}
+              >
+                <X size={10} />
+              </span>
             </span>
           )) : (
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{chosen[0].label}</span>
@@ -7928,7 +8316,10 @@ function DelaySettings({ value, onChange }) {
    as the Delay element inside a Message Block. Renders nothing when no delay is set. */
 function DelayPill({ data, style, always = false }) {
   const d = data?.delay;
-  const label = formatDelayBadge(d) ? formatDelayLong(d.hours, d.minutes, d.seconds) : (always ? formatDelayLong(0, 0, data?.seconds) : null);
+  const total = d && typeof d === 'object'
+    ? (Number(d.hours) || 0) * 3600 + (Number(d.minutes) || 0) * 60 + (Number(d.seconds) || 0)
+    : (Number(data?.seconds) || 0);
+  const label = total > 0 ? formatDelayLong(0, 0, total) : (always ? '0 sec' : null);
   if (!label) return null;
   return (
     <div
@@ -7940,6 +8331,11 @@ function DelayPill({ data, style, always = false }) {
       }}
     >
       <Clock size={14} style={{ color: NODE_COLORS.delay }} /> Delay {label}
+      {data?.showTyping && (
+        <span className="fb-node-typing-badge" title="Shows typing indicator during delay" style={{ marginLeft: 2 }}>
+          <span className="dot" /><span className="dot" /><span className="dot" />
+        </span>
+      )}
     </div>
   );
 }
@@ -7952,16 +8348,6 @@ function formatDelayLong(hours = 0, minutes = 0, seconds = 0) {
   const m = Math.floor((total % 3600) / 60);
   const sec = total % 60;
   return [h && `${h} hr`, m && `${m} min`, sec && `${sec} sec`].filter(Boolean).join(' ');
-}
-
-function formatDelayBadge(delay) {
-  if (!delay || typeof delay !== 'object') return null;
-  const { hours = 0, minutes = 0, seconds = 0 } = delay;
-  const parts = [];
-  if (hours) parts.push(`${hours}h`);
-  if (minutes) parts.push(`${minutes}m`);
-  if (seconds) parts.push(`${seconds}s`);
-  return parts.length ? parts.join(' ') : null;
 }
 
 /* ── User Input Flow: Start node settings ───────────────────────────
@@ -8160,7 +8546,7 @@ function UserInputFlowStartProperties({ data, updateField, platform, flowName, o
   );
 }
 
-function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFields = [], onCustomFieldCreated, userInputFlows = [], onUserInputFlowCreated, isUserInputFlow = false, sequences = [], onSequenceCreated, isSequence = false, isBroadcastFlow = false, isChatWidgetFlow = false, linkedWidget = null, widgetAppearanceForm = null, onWidgetAppearanceChange = null, onAddReplyNode = null, flows = [], httpApiCampaigns = [], currentFlowId = null, flowName, onFlowNameChange, onDrillIn, onAttachSequence, attachedSequenceNode, onSelectSequenceNode, embedded = false }) {
+function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFields = [], onCustomFieldCreated, userInputFlows = [], onUserInputFlowCreated, isUserInputFlow = false, sequences = [], onSequenceCreated, isSequence = false, isBroadcastFlow = false, isChatWidgetFlow = false, linkedWidget = null, widgetAppearanceForm = null, onWidgetAppearanceChange = null, onAddReplyNode = null, flows = [], httpApiCampaigns = [], currentFlowId = null, flowName, onFlowNameChange, onDrillIn, embedded = false }) {
   if (!node) return null;
 
   const { data, type } = node;
@@ -8265,9 +8651,6 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
             sequences={sequences}
             onSequenceCreated={(seq) => onSequenceCreated?.(seq)}
             platform={platform}
-            onAttachSequence={(sequenceId, sequenceName) => onAttachSequence?.(node.id, sequenceId, sequenceName)}
-            attachedSequenceNode={attachedSequenceNode}
-            onSelectSequenceNode={onSelectSequenceNode}
           />
         );
 
@@ -8808,37 +9191,70 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
               <div style={{ fontSize: '11px', color: '#475569', marginBottom: 8, lineHeight: 1.45, background: '#f8fafc', border: '1px solid #e2e8f0', padding: '8px 10px', borderRadius: '8px' }}>
                 <strong>📌 Meta Platform Rule:</strong> Quick replies pause and wait for the user to tap an option. Immediate automatic follow-up replies are prohibited because Meta instantly dismisses quick replies if another message is sent. Connect your responses directly to each individual option handle on the right.
               </div>
-              {(data.replies || []).map((reply, i) => (
-                <div key={i} className="fb-list-item">
-                  <div style={{
-                    width: 22, height: 22, borderRadius: 6, background: '#f1f5f9',
-                    color: '#0f172a', border: '1px solid #e2e8f0', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
-                  }}>
-                    {i + 1}
-                  </div>
-                  <input
-                    value={reply}
-                    onChange={(e) => {
-                      const updated = [...(data.replies || [])];
-                      updated[i] = e.target.value;
-                      updateField('replies', updated);
-                    }}
-                    placeholder={`Reply ${i + 1}`}
-                  />
-                  <button
-                    className="fb-list-item-del"
-                    onClick={() => {
-                      const updated = (data.replies || []).filter((_, idx) => idx !== i);
-                      updateField('replies', updated);
-                    }}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              ))}
+              {(() => {
+                const kindOptions = getQuickReplyKindOptions(platform);
+                return (data.replies || []).map((reply, i) => {
+                  const qr = normalizeQuickReply(reply);
+                  const kind = qr.kind || 'text';
+                  // Meta auto-generates the chip for these two — our own title
+                  // is never sent and never shown, per its own docs.
+                  const hidesTitle = kind === 'user_phone_number' || kind === 'user_email';
+                  const updateReply = (patch) => {
+                    const updated = [...(data.replies || [])];
+                    updated[i] = { ...qr, ...patch };
+                    updateField('replies', updated);
+                  };
+                  return (
+                    <div key={i} className="fb-list-item" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{
+                          width: 22, height: 22, borderRadius: 6, background: '#f1f5f9',
+                          color: '#0f172a', border: '1px solid #e2e8f0', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                        }}>
+                          {i + 1}
+                        </div>
+                        {hidesTitle ? (
+                          <div style={{ flex: 1, fontSize: 12, fontWeight: 600, color: '#0f172a', padding: '6px 0' }}>
+                            {QUICK_REPLY_KINDS[kind]?.label}
+                          </div>
+                        ) : (
+                          <input
+                            value={qr.title}
+                            onChange={(e) => updateReply({ title: e.target.value })}
+                            placeholder={`Reply ${i + 1}`}
+                          />
+                        )}
+                        <button
+                          className="fb-list-item-del"
+                          onClick={() => {
+                            const updated = (data.replies || []).filter((_, idx) => idx !== i);
+                            updateField('replies', updated);
+                          }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                      {kindOptions.length > 1 && (
+                        <select
+                          value={kind}
+                          onChange={(e) => updateReply({ kind: e.target.value })}
+                          style={{ fontSize: 11, padding: '5px 8px' }}
+                        >
+                          {kindOptions.map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                      )}
+                      {kind !== 'text' && (
+                        <span className="fb-hint">{QUICK_REPLY_UNROUTABLE_HINT[kind]}</span>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
               <button
                 className="fb-add-btn"
-                onClick={() => updateField('replies', [...(data.replies || []), ''])}
+                onClick={() => updateField('replies', [...(data.replies || []), { title: '', kind: 'text' }])}
               >
                 <Plus size={14} /> Add Reply
               </button>
@@ -9039,6 +9455,7 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
                       background: 'var(--bg-card)', border: '1px solid var(--border, rgba(255,255,255,0.06))',
                       borderRadius: 6, padding: '6px 10px', fontSize: 12,
                       color: 'var(--text-primary)', outline: 'none',
+                      boxSizing: 'border-box',
                     }}
                   />
                   <input
@@ -9054,6 +9471,7 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
                       background: 'var(--bg-card)', border: '1px solid var(--border, rgba(255,255,255,0.06))',
                       borderRadius: 6, padding: '6px 10px', fontSize: 12,
                       color: 'var(--text-primary)', outline: 'none',
+                      boxSizing: 'border-box',
                     }}
                   />
                   <ImageUploadField
@@ -9443,13 +9861,132 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
         );
       }
 
-      case 'delay':
-        // This node's own wait is set via the "Delay before this step"
-        // control every node type shares, shown right below — nothing
-        // node-type-specific to configure here anymore.
+      case 'delay': {
+        const d = data.delay || {};
+        const totalSecs = (Number(d.hours) || 0) * 3600 + (Number(d.minutes) || 0) * 60 + (Number(d.seconds) || 0) || (Number(data.seconds) || 0);
+        const hours = d.hours !== undefined ? d.hours : Math.floor(totalSecs / 3600);
+        const minutes = d.minutes !== undefined ? d.minutes : Math.floor((totalSecs % 3600) / 60);
+        const seconds = d.seconds !== undefined ? d.seconds : (totalSecs % 60);
+
+        const updateTime = (h, m, s) => {
+          const newH = Math.max(0, parseInt(h, 10) || 0);
+          const newM = Math.max(0, parseInt(m, 10) || 0);
+          const newS = Math.max(0, parseInt(s, 10) || 0);
+          const total = newH * 3600 + newM * 60 + newS;
+          updateFields({
+            delay: { hours: newH, minutes: newM, seconds: newS },
+            seconds: total,
+          });
+        };
+
+        const presets = [
+          { label: '3s', h: 0, m: 0, s: 3 },
+          { label: '5s', h: 0, m: 0, s: 5 },
+          { label: '10s', h: 0, m: 0, s: 10 },
+          { label: '30s', h: 0, m: 0, s: 30 },
+          { label: '1m', h: 0, m: 1, s: 0 },
+          { label: '5m', h: 0, m: 5, s: 0 },
+          { label: '15m', h: 0, m: 15, s: 0 },
+          { label: '1h', h: 1, m: 0, s: 0 },
+        ];
+
         return (
-          <span className="fb-hint">Set how long to wait in "Delay before this step" below.</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div className="fb-field" style={{ margin: 0 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, fontSize: 12, fontWeight: 700, color: '#1e293b' }}>
+                <Clock size={14} style={{ color: NODE_COLORS.delay }} />
+                Delay Duration
+              </label>
+
+              {/* Quick Preset Buttons */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                {presets.map((p) => {
+                  const pTotal = p.h * 3600 + p.m * 60 + p.s;
+                  const isActive = totalSecs === pTotal;
+                  return (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => updateTime(p.h, p.m, p.s)}
+                      style={{
+                        padding: '5px 10px',
+                        borderRadius: 6,
+                        fontSize: 11.5,
+                        fontWeight: 600,
+                        border: isActive ? `1.5px solid ${NODE_COLORS.delay}` : '1px solid #e2e8f0',
+                        background: isActive ? '#fef3c7' : '#f8fafc',
+                        color: isActive ? '#92400e' : '#475569',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Hours / Minutes / Seconds numeric inputs */}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 10.5, color: '#64748b', fontWeight: 600, display: 'block', marginBottom: 3 }}>Hours</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={48}
+                    value={hours}
+                    onChange={(e) => updateTime(e.target.value, minutes, seconds)}
+                    style={{ width: '100%', fontSize: 12, padding: '6px 8px', borderRadius: 6, textAlign: 'center', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 10.5, color: '#64748b', fontWeight: 600, display: 'block', marginBottom: 3 }}>Minutes</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={59}
+                    value={minutes}
+                    onChange={(e) => updateTime(hours, e.target.value, seconds)}
+                    style={{ width: '100%', fontSize: 12, padding: '6px 8px', borderRadius: 6, textAlign: 'center', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 10.5, color: '#64748b', fontWeight: 600, display: 'block', marginBottom: 3 }}>Seconds</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={59}
+                    value={seconds}
+                    onChange={(e) => updateTime(hours, minutes, e.target.value)}
+                    style={{ width: '100%', fontSize: 12, padding: '6px 8px', borderRadius: 6, textAlign: 'center', boxSizing: 'border-box' }}
+                  />
+                </div>
+              </div>
+              <span className="fb-hint" style={{ marginTop: 6, display: 'block' }}>
+                Waits for this amount of time before sending the next element or message.
+              </span>
+            </div>
+
+            {/* Optional typing indicator while waiting */}
+            <div className="fb-field" style={{ margin: 0, borderTop: '1px dashed #e2e8f0', paddingTop: 10 }}>
+              <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: '#334155' }}>
+                  <span className="fb-node-typing-badge"><span className="dot" /><span className="dot" /><span className="dot" /></span>
+                  Show "typing…" during delay
+                </span>
+                <input
+                  type="checkbox"
+                  checked={!!data.showTyping}
+                  onChange={(e) => updateField('showTyping', e.target.checked)}
+                />
+              </label>
+              <span className="fb-hint" style={{ marginTop: 4 }}>
+                Displays native typing bubbles to the subscriber while waiting.
+              </span>
+            </div>
+          </div>
         );
+      }
 
       case 'webhook':
         return (
@@ -10913,6 +11450,32 @@ function FlowBuilderInner() {
           targetHandle: (e.targetHandle === 'default' || e.targetHandle === 'top') ? undefined : e.targetHandle,
         }));
 
+        // One-time upgrade: a flow saved before "Attach Sequence" became a plain
+        // Start-node field (see StartNodeSequenceAttach) still has a real "Start
+        // Sequence" node wired to Start's own dedicated "attach-sequence" handle —
+        // fold that node's sequenceId/Name onto the Start node's new
+        // attachSequenceId/attachSequenceName field and drop the now-redundant
+        // node + edge, so it opens already in the simpler shape. Only touches a
+        // startSequenceAction node that IS that specific branch — one placed by
+        // hand elsewhere in the flow is left alone.
+        const legacyAttachEdge = loadedEdges.find((e) => e.sourceHandle === 'attach-sequence');
+        const legacyAttachNode = legacyAttachEdge
+          ? loadedNodes.find((n) => n.id === legacyAttachEdge.target && n.type === 'startSequenceAction')
+          : null;
+        if (legacyAttachNode) {
+          loadedNodes = loadedNodes
+            .filter((n) => n.id !== legacyAttachNode.id)
+            .map((n) => (n.type === 'start' ? {
+              ...n,
+              data: {
+                ...n.data,
+                attachSequenceId: legacyAttachNode.data?.sequenceId ?? null,
+                attachSequenceName: legacyAttachNode.data?.sequenceName || '',
+              },
+            } : n));
+          loadedEdges = loadedEdges.filter((e) => e !== legacyAttachEdge);
+        }
+
         setNodes(loadedNodes);
         setEdges(loadedEdges);
         setIsLive(flow.is_active === 1 || flow.is_active === true || flow.status === 'active');
@@ -11744,75 +12307,6 @@ function FlowBuilderInner() {
     [nodes, edges, setNodes, setEdges, pushHistory, setSelectedNode]
   );
 
-  // ── Attach Sequence (Start node picker) ──────────────────────────────────
-  // Adds a real "Start Sequence" node as its OWN separate branch off Start —
-  // a second wire from a dedicated "attach-sequence" handle, alongside
-  // (never replacing or splicing into) Start's existing "Then" connection to
-  // the real conversation. The two are genuinely independent: the flow's own
-  // path is completely untouched, and the engine (flowEngine.js's `case
-  // "start"`) fires the enrollment as a side effect without ever making this
-  // node part of the executed conversation path — see the note there for why
-  // a second edge off the SAME handle wouldn't work (this engine resolves
-  // "the next node" as a single pointer, not a true multi-branch walk).
-  const handleAttachSequenceToStart = useCallback(
-    (startNodeId, sequenceId, sequenceName) => {
-      const startNode = nodes.find((n) => n.id === startNodeId);
-      if (!startNode) return;
-
-      const newId = generateNodeId('startSequenceAction');
-      const newNode = {
-        id: newId,
-        type: 'startSequenceAction',
-        // Below the Start node rather than inline to its right — reads as a
-        // branch, not a step in the "Then" conversation path drawn straight
-        // across.
-        position: { x: (startNode.position?.x || 0) + 40, y: (startNode.position?.y || 0) + 200 },
-        sourcePosition: Position.Right,
-        targetPosition: Position.Left,
-        data: { ...DEFAULT_NODE_DATA.startSequenceAction, sequenceId, sequenceName },
-      };
-      const newEdge = {
-        id: `e_${startNodeId}_${newId}_${Date.now()}`,
-        source: startNodeId, sourceHandle: 'attach-sequence', target: newId,
-        type: 'default', animated: false,
-        // Same neutral slate as every other wire on the canvas — no special
-        // color for this connection.
-      };
-
-      const nextNodes = nodes.concat(newNode);
-      const nextEdges = edges.concat(newEdge);
-
-      setNodes(nextNodes);
-      setEdges(nextEdges);
-      setSelectedNode(newNode);
-      pushHistory(nextNodes, nextEdges);
-    },
-    [nodes, edges, setNodes, setEdges, pushHistory, setSelectedNode]
-  );
-
-  // The Start node's "Attach Sequence" UI needs to know whether it already has
-  // a Start Sequence node wired to its dedicated branch handle (to show
-  // "Edit" instead of the picker) — computed once here rather than passing
-  // the whole nodes/edges graph down through PropertiesPanel/StartNodeProperties
-  // for one field.
-  const startAttachedSequenceNode = useMemo(() => {
-    if (isSequence || isUserInputFlow) return null;
-    const startNode = nodes.find((n) => n.type === 'start');
-    if (!startNode) return null;
-    const edge = edges.find((e) => e.source === startNode.id && e.sourceHandle === 'attach-sequence');
-    if (!edge) return null;
-    const nextNode = nodes.find((n) => n.id === edge.target);
-    return nextNode?.type === 'startSequenceAction' ? nextNode : null;
-  }, [nodes, edges, isSequence, isUserInputFlow]);
-
-  const handleSelectSequenceNode = useCallback(
-    (nodeId) => {
-      const target = nodes.find((n) => n.id === nodeId);
-      if (target) setSelectedNode(target);
-    },
-    [nodes, setSelectedNode]
-  );
-
   /* ── Keep selectedNode synced with nodes state ──────────── */
   useEffect(() => {
     if (selectedNode) {
@@ -11872,13 +12366,47 @@ function FlowBuilderInner() {
       onDuplicate: handleDuplicateNode,
       onDelete: handleDeleteNode,
       onSelectNode: (nodeId, action) => {
-        const node = nodes.find((n) => n.id === nodeId);
-        if (!node) return;
         if (action === 'addTrigger') {
+          const node = nodes.find((n) => n.id === nodeId);
+          if (!node) return;
           // Select node and set a temporary flag so properties panel auto-adds a trigger
           setSelectedNode({ ...node, data: { ...node.data, _addTriggerNow: true } });
+        } else if (action && typeof action === 'object' && action.selectItemId) {
+          // Message Block callers (addElement/addButton/addReply) call this
+          // RIGHT AFTER their own onUpdateNodeData(...) in the same handler —
+          // that update is only queued, not yet applied to the `nodes` array
+          // this closure captured at last render. Building a replacement node
+          // from that stale `nodes.find(...)` and setNodes-replacing the node
+          // with it clobbered whatever the item-adding update had just queued
+          // (the new element/button/reply vanished the instant it was added).
+          // The functional updater below reads React's actual latest pending
+          // `nds` instead, so it always builds on top of that update.
+          //
+          // Both updates below are kept as independent, self-contained
+          // functional updaters — no setState call nested inside another's
+          // updater. React 18 StrictMode (this app runs under it, see
+          // main.jsx) intentionally double-invokes updaters in dev to catch
+          // exactly that impurity; an earlier version of this fix called
+          // setSelectedNode from inside the setNodes updater above, which
+          // is why opening an element's settings worked inconsistently —
+          // some elements closed/misbehaved on click and some didn't,
+          // depending on how StrictMode's replay happened to interleave.
+          const patch = { _selectedItemId: action.selectItemId, _selectTimestamp: Date.now() };
+          setNodes((nds) => nds.map((n) => (n.id === nodeId
+            ? { ...n, selected: true, data: { ...n.data, ...patch } }
+            : { ...n, selected: false })));
+          setSelectedNode((prev) => {
+            if (prev?.id === nodeId) {
+              return { ...prev, selected: true, data: { ...prev.data, ...patch } };
+            }
+            // Wasn't already the selected node — nothing else in this handler
+            // touched it, so the outer `nodes` snapshot is accurate for it.
+            const node = nodes.find((n) => n.id === nodeId);
+            return node ? { ...node, selected: true, data: { ...node.data, ...patch } } : prev;
+          });
         } else {
-          setSelectedNode(node);
+          const node = nodes.find((n) => n.id === nodeId);
+          if (node) setSelectedNode(node);
         }
       },
       onUpdateNodeData: handleUpdateNodeData,
@@ -12313,9 +12841,6 @@ function FlowBuilderInner() {
             flowName={flowName}
             onFlowNameChange={setFlowName}
             onDrillIn={drillIntoUif}
-            onAttachSequence={handleAttachSequenceToStart}
-            attachedSequenceNode={startAttachedSequenceNode}
-            onSelectSequenceNode={handleSelectSequenceNode}
           />
         )}
 

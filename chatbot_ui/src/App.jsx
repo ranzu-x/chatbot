@@ -88,6 +88,7 @@ import SocialPostingPage     from './Pages/Publishing/SocialPostingPage';
 import CommentAutomationPage from './Pages/Engagement/CommentAutomationPage';
 import AppointmentList       from './Pages/Appointment/AppointmentList';
 import SlotManager           from './Pages/Appointment/SlotManager';
+import PublicBookingPage     from './Pages/Appointment/PublicBookingPage';
 
 import AppToaster from './Components/Common/AppToaster';
 
@@ -250,6 +251,7 @@ export default function App() {
               <Route path="/pricing"          element={<PricingPage />} />
             </Route>
             <Route path="/payments/pay/:orderId" element={<InChatPaymentCheckoutPage />} />
+            <Route path="/book/:agencyId" element={<PublicBookingPage />} />
             <Route path="/checkout"         element={<GuestCheckoutPage />} />
             <Route path="/checkout/complete" element={<CheckoutCompletePage />} />
 

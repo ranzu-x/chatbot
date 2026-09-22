@@ -97,7 +97,17 @@ function nodeToSendArgs(node, flow, contact) {
     }
     case "quickReplies": {
       const body = replaceVariables(data.message || "", vars, contact);
-      const replies = (data.replies || []).map((r) => (typeof r === "string" ? r : (r.title || r.label || "Option")));
+      // Objects, not bare strings — platformSender.js's Facebook/Instagram
+      // branch reads qr.title/qr.payload/qr.kind, so a plain string here was
+      // silently falling back to a generic "Option N" label on those two
+      // channels (Telegram's branch happened to guard for the string case,
+      // Facebook/Instagram's didn't). kind selects a special, non-free-text
+      // Quick Reply — see platformSender.js for how each is actually sent.
+      const replies = (data.replies || []).map((r) => {
+        const title = typeof r === "string" ? r : (r.title || r.label || "Option");
+        const kind = (typeof r === "object" && r?.kind) || "text";
+        return { title, payload: title, kind };
+      });
       if (!body && !replies.length) return null;
       return { type: "TEXT", bodyText: body, extraFields: replies.length ? { quickReplies: replies } : {} };
     }
