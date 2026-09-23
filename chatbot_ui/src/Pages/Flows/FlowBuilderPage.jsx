@@ -18,14 +18,14 @@ import {
   Video, Music, FileText, Globe, ExternalLink,
   Smartphone, RotateCcw, Undo2, Redo2, ThumbsUp, Sparkles, MoreVertical,
   Copy, ShoppingBag, HelpCircle, Flag, ClipboardList, Workflow, Tag, Timer, Palette, Megaphone, Network, MessagesSquare,
-  ArrowUp, ArrowDown, MapPin, Contact
+  ArrowUp, ArrowDown, MapPin, Contact, CalendarDays
 } from 'lucide-react';
 import FlowPhonePreview from './FlowPhonePreview';
 import PlatformIcon, { getPlatformMeta } from '../../Components/Common/PlatformIcon';
 import BroadcastStartNodeProperties from '../../Components/Broadcast/BroadcastStartNodeProperties';
 import ChatWidgetStartNodeProperties from '../../Components/Engagement/ChatWidgetStartNodeProperties';
 import { buildDefaultWidgetFlowGraph } from '../../utils/chatWidgetHelpers';
-import { flowAPI, uploadAPI, integrationAPI, customFieldAPI, userInputFlowAPI, sequenceAPI, labelAPI, googleSheetsAPI, channelAPI, httpApiCampaignAPI } from '../../services/api';
+import { flowAPI, uploadAPI, integrationAPI, customFieldAPI, userInputFlowAPI, sequenceAPI, labelAPI, googleSheetsAPI, channelAPI, httpApiCampaignAPI, appointmentCampaignAPI } from '../../services/api';
 import WidgetAppearancePanel from '../../Components/Engagement/WidgetAppearancePanel';
 import Swal from 'sweetalert2';
 
@@ -42,7 +42,7 @@ const PLATFORM_RULES = {
     audio: true,
     file: true,
     buttons: 3,        // WhatsApp Interactive Reply Buttons (max 3)
-    quickReplies: false, // WhatsApp uses buttons, interactive or listMenu
+    quickReplies: 3,   // WhatsApp Interactive Reply Buttons (max 3 buttons, max 20 chars; 4-10 adapt to list)
     listMenu: 10,      // WhatsApp Interactive List Message (max 10 items)
     card: false,
     carousel: false,
@@ -71,6 +71,7 @@ const PLATFORM_RULES = {
     payment: true,     // WhatsApp In-Chat Payment / Catalog Orders
     handoff: true,
     end: true,
+    appointment: true, // WhatsApp Appointment Booking (interactive lists + buttons)
   },
   FACEBOOK: {
     text: true,
@@ -291,10 +292,9 @@ const PLATFORM_RULES = {
 // None of these four are reliably routable to a specific canvas edge the way
 // a normal text quick reply is (see QUICK_REPLY_UNROUTABLE_HINT below) — the
 // shared value arrives as the visitor's next plain message/contact/location,
-// not a tap our engine can match back to one specific option. WhatsApp has no
-// quick-reply concept at all (PLATFORM_RULES already reflects that), and
-// TikTok's Send API has no button/quick-reply capability at all (see the
-// TikTok comment above), so neither platform gets any kind here.
+// not a tap our engine can match back to one specific option. WhatsApp uses
+// native Interactive Reply Buttons (max 3 buttons, max 20 chars; 4-10 adapt to list),
+// and TikTok's Send API has no button/quick-reply capability at all, so neither gets a special profile kind here.
 const QUICK_REPLY_KINDS = {
   text: { label: 'Text' },
   user_phone_number: { label: 'Ask for Phone Number', icon: Phone, platforms: ['FACEBOOK', 'INSTAGRAM'] },
@@ -314,7 +314,9 @@ function getQuickReplyKindOptions(platform) {
     .map(([value, meta]) => ({ value, label: meta.label }));
 }
 function normalizeQuickReply(r) {
-  return typeof r === 'string' ? { title: r, kind: 'text' } : { title: '', kind: 'text', ...(r || {}) };
+  return typeof r === 'string'
+    ? { title: r, kind: 'text', action: 'flow', flowId: null, flowName: '' }
+    : { title: '', kind: 'text', action: 'flow', flowId: null, flowName: '', ...(r || {}) };
 }
 
 const NODE_COLORS = {
@@ -348,6 +350,7 @@ const NODE_COLORS = {
   actions: '#d9480f',
   startAutomation: '#4d7c0f',
   messageBlock: '#0284c7',
+  appointment: '#0d9488',   // Teal — healthcare/calendar feel
 };
 
 // Dynamic light-color styling themes per connected channel for the main Save button
@@ -450,6 +453,7 @@ const NODE_ICONS = {
   actions: Zap,
   startAutomation: Workflow,
   messageBlock: MessagesSquare,
+  appointment: CalendarDays,
 };
 
 const PALETTE_CATEGORIES = [
@@ -495,6 +499,12 @@ const PALETTE_CATEGORIES = [
       { type: 'stopSequenceAction', label: 'Stop Sequence' },
       { type: 'handoff', label: 'Agent Handoff' },
       { type: 'end', label: 'End Flow' },
+    ],
+  },
+  {
+    label: 'Booking',
+    items: [
+      { type: 'appointment', label: 'Appointment Booking' },
     ],
   },
 ];
@@ -589,6 +599,7 @@ const DEFAULT_NODE_DATA = {
   actions: { label: 'Actions', actions: [] },
   startAutomation: { label: 'Start Automation', flowId: null, flowName: '' },
   messageBlock: { label: 'Send Message', items: [{ id: 'it_first', type: 'buttons', data: { label: 'Text Message', message: '', buttons: [] } }] },
+  appointment:  { label: 'Appointment Booking', campaignId: null, campaignName: '' },
   // Sequence-only delay step, between two content nodes — see SEQUENCE_PALETTE.
   wait: { label: 'Wait', preset: '5m', customValue: '', customUnit: 'minutes' },
   // The following two only ever appear inside a User Input Flow's own mini-builder:
@@ -618,7 +629,7 @@ const builderStyles = `
     height: 100vh;
     display: flex;
     flex-direction: column;
-    background: #f0f2f7;
+    background: var(--bg-base);
     overflow: hidden;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   }
@@ -630,8 +641,8 @@ const builderStyles = `
     align-items: center;
     gap: 12px;
     padding: 0 16px;
-    background: #ffffff;
-    border-bottom: 1px solid #e4e4f0;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
     z-index: 20;
     flex-shrink: 0;
     box-shadow: 0 1px 4px rgba(0,0,0,0.06);
@@ -643,9 +654,9 @@ const builderStyles = `
     align-items: center;
     gap: 8px;
     border-radius: 8px;
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
-    color: #334155;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
@@ -653,14 +664,14 @@ const builderStyles = `
     flex-shrink: 0;
   }
   .fb-toolbar-back:hover {
-    background: #f1f5f9;
-    color: #0f172a;
-    border-color: #cbd5e1;
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--border-light);
   }
   .fb-toolbar-name {
     font-size: 16px;
     font-weight: 600;
-    color: #1a1a2e;
+    color: var(--text-primary);
     background: transparent;
     border: 1px solid transparent;
     border-radius: 6px;
@@ -672,8 +683,8 @@ const builderStyles = `
   }
   .fb-toolbar-name:hover,
   .fb-toolbar-name:focus {
-    border-color: #e4e4f0;
-    background: #f8f8fc;
+    border-color: var(--border);
+    background: var(--bg-input);
   }
   .fb-platform-badge {
     padding: 4px 12px;
@@ -682,9 +693,9 @@ const builderStyles = `
     font-weight: 600;
     letter-spacing: 0.5px;
     text-transform: uppercase;
-    background: rgba(99, 102, 241, 0.10);
-    color: #6366f1;
-    border: 1px solid rgba(99, 102, 241, 0.20);
+    background: var(--primary-soft);
+    color: var(--primary);
+    border: 1px solid var(--primary-ring);
   }
   .fb-toolbar-spacer { flex: 1; }
   .fb-autosave-indicator {
@@ -692,7 +703,7 @@ const builderStyles = `
     align-items: center;
     gap: 6px;
     font-size: 12px;
-    color: #5c5c80;
+    color: var(--text-secondary);
     opacity: 0;
     transition: opacity 0.4s;
   }
@@ -704,14 +715,14 @@ const builderStyles = `
     padding: 8px 20px;
     border-radius: 8px;
     border: none;
-    background: #6366f1;
+    background: var(--primary);
     color: #fff;
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
   }
-  .fb-save-btn:hover { background: #4f46e5; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(99,102,241,0.3); }
+  .fb-save-btn:hover { background: var(--primary-dark); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(24, 24, 27, 0.25); }
   .fb-save-btn:active { transform: translateY(0); }
   .fb-save-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
   .fb-save-btn .spin { animation: fb-spin 0.8s linear infinite; }
@@ -735,22 +746,22 @@ const builderStyles = `
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
-    background: #ffffff;
-    border-right: 1px solid #e4e4f0;
+    background: var(--bg-surface);
+    border-right: 1px solid var(--border);
     z-index: 10;
     overflow-y: auto;
     box-shadow: 2px 0 8px rgba(0,0,0,0.04);
   }
   .fb-palette::-webkit-scrollbar { width: 4px; }
-  .fb-palette::-webkit-scrollbar-thumb { background: #d0d0e8; border-radius: 4px; }
+  .fb-palette::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 4px; }
   .fb-palette-header {
     padding: 14px 16px 8px;
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.4px;
-    color: #94a3b8;
-    border-bottom: 1px solid #f1f5f9;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
     margin-bottom: 4px;
   }
   .fb-palette-category {
@@ -759,7 +770,7 @@ const builderStyles = `
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.4px;
-    color: #94a3b8;
+    color: var(--text-muted);
   }
   .fb-palette-item {
     display: flex;
@@ -771,12 +782,12 @@ const builderStyles = `
     cursor: grab;
     transition: background 0.12s;
     user-select: none;
-    color: #1e293b;
+    color: var(--text-primary);
     font-size: 12.5px;
     font-weight: 500;
     line-height: 1.3;
   }
-  .fb-palette-item:hover { background: #f1f5f9; }
+  .fb-palette-item:hover { background: var(--bg-hover); }
   .fb-palette-item:active { cursor: grabbing; }
   .fb-palette-item-icon {
     width: 16px; height: 16px;
@@ -787,7 +798,7 @@ const builderStyles = `
   }
   .fb-palette-item-grip {
     margin-left: auto;
-    color: #cbd5e1;
+    color: var(--border-light);
     opacity: 0;
     display: flex;
     transition: opacity 0.12s;
@@ -800,15 +811,15 @@ const builderStyles = `
     position: relative;
   }
   .fb-canvas .react-flow__node { cursor: pointer; }
-  .fb-canvas .react-flow__minimap { border-radius: 8px; overflow: hidden; border: 1px solid #e4e4f0; }
-  .fb-canvas .react-flow__controls { border-radius: 8px; overflow: hidden; border: 1px solid #e4e4f0; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+  .fb-canvas .react-flow__minimap { border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+  .fb-canvas .react-flow__controls { border-radius: 8px; overflow: hidden; border: 1px solid var(--border); box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
   .fb-canvas .react-flow__controls button {
-    background: #ffffff;
-    color: #1a1a2e;
-    border-color: #e4e4f0;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border);
   }
   .fb-canvas .react-flow__controls button:hover {
-    background: #f0f0fa;
+    background: var(--bg-hover);
   }
 
   /* ── Properties Panel (Right Modal / Sidebar) ─────────────── */
@@ -816,8 +827,8 @@ const builderStyles = `
     width: 380px;
     max-width: min(420px, 90vw);
     flex-shrink: 0;
-    background: #ffffff;
-    border-left: 1.5px solid #e2e8f0;
+    background: var(--bg-surface);
+    border-left: 1.5px solid var(--border);
     z-index: 10;
     display: flex;
     flex-direction: column;
@@ -832,21 +843,21 @@ const builderStyles = `
     to { transform: translateX(0); opacity: 1; }
   }
   .fb-props::-webkit-scrollbar { width: 5px; }
-  .fb-props::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+  .fb-props::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 4px; }
   .fb-props-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 14px 18px;
-    border-bottom: 1px solid #e2e8f0;
-    background: #ffffff;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-surface);
     box-sizing: border-box;
   }
   .fb-props-header h3 {
     margin: 0;
     font-size: 13.5px;
     font-weight: 600;
-    color: #0f172a;
+    color: var(--text-primary);
     display: flex;
     align-items: center;
     gap: 10px;
@@ -855,20 +866,20 @@ const builderStyles = `
     width: 28px; height: 28px;
     display: flex; align-items: center; justify-content: center;
     border-radius: 8px;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    color: #64748b;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-tertiary);
     cursor: pointer;
     transition: all 0.15s;
     flex-shrink: 0;
   }
-  .fb-props-close:hover { background: #f1f5f9; border-color: #cbd5e1; color: #0f172a; }
+  .fb-props-close:hover { background: var(--bg-hover); border-color: var(--border-light); color: var(--text-primary); }
   .fb-props-body {
     padding: 16px;
     display: flex;
     flex-direction: column;
     gap: 14px;
-    background: #ffffff;
+    background: var(--bg-surface);
     width: 100%;
     max-width: 100%;
     overflow-x: hidden;
@@ -896,17 +907,17 @@ const builderStyles = `
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.6px;
-    color: #475569;
+    color: var(--text-secondary);
   }
   .fb-field input,
   .fb-field textarea,
   .fb-field select {
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
     border-radius: 10px;
     padding: 9px 12px;
     font-size: 12.5px;
-    color: #0f172a;
+    color: var(--text-primary);
     outline: none;
     transition: all 0.15s;
     font-family: inherit;
@@ -918,12 +929,12 @@ const builderStyles = `
   .fb-field input:focus,
   .fb-field textarea:focus,
   .fb-field select:focus {
-    border-color: #0f172a;
-    box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.08);
-    background: #ffffff;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-ring);
+    background: var(--bg-surface);
   }
   .fb-field textarea { min-height: 80px; }
-  .fb-hint { font-size: 11px; color: #94a3b8; line-height: 1.4; }
+  .fb-hint { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
   .fb-list-item {
     display: flex;
     align-items: center;
@@ -935,9 +946,9 @@ const builderStyles = `
     width: 28px; height: 28px;
     display: flex; align-items: center; justify-content: center;
     border-radius: 8px;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    color: #94a3b8;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
     cursor: pointer;
     transition: all 0.15s;
     flex-shrink: 0;
@@ -950,15 +961,15 @@ const builderStyles = `
     gap: 6px;
     padding: 8px 14px;
     border-radius: 8px;
-    border: 1.5px dashed #cbd5e1;
-    background: #ffffff;
-    color: #0f172a;
+    border: 1.5px dashed var(--border-light);
+    background: var(--bg-surface);
+    color: var(--text-primary);
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
   }
-  .fb-add-btn:hover { background: #f8fafc; border-color: #94a3b8; }
+  .fb-add-btn:hover { background: var(--bg-input); border-color: var(--text-muted); }
   .fb-done-btn {
     display: flex;
     align-items: center;
@@ -966,8 +977,8 @@ const builderStyles = `
     gap: 8px;
     padding: 10px;
     border-radius: 8px;
-    border: 1px solid #0f172a;
-    background: #0f172a;
+    border: 1px solid var(--primary);
+    background: var(--primary);
     color: #ffffff;
     font-size: 12.5px;
     font-weight: 600;
@@ -976,7 +987,7 @@ const builderStyles = `
     margin-top: 4px;
     box-shadow: 0 1px 2px rgba(0,0,0,0.05);
   }
-  .fb-done-btn:hover { background: #1e293b; border-color: #1e293b; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15); }
+  .fb-done-btn:hover { background: var(--primary-dark); border-color: var(--primary-dark); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(24, 24, 27, 0.2); }
   .fb-delete-node-btn {
     display: flex;
     align-items: center;
@@ -985,7 +996,7 @@ const builderStyles = `
     padding: 9px;
     border-radius: 8px;
     border: 1px solid #fee2e2;
-    background: #ffffff;
+    background: var(--bg-surface);
     color: #dc2626;
     font-size: 12px;
     font-weight: 600;
@@ -1002,11 +1013,11 @@ const builderStyles = `
     display: flex;
     align-items: center;
     gap: 4px;
-    background: #ffffff;
+    background: var(--bg-surface);
     padding: 3px 6px;
     border-radius: 8px;
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.06);
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--border);
     z-index: 60;
     opacity: 0;
     transform: translateY(4px);
@@ -1042,14 +1053,14 @@ const builderStyles = `
     padding: 0;
   }
   .fb-node-duplicate-btn {
-    color: #475569;
+    color: var(--text-secondary);
   }
   .fb-node-duplicate-btn:hover {
-    background: #f1f5f9;
-    color: #0f172a;
+    background: var(--bg-hover);
+    color: var(--text-primary);
   }
   .fb-node-delete-btn {
-    color: #ef4444;
+    color: var(--danger);
   }
   .fb-node-delete-btn:hover {
     background: #fef2f2;
@@ -1062,8 +1073,8 @@ const builderStyles = `
     min-width: 270px;
     max-width: 270px;
     border-radius: 16px;
-    background: #ffffff;
-    border: 1.5px solid #e4e4f0;
+    background: var(--bg-surface);
+    border: 1.5px solid var(--border);
     box-shadow: 0 2px 12px rgba(0,0,0,0.07), 0 1px 4px rgba(0,0,0,0.04);
     overflow: visible;
     transition: box-shadow 0.2s, border-color 0.2s;
@@ -1071,11 +1082,11 @@ const builderStyles = `
   }
   .fb-node:hover {
     box-shadow: 0 6px 24px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.06);
-    border-color: #c4c4e0;
+    border-color: var(--border-light);
   }
   .fb-node.selected {
-    border-color: #6366f1;
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15), 0 6px 24px rgba(0,0,0,0.10);
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(24, 24, 27, 0.14), 0 6px 24px rgba(0,0,0,0.10);
   }
   .fb-node.has-error,
   .fb-node-condition.has-error {
@@ -1096,9 +1107,9 @@ const builderStyles = `
   .fb-node-body {
     padding: 8px 12px 10px;
     font-size: 12px;
-    color: #5c5c80;
+    color: var(--text-secondary);
     line-height: 1.5;
-    background: #ffffff;
+    background: var(--bg-surface);
     border-radius: 0 0 10px 10px;
   }
   .fb-node-body-preview {
@@ -1108,7 +1119,7 @@ const builderStyles = `
     -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
     word-break: break-word;
-    color: #5c5c80;
+    color: var(--text-secondary);
   }
   .fb-node-warning {
     position: absolute;
@@ -1135,10 +1146,10 @@ const builderStyles = `
     justify-content: space-between;
     padding: 4px 8px;
     border-radius: 6px;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
     font-size: 11px;
-    color: #334155;
+    color: var(--text-secondary);
     font-weight: 500;
     position: relative;
   }
@@ -1151,10 +1162,10 @@ const builderStyles = `
   .fb-node-reply-chip {
     padding: 3px 8px;
     border-radius: 14px;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
     font-size: 10px;
-    color: #334155;
+    color: var(--text-secondary);
     font-weight: 500;
   }
 
@@ -1163,8 +1174,8 @@ const builderStyles = `
     min-width: 270px;
     max-width: 270px;
     border-radius: 16px;
-    background: #ffffff;
-    border: 1.5px solid #e4e4f0;
+    background: var(--bg-surface);
+    border: 1.5px solid var(--border);
     box-shadow: 0 2px 12px rgba(0,0,0,0.07);
     position: relative;
     overflow: visible;
@@ -1174,19 +1185,19 @@ const builderStyles = `
     box-shadow: 0 6px 24px rgba(0,0,0,0.10);
   }
   .fb-node-condition.selected {
-    border-color: #6366f1;
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15), 0 6px 24px rgba(0,0,0,0.10);
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(24, 24, 27, 0.14), 0 6px 24px rgba(0,0,0,0.10);
   }
 
   /* ── React Flow Handle overrides (ManyChat-exact design) ───── */
   .react-flow__handle {
     width: 13px !important;
     height: 13px !important;
-    background: #64748b !important;
+    background: var(--text-tertiary) !important;
     border: 2px solid #ffffff !important;
     border-radius: 50% !important;
     transition: all 0.15s ease !important;
-    box-shadow: 0 0 0 1px #94a3b8, 0 2px 5px rgba(0,0,0,0.12) !important;
+    box-shadow: 0 0 0 1px var(--text-muted), 0 2px 5px rgba(0,0,0,0.12) !important;
     cursor: pointer !important;
     z-index: 10 !important;
   }
@@ -1196,10 +1207,10 @@ const builderStyles = `
      around only in case a future handle type is added without its own
      explicit hover treatment. */
   .react-flow__handle:hover:not(.next-step-handle):not(.btn-handle):not(.target-handle) {
-    background: #0f172a !important;
+    background: var(--primary) !important;
     border-color: #ffffff !important;
     transform: scale(1.25) !important;
-    box-shadow: 0 0 0 2px #6366f1, 0 3px 8px rgba(0,0,0,0.2) !important;
+    box-shadow: 0 0 0 2px var(--primary), 0 3px 8px rgba(0,0,0,0.2) !important;
   }
   .react-flow__handle-top { top: -6px !important; }
   .react-flow__handle-bottom { bottom: -6px !important; }
@@ -1254,8 +1265,8 @@ const builderStyles = `
   .react-flow__handle[id="no"] {
     width: 13px !important;
     height: 13px !important;
-    background: #ffffff !important;
-    border: 2px solid #94a3b8 !important;
+    background: var(--bg-surface) !important;
+    border: 2px solid var(--text-muted) !important;
     border-radius: 50% !important;
     box-shadow: none !important;
     cursor: pointer !important;
@@ -1270,9 +1281,9 @@ const builderStyles = `
   .react-flow__handle[id="next"].connected,
   .react-flow__handle[id="yes"].connected,
   .react-flow__handle[id="no"].connected {
-    background: #64748b !important;
+    background: var(--text-tertiary) !important;
     border: 2px solid #ffffff !important;
-    box-shadow: 0 0 0 1px #94a3b8 !important;
+    box-shadow: 0 0 0 1px var(--text-muted) !important;
   }
   /* No hover animation on these — hovering looks identical to not hovering,
      for both the blank and filled state. Deliberately NOT declaring
@@ -1293,8 +1304,8 @@ const builderStyles = `
   .react-flow__handle[id="next"]:hover,
   .react-flow__handle[id="yes"]:hover,
   .react-flow__handle[id="no"]:hover {
-    background: #ffffff !important;
-    border: 2px solid #94a3b8 !important;
+    background: var(--bg-surface) !important;
+    border: 2px solid var(--text-muted) !important;
     box-shadow: none !important;
   }
   .react-flow__handle.next-step-handle.connected:hover,
@@ -1307,9 +1318,9 @@ const builderStyles = `
   .react-flow__handle[id="next"].connected:hover,
   .react-flow__handle[id="yes"].connected:hover,
   .react-flow__handle[id="no"].connected:hover {
-    background: #64748b !important;
+    background: var(--text-tertiary) !important;
     border: 2px solid #ffffff !important;
-    box-shadow: 0 0 0 1px #94a3b8 !important;
+    box-shadow: 0 0 0 1px var(--text-muted) !important;
   }
 
   /* Target connector on node left side (discreet circle matching card border,
@@ -1320,9 +1331,9 @@ const builderStyles = `
   .react-flow__handle[type="target"] {
     width: 9px !important;
     height: 9px !important;
-    background: #64748b !important;
+    background: var(--text-tertiary) !important;
     border: 2px solid #ffffff !important;
-    box-shadow: 0 0 0 1px #cbd5e1 !important;
+    box-shadow: 0 0 0 1px var(--border-light) !important;
     left: 3px !important;
   }
   /* No hover animation here either — restates the same resting look above,
@@ -1331,9 +1342,9 @@ const builderStyles = `
      to "to"). */
   .react-flow__handle.target-handle:hover,
   .react-flow__handle[type="target"]:hover {
-    background: #64748b !important;
+    background: var(--text-tertiary) !important;
     border: 2px solid #ffffff !important;
-    box-shadow: 0 0 0 1px #cbd5e1 !important;
+    box-shadow: 0 0 0 1px var(--border-light) !important;
   }
 
   /* Red "remove button" cross on a button chip: hidden until the chip is
@@ -1356,10 +1367,10 @@ const builderStyles = `
     padding: 8px 28px 10px 14px;
     font-size: 11px;
     font-weight: 600;
-    color: #94a3b8;
+    color: var(--text-muted);
     position: relative;
     background: transparent;
-    border-top: 1px dashed #f1f5f9;
+    border-top: 1px dashed var(--border);
   }
 
   /* ── Edge styling (ManyChat smooth slate curved connection lines) */
@@ -1371,18 +1382,18 @@ const builderStyles = `
     z-index: 4 !important;
   }
   .react-flow__edge-path {
-    stroke: #94a3b8 !important;
+    stroke: var(--text-muted) !important;
     stroke-width: 1.75 !important;
     stroke-linecap: round;
     stroke-linejoin: round;
     transition: stroke 0.15s ease, stroke-width 0.15s ease;
   }
   .react-flow__edge.selected .react-flow__edge-path {
-    stroke: #0f172a !important;
+    stroke: var(--primary) !important;
     stroke-width: 2.5 !important;
   }
   .react-flow__edge:hover .react-flow__edge-path {
-    stroke: #475569 !important;
+    stroke: var(--text-secondary) !important;
     stroke-width: 2.5 !important;
   }
 
@@ -1393,13 +1404,13 @@ const builderStyles = `
     align-items: center;
     justify-content: center;
     height: 100vh;
-    background: var(--bg-base, #0f1117);
-    color: var(--text-primary, #e2e8f0);
+    background: var(--bg-base, #f6f6f7);
+    color: var(--text-primary, #18181b);
     gap: 16px;
   }
   .fb-loading-spinner {
     animation: fb-spin 1s linear infinite;
-    color: var(--primary, #6366f1);
+    color: var(--primary, #18181b);
   }
 
   /* ── Condition label badges ────────────────────────────────── */
@@ -1419,11 +1430,11 @@ const builderStyles = `
   }
   .fb-condition-yes {
     background: rgba(16, 185, 129, 0.15);
-    color: #10b981;
+    color: var(--success);
   }
   .fb-condition-no {
     background: rgba(239, 68, 68, 0.15);
-    color: #ef4444;
+    color: var(--danger);
   }
 
   /* ═══════════════════════════════════════════════════════════════════
@@ -1434,17 +1445,17 @@ const builderStyles = `
   .flow-topbar {
     height: 52px;
     padding: 0 16px;
-    background: #ffffff;
-    border-bottom: 1px solid #e2e8f0;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
     box-shadow: 0 1px 3px rgba(0,0,0,0.03);
   }
   .flow-tool-btn {
     width: 34px;
     height: 34px;
     border-radius: 8px;
-    border: 1.5px solid #e2e8f0;
-    background: #ffffff;
-    color: #475569;
+    border: 1.5px solid var(--border);
+    background: var(--bg-surface);
+    color: var(--text-secondary);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1453,9 +1464,9 @@ const builderStyles = `
     transition: all 0.2s ease;
   }
   .flow-tool-btn:hover {
-    background: #f8fafc;
-    border-color: #cbd5e1;
-    color: #0f172a;
+    background: var(--bg-input);
+    border-color: var(--border-light);
+    color: var(--text-primary);
     box-shadow: 0 2px 6px rgba(0,0,0,0.06);
     transform: translateY(-0.5px);
   }
@@ -1465,9 +1476,9 @@ const builderStyles = `
     gap: 7px;
     padding: 7px 16px;
     border-radius: 8px;
-    background: #ffffff;
-    border: 1.5px solid #e2e8f0;
-    color: #334155;
+    background: var(--bg-surface);
+    border: 1.5px solid var(--border);
+    color: var(--text-secondary);
     font-size: 12.5px;
     font-weight: 700;
     cursor: pointer;
@@ -1478,9 +1489,9 @@ const builderStyles = `
     overflow: hidden;
   }
   .flow-layout-btn:hover {
-    background: #f8fafc;
-    border-color: #cbd5e1;
-    color: #0f172a;
+    background: var(--bg-input);
+    border-color: var(--border-light);
+    color: var(--text-primary);
     box-shadow: 0 2px 8px rgba(0,0,0,0.06);
     transform: translateY(-0.5px);
   }
@@ -1490,9 +1501,9 @@ const builderStyles = `
     gap: 7px;
     padding: 7px 18px;
     border-radius: 8px;
-    background: #ffffff;
-    border: 1.5px solid #cbd5e1;
-    color: #0f172a;
+    background: var(--bg-surface);
+    border: 1.5px solid var(--border-light);
+    color: var(--text-primary);
     font-size: 12.5px;
     font-weight: 700;
     cursor: pointer;
@@ -1504,10 +1515,10 @@ const builderStyles = `
   }
   .flow-preview-toggle-btn:hover,
   .flow-preview-toggle-btn.active {
-    background: #eff6ff;
-    border-color: #3b82f6;
-    color: #1d4ed8;
-    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.18);
+    background: var(--primary-soft);
+    border-color: var(--primary);
+    color: var(--primary-dark);
+    box-shadow: 0 2px 8px var(--primary-ring);
     transform: translateY(-0.5px);
   }
   /* ── Canvas Floating Hint Tooltip ──────────────────────────── */
@@ -4704,6 +4715,7 @@ function QuickRepliesNode({ id, data, selected }) {
         {replies.map((r, i) => {
           const qr = normalizeQuickReply(r);
           const isSpecial = qr.kind !== 'text';
+          const isGoToFlow = qr.action === 'goToFlow';
           const SpecialIcon = isSpecial ? QUICK_REPLY_KINDS[qr.kind]?.icon : null;
           return (
             <div key={i} className="fb-node-btn-chip">
@@ -4715,6 +4727,8 @@ function QuickRepliesNode({ id, data, selected }) {
                 // — an icon instead of a connector, same as a "Go to Flow" button
                 // action elsewhere on this canvas.
                 SpecialIcon && <SpecialIcon size={12} style={{ opacity: 0.7, flexShrink: 0, color: '#334155' }} />
+              ) : isGoToFlow ? (
+                <Workflow size={12} style={{ opacity: 0.85, flexShrink: 0, color: '#4338ca' }} title={`Goes to flow: ${qr.flowName || 'Selected Flow'}`} />
               ) : (
                 <>
                   <ChevronRight size={12} style={{ opacity: 0.6, flexShrink: 0 }} />
@@ -5336,6 +5350,86 @@ function HandoffNode({ id, data, selected }) {
   );
 }
 
+/* ── Appointment Booking Node ────────────────────────────────── */
+function AppointmentNode({ id, data, selected }) {
+  const unsupported = data?._unsupported;
+  const validationError = data?._validationError;
+  const connectedHandles = useConnectedHandles(id);
+  const color = NODE_COLORS.appointment;
+
+  return (
+    <div
+      className={`fb-node-condition${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
+      style={{
+        background: '#ffffff',
+        borderRadius: 20,
+        borderColor: validationError ? '#ef4444' : selected ? color : '#e2e8f0',
+      }}
+    >
+      <NodeHoverActions nodeId={id} nodeType="appointment" />
+      <DelayPill data={data} />
+      {validationError ? (
+        <div className="fb-node-warning" style={{ background: '#ef4444' }} title={`Missing Data: ${validationError}`}>
+          <AlertTriangle size={12} color="#fff" />
+        </div>
+      ) : unsupported ? (
+        <div className="fb-node-warning" title="Not permitted on current channel">
+          <AlertTriangle size={12} color="#fff" />
+        </div>
+      ) : null}
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
+      <div
+        className="fb-node-header"
+        style={{
+          background: validationError ? '#fef2f2' : `${color}12`,
+          borderBottom: `1px solid ${validationError ? '#fecaca' : `${color}22`}`,
+          borderRadius: '19px 19px 0 0',
+        }}
+      >
+        <div
+          style={{
+            width: 22, height: 22, borderRadius: 6,
+            background: validationError ? '#fee2e2' : `${color}1e`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          }}
+        >
+          <CalendarDays size={13} style={{ color: validationError ? '#ef4444' : color }} />
+        </div>
+        <span style={{ fontWeight: 700, fontSize: '11.5px', color: validationError ? '#b91c1c' : '#1e293b' }}>Appointment Booking</span>
+      </div>
+      <div className="fb-node-body">
+        {data.campaignName ? (
+          <span style={{ fontSize: 11, fontWeight: 600, color: '#1e293b' }}>📋 {data.campaignName}</span>
+        ) : (
+          <span style={{ opacity: 0.5, fontStyle: 'italic', fontSize: 11, color: '#64748b' }}>All services · No campaign</span>
+        )}
+      </div>
+      <div className="fb-condition-outputs" style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 12px 10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
+          <span className="fb-condition-label fb-condition-yes">✅ Booking Confirmed</span>
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="confirmed"
+            className={`btn-handle${connectedHandles.has('confirmed') ? ' connected' : ''}`}
+            style={{ right: 8, top: '50%', transform: 'translateY(-50%)', position: 'absolute' }}
+          />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
+          <span className="fb-condition-label fb-condition-no">❌ Booking Cancelled</span>
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="cancelled"
+            className={`btn-handle${connectedHandles.has('cancelled') ? ' connected' : ''}`}
+            style={{ right: 8, top: '50%', transform: 'translateY(-50%)', position: 'absolute' }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── End Node ────────────────────────────────────────────────── */
 function EndNode({ id, data, selected }) {
   return (
@@ -5839,14 +5933,17 @@ function BlockItemView({ item, connectedHandles, onAddButton, onAddReply, attach
             {(d.replies || []).map((r, i) => {
               const qr = normalizeQuickReply(r);
               const isSpecial = qr.kind !== 'text';
+              const isGoToFlow = qr.action === 'goToFlow';
               const SpecialIcon = isSpecial ? QUICK_REPLY_KINDS[qr.kind]?.icon : null;
               return (
-                <div key={i} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, padding: isSpecial ? '6px 12px' : '6px 34px 6px 14px', borderRadius: 999, background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)', fontSize: 12, fontWeight: 600, color: '#1e293b', maxWidth: '100%' }}>
+                <div key={i} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, padding: (isSpecial || isGoToFlow) ? '6px 12px' : '6px 34px 6px 14px', borderRadius: 999, background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)', fontSize: 12, fontWeight: 600, color: '#1e293b', maxWidth: '100%' }}>
                   {SpecialIcon && <SpecialIcon size={12} style={{ flexShrink: 0, opacity: 0.75 }} />}
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {isSpecial ? (QUICK_REPLY_KINDS[qr.kind]?.label || 'Special') : (qr.title || `Reply ${i + 1}`)}
                   </span>
-                  {!isSpecial && (
+                  {isGoToFlow ? (
+                    <Workflow size={12} style={{ opacity: 0.85, flexShrink: 0, color: '#4338ca' }} title={`Goes to flow: ${qr.flowName || 'Selected Flow'}`} />
+                  ) : !isSpecial && (
                     <Handle
                       type="source"
                       position={Position.Right}
@@ -6846,6 +6943,7 @@ function ButtonActionEditor({
   const { currentIntegrationId } = useContext(FlowNodeActionsContext);
   const p = (platform || 'WEBCHAT').toUpperCase();
   const isItem = variant === 'item';
+  const isQR = variant === 'quickReply';
   const [menuOpen, setMenuOpen] = useState(false);
   const [creatingSeq, setCreatingSeq] = useState(false);
   const [newSeqName, setNewSeqName] = useState('');
@@ -6853,11 +6951,16 @@ function ButtonActionEditor({
   const availableLabels = useAvailableLabels();
 
   const btnObj = typeof btn === 'string'
-    ? { title: btn, action: 'flow', url: '', phone: '', reply_text: '' }
-    : { action: 'flow', url: '', phone: '', reply_text: '', ...btn };
+    ? { title: btn, action: 'flow', url: '', phone: '', reply_text: '', kind: 'text', flowId: null, flowName: '' }
+    : { action: 'flow', url: '', phone: '', reply_text: '', kind: 'text', flowId: null, flowName: '', ...btn };
 
   const isFB = p === 'FACEBOOK';
   const isWA = p === 'WHATSAPP';
+  const isIG = p === 'INSTAGRAM';
+  const isTG = p === 'TELEGRAM';
+  const isMeta = isWA || isFB || isIG;
+  const qrKind = btnObj.kind || 'text';
+  const isSpecial = isQR && qrKind !== 'text';
 
   // Same-platform flows only — jumping into a flow built for a different
   // channel would just fail to send there. Excludes the flow being edited:
@@ -6866,32 +6969,34 @@ function ButtonActionEditor({
     (f) => (f.platform || '').toUpperCase() === p && f.id !== currentFlowId
   );
 
-  // Allowed action types, per Meta's own WhatsApp Cloud API docs: a reply
-  // button AND a list row are BOTH fundamentally postback-only — tapping
-  // either just sends a reply, full stop. A button's "Open Website" only
-  // really works as a genuine link when it's the single button on the
-  // message (Meta's separate cta_url message type — see platformSender.js);
-  // a list ROW has no such exception at all, there's no per-row URL/call
-  // capability on WhatsApp under any configuration — so a list item on
-  // WhatsApp doesn't get offered options it structurally cannot do.
+  // Allowed action types, per Meta's docs:
+  // Quick replies support continuing in flow or jumping directly to another flow.
   const skipUrlPhoneOnWA = isWA && isItem;
-  const actionOptions = [
-    { value: 'flow', label: 'Continue Flow (Next Step)', description: 'Follows the wire connected to this button on the canvas.', Icon: CornerDownRight },
-    { value: 'goToFlow', label: 'Go to Existing Flow', description: "Jumps straight to another flow's start — no wire needed.", Icon: Workflow },
-    ...(skipUrlPhoneOnWA ? [] : [{ value: 'url', label: 'Open Website / URL', description: 'Opens a link — never replies back to the bot.', Icon: ExternalLink }]),
-    ...(!skipUrlPhoneOnWA && (isFB || p === 'WEBCHAT') ? [{ value: 'phone', label: 'Call Phone Number', description: 'Dials a number — never replies back to the bot.', Icon: Phone }] : []),
-  ];
+  const actionOptions = isQR
+    ? [
+        { value: 'flow', label: 'Continue Flow (Next Step)', description: 'Follows the wire connected to this reply on the canvas.', Icon: CornerDownRight },
+        { value: 'goToFlow', label: 'Go to Existing Flow', description: "Jumps straight to another flow's start — no wire needed.", Icon: Workflow },
+      ]
+    : [
+        { value: 'flow', label: 'Continue Flow (Next Step)', description: 'Follows the wire connected to this button on the canvas.', Icon: CornerDownRight },
+        { value: 'goToFlow', label: 'Go to Existing Flow', description: "Jumps straight to another flow's start — no wire needed.", Icon: Workflow },
+        ...(skipUrlPhoneOnWA ? [] : [{ value: 'url', label: 'Open Website / URL', description: 'Opens a link — never replies back to the bot.', Icon: ExternalLink }]),
+        ...(!skipUrlPhoneOnWA && (isFB || p === 'WEBCHAT') ? [{ value: 'phone', label: 'Call Phone Number', description: 'Dials a number — never replies back to the bot.', Icon: Phone }] : []),
+      ];
 
   const updateProp = (field, val) => {
     onChange({ ...btnObj, [field]: val });
   };
 
   const getActionBadge = () => {
+    if (isSpecial) {
+      return { label: QUICK_REPLY_KINDS[qrKind]?.label || 'Profile', bg: '#fef3c7', color: '#92400e' };
+    }
     switch (btnObj.action) {
       case 'url': return { label: 'URL', bg: '#f1f5f9', color: '#334155' };
       case 'phone': return { label: 'Call', bg: '#f1f5f9', color: '#334155' };
       case 'goToFlow': return { label: 'Go to Flow', bg: '#eef2ff', color: '#4338ca' };
-      default: return { label: 'Flow', bg: '#f1f5f9', color: '#334155' };
+      default: return { label: isQR ? 'Reply' : 'Flow', bg: '#f1f5f9', color: '#334155' };
     }
   };
 
@@ -6950,7 +7055,7 @@ function ButtonActionEditor({
             whiteSpace: 'nowrap',
           }}
         >
-          {btnObj.title || (isItem ? `Option ${index + 1}` : `Button ${index + 1}`)}
+          {isSpecial ? (QUICK_REPLY_KINDS[qrKind]?.label || 'Special') : (btnObj.title || (isQR ? `Reply ${index + 1}` : isItem ? `Option ${index + 1}` : `Button ${index + 1}`))}
         </span>
         <span
           style={{
@@ -6991,7 +7096,7 @@ function ButtonActionEditor({
           </span>
         )}
         <span
-          title={`Edit ${isItem ? 'item' : 'button'}`}
+          title={`Edit ${isQR ? 'reply' : isItem ? 'item' : 'button'}`}
           style={{ color: '#64748b', display: 'flex', alignItems: 'center', padding: 4, flexShrink: 0 }}
         >
           <Settings2 size={13} />
@@ -7009,7 +7114,7 @@ function ButtonActionEditor({
             alignItems: 'center',
             flexShrink: 0,
           }}
-          title={isItem ? 'Remove item' : 'Remove button'}
+          title={isQR ? 'Remove reply' : isItem ? 'Remove item' : 'Remove button'}
         >
           <Trash2 size={13} />
         </button>
@@ -7056,7 +7161,9 @@ function ButtonActionEditor({
                 flexShrink: 0,
               }}
             >
-              <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>{isItem ? 'Edit List Item' : 'Edit Button'}</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>
+                {isQR ? 'Edit Quick Reply' : isItem ? 'Edit List Item' : 'Edit Button'}
+              </span>
               <button
                 type="button"
                 onClick={() => setMenuOpen(false)}
@@ -7080,20 +7187,58 @@ function ButtonActionEditor({
             {/* Body */}
             <div style={{ padding: 16, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{ fontSize: 10.5, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.4 }}>
-                {isItem ? 'Set up this item' : 'Set up this button'}
+                {isQR ? 'Set up this quick reply' : isItem ? 'Set up this item' : 'Set up this button'}
               </div>
 
-              <div className="fb-field" style={{ margin: 0 }}>
-                <label style={{ fontSize: 11, fontWeight: 700, color: '#475569' }}>{isItem ? 'Item title' : 'Button title'}</label>
-                <input
-                  autoFocus
-                  value={btnObj.title || ''}
-                  onChange={(e) => updateProp('title', e.target.value)}
-                  placeholder={isItem ? `Option ${index + 1} text...` : `Button ${index + 1} text...`}
-                  maxLength={isItem ? 24 : 20}
-                  style={{ fontSize: 13, padding: '7px 9px', borderRadius: 7, border: '1px solid #cbd5e1', background: '#ffffff' }}
-                />
-              </div>
+              {/* Special Kind selector for Quick Replies if channel supports it */}
+              {isQR && (() => {
+                const kindOptions = getQuickReplyKindOptions(p);
+                if (kindOptions.length <= 1) return null;
+                return (
+                  <div className="fb-field" style={{ margin: 0 }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: '#475569' }}>Quick Reply Type</label>
+                    <select
+                      value={qrKind}
+                      onChange={(e) => updateProp('kind', e.target.value)}
+                      style={{ fontSize: 12, padding: '7px 9px', borderRadius: 7, border: '1px solid #cbd5e1', background: '#ffffff' }}
+                    >
+                      {kindOptions.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })()}
+
+              {isSpecial ? (
+                <div style={{ padding: '8px 10px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, fontSize: 11.5, color: '#92400e', lineHeight: 1.45 }}>
+                  {QUICK_REPLY_UNROUTABLE_HINT[qrKind]}
+                </div>
+              ) : (
+                <div className="fb-field" style={{ margin: 0 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: '#475569', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>{isQR ? 'Reply title' : isItem ? 'Item title' : 'Button title'}</span>
+                    {(isMeta || isQR) && (
+                      <span style={{ fontSize: 10, fontWeight: 600, color: (btnObj.title || '').length > 20 ? '#ef4444' : '#64748b' }}>
+                        {(btnObj.title || '').length}/20 chars
+                      </span>
+                    )}
+                  </label>
+                  <input
+                    autoFocus
+                    value={btnObj.title || ''}
+                    onChange={(e) => updateProp('title', e.target.value)}
+                    placeholder={isQR ? `Reply ${index + 1} text...` : isItem ? `Option ${index + 1} text...` : `Button ${index + 1} text...`}
+                    maxLength={(isMeta || isQR) ? 20 : (isItem ? 24 : 20)}
+                    style={{ fontSize: 13, padding: '7px 9px', borderRadius: 7, border: '1px solid #cbd5e1', background: '#ffffff' }}
+                  />
+                  {(isMeta || isQR) && (
+                    <span style={{ fontSize: 9.5, color: '#64748b', fontStyle: 'italic', marginTop: 2 }}>
+                      Meta channel rule: maximum 20 characters per reply title.
+                    </span>
+                  )}
+                </div>
+              )}
 
               {isItem && (
                 <div className="fb-field" style={{ margin: 0 }}>
@@ -7108,10 +7253,12 @@ function ButtonActionEditor({
                 </div>
               )}
 
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: '#475569', display: 'block', marginBottom: 6 }}>
-                  When this button is pressed
-                </label>
+              {!isSpecial && (
+                <>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: '#475569', display: 'block', marginBottom: 6 }}>
+                      {isQR ? 'When this reply is tapped' : 'When this button is pressed'}
+                    </label>
                 {/* Plain vertical list of rows — not tabs, not a dropdown. */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {actionOptions.map((opt) => {
@@ -7231,7 +7378,7 @@ function ButtonActionEditor({
                   Sequence" branch already has to the rest of that flow. */}
               <div style={{ borderTop: '1px dashed #e2e8f0', paddingTop: 12 }}>
                 <label style={{ fontSize: 11, fontWeight: 700, color: '#475569', display: 'block', marginBottom: 6 }}>
-                  Also enroll in a Sequence (optional)
+                  Enroll in a Sequence (optional)
                 </label>
                 {creatingSeq ? (
                   <div style={{ display: 'flex', gap: 6 }}>
@@ -7304,7 +7451,7 @@ function ButtonActionEditor({
                   that doesn't exist yet isn't a real use case. */}
               <div style={{ borderTop: '1px dashed #e2e8f0', paddingTop: 12 }}>
                 <label style={{ fontSize: 11, fontWeight: 700, color: '#475569', display: 'block', marginBottom: 6 }}>
-                  Also remove from a Sequence (optional)
+                  Remove from a Sequence (optional)
                 </label>
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                   <select
@@ -7372,6 +7519,8 @@ function ButtonActionEditor({
                   hint={`Removes this label from the contact the moment this ${isItem ? 'item' : 'button'} is tapped.`}
                 />
               </div>
+                </>
+              )}
             </div>
 
             {/* Footer */}
@@ -8546,7 +8695,7 @@ function UserInputFlowStartProperties({ data, updateField, platform, flowName, o
   );
 }
 
-function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFields = [], onCustomFieldCreated, userInputFlows = [], onUserInputFlowCreated, isUserInputFlow = false, sequences = [], onSequenceCreated, isSequence = false, isBroadcastFlow = false, isChatWidgetFlow = false, linkedWidget = null, widgetAppearanceForm = null, onWidgetAppearanceChange = null, onAddReplyNode = null, flows = [], httpApiCampaigns = [], currentFlowId = null, flowName, onFlowNameChange, onDrillIn, embedded = false }) {
+function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFields = [], onCustomFieldCreated, userInputFlows = [], onUserInputFlowCreated, isUserInputFlow = false, sequences = [], onSequenceCreated, isSequence = false, isBroadcastFlow = false, isChatWidgetFlow = false, linkedWidget = null, widgetAppearanceForm = null, onWidgetAppearanceChange = null, onAddReplyNode = null, flows = [], httpApiCampaigns = [], appointmentCampaigns = [], currentFlowId = null, flowName, onFlowNameChange, onDrillIn, embedded = false }) {
   if (!node) return null;
 
   const { data, type } = node;
@@ -9170,7 +9319,36 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
         );
       }
 
-      case 'quickReplies':
+      case 'quickReplies': {
+        const qrList = data.replies || [];
+        const pUpper = (platform || 'WEBCHAT').toUpperCase();
+        const maxReplies = getNodeItemCap('quickReplies', platform) || (pUpper === 'WHATSAPP' ? 3 : (pUpper === 'FACEBOOK' || pUpper === 'INSTAGRAM') ? 13 : null);
+        const canAdd = maxReplies ? qrList.length < maxReplies : true;
+
+        const handleAddReply = () => {
+          if (!canAdd) return;
+          const newQr = {
+            title: `Reply ${qrList.length + 1}`,
+            kind: 'text',
+            action: 'flow',
+            url: '',
+            phone: '',
+            flowId: null,
+            flowName: '',
+          };
+          updateField('replies', [...qrList, newQr]);
+        };
+
+        const handleUpdateReply = (index, value) => {
+          const updated = [...qrList];
+          updated[index] = value;
+          updateField('replies', updated);
+        };
+
+        const handleRemoveReply = (index) => {
+          updateField('replies', qrList.filter((_, idx) => idx !== index));
+        };
+
         return (
           <>
             <div className="fb-field">
@@ -9183,84 +9361,51 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
             </div>
             <div className="fb-field">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                <label>Quick Replies</label>
-                <span style={{ fontSize: '10px', color: '#475569', fontWeight: 600 }}>
-                  {(data.replies || []).length} replies
+                <label style={{ margin: 0 }}>Quick Replies ({qrList.length}{maxReplies ? `/${maxReplies}` : ''})</label>
+                <span style={{ fontSize: 10, color: '#475569', background: '#f1f5f9', border: '1px solid #e2e8f0', padding: '2px 6px', borderRadius: 4, fontWeight: 600 }}>
+                  {pUpper === 'WHATSAPP' ? 'Meta Interactive Buttons' : pUpper === 'INSTAGRAM' ? 'Instagram DM' : pUpper === 'FACEBOOK' ? 'Messenger' : 'Quick Replies'}
                 </span>
               </div>
               <div style={{ fontSize: '11px', color: '#475569', marginBottom: 8, lineHeight: 1.45, background: '#f8fafc', border: '1px solid #e2e8f0', padding: '8px 10px', borderRadius: '8px' }}>
-                <strong>📌 Meta Platform Rule:</strong> Quick replies pause and wait for the user to tap an option. Immediate automatic follow-up replies are prohibited because Meta instantly dismisses quick replies if another message is sent. Connect your responses directly to each individual option handle on the right.
+                <strong>📌 {pUpper === 'WHATSAPP' ? 'WhatsApp Rule:' : 'Meta Platform Rule:'}</strong>{' '}
+                {pUpper === 'WHATSAPP'
+                  ? 'WhatsApp Cloud API supports up to 3 Interactive Reply Buttons (max 20 chars title). 4–10 replies will automatically adapt to an Interactive List. Each reply can continue this flow or jump straight to another flow.'
+                  : 'Quick replies wait for the subscriber to tap an option. Each reply can continue this flow via canvas wire or jump directly to another flow (Go to Existing Flow). Max 20 chars per title.'}
               </div>
-              {(() => {
-                const kindOptions = getQuickReplyKindOptions(platform);
-                return (data.replies || []).map((reply, i) => {
-                  const qr = normalizeQuickReply(reply);
-                  const kind = qr.kind || 'text';
-                  // Meta auto-generates the chip for these two — our own title
-                  // is never sent and never shown, per its own docs.
-                  const hidesTitle = kind === 'user_phone_number' || kind === 'user_email';
-                  const updateReply = (patch) => {
-                    const updated = [...(data.replies || [])];
-                    updated[i] = { ...qr, ...patch };
-                    updateField('replies', updated);
-                  };
-                  return (
-                    <div key={i} className="fb-list-item" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <div style={{
-                          width: 22, height: 22, borderRadius: 6, background: '#f1f5f9',
-                          color: '#0f172a', border: '1px solid #e2e8f0', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
-                        }}>
-                          {i + 1}
-                        </div>
-                        {hidesTitle ? (
-                          <div style={{ flex: 1, fontSize: 12, fontWeight: 600, color: '#0f172a', padding: '6px 0' }}>
-                            {QUICK_REPLY_KINDS[kind]?.label}
-                          </div>
-                        ) : (
-                          <input
-                            value={qr.title}
-                            onChange={(e) => updateReply({ title: e.target.value })}
-                            placeholder={`Reply ${i + 1}`}
-                          />
-                        )}
-                        <button
-                          className="fb-list-item-del"
-                          onClick={() => {
-                            const updated = (data.replies || []).filter((_, idx) => idx !== i);
-                            updateField('replies', updated);
-                          }}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                      {kindOptions.length > 1 && (
-                        <select
-                          value={kind}
-                          onChange={(e) => updateReply({ kind: e.target.value })}
-                          style={{ fontSize: 11, padding: '5px 8px' }}
-                        >
-                          {kindOptions.map((o) => (
-                            <option key={o.value} value={o.value}>{o.label}</option>
-                          ))}
-                        </select>
-                      )}
-                      {kind !== 'text' && (
-                        <span className="fb-hint">{QUICK_REPLY_UNROUTABLE_HINT[kind]}</span>
-                      )}
-                    </div>
-                  );
-                });
-              })()}
-              <button
-                className="fb-add-btn"
-                onClick={() => updateField('replies', [...(data.replies || []), { title: '', kind: 'text' }])}
-              >
-                <Plus size={14} /> Add Reply
-              </button>
+
+              {qrList.map((reply, i) => (
+                <ButtonActionEditor
+                  key={i}
+                  btn={reply}
+                  index={i}
+                  platform={platform}
+                  flows={flows}
+                  currentFlowId={currentFlowId}
+                  sequences={sequences}
+                  onSequenceCreated={onSequenceCreated}
+                  variant="quickReply"
+                  onChange={(val) => handleUpdateReply(i, val)}
+                  onRemove={() => handleRemoveReply(i)}
+                />
+              ))}
+
+              {canAdd ? (
+                <button
+                  type="button"
+                  className="fb-add-btn"
+                  onClick={handleAddReply}
+                >
+                  <Plus size={14} /> Add Quick Reply
+                </button>
+              ) : (
+                <div style={{ fontSize: '11px', color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '6px 0' }}>
+                  Maximum {maxReplies} quick replies reached for {pUpper}.
+                </div>
+              )}
             </div>
           </>
         );
+      }
 
       case 'listMenu': {
         const listCap = getNodeItemCap('listMenu', platform) || 10;
@@ -10083,6 +10228,51 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
           </div>
         );
 
+      case 'appointment':
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div className="fb-field">
+              <label>Appointment Campaign <span style={{ fontWeight: 400, color: '#94a3b8' }}>(optional)</span></label>
+              <select
+                value={data.campaignId || ''}
+                onChange={(e) => {
+                  const id = e.target.value ? Number(e.target.value) : null;
+                  const campaign = appointmentCampaigns.find((c) => c.id === id);
+                  updateFields({ campaignId: id, campaignName: campaign?.name || '' });
+                }}
+              >
+                <option value="">All services · Default greeting</option>
+                {appointmentCampaigns.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              {appointmentCampaigns.length === 0 && (
+                <span className="fb-hint" style={{ marginTop: 4 }}>
+                  No campaigns yet. <a href="/appointments/campaigns" target="_blank" rel="noopener noreferrer" style={{ color: '#0d9488', textDecoration: 'underline' }}>Create one</a> to filter services or set a custom greeting.
+                </span>
+              )}
+            </div>
+
+            {data.campaignId && (
+              <a
+                href="/appointments/campaigns"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ fontSize: 11, color: '#0d9488', textDecoration: 'underline', padding: 0 }}
+              >
+                ✏️ Manage Appointment Campaigns
+              </a>
+            )}
+
+            <div style={{ padding: '10px 12px', borderRadius: 8, background: '#f0fdfa', border: '1px solid #99f6e4', fontSize: 11, color: '#0f766e', lineHeight: 1.5 }}>
+              <strong>📋 How it works:</strong><br />
+              When the contact reaches this node, the bot automatically guides them through booking:
+              service → date → time slot → confirm.<br /><br />
+              Wire the <strong>✅ Booking Confirmed</strong> handle to a thank-you message, and the <strong>❌ Booking Cancelled</strong> handle to an alternative offer.
+            </div>
+          </div>
+        );
+
       case 'payment':
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -10471,6 +10661,7 @@ const nodeTypes = {
   actions: ActionsNode,
   startAutomation: StartAutomationNode,
   messageBlock: MessageBlockNode,
+  appointment: AppointmentNode,
 };
 
 /* ── Removable / Deletable Edge ────────────────────────────── */
@@ -11122,9 +11313,11 @@ function FlowBuilderInner() {
   // HTTP API Campaigns (Automation module) — offered on an "HTTP API" node,
   // same reasoning as flowsList/sequencesList above.
   const [httpApiCampaigns, setHttpApiCampaigns] = useState([]);
+  const [appointmentCampaigns, setAppointmentCampaigns] = useState([]);
   useEffect(() => {
     if (isUserInputFlow || isSequence) return;
     httpApiCampaignAPI.getAll().then((res) => setHttpApiCampaigns(res.data?.campaigns || [])).catch(() => {});
+    appointmentCampaignAPI.getAll().then((res) => setAppointmentCampaigns(res.data?.campaigns || [])).catch(() => {});
   }, [isUserInputFlow, isSequence]);
   const [autoSaveStatus, setAutoSaveStatus] = useState('');
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -12837,6 +13030,7 @@ function FlowBuilderInner() {
             onAddReplyNode={handleAddReplyNode}
             flows={flowsList}
             httpApiCampaigns={httpApiCampaigns}
+            appointmentCampaigns={appointmentCampaigns}
             currentFlowId={(!isUserInputFlow && !isSequence) ? Number(id) : null}
             flowName={flowName}
             onFlowNameChange={setFlowName}

@@ -14,7 +14,6 @@ import StoreConnectionsManager from '../../Components/Commerce/StoreConnectionsM
 import { humanizeBotError, cleanRawMessage } from '../../utils/humanizeBotError';
 import AIAgentManagerList from '../../Components/AIAgents/AIAgentManagerList';
 import AIReplySettingsPanel from '../../Components/AIAgents/AIReplySettingsPanel';
-import BusinessHoursSettings from '../../Components/Bots/BusinessHoursSettings';
 import Swal from 'sweetalert2';
 import {
   Bot,
@@ -878,8 +877,8 @@ export default function BotManagerPage() {
           font-size: 0.78rem;
           font-weight: 700;
           color: var(--primary);
-          background: rgba(79, 70, 229, 0.08);
-          border: 1px solid rgba(79, 70, 229, 0.2);
+          background: rgba(24, 24, 27, 0.06);
+          border: 1px solid rgba(24, 24, 27, 0.16);
           border-radius: 6px;
           padding: 5px 10px;
           cursor: pointer;
@@ -1080,7 +1079,7 @@ export default function BotManagerPage() {
           background: var(--primary);
           color: #ffffff;
           border-color: var(--primary);
-          box-shadow: 0 2px 8px rgba(79, 70, 229, 0.25);
+          box-shadow: 0 2px 8px rgba(24, 24, 27, 0.2);
         }
 
         /* ── Work Area Content Box ── */
@@ -1156,7 +1155,7 @@ export default function BotManagerPage() {
         .bm-row-action:hover {
           border-color: var(--primary);
           color: var(--primary);
-          background: rgba(79, 70, 229, 0.08);
+          background: rgba(24, 24, 27, 0.06);
           transform: translateY(-1px);
         }
         .bm-row-action.delete:hover {
@@ -1354,6 +1353,25 @@ export default function BotManagerPage() {
                     {errorLogs.length}
                   </span>
                 )}
+              </button>
+
+              <button
+                onClick={() => navigate('/settings/business-hours', { state: { selectedAccountId: selectedAccount?.id && selectedAccount.id !== 'all' ? selectedAccount.id : null } })}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '7px 14px',
+                  borderRadius: 8,
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-surface)',
+                  color: 'var(--text-primary)',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                <Clock size={14} color="var(--primary)" /> Business Hours
               </button>
 
               <button
@@ -1569,7 +1587,7 @@ export default function BotManagerPage() {
                       fontWeight: 700,
                       fontSize: '0.84rem',
                       cursor: 'pointer',
-                      boxShadow: '0 2px 6px rgba(79, 70, 229, 0.3)',
+                      boxShadow: '0 2px 6px rgba(24, 24, 27, 0.25)',
                     }}
                   >
                     <Plus size={15} /> Create
@@ -2404,7 +2422,42 @@ export default function BotManagerPage() {
               )}
 
               {settingsModalTab === 'businessHours' && (
-                <BusinessHoursSettings integrationId={selectedAccount?.id && selectedAccount.id !== 'all' ? selectedAccount.id : null} />
+                <div style={{ textAlign: 'center', padding: '28px 16px' }}>
+                  <div
+                    style={{
+                      width: 52,
+                      height: 52,
+                      borderRadius: 14,
+                      background: 'rgba(24, 24, 27, 0.06)',
+                      color: 'var(--primary)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      margin: '0 auto 14px auto',
+                    }}
+                  >
+                    <Clock size={26} />
+                  </div>
+                  <h4 style={{ fontSize: '1.05rem', fontWeight: 800, margin: '0 0 6px 0', color: 'var(--text-primary)' }}>
+                    Business Hours & Availability
+                  </h4>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: 380, margin: '0 auto 18px auto', lineHeight: 1.5 }}>
+                    Business Hours configuration has moved to a dedicated full page with timezone detection, live operating status, multi-channel bot switching, and off-hours automation.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowSettingsModal(false);
+                      navigate('/settings/business-hours', {
+                        state: { selectedAccountId: selectedAccount?.id && selectedAccount.id !== 'all' ? selectedAccount.id : null },
+                      });
+                    }}
+                    className="btn btn-primary"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 20px', fontSize: '0.85rem' }}
+                  >
+                    Open Business Hours Page <ExternalLink size={14} />
+                  </button>
+                </div>
               )}
             </div>
           </div>

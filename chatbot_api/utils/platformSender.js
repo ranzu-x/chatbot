@@ -491,6 +491,67 @@ export async function sendPlatformMessage(platform, integration, contactExternal
             text: footerText.trim().slice(0, 60),
           };
         }
+      } else if (quickReplies && quickReplies.length > 0) {
+        // WhatsApp interactive quick replies (Meta WhatsApp Cloud API):
+        // Up to 3 buttons send as Interactive Reply Buttons (type: "reply", title <= 20 chars).
+        // If 4 to 10 options, automatically adapts to Meta WhatsApp Interactive List Message.
+        const qrBodyText = (body && body.trim()) || (caption && caption.trim()) || "Please select an option:";
+        if (quickReplies.length <= 3) {
+          payload.type = "interactive";
+          payload.interactive = {
+            type: "button",
+            body: { text: qrBodyText.slice(0, 1024) },
+            action: {
+              buttons: quickReplies.slice(0, 3).map((qr, index) => {
+                const qrTitle = typeof qr === "string" ? qr : (qr.title || qr.label || `Option ${index + 1}`);
+                const qrId = typeof qr === "string" ? `qr_${index}` : (qr.payload || qr.id || `qr_${index}`);
+                return {
+                  type: "reply",
+                  reply: {
+                    id: String(qrId).slice(0, 256),
+                    title: String(qrTitle).slice(0, 20),
+                  },
+                };
+              }),
+            },
+          };
+        } else {
+          // If > 3 options, automatically render as WhatsApp Interactive List (up to 10 rows)
+          payload.type = "interactive";
+          payload.interactive = {
+            type: "list",
+            body: { text: qrBodyText.slice(0, 1024) },
+            action: {
+              button: "Options",
+              sections: [
+                {
+                  title: "Options",
+                  rows: quickReplies.slice(0, 10).map((qr, index) => {
+                    const qrTitle = typeof qr === "string" ? qr : (qr.title || qr.label || `Option ${index + 1}`);
+                    const qrId = typeof qr === "string" ? `qr_${index}` : (qr.payload || qr.id || `qr_${index}`);
+                    return {
+                      id: String(qrId).slice(0, 200),
+                      title: String(qrTitle).slice(0, 24),
+                      description: "",
+                    };
+                  }),
+                },
+              ],
+            },
+          };
+        }
+
+        if (headerText && headerText.trim()) {
+          payload.interactive.header = {
+            type: "text",
+            text: headerText.trim().slice(0, 60),
+          };
+        }
+        if (footerText && footerText.trim()) {
+          payload.interactive.footer = {
+            text: footerText.trim().slice(0, 60),
+          };
+        }
       } else if (isInteractive && !hasButtons) {
         // Interactive node without buttons: Meta WhatsApp doesn't accept interactive button with 0 buttons,
         // so send formatted text message with bold header and italic footer.

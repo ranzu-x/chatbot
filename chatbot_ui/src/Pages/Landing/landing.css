@@ -496,20 +496,65 @@
 
 /* ─── Footer ─────────────────────────────────────────────────────── */
 .lp-footer {
-  background: #0f172a;
+  position: relative;
+  overflow: hidden;
+  background: #0b0f19;
   color: #94a3b8;
-  padding: 64px 0 32px 0;
-  border-top: 1px solid #1e293b;
+  padding: 72px 0 28px 0;
+  /* A thin brand-gradient seam along the top edge instead of a flat
+     border — the one hairline of color in an otherwise dark, quiet
+     section. */
+  border-top: 1px solid transparent;
+  background-image:
+    linear-gradient(#0b0f19, #0b0f19),
+    linear-gradient(90deg, var(--lp-primary) 0%, var(--lp-secondary) 50%, var(--lp-accent) 100%);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
 }
 
-.lp-footer-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 24px;
+/* Soft ambient glow blobs, purely decorative — same hue family as the
+   hero's radial gradient, echoed here so the page feels bookended. */
+.lp-footer-glow {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  pointer-events: none;
+  opacity: 0.16;
+  z-index: 0;
+}
+.lp-footer-glow-1 {
+  width: 420px;
+  height: 420px;
+  top: -180px;
+  left: -120px;
+  background: var(--lp-primary);
+}
+.lp-footer-glow-2 {
+  width: 360px;
+  height: 360px;
+  bottom: -160px;
+  right: -100px;
+  background: var(--lp-secondary);
+}
+
+.lp-footer-inner {
+  position: relative;
+  z-index: 1;
+}
+
+.lp-footer-grid {
+  display: grid;
+  grid-template-columns: 1.6fr repeat(3, 1fr);
+  gap: 40px;
   padding-bottom: 40px;
-  border-bottom: 1px solid #1e293b;
+}
+
+.lp-footer-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  padding-right: 24px;
 }
 
 .lp-footer-logo {
@@ -517,34 +562,171 @@
   align-items: center;
   gap: 10px;
   color: #ffffff;
-  font-weight: 700;
-  font-size: 1.2rem;
+  font-weight: 800;
+  font-size: 1.25rem;
   text-decoration: none;
 }
 
-.lp-footer-links {
+.lp-footer-tagline {
+  font-size: 0.88rem;
+  line-height: 1.7;
+  color: #94a3b8;
+  margin: 0;
+  max-width: 340px;
+}
+
+.lp-footer-channels {
   display: flex;
   align-items: center;
-  gap: 28px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
+.lp-footer-channel-tile {
+  display: inline-flex;
+  border-radius: 8px;
+  transition: transform 0.18s ease, filter 0.18s ease;
+}
+.lp-footer-channel-tile:hover {
+  transform: translateY(-3px);
+  filter: brightness(1.15);
+}
+
+.lp-footer-social {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lp-footer-social-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #cbd5e1;
+  transition: all 0.2s ease;
+}
+.lp-footer-social-btn:hover {
+  color: #ffffff;
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--lp-primary), var(--lp-secondary));
+  transform: translateY(-3px);
+  box-shadow: 0 6px 16px rgba(99, 102, 241, 0.35);
+}
+
+.lp-footer-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 13px;
+}
+
+.lp-footer-col h4 {
+  margin: 0 0 3px 0;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: #f8fafc;
+}
+
 .lp-footer-link {
+  display: inline-flex;
+  align-items: center;
   color: #94a3b8;
   text-decoration: none;
-  font-size: 0.92rem;
-  transition: color 0.2s ease;
+  font-size: 0.9rem;
+  transition: color 0.18s ease, transform 0.18s ease;
 }
 
 .lp-footer-link:hover {
   color: #ffffff;
+  transform: translateX(3px);
+}
+
+.lp-footer-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #1e293b 15%, #1e293b 85%, transparent);
 }
 
 .lp-footer-bottom {
-  padding-top: 32px;
-  text-align: center;
-  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-top: 28px;
+  font-size: 0.82rem;
   color: #64748b;
+}
+
+.lp-footer-badges {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lp-footer-badge {
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #94a3b8;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Back-to-top — fixed, fades/lifts in only once there's somewhere to
+   scroll back to (see LandingFooter.jsx's scroll listener). */
+.lp-footer-totop {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--lp-primary), var(--lp-secondary));
+  box-shadow: 0 8px 20px rgba(99, 102, 241, 0.35);
+  cursor: pointer;
+  z-index: 200;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(12px) scale(0.9);
+  transition: opacity 0.25s ease, transform 0.25s ease, visibility 0.25s;
+}
+.lp-footer-totop.visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0) scale(1);
+}
+.lp-footer-totop:hover {
+  transform: translateY(-3px) scale(1.05);
+  box-shadow: 0 10px 24px rgba(99, 102, 241, 0.45);
+}
+
+@media (max-width: 900px) {
+  .lp-footer-grid {
+    grid-template-columns: 1fr 1fr;
+    row-gap: 36px;
+  }
+  .lp-footer-brand { grid-column: 1 / -1; padding-right: 0; }
+}
+
+@media (max-width: 560px) {
+  .lp-footer-grid { grid-template-columns: 1fr; }
+  .lp-footer-bottom { flex-direction: column; align-items: flex-start; }
+  .lp-footer-totop { right: 16px; bottom: 16px; }
 }
 
 /* ─── Legal Pages (Privacy & Terms) ──────────────────────────────── */

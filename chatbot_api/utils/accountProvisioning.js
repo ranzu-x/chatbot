@@ -12,6 +12,7 @@
  * duplicating this one shape here is a smaller risk than restructuring it.
  */
 import pool from "../db.js";
+import { attributeReferral } from "./affiliateCommission.js";
 
 /**
  * Creates a new DIRECT_CUSTOMER agency + its owning RESELLER-role user +
@@ -20,9 +21,14 @@ import pool from "../db.js";
  * just under a caller-supplied business name/slug instead of "Main
  * Workspace". `passwordHash` must already be bcrypt-hashed by the caller.
  *
+ * `affiliateCode`, if present, attributes the new agency to the Super
+ * Admin affiliate behind that referral code (see utils/affiliateCommission.js)
+ * — this is the only self-serve flow that mints a brand-new top-level
+ * tenant, so it's the only place referral attribution happens.
+ *
  * Returns { userId, agencyId, agencyName }.
  */
-export async function createAccount({ fullName, email, passwordHash, businessName }) {
+export async function createAccount({ fullName, email, passwordHash, businessName, affiliateCode }) {
   const normalizedEmail = String(email).toLowerCase().trim();
 
   const [existing] = await pool.query("SELECT id FROM users WHERE email = ? LIMIT 1", [normalizedEmail]);
@@ -53,6 +59,10 @@ export async function createAccount({ fullName, email, passwordHash, businessNam
       "INSERT INTO organization_members (user_id, agency_id, role_id, member_kind, chat_access) VALUES (?,?,?, 'OWNER', 'ALL')",
       [userId, agencyId, ownerRole.id]
     );
+  }
+
+  if (affiliateCode) {
+    await attributeReferral(agencyId, affiliateCode);
   }
 
   console.log(`[Guest Checkout] User "${fullName}" (${normalizedEmail}) created new workspace "${agencyName}" (Agency ID ${agencyId})`);

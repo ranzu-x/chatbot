@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { User, Mail, Lock, Eye, EyeOff, Sparkles, CheckCircle2, ArrowRight } from 'lucide-react';
+import { User, Mail, Lock, Eye, EyeOff, Sparkles, MailCheck, ArrowRight } from 'lucide-react';
 import { useNavigate, useSearchParams, Link } from 'react-router';
 import { useAuth } from '../../Provider/AuthContext';
 import { authAPI, tenantAPI } from '../../services/api';
+import { useResendVerification } from '../../hooks/useResendVerification';
+
+const ROLE_HOME = { ADMIN: '/admin', RESELLER: '/agency', USER: '/agency' };
 
 export default function Register() {
   const [searchParams] = useSearchParams();
@@ -29,8 +32,13 @@ export default function Register() {
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState('');
 
-  const { login } = useAuth();
+  const { setUser } = useAuth();
   const navigate = useNavigate();
+  // Set once the account exists: swaps the form for the "check your inbox" screen.
+  const [registered, setRegistered] = useState(null);
+  // The verification email was JUST sent by the signup itself, so the resend
+  // button starts in its 60s waiting state (the server enforces the same limit).
+  const { resend, sending: resending, cooldown } = useResendVerification(60);
 
   // Resolve Tenant Branding on Mount
   useEffect(() => {
@@ -104,9 +112,11 @@ export default function Register() {
       if (res.data?.token) {
         localStorage.setItem('auth_token', res.data.token);
       }
-
-      // Redirect to login or auto-login
-      navigate('/inbox');
+      // Deliberately NOT signed into the app yet: /register sits behind
+      // PublicRoute, which redirects any signed-in user away, so doing it now
+      // would skip the "check your email" screen below. The token is already
+      // saved (resend works), and "Continue" signs them in.
+      setRegistered({ email: payload.email, user: res.data?.user });
     } catch (err) {
       console.error(err);
       setServerError(err.response?.data?.message || 'Registration failed. Please try again.');
@@ -114,6 +124,48 @@ export default function Register() {
       setSubmitting(false);
     }
   };
+
+  if (registered) {
+    return (
+      <div className="login-page">
+        <div className="login-card animate-slide-up" style={{ maxWidth: 460, textAlign: 'center' }}>
+          <div style={{ width: 60, height: 60, borderRadius: '50%', background: '#dcfce7', color: '#16a34a', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+            <MailCheck size={28} />
+          </div>
+          <h1 style={{ fontSize: '1.35rem', fontWeight: 800, color: '#0f172a', margin: '0 0 8px' }}>Check your email</h1>
+          <p style={{ fontSize: '0.88rem', color: '#475569', margin: '0 0 6px', lineHeight: 1.6 }}>
+            Your account is created. We've sent a verification email to
+          </p>
+          <p style={{ fontSize: '0.95rem', fontWeight: 800, color: '#0f172a', margin: '0 0 12px', wordBreak: 'break-all' }}>{registered.email}</p>
+          <p style={{ fontSize: '0.84rem', color: '#64748b', margin: '0 0 22px', lineHeight: 1.6 }}>
+            Click the link in that email to verify your account. It can take a minute to arrive — check your spam folder if you don't see it.
+          </p>
+
+          <button
+            type="button"
+            onClick={() => {
+              // Storing the token alone never updated the auth context, which is
+              // why signup used to bounce straight back to /login.
+              if (registered.user) setUser(registered.user);
+              navigate(ROLE_HOME[registered.user?.role] || '/agency', { replace: true });
+            }}
+            style={{ width: '100%', padding: '10px', borderRadius: 8, background: tenant.primaryColor || '#2563eb', color: '#fff', border: 'none', fontWeight: 800, fontSize: '0.88rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+          >
+            Continue to your dashboard <ArrowRight size={15} />
+          </button>
+
+          <button
+            type="button"
+            onClick={resend}
+            disabled={resending || cooldown > 0}
+            style={{ marginTop: 12, background: 'none', border: 'none', color: tenant.primaryColor || '#2563eb', fontWeight: 700, fontSize: '0.82rem', cursor: resending || cooldown > 0 ? 'not-allowed' : 'pointer', opacity: resending || cooldown > 0 ? 0.55 : 1 }}
+          >
+            {resending ? 'Sending…' : cooldown > 0 ? `Didn't get it? Resend in ${cooldown}s` : "Didn't get it? Resend the email"}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!tenant.allowUserRegistration) {
     return (

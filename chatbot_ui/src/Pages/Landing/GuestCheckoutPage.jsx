@@ -3,6 +3,7 @@ import { useSearchParams, Link } from 'react-router';
 import './landing.css';
 import { MessageSquare, ArrowLeft, Lock, CreditCard, CheckCircle2, Loader2 } from 'lucide-react';
 import { billingAPI } from '../../services/api';
+import { getStoredAffiliateCode } from '../../utils/affiliateTracking';
 
 const PROVIDERS = [
   { id: 'STRIPE', label: 'Card (Stripe)', hint: 'International cards — USD', currency: 'USD' },
@@ -52,6 +53,7 @@ export default function GuestCheckoutPage() {
         password: form.password,
         packageId: pkg.id,
         provider,
+        affiliateCode: getStoredAffiliateCode() || undefined,
       });
       if (res.data?.redirectUrl) {
         window.location.href = res.data.redirectUrl;

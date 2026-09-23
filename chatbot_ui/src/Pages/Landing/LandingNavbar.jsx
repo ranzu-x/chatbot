@@ -18,6 +18,7 @@ export default function LandingNavbar() {
     { to: '/landing#how-it-works', label: 'How It Works' },
     { to: '/pricing', label: 'Pricing' },
     { to: '/blog', label: 'Blog' },
+    { to: '/forum', label: 'Forum' },
     { to: '/privacy-policy', label: 'Privacy Policy' },
     { to: '/terms-of-service', label: 'Terms' },
   ];

@@ -149,12 +149,16 @@ export async function listTabs(agencyId, spreadsheetId) {
  * labels attached to each value (reads far better as knowledge-base prose
  * than a raw CSV dump would).
  */
-export async function readSheetValues(agencyId, spreadsheetId, sheetName) {
+export async function readSheetValues(agencyId, spreadsheetId, sheetName, { raw = false } = {}) {
   const auth = await getAuthedClient(agencyId);
   const sheets = google.sheets({ version: "v4", auth });
   const { data } = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: sheetName ? `${sheetName}` : undefined,
+    // raw: numbers come back as numbers (a phone number in a General-format
+    // cell would otherwise be returned as "8.8E+12") and dates as their
+    // displayed text — used by the subscriber import.
+    ...(raw ? { valueRenderOption: "UNFORMATTED_VALUE", dateTimeRenderOption: "FORMATTED_STRING" } : {}),
   });
   return data.values || [];
 }

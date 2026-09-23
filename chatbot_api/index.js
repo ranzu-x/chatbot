@@ -25,6 +25,7 @@ import whatsappFlowEndpointRoutes from "./routes/whatsappFlowEndpoint.js";
 import flowRoutes from "./routes/flows.js";
 import webchatRoutes from "./routes/webchat.js";
 import contactRoutes from "./routes/contacts.js";
+import { authMiddleware } from "./middleware/authmiddleware.js";
 import contactListRoutes from "./routes/contactLists.js";
 import uploadRoutes from "./routes/upload.js";
 import templateRoutes from "./routes/templates.js";
@@ -44,6 +45,7 @@ import socialPostRoutes from "./routes/socialPosts.js";
 import teamRoutes from "./routes/team.js";
 import appointmentRoutes from "./routes/appointments.js";
 import appointmentServicesRoutes from "./routes/appointmentServices.js";
+import appointmentCampaignRoutes from "./routes/appointmentCampaigns.js";
 import slotRoutes from "./routes/slots.js";
 import labelsRoutes from "./routes/labels.js";
 import mediaRoutes from "./routes/media.js";
@@ -62,6 +64,8 @@ import customFieldRoutes from "./routes/customFields.js";
 import userInputFlowRoutes from "./routes/userInputFlows.js";
 import googleSheetsRoutes from "./routes/googleSheets.js";
 import followupRoutes from "./routes/followups.js";
+import affiliateRoutes from "./routes/affiliate.js";
+import forumRoutes from "./routes/forum.js";
 import whatsappFlowRefRoutes from "./routes/whatsappFlowRefs.js";
 import aiRewriteRoutes from "./routes/aiRewrite.js";
 import roleRoutes from "./routes/roles.js";
@@ -124,7 +128,10 @@ app.use(compression());
 // bytes, not a re-serialization of the parsed object) without switching the
 // whole route to express.raw() and rewriting every req.body.* access in it.
 // Inert for every other route — it's just an extra Buffer on req.
-app.use(express.json({ limit: "5mb", verify: (req, res, buf) => { req.rawBody = buf; } }));
+const jsonBody = express.json({ limit: "5mb", verify: (req, res, buf) => { req.rawBody = buf; } });
+// The bulk subscriber import posts up to 50,000 rows as JSON (several MB), past the 5mb
+// default — it gets its own, larger parser further down (after CORS and behind auth).
+app.use((req, res, next) => (req.path === "/api/v1/contacts/import" ? next() : jsonBody(req, res, next)));
 app.use(express.urlencoded({ extended: true }));
 const corsAppDashboard = cors({
   origin: function (origin, callback) {
@@ -173,6 +180,9 @@ app.use((req, res, next) => {
   return corsAppDashboard(req, res, next);
 });
 app.use(cookieParser());
+// Placed after CORS so preflights and 401s carry the CORS headers, and behind auth so an
+// anonymous caller can't make the server buffer a 25mb body.
+app.use("/api/v1/contacts/import", authMiddleware, express.json({ limit: "25mb" }));
 app.use(
   "/uploads",
   (req, res, next) => {
@@ -233,6 +243,13 @@ app.use("/api/v1", billingRoutes);
 // commerce.js has the exact same shape of public route (Shopify's OAuth
 // callback, hit anonymously by Shopify's redirect) — same fix, same reason.
 app.use("/api/v1", commerceRoutes);
+// forum.js is publicly readable (the Community Forum's threads/replies/stats
+// work logged-out), so it must be mounted here too — before the routers below
+// with a bare router.use(authMiddleware, ...) — or they 401 every anonymous
+// read. It scopes its own auth per path (router.use("/forum", ...) and
+// router.use("/admin/forum", ...) below its public routes), so nothing loses
+// protection by being mounted early.
+app.use("/api/v1", forumRoutes);
 
 // ─── Protected Application Routes ─────────────────────────────────────────────
 app.use("/api/v1", adminRoutes);
@@ -264,6 +281,7 @@ app.use("/api/v1", socialPostRoutes);
 app.use("/api/v1", teamRoutes);
 app.use("/api/v1", appointmentRoutes);
 app.use("/api/v1", appointmentServicesRoutes);
+app.use("/api/v1", appointmentCampaignRoutes);
 app.use("/api/v1", slotRoutes);
 app.use("/api/v1", labelsRoutes);
 app.use("/api/v1", agencyPaymentGatewayRoutes);
@@ -280,6 +298,7 @@ app.use("/api/v1", customFieldRoutes);
 app.use("/api/v1", userInputFlowRoutes);
 app.use("/api/v1", googleSheetsRoutes);
 app.use("/api/v1", followupRoutes);
+app.use("/api/v1", affiliateRoutes);
 app.use("/api/v1", whatsappFlowRefRoutes);
 app.use("/api/v1", aiRewriteRoutes);
 app.use("/api/v1", roleRoutes);

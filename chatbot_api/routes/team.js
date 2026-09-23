@@ -279,8 +279,10 @@ router.post("/team-members", requireTeamManage, async (req, res) => {
     // 3. Hash password and create user
     const hashed = await bcrypt.hash(password, 10);
     const [userResult] = await conn.query(
-      `INSERT INTO users (name, email, phone, password, role, is_active, created_at)
-       VALUES (?, ?, ?, ?, 'USER', 1, NOW())`,
+      // Created by a logged-in team owner, who vouches for the address — marked
+      // verified directly instead of emailing a link (see utils/emailVerification.js).
+      `INSERT INTO users (name, email, phone, password, role, is_active, created_at, email_verified_at)
+       VALUES (?, ?, ?, ?, 'USER', 1, NOW(), NOW())`,
       [name.trim(), email.toLowerCase().trim(), phone ? phone.trim() : null, hashed]
     );
     const newUserId = userResult.insertId;

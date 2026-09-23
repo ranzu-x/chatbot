@@ -9,6 +9,7 @@ import { consumePendingSignup } from "../services/guestSignupService.js";
 import * as sslcommerz from "../services/sslcommerzService.js";
 import * as aamarpay from "../services/aamarpayService.js";
 import * as portwallet from "../services/portwalletService.js";
+import { recordCommissionForInvoice } from "../utils/affiliateCommission.js";
 
 const router = express.Router();
 
@@ -136,7 +137,7 @@ router.get("/billing/invoices", authMiddleware, async (req, res) => {
 // from this endpoint or from the browser's success redirect below.
 router.post("/billing/guest-checkout", async (req, res) => {
   try {
-    const { fullName, email, businessName, password, packageId, provider } = req.body || {};
+    const { fullName, email, businessName, password, packageId, provider, affiliateCode } = req.body || {};
     if (!fullName || !email || !password || !packageId || !provider) {
       return res.status(400).json({ success: false, message: "fullName, email, password, packageId, and provider are required" });
     }
@@ -170,9 +171,9 @@ router.post("/billing/guest-checkout", async (req, res) => {
 
     await pool.query(
       `INSERT INTO pending_signups
-        (reference_token, full_name, email, business_name, password_hash, package_id, billing_cycle, provider, amount, currency, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
-      [referenceToken, fullName, normalizedEmail, businessName || null, passwordHash, pkg.id, pkg.billing_cycle, normalizedProvider, amount, currency]
+        (reference_token, full_name, email, business_name, affiliate_code, password_hash, package_id, billing_cycle, provider, amount, currency, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+      [referenceToken, fullName, normalizedEmail, businessName || null, affiliateCode || null, passwordHash, pkg.id, pkg.billing_cycle, normalizedProvider, amount, currency]
     );
 
     const providerPath = normalizedProvider.toLowerCase();
@@ -323,12 +324,16 @@ router.post("/billing/webhook", express.raw({ type: "application/json" }), async
 
           // Record invoice
           const amountPaid = (dataObject.amount_total || 0) / 100;
-          await pool.query(
+          const invoiceCurrency = (dataObject.currency || "USD").toUpperCase();
+          const [invoiceResult] = await pool.query(
             `INSERT INTO invoices (
               agency_id, user_id, package_id, stripe_invoice_id, amount_paid, currency, status, paid_at
             ) VALUES (?, ?, ?, ?, ?, ?, 'PAID', NOW())`,
-            [agencyId, userId, packageId, dataObject.invoice || dataObject.id, amountPaid, (dataObject.currency || "USD").toUpperCase()]
+            [agencyId, userId, packageId, dataObject.invoice || dataObject.id, amountPaid, invoiceCurrency]
           );
+          if (agencyId) {
+            await recordCommissionForInvoice({ agencyId, invoiceId: invoiceResult.insertId, amountPaid, currency: invoiceCurrency });
+          }
           console.log(`✅ [STRIPE] Upgraded workspace (Agency: ${agencyId}, User: ${userId}) to package ID: ${packageId}`);
         }
         break;
@@ -362,6 +367,7 @@ router.post("/billing/webhook", express.raw({ type: "application/json" }), async
 
         if (subRows.length) {
           const { agency_id, user_id, package_id } = subRows[0];
+          const renewalCurrency = (dataObject.currency || "USD").toUpperCase();
           await pool.query(
             `INSERT INTO invoices (
               agency_id, user_id, package_id, stripe_invoice_id, amount_paid, currency, status, invoice_pdf_url, hosted_invoice_url, paid_at
@@ -376,11 +382,21 @@ router.post("/billing/webhook", express.raw({ type: "application/json" }), async
               package_id,
               invoiceId,
               amountPaid,
-              (dataObject.currency || "USD").toUpperCase(),
+              renewalCurrency,
               invoicePdf,
               hostedInvoiceUrl,
             ]
           );
+          if (agency_id) {
+            // ON DUPLICATE KEY UPDATE doesn't reliably hand back the row's id
+            // via insertId, so look it up by the (unique) stripe_invoice_id —
+            // this also naturally covers both a fresh renewal and a retried
+            // webhook delivery for the same invoice.
+            const [[invoiceRow]] = await pool.query("SELECT id FROM invoices WHERE stripe_invoice_id = ? LIMIT 1", [invoiceId]);
+            if (invoiceRow) {
+              await recordCommissionForInvoice({ agencyId: agency_id, invoiceId: invoiceRow.id, amountPaid, currency: renewalCurrency });
+            }
+          }
         }
         break;
       }

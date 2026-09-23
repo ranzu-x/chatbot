@@ -76,10 +76,78 @@ function formatDatePretty(dateStr) {
 }
 
 /**
+ * After a booking session ends (COMPLETED or CANCELLED), resume the parent flow session
+ * by advancing to the appropriate handle ("confirmed" or "cancelled").
+ *
+ * This is done by updating the flow_sessions.current_node_id to the node AFTER the
+ * appointment node, resolved via the handle. The flow engine will pick it up on the
+ * next message if it's parked, or we directly advance the session.
+ */
+async function resumeParentFlow(session, outcome) {
+  if (!session.flow_session_id || !session.flow_node_id) return;
+
+  try {
+    // Load the flow session
+    const [[flowSession]] = await pool.query(
+      "SELECT * FROM flow_sessions WHERE id = ? AND status = 'ACTIVE'",
+      [session.flow_session_id]
+    );
+    if (!flowSession) return;
+
+    // Load the flow graph to find the next node
+    const [[flowRow]] = await pool.query("SELECT * FROM flows WHERE id = ?", [flowSession.flow_id]);
+    if (!flowRow) return;
+
+    let edges = [];
+    try { edges = JSON.parse(flowRow.edges_json || "[]"); } catch {}
+
+    // Resolve next node ID based on outcome handle: "confirmed" or "cancelled"
+    const handle = outcome === "COMPLETED" ? "confirmed" : "cancelled";
+    const nextEdge = edges.find(
+      (e) => e.source === session.flow_node_id && e.sourceHandle === handle
+    );
+    // Fallback: any edge from this node (if user didn't wire both handles)
+    const fallbackEdge = !nextEdge ? edges.find((e) => e.source === session.flow_node_id) : null;
+    const nextNodeId = nextEdge?.target || fallbackEdge?.target || null;
+
+    if (nextNodeId) {
+      await pool.query(
+        "UPDATE flow_sessions SET current_node_id = ?, variables = ? WHERE id = ?",
+        [nextNodeId, flowSession.variables, flowSession.id]
+      );
+      console.log(`[Appointment Engine] Resumed flow session ${flowSession.id} → node ${nextNodeId} (${handle})`);
+    } else {
+      // No next node — end the flow session
+      await pool.query(
+        "UPDATE flow_sessions SET status = 'COMPLETED', current_node_id = ? WHERE id = ?",
+        [session.flow_node_id, flowSession.id]
+      );
+      console.log(`[Appointment Engine] Flow session ${flowSession.id} completed (no next node after appointment)`);
+    }
+  } catch (err) {
+    console.error("[Appointment Engine] Failed to resume parent flow:", err.message);
+  }
+}
+
+/**
  * Main Omnichannel Appointment Booking Handler
+ * @param {number} agencyId
+ * @param {string} platform
+ * @param {object} conversation
+ * @param {object} contact
+ * @param {string} incomingMsgBody
+ * @param {object} integration
+ * @param {string} msgType
+ * @param {string|null} buttonRoute
+ * @param {number|null} campaignId  - If called from a flow node, the selected campaign ID
+ * @param {object|null} flowContext - { flowSessionId, flowNodeId } for flow resume
  * Returns true if handled, false otherwise
  */
-export async function handleAppointmentBooking(agencyId, platform, conversation, contact, incomingMsgBody, integration, msgType, buttonRoute) {
+export async function handleAppointmentBooking(
+  agencyId, platform, conversation, contact,
+  incomingMsgBody, integration, msgType, buttonRoute,
+  campaignId = null, flowContext = null
+) {
   try {
     const cleanMsg = (incomingMsgBody || "").trim();
     const lowerMsg = cleanMsg.toLowerCase();
@@ -98,19 +166,20 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
     // Check if user wants to cancel an ongoing session
     if (session && (lowerMsg === "cancel" || lowerMsg === "exit" || lowerMsg === "quit" || lowerMsg === "stop" || effectiveRoute === "apt:cancel")) {
       await pool.query(
-        "UPDATE appointment_booking_sessions SET status = 'CANCELLED' WHERE id = ?",
+        "UPDATE appointment_booking_sessions SET status = 'CANCELLED', flow_outcome = 'CANCELLED' WHERE id = ?",
         [session.id]
       );
       await sendBookingReply(agencyId, conversation, contact, integration, platform, {
         type: "TEXT",
         body: "🚫 Appointment booking has been cancelled. If you'd like to book in the future, just reply *book appointment*!",
       });
+      await resumeParentFlow(session, "CANCELLED");
       return true;
     }
 
     // If no active session, check if message is a booking trigger
     if (!session) {
-      if (!isAppointmentTrigger(incomingMsgBody, effectiveRoute)) {
+      if (!isAppointmentTrigger(incomingMsgBody, effectiveRoute) && !flowContext) {
         return false;
       }
 
@@ -119,20 +188,33 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
         `SELECT is_active FROM agency_modules WHERE agency_id = ? AND module_key = 'feature_appointments' LIMIT 1`,
         [agencyId]
       );
-      // If agency_modules row exists and is_active is 0, skip
       if (modules.length > 0 && modules[0].is_active === 0) {
         return false;
       }
 
-      // Create new booking session with 15-minute expiry
+      // Load campaign if provided
+      let campaign = null;
+      if (campaignId) {
+        const [[cam]] = await pool.query(
+          "SELECT * FROM appointment_campaigns WHERE id = ? AND agency_id = ? AND is_active = 1",
+          [campaignId, agencyId]
+        );
+        campaign = cam || null;
+      }
+
+      // Create new booking session with 30-minute expiry
       const [newSess] = await pool.query(
         `INSERT INTO appointment_booking_sessions (
-          agency_id, conversation_id, contact_id, platform, step,
+          agency_id, campaign_id, flow_session_id, flow_node_id,
+          conversation_id, contact_id, platform, step,
           customer_name, customer_phone, customer_email,
           status, expires_at
-        ) VALUES (?, ?, ?, ?, 'SELECT_SERVICE', ?, ?, ?, 'ACTIVE', DATE_ADD(NOW(), INTERVAL 15 MINUTE))`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'SELECT_SERVICE', ?, ?, ?, 'ACTIVE', DATE_ADD(NOW(), INTERVAL 30 MINUTE))`,
         [
           agencyId,
+          campaign?.id || null,
+          flowContext?.flowSessionId || null,
+          flowContext?.flowNodeId || null,
           conversation.id,
           contact.id,
           platform || "WHATSAPP",
@@ -144,22 +226,56 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
 
       const [loaded] = await pool.query("SELECT * FROM appointment_booking_sessions WHERE id = ?", [newSess.insertId]);
       session = loaded[0];
+
+      // Send campaign greeting if present
+      if (campaign?.greeting_message) {
+        await sendBookingReply(agencyId, conversation, contact, integration, platform, {
+          type: "TEXT",
+          body: campaign.greeting_message,
+        });
+      }
     }
+
+    // Load campaign for service filtering
+    let campaignServiceIds = null;
+    if (session.campaign_id) {
+      const [[cam]] = await pool.query(
+        "SELECT service_ids, staff_id FROM appointment_campaigns WHERE id = ?",
+        [session.campaign_id]
+      );
+      if (cam?.service_ids) {
+        try {
+          campaignServiceIds = typeof cam.service_ids === "string"
+            ? JSON.parse(cam.service_ids)
+            : cam.service_ids;
+        } catch {}
+      }
+    }
+
+    // Helper: build service WHERE clause
+    const buildServiceFilter = (agencyId, campaignServiceIds) => {
+      if (campaignServiceIds && campaignServiceIds.length > 0) {
+        const placeholders = campaignServiceIds.map(() => "?").join(",");
+        return {
+          sql: `SELECT id, name, description, duration_minutes, price, currency FROM appointment_services WHERE agency_id = ? AND is_active = 1 AND id IN (${placeholders}) ORDER BY name ASC`,
+          params: [agencyId, ...campaignServiceIds],
+        };
+      }
+      return {
+        sql: `SELECT id, name, description, duration_minutes, price, currency FROM appointment_services WHERE agency_id = ? AND is_active = 1 ORDER BY name ASC`,
+        params: [agencyId],
+      };
+    };
 
     // ── STEP 1: SELECT SERVICE ─────────────────────────────────────────────
     if (session.step === "SELECT_SERVICE") {
-      const [services] = await pool.query(
-        "SELECT id, name, description, duration_minutes, price, currency FROM appointment_services WHERE agency_id = ? AND is_active = 1 ORDER BY name ASC",
-        [agencyId]
-      );
+      const { sql, params } = buildServiceFilter(agencyId, campaignServiceIds);
+      const [services] = await pool.query(sql, params);
 
-      // If no custom services configured, use default consultation and jump to SELECT_DATE
       if (services.length === 0) {
         session.step = "SELECT_DATE";
         await pool.query("UPDATE appointment_booking_sessions SET step = 'SELECT_DATE' WHERE id = ?", [session.id]);
-        // Fall through to SELECT_DATE below
       } else if (services.length === 1) {
-        // Automatically select the only available service
         const singleSvc = services[0];
         session.service_id = singleSvc.id;
         session.step = "SELECT_DATE";
@@ -167,18 +283,14 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
           "UPDATE appointment_booking_sessions SET service_id = ?, step = 'SELECT_DATE' WHERE id = ?",
           [singleSvc.id, session.id]
         );
-        // Fall through to SELECT_DATE below
       } else {
-        // Check if user already made a selection
         let selectedService = null;
         if (effectiveRoute && effectiveRoute.startsWith("apt:svc:")) {
           const svcId = parseInt(effectiveRoute.replace("apt:svc:", ""));
           selectedService = services.find((s) => s.id === svcId);
         } else if (/^\d+$/.test(cleanMsg)) {
           const idx = parseInt(cleanMsg) - 1;
-          if (idx >= 0 && idx < services.length) {
-            selectedService = services[idx];
-          }
+          if (idx >= 0 && idx < services.length) selectedService = services[idx];
         } else {
           selectedService = services.find((s) => s.name.toLowerCase() === lowerMsg);
         }
@@ -190,10 +302,8 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
             "UPDATE appointment_booking_sessions SET service_id = ?, step = 'SELECT_DATE' WHERE id = ?",
             [selectedService.id, session.id]
           );
-          // Fall through to SELECT_DATE
         } else {
-          // Send Service Selection Options
-          const serviceRows = services.slice(0, 10).map((s, idx) => ({
+          const serviceRows = services.slice(0, 10).map((s) => ({
             id: `apt:svc:${s.id}`,
             title: `${s.name}`.slice(0, 24),
             description: `${s.duration_minutes}m • ${s.price > 0 ? `${s.currency} ${s.price}` : "Free"}`.slice(0, 72),
@@ -215,25 +325,16 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
               await sendBookingReply(agencyId, conversation, contact, integration, platform, {
                 type: "LIST_MENU",
                 body: "👋 Welcome! Please select the service you would like to book from the menu below:",
-                listMenu: {
-                  title: "Services",
-                  buttonText: "Choose Service",
-                  items: serviceRows,
-                },
+                listMenu: { title: "Services", buttonText: "Choose Service", items: serviceRows },
               });
             }
           } else {
-            // Facebook, Instagram, Telegram, Webchat text/button fallback
             let text = "👋 Welcome! Please select a service to book by replying with the number:\n\n";
             services.forEach((s, idx) => {
               text += `${idx + 1}. *${s.name}* (${s.duration_minutes}m - ${s.price > 0 ? `${s.currency} ${s.price}` : "Free"})\n`;
             });
             text += "\n_Or reply CANCEL to stop._";
-
-            await sendBookingReply(agencyId, conversation, contact, integration, platform, {
-              type: "TEXT",
-              body: text,
-            });
+            await sendBookingReply(agencyId, conversation, contact, integration, platform, { type: "TEXT", body: text });
           }
           return true;
         }
@@ -242,7 +343,6 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
 
     // ── STEP 2: SELECT DATE ───────────────────────────────────────────────
     if (session.step === "SELECT_DATE") {
-      // Find dates that have active available slots
       const [dates] = await pool.query(
         `SELECT DISTINCT slot_date
          FROM appointment_slots
@@ -256,15 +356,15 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
       );
 
       if (dates.length === 0) {
-        await pool.query("UPDATE appointment_booking_sessions SET status = 'CANCELLED' WHERE id = ?", [session.id]);
+        await pool.query("UPDATE appointment_booking_sessions SET status = 'CANCELLED', flow_outcome = 'CANCELLED' WHERE id = ?", [session.id]);
         await sendBookingReply(agencyId, conversation, contact, integration, platform, {
           type: "TEXT",
           body: "📅 Sorry, there are currently no open appointment dates available. Please check back soon or message our team for assistance!",
         });
+        await resumeParentFlow(session, "CANCELLED");
         return true;
       }
 
-      // Check if user selected a date
       let selectedDate = null;
       if (effectiveRoute && effectiveRoute.startsWith("apt:date:")) {
         selectedDate = effectiveRoute.replace("apt:date:", "");
@@ -283,10 +383,12 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
         selectedDate = tom.toISOString().split("T")[0];
       }
 
-      const validDateObj = selectedDate ? dates.find((d) => {
-        const dStr = typeof d.slot_date === "string" ? d.slot_date : d.slot_date.toISOString().split("T")[0];
-        return dStr === selectedDate;
-      }) : null;
+      const validDateObj = selectedDate
+        ? dates.find((d) => {
+            const dStr = typeof d.slot_date === "string" ? d.slot_date : d.slot_date.toISOString().split("T")[0];
+            return dStr === selectedDate;
+          })
+        : null;
 
       if (validDateObj) {
         const finalDateStr = typeof validDateObj.slot_date === "string" ? validDateObj.slot_date : validDateObj.slot_date.toISOString().split("T")[0];
@@ -296,25 +398,15 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
           "UPDATE appointment_booking_sessions SET selected_date = ?, step = 'SELECT_SLOT' WHERE id = ?",
           [finalDateStr, session.id]
         );
-        // Fall through to SELECT_SLOT
       } else {
-        // Send Date Selection
-        const dateRows = dates.map((d, idx) => {
+        const dateRows = dates.map((d) => {
           const dStr = typeof d.slot_date === "string" ? d.slot_date : d.slot_date.toISOString().split("T")[0];
-          return {
-            id: `apt:date:${dStr}`,
-            title: formatDatePretty(dStr).slice(0, 24),
-            description: `Date: ${dStr}`,
-          };
+          return { id: `apt:date:${dStr}`, title: formatDatePretty(dStr).slice(0, 24), description: `Date: ${dStr}` };
         });
 
         if (platform === "WHATSAPP") {
           if (dates.length <= 3) {
-            const buttons = dateRows.map((d) => ({
-              id: d.id,
-              title: d.title.slice(0, 20),
-              type: "reply",
-            }));
+            const buttons = dateRows.map((d) => ({ id: d.id, title: d.title.slice(0, 20), type: "reply" }));
             await sendBookingReply(agencyId, conversation, contact, integration, platform, {
               type: "BUTTONS",
               body: "📅 Please pick your preferred appointment date:",
@@ -324,11 +416,7 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
             await sendBookingReply(agencyId, conversation, contact, integration, platform, {
               type: "LIST_MENU",
               body: "📅 Please choose an available date for your appointment:",
-              listMenu: {
-                title: "Available Dates",
-                buttonText: "Select Date",
-                items: dateRows,
-              },
+              listMenu: { title: "Available Dates", buttonText: "Select Date", items: dateRows },
             });
           }
         } else {
@@ -338,11 +426,7 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
             text += `${idx + 1}. *${formatDatePretty(dStr)}* (${dStr})\n`;
           });
           text += "\n_Or reply CANCEL to stop._";
-
-          await sendBookingReply(agencyId, conversation, contact, integration, platform, {
-            type: "TEXT",
-            body: text,
-          });
+          await sendBookingReply(agencyId, conversation, contact, integration, platform, { type: "TEXT", body: text });
         }
         return true;
       }
@@ -365,7 +449,6 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
       );
 
       if (slots.length === 0) {
-        // No slots left for this date
         session.step = "SELECT_DATE";
         await pool.query("UPDATE appointment_booking_sessions SET step = 'SELECT_DATE' WHERE id = ?", [session.id]);
         await sendBookingReply(agencyId, conversation, contact, integration, platform, {
@@ -375,16 +458,13 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
         return true;
       }
 
-      // Check if user selected a slot
       let selectedSlot = null;
       if (effectiveRoute && effectiveRoute.startsWith("apt:slot:")) {
         const slotId = parseInt(effectiveRoute.replace("apt:slot:", ""));
         selectedSlot = slots.find((s) => s.id === slotId);
       } else if (/^\d+$/.test(cleanMsg)) {
         const idx = parseInt(cleanMsg) - 1;
-        if (idx >= 0 && idx < slots.length) {
-          selectedSlot = slots[idx];
-        }
+        if (idx >= 0 && idx < slots.length) selectedSlot = slots[idx];
       } else {
         selectedSlot = slots.find((s) => {
           const st = s.start_time.substring(0, 5);
@@ -399,10 +479,8 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
           "UPDATE appointment_booking_sessions SET slot_id = ?, step = 'CONFIRM' WHERE id = ?",
           [selectedSlot.id, session.id]
         );
-        // Fall through to CONFIRM
       } else {
-        // Send Slot Options
-        const slotRows = slots.map((s, idx) => ({
+        const slotRows = slots.map((s) => ({
           id: `apt:slot:${s.id}`,
           title: `${s.start_time.substring(0, 5)} - ${s.end_time.substring(0, 5)}`,
           description: `${s.max_capacity - s.booked_count} slot(s) left`,
@@ -410,11 +488,7 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
 
         if (platform === "WHATSAPP") {
           if (slots.length <= 3) {
-            const buttons = slotRows.map((s) => ({
-              id: s.id,
-              title: s.title.slice(0, 20),
-              type: "reply",
-            }));
+            const buttons = slotRows.map((s) => ({ id: s.id, title: s.title.slice(0, 20), type: "reply" }));
             await sendBookingReply(agencyId, conversation, contact, integration, platform, {
               type: "BUTTONS",
               body: `⏰ Available times for *${formatDatePretty(targetDate)}*:`,
@@ -424,11 +498,7 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
             await sendBookingReply(agencyId, conversation, contact, integration, platform, {
               type: "LIST_MENU",
               body: `⏰ Please choose an available time window for *${formatDatePretty(targetDate)}*:`,
-              listMenu: {
-                title: "Available Slots",
-                buttonText: "Choose Time",
-                items: slotRows,
-              },
+              listMenu: { title: "Available Slots", buttonText: "Choose Time", items: slotRows },
             });
           }
         } else {
@@ -437,11 +507,7 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
             text += `${idx + 1}. *${s.start_time.substring(0, 5)} - ${s.end_time.substring(0, 5)}*\n`;
           });
           text += "\n_Reply with the number of your choice, or reply CANCEL._";
-
-          await sendBookingReply(agencyId, conversation, contact, integration, platform, {
-            type: "TEXT",
-            body: text,
-          });
+          await sendBookingReply(agencyId, conversation, contact, integration, platform, { type: "TEXT", body: text });
         }
         return true;
       }
@@ -449,14 +515,12 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
 
     // ── STEP 4: CONFIRMATION ──────────────────────────────────────────────
     if (session.step === "CONFIRM") {
-      // Look up slot details
       const [slotRows] = await pool.query(
         "SELECT * FROM appointment_slots WHERE id = ? AND agency_id = ?",
         [session.slot_id, agencyId]
       );
       const slot = slotRows[0];
 
-      // Look up service details
       let serviceName = "General Consultation";
       let fee = 0.0;
       let duration = 30;
@@ -472,51 +536,40 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
         }
       }
 
-      const isConfirm =
-        lowerMsg === "yes" ||
-        lowerMsg === "confirm" ||
-        lowerMsg === "1" ||
-        effectiveRoute === "apt:confirm";
-
-      const isCancel =
-        lowerMsg === "no" ||
-        lowerMsg === "cancel" ||
-        effectiveRoute === "apt:cancel";
+      const isConfirm = lowerMsg === "yes" || lowerMsg === "confirm" || lowerMsg === "1" || effectiveRoute === "apt:confirm";
+      const isCancel = lowerMsg === "no" || lowerMsg === "cancel" || effectiveRoute === "apt:cancel";
 
       if (isConfirm) {
         if (!slot) {
-          await pool.query("UPDATE appointment_booking_sessions SET status = 'CANCELLED' WHERE id = ?", [session.id]);
+          await pool.query("UPDATE appointment_booking_sessions SET status = 'CANCELLED', flow_outcome = 'CANCELLED' WHERE id = ?", [session.id]);
           await sendBookingReply(agencyId, conversation, contact, integration, platform, {
             type: "TEXT",
             body: "⚠️ The selected slot is no longer valid. Please start again by replying *book appointment*.",
           });
+          await resumeParentFlow(session, "CANCELLED");
           return true;
         }
 
-        // Atomic booking transaction
         const conn = await pool.getConnection();
         try {
           await conn.beginTransaction();
-
           const [lockSlots] = await conn.query(
             "SELECT id, booked_count, max_capacity FROM appointment_slots WHERE id = ? FOR UPDATE",
             [slot.id]
           );
-
           if (!lockSlots.length || lockSlots[0].booked_count >= lockSlots[0].max_capacity) {
             await conn.rollback();
-            await pool.query("UPDATE appointment_booking_sessions SET status = 'CANCELLED' WHERE id = ?", [session.id]);
+            await pool.query("UPDATE appointment_booking_sessions SET status = 'CANCELLED', flow_outcome = 'CANCELLED' WHERE id = ?", [session.id]);
             await sendBookingReply(agencyId, conversation, contact, integration, platform, {
               type: "TEXT",
               body: "⚠️ Sorry, that slot was just filled by someone else! Please reply *book appointment* to pick another time.",
             });
+            await resumeParentFlow(session, "CANCELLED");
             return true;
           }
 
-          // Increment slot
           await conn.query("UPDATE appointment_slots SET booked_count = booked_count + 1 WHERE id = ?", [slot.id]);
 
-          // Insert Appointment
           const targetDate = typeof slot.slot_date === "string" ? slot.slot_date : slot.slot_date.toISOString().split("T")[0];
           const [ins] = await conn.query(
             `INSERT INTO appointments (
@@ -543,14 +596,14 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
             ]
           );
 
-          // Mark session completed
-          await conn.query("UPDATE appointment_booking_sessions SET status = 'COMPLETED' WHERE id = ?", [session.id]);
-
+          await conn.query(
+            "UPDATE appointment_booking_sessions SET status = 'COMPLETED', flow_outcome = 'CONFIRMED' WHERE id = ?",
+            [session.id]
+          );
           await conn.commit();
 
           const aptId = ins.insertId;
 
-          // Emit live dashboard event
           try {
             emitToAgency(agencyId, "new_appointment", {
               appointmentId: aptId,
@@ -562,7 +615,6 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
             });
           } catch (e) {}
 
-          // Confirmation message
           const confirmationText =
             `🎉 *Appointment Confirmed!*\n` +
             `━━━━━━━━━━━━━━━━━━━━\n` +
@@ -580,6 +632,8 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
             body: confirmationText,
           });
 
+          // Resume parent flow at "confirmed" handle
+          await resumeParentFlow(session, "COMPLETED");
           return true;
         } catch (txErr) {
           await conn.rollback();
@@ -593,22 +647,26 @@ export async function handleAppointmentBooking(agencyId, platform, conversation,
           conn.release();
         }
       } else if (isCancel) {
-        await pool.query("UPDATE appointment_booking_sessions SET status = 'CANCELLED' WHERE id = ?", [session.id]);
+        await pool.query(
+          "UPDATE appointment_booking_sessions SET status = 'CANCELLED', flow_outcome = 'CANCELLED' WHERE id = ?",
+          [session.id]
+        );
         await sendBookingReply(agencyId, conversation, contact, integration, platform, {
           type: "TEXT",
           body: "🚫 Appointment booking cancelled. Feel free to message us again when you're ready to schedule!",
         });
+        await resumeParentFlow(session, "CANCELLED");
         return true;
       } else {
         // Show Confirmation Prompt
-        const targetDate = typeof slot.slot_date === "string" ? slot.slot_date : slot.slot_date.toISOString().split("T")[0];
+        const targetDate = typeof slot?.slot_date === "string" ? slot.slot_date : slot?.slot_date?.toISOString().split("T")[0] || "";
         const summaryText =
           `🗓️ *Confirm Your Booking*\n` +
           `━━━━━━━━━━━━━━━━━━━━\n` +
           `👤 *Name:* ${contact.name || "Valued Client"}\n` +
           `💼 *Service:* ${serviceName}\n` +
           `📅 *Date:* ${formatDatePretty(targetDate)}\n` +
-          `⏰ *Time:* ${slot.start_time.substring(0, 5)} - ${slot.end_time.substring(0, 5)}\n` +
+          `⏰ *Time:* ${slot ? slot.start_time.substring(0, 5) + " - " + slot.end_time.substring(0, 5) : "TBD"}\n` +
           (fee > 0 ? `💵 *Price:* $${parseFloat(fee).toFixed(2)}\n` : "") +
           `━━━━━━━━━━━━━━━━━━━━\n` +
           `Would you like to confirm this appointment?`;

@@ -126,8 +126,10 @@ export async function createCustomerAccount({ resellerId, actor, name, slug, own
     }
 
     const hashed = await bcrypt.hash(ownerPassword, 10);
+    // Created by a logged-in admin/reseller, who vouches for the address — so it's
+    // marked verified directly instead of emailing a link (see utils/emailVerification.js).
     const [userResult] = await conn.query(
-      "INSERT INTO users (name, email, password, role, phone) VALUES (?, ?, ?, 'RESELLER', ?)",
+      "INSERT INTO users (name, email, password, role, phone, email_verified_at) VALUES (?, ?, ?, 'RESELLER', ?, NOW())",
       [ownerName, ownerEmail, hashed, phone || null]
     );
     const ownerId = userResult.insertId;

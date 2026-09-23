@@ -28,6 +28,7 @@ import {
   Blocks,
   KeyRound,
   ScrollText,
+  Gift,
 } from 'lucide-react';
 
 const NAV_CONFIG = {
@@ -59,6 +60,7 @@ const NAV_CONFIG = {
     { section: 'Billing & Platform', items: [
       { label: 'Packages & Modules',  icon: Package,   path: '/admin/packages' },
       { label: 'Payment Gateways',    icon: Zap,       path: '/admin/payment-gateways' },
+      { label: 'Affiliates',          icon: Gift,      path: '/admin/affiliates' },
       { label: 'Resellers',           icon: Building2, path: '/admin/agencies' },
       { label: 'Platform Settings',   icon: Settings,  path: '/admin/platform-settings' },
     ]},
@@ -88,6 +90,7 @@ const NAV_CONFIG = {
       { label: 'Team Roles & Permissions', icon: KeyRound, path: '/roles' },
       { label: 'Audit Log',                icon: ScrollText, path: '/admin/audit-log' },
       { label: 'Packages & Modules',  icon: Package,  path: '/agency/packages' },
+      { label: 'Affiliate Program',   icon: Gift,     path: '/affiliate', accountTypeIn: ['RESELLER', 'DIRECT_CUSTOMER'] },
     ]},
   ],
   // User (a Reseller's team member) gets every day-to-day operational menu
@@ -112,11 +115,12 @@ const NAV_CONFIG = {
       { label: 'Comment Automation', icon: MessageCircle, path: '/comment-automation', moduleKey: 'feature_bot_manager' },
       { label: 'Connect Account',  icon: Radio,         path: '/connect-accounts' },
       { label: 'Broadcasts',       icon: Send,          path: '/campaigns',      moduleKey: 'feature_broadcasts' },
-      { label: 'In-Chat Orders',   icon: ShoppingBag,   path: '/orders' },
-      { label: 'Appointments',     icon: Calendar,      path: '/appointments',   moduleKey: 'feature_appointments' },
+      { label: 'In-Chat Orders',   icon: ShoppingBag,     path: '/orders' },
+      { label: 'Appointments',     icon: Calendar,        path: '/appointments',   moduleKey: 'feature_appointments' },
     ]},
     { section: 'Control Panel', items: [
       { label: 'Team Members',     icon: Users,    path: '/team' },
+      { label: 'Affiliate Program', icon: Gift,    path: '/affiliate', accountTypeIn: ['RESELLER', 'DIRECT_CUSTOMER'] },
     ]},
   ],
 };
@@ -186,13 +190,13 @@ export default function Sidebar() {
             top: 0,
             bottom: 0,
             width: 270,
-            background: '#ffffff',
+            background: 'var(--bg-surface)',
             zIndex: 99999,
             boxShadow: '6px 0 28px rgba(0, 0, 0, 0.18)',
             display: 'flex',
             flexDirection: 'column',
             animation: 'slideInLeft 0.22s cubic-bezier(0.4, 0, 0.2, 1)',
-            borderRight: '1px solid #e2e8f0',
+            borderRight: '1px solid var(--border)',
           }}
         >
           {/* Drawer Header with Close Button */}
@@ -202,8 +206,8 @@ export default function Sidebar() {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              borderBottom: '1px solid #e2e8f0',
-              background: '#f8fafc',
+              borderBottom: '1px solid var(--border)',
+              background: 'var(--bg-input)',
             }}
           >
             <Link
@@ -235,10 +239,10 @@ export default function Sidebar() {
                 <Sparkles size={17} />
               </div>
               <div>
-                <div style={{ fontSize: '0.92rem', fontWeight: 800, color: '#0f172a' }}>
+                <div style={{ fontSize: '0.92rem', fontWeight: 800, color: 'var(--text-primary)' }}>
                   Nexa Chatbot
                 </div>
-                <div style={{ fontSize: '0.68rem', color: '#64748b' }}>
+                <div style={{ fontSize: '0.68rem', color: 'var(--text-tertiary)' }}>
                   {subtitle}
                 </div>
               </div>
@@ -251,17 +255,17 @@ export default function Sidebar() {
                 width: 28,
                 height: 28,
                 borderRadius: 6,
-                border: '1px solid #e2e8f0',
-                background: '#ffffff',
-                color: '#64748b',
+                border: '1px solid var(--border)',
+                background: 'var(--bg-surface)',
+                color: 'var(--text-tertiary)',
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 transition: 'all 0.12s',
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = '#0f172a'; e.currentTarget.style.borderColor = '#cbd5e1'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = '#64748b'; e.currentTarget.style.borderColor = '#e2e8f0'; }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.borderColor = 'var(--border-light)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
             >
               <X size={16} />
             </button>
@@ -271,7 +275,7 @@ export default function Sidebar() {
           <nav style={{ padding: '14px 10px', flex: 1, overflowY: 'auto' }}>
             {sections.map((section) => (
               <div key={section.section} style={{ marginBottom: 14 }}>
-                <div style={{ fontSize: '0.66rem', fontWeight: 700, letterSpacing: '0.8px', color: '#94a3b8', padding: '6px 8px 4px', textTransform: 'uppercase' }}>
+                <div style={{ fontSize: '0.66rem', fontWeight: 700, letterSpacing: '0.8px', color: 'var(--text-muted)', padding: '6px 8px 4px', textTransform: 'uppercase' }}>
                   {section.section}
                 </div>
 
@@ -296,25 +300,25 @@ export default function Sidebar() {
                         textDecoration: 'none',
                         fontSize: '0.84rem',
                         fontWeight: active ? 700 : 500,
-                        color: active ? 'var(--text-primary)' : '#475569',
-                        background: active ? 'var(--border)' : 'transparent',
+                        color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                        background: active ? 'var(--bg-selected)' : 'transparent',
                         transition: 'all 0.12s ease',
                         marginBottom: 2,
                       }}
                       onMouseEnter={(e) => {
                         if (!active) {
-                          e.currentTarget.style.background = '#f1f5f9';
-                          e.currentTarget.style.color = '#0f172a';
+                          e.currentTarget.style.background = 'var(--bg-hover)';
+                          e.currentTarget.style.color = 'var(--text-primary)';
                         }
                       }}
                       onMouseLeave={(e) => {
                         if (!active) {
                           e.currentTarget.style.background = 'transparent';
-                          e.currentTarget.style.color = '#475569';
+                          e.currentTarget.style.color = 'var(--text-secondary)';
                         }
                       }}
                     >
-                      <Icon size={17} color={active ? 'var(--text-primary)' : '#64748b'} style={{ flexShrink: 0 }} />
+                      <Icon size={17} color={active ? 'var(--text-primary)' : 'var(--text-tertiary)'} style={{ flexShrink: 0 }} />
                       <span style={{ whiteSpace: 'nowrap' }}>{item.label}</span>
                     </Link>
                   );
@@ -324,7 +328,7 @@ export default function Sidebar() {
           </nav>
 
           {/* Drawer Footer */}
-          <div style={{ padding: '12px 16px', borderTop: '1px solid #e2e8f0', background: '#fafbfe', fontSize: '0.72rem', color: '#94a3b8', textAlign: 'center' }}>
+          <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', background: 'var(--bg-input)', fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'center' }}>
             Nexa Chatbot • Enterprise Suite
           </div>
         </aside>
@@ -339,8 +343,8 @@ export default function Sidebar() {
       style={{
         width: collapsed ? 68 : 260,
         transition: 'width 0.22s cubic-bezier(0.4, 0, 0.2, 1)',
-        background: '#ffffff',
-        borderRight: '1px solid #e2e8f0',
+        background: 'var(--bg-surface)',
+        borderRight: '1px solid var(--border)',
       }}
     >
       {/* Brand Logo Header — fixed to 56px to match .top-bar's height so the
@@ -351,7 +355,7 @@ export default function Sidebar() {
           height: 56,
           padding: collapsed ? '0 12px' : '0 16px',
           justifyContent: collapsed ? 'center' : 'space-between',
-          borderBottom: '1px solid #e2e8f0',
+          borderBottom: '1px solid var(--border)',
           flexShrink: 0,
           boxSizing: 'border-box',
         }}
@@ -387,10 +391,10 @@ export default function Sidebar() {
 
           {!collapsed && (
             <div>
-              <div className="sidebar-logo-text" style={{ fontSize: '0.98rem', fontWeight: 800, letterSpacing: '-0.3px', color: '#0f172a', whiteSpace: 'nowrap' }}>
+              <div className="sidebar-logo-text" style={{ fontSize: '0.98rem', fontWeight: 800, letterSpacing: '-0.3px', color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
                 Nexa Chatbot
               </div>
-              <div className="sidebar-logo-sub" style={{ fontSize: '0.7rem', color: '#64748b', whiteSpace: 'nowrap' }}>
+              <div className="sidebar-logo-sub" style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>
                 {subtitle}
               </div>
             </div>
@@ -405,9 +409,9 @@ export default function Sidebar() {
               width: 26,
               height: 26,
               borderRadius: 6,
-              border: '1px solid #e2e8f0',
-              background: '#f8fafc',
-              color: '#64748b',
+              border: '1px solid var(--border)',
+              background: 'var(--bg-input)',
+              color: 'var(--text-tertiary)',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
@@ -424,9 +428,9 @@ export default function Sidebar() {
         {sections.map((section, sIdx) => (
           <div key={section.section} style={{ marginBottom: collapsed ? 6 : 14 }}>
             {collapsed ? (
-              sIdx > 0 && <div style={{ height: 1, background: '#f1f5f9', margin: '6px 4px' }} />
+              sIdx > 0 && <div style={{ height: 1, background: 'var(--border)', margin: '6px 4px' }} />
             ) : (
-              <div className="sidebar-section-label" style={{ fontSize: '0.66rem', fontWeight: 700, letterSpacing: '0.8px', color: '#94a3b8', padding: '6px 8px 4px' }}>
+              <div className="sidebar-section-label" style={{ fontSize: '0.66rem', fontWeight: 700, letterSpacing: '0.8px', color: 'var(--text-muted)', padding: '6px 8px 4px' }}>
                 {section.section}
               </div>
             )}
@@ -451,27 +455,27 @@ export default function Sidebar() {
                     textDecoration: 'none',
                     fontSize: '0.84rem',
                     fontWeight: active ? 700 : 500,
-                    color: active ? 'var(--text-primary)' : '#475569',
-                    background: active ? 'var(--border)' : 'transparent',
+                    color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                    background: active ? 'var(--bg-selected)' : 'transparent',
                     transition: 'all 0.12s ease',
                     marginBottom: 2,
                   }}
                   onMouseEnter={(e) => {
                     if (!active) {
-                      e.currentTarget.style.background = '#f1f5f9';
-                      e.currentTarget.style.color = '#0f172a';
+                      e.currentTarget.style.background = 'var(--bg-hover)';
+                      e.currentTarget.style.color = 'var(--text-primary)';
                     }
                   }}
                   onMouseLeave={(e) => {
                     if (!active) {
                       e.currentTarget.style.background = 'transparent';
-                      e.currentTarget.style.color = '#475569';
+                      e.currentTarget.style.color = 'var(--text-secondary)';
                     }
                   }}
                 >
                   <Icon
                     size={17}
-                    color={active ? 'var(--text-primary)' : '#64748b'}
+                    color={active ? 'var(--text-primary)' : 'var(--text-tertiary)'}
                     style={{ flexShrink: 0 }}
                   />
                   {!collapsed && <span style={{ whiteSpace: 'nowrap' }}>{item.label}</span>}
@@ -490,12 +494,12 @@ export default function Sidebar() {
           alignItems: 'center',
           justifyContent: collapsed ? 'center' : 'space-between',
           padding: collapsed ? '10px 6px' : '10px 14px',
-          borderTop: '1px solid #e2e8f0',
-          background: '#ffffff',
+          borderTop: '1px solid var(--border)',
+          background: 'var(--bg-surface)',
         }}
       >
         {!collapsed ? (
-          <div style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: 500 }}>
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 500 }}>
             Nexa Chatbot v2.0
           </div>
         ) : null}
@@ -507,9 +511,9 @@ export default function Sidebar() {
             width: 28,
             height: 28,
             borderRadius: 6,
-            border: '1px solid #e2e8f0',
-            background: '#f8fafc',
-            color: '#64748b',
+            border: '1px solid var(--border)',
+            background: 'var(--bg-input)',
+            color: 'var(--text-tertiary)',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',

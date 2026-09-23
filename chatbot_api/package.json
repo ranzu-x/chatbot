@@ -11,6 +11,7 @@
     "test:tenant": "node scripts/test-tenant.mjs",
     "lint:tenant": "node scripts/check-tenant-queries.mjs",
     "check:tenant": "node scripts/check-tenant-integrity.mjs",
+    "test:email": "node scripts/test-email.mjs",
     "pretest": "npm run lint:tenant"
   },
   "keywords": [],

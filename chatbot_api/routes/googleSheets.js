@@ -9,6 +9,9 @@ import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { requireModule } from "../utils/entitlements.js";
 import * as googleSheets from "../utils/googleSheets.js";
 
+// Keep in step with IMPORT_MAX_ROWS in routes/contacts.js.
+const SHEET_IMPORT_MAX_ROWS = 50000;
+
 const router = express.Router();
 
 // The callback is hit directly by Google's redirect (no Authorization header) —
@@ -91,6 +94,24 @@ router.get("/integrations/google-sheets/spreadsheets/:id/tabs", async (req, res)
   } catch (err) {
     console.error("List tabs failed:", err.message);
     return res.status(400).json({ success: false, message: err.message || "Failed to list tabs" });
+  }
+});
+
+// One tab's cells, for the subscriber import. Capped at the import limit so a huge
+// sheet fails here with a clear message instead of timing out further along.
+router.get("/integrations/google-sheets/spreadsheets/:id/values", async (req, res) => {
+  try {
+    const tab = String(req.query.tab || "").trim();
+    if (!tab) return res.status(400).json({ success: false, message: "Choose a tab" });
+    const range = "'" + tab.replace(/'/g, "''") + "'"; // A1 notation needs quotes around tab names
+    const values = await googleSheets.readSheetValues(req.user.agencyId, req.params.id, range, { raw: true });
+    if (values.length - 1 > SHEET_IMPORT_MAX_ROWS) {
+      return res.status(400).json({ success: false, message: `This tab has ${(values.length - 1).toLocaleString()} rows. Imports are limited to ${SHEET_IMPORT_MAX_ROWS.toLocaleString()} at a time — split it into several tabs.` });
+    }
+    return res.json({ success: true, values });
+  } catch (err) {
+    console.error("Read sheet values failed:", err.message);
+    return res.status(400).json({ success: false, message: err.message || "Failed to read the sheet" });
   }
 });
 

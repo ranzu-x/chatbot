@@ -2,6 +2,8 @@ import express from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import pool from "../db.js";
+import { authMiddleware } from "../middleware/authmiddleware.js";
+import { sendVerificationEmail, consumeVerificationToken } from "../utils/emailVerification.js";
 
 const router = express.Router();
 
@@ -255,6 +257,10 @@ router.post(["/auth/register", "/hospital-admin/signup"], async (req, res) => {
       console.log(`✅ [Tenant Registration] User "${fullName}" (${email}) created under Agency ID ${finalAgencyId} ("${finalAgencyName}") via domain "${targetHost}"`);
     }
 
+    // Never blocks registration — same non-blocking posture as every other
+    // email call site in this app (sendWelcomeEmail etc.).
+    sendVerificationEmail({ userId, to: email.toLowerCase().trim(), name: fullName }).catch(() => {});
+
     // Generate JWT
     const [[registeredAccountType]] = await pool.query("SELECT account_type FROM agencies WHERE id = ?", [finalAgencyId]);
     const payload = {
@@ -264,6 +270,7 @@ router.post(["/auth/register", "/hospital-admin/signup"], async (req, res) => {
       role: jwtRole,
       agencyId: finalAgencyId,
       accountType: registeredAccountType?.account_type || "DIRECT_CUSTOMER",
+      emailVerified: false,
     };
 
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
@@ -277,7 +284,8 @@ router.post(["/auth/register", "/hospital-admin/signup"], async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: `Account created successfully under ${finalAgencyName}!`,
+      message: `Account created successfully under ${finalAgencyName}! We've sent a verification email to ${email.toLowerCase().trim()} — click the link in it to verify your account.`,
+      verificationEmailSent: true,
       user: payload,
       token,
       agencyName: finalAgencyName,
@@ -345,6 +353,7 @@ router.post("/auth/login", async (req, res) => {
       role: user.role,
       agencyId: resolvedAgencyId,
       accountType: accountTypeRow?.account_type || "DIRECT_CUSTOMER",
+      emailVerified: Boolean(user.email_verified_at),
     };
 
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
@@ -391,7 +400,7 @@ router.get("/auth/me", async (req, res) => {
 
     // Verify user exists and is active in database
     const [userRows] = await pool.query(
-      "SELECT id, name, email, role, is_active FROM users WHERE id = ? LIMIT 1",
+      "SELECT id, name, email, role, is_active, email_verified_at FROM users WHERE id = ? LIMIT 1",
       [decoded.id]
     );
     if (!userRows.length || !userRows[0].is_active) {
@@ -405,6 +414,7 @@ router.get("/auth/me", async (req, res) => {
     decoded.name = dbUser.name;
     decoded.email = dbUser.email;
     decoded.role = dbUser.role;
+    decoded.emailVerified = Boolean(dbUser.email_verified_at);
 
     if (!decoded.agencyId) {
       const [agRows] = await pool.query(
@@ -427,6 +437,56 @@ router.get("/auth/me", async (req, res) => {
     res.clearCookie("token", { path: "/" });
     res.clearCookie("token");
     return res.status(401).json({ success: false, message: "Invalid or expired token" });
+  }
+});
+
+// ─── EMAIL VERIFICATION ─────────────────────────────────────────────────────
+// Public — the link in the verification email carries the token itself; no
+// login is needed to click it (a brand-new registrant may check their inbox
+// from a different device/browser than the one they signed up on).
+router.post("/auth/verify-email", async (req, res) => {
+  try {
+    const result = await consumeVerificationToken(req.body?.token);
+    if (!result.success) {
+      const messages = {
+        missing_token: "Missing verification token.",
+        not_found: "This verification link is invalid.",
+        expired: "This verification link has expired. Please request a new one.",
+      };
+      return res.status(400).json({ success: false, code: (result.reason || "invalid").toUpperCase(), message: messages[result.reason] || "Invalid verification link." });
+    }
+    return res.json({ success: true, alreadyVerified: Boolean(result.alreadyConsumed) });
+  } catch (err) {
+    console.error("Verify email error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Authenticated — resend for whoever is signed in. Rate-limited per user
+// (one email a minute) so the button can't be used to spam an inbox or burn
+// through a free SMTP plan's daily quota. Age is computed in SQL so it uses
+// the same clock/timezone as created_at regardless of the Node process's.
+const RESEND_COOLDOWN_SECONDS = 60;
+router.post("/auth/resend-verification", authMiddleware, async (req, res) => {
+  try {
+    const [[user]] = await pool.query("SELECT id, name, email, email_verified_at FROM users WHERE id = ?", [req.user.id]);
+    if (!user) return res.status(404).json({ success: false, message: "Account not found" });
+    if (user.email_verified_at) return res.json({ success: true, alreadyVerified: true });
+
+    const [[last]] = await pool.query(
+      "SELECT TIMESTAMPDIFF(SECOND, created_at, NOW()) AS ageSeconds FROM email_verification_tokens WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+      [user.id]
+    );
+    if (last && last.ageSeconds < RESEND_COOLDOWN_SECONDS) {
+      const wait = RESEND_COOLDOWN_SECONDS - last.ageSeconds;
+      return res.status(429).json({ success: false, code: "RESEND_TOO_SOON", retryAfterSeconds: wait, message: `A verification email was just sent. Please wait ${wait}s before requesting another.` });
+    }
+
+    await sendVerificationEmail({ userId: user.id, to: user.email, name: user.name });
+    return res.json({ success: true, retryAfterSeconds: RESEND_COOLDOWN_SECONDS });
+  } catch (err) {
+    console.error("Resend verification error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 

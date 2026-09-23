@@ -1,7 +1,7 @@
 /**
- * Platform-wide SMTP notifications for the Support Desk — new-ticket and
- * new-reply emails. There was no email layer anywhere in the API before
- * this; deliberately scoped out when the Support Desk was originally built.
+ * Platform-wide SMTP notifications — Support Desk new-ticket/new-reply
+ * emails, the guest-checkout welcome email, and account email verification
+ * (see utils/emailVerification.js).
  *
  * One SMTP account (SMTP_HOST/PORT/USER/PASS/FROM env vars) sends every
  * notification across every agency's helpdesk — not per-agency BYO SMTP.
@@ -14,12 +14,12 @@ import nodemailer from "nodemailer";
 let cachedTransporter = null;
 let transporterConfigured = null; // null = not yet checked, true/false after
 
-function getTransporter() {
+export function getTransporter() {
   if (transporterConfigured !== null) return cachedTransporter;
 
   const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
   if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
-    console.warn("[Email] SMTP_HOST/SMTP_USER/SMTP_PASS not set — ticket notification emails will be logged, not sent. Set them in .env to enable real delivery.");
+    console.warn("[Email] SMTP_HOST/SMTP_USER/SMTP_PASS not set — emails (verification, tickets, welcome) will be logged, not sent. Set them in .env to enable real delivery (see .env.example, and `npm run test:email`).");
     transporterConfigured = false;
     cachedTransporter = null;
     return null;
@@ -34,6 +34,8 @@ function getTransporter() {
   transporterConfigured = true;
   return cachedTransporter;
 }
+
+export const smtpFromAddress = () => process.env.SMTP_FROM || process.env.SMTP_USER || "no-reply@localhost";
 
 function wrapHtml(title, bodyHtml, footer = "This is an automated notification from your Support Desk.") {
   return `<!doctype html><html><body style="margin:0;padding:0;background:#f4f6f8;font-family:-apple-system,'Segoe UI',sans-serif;">
@@ -100,5 +102,41 @@ export async function sendWelcomeEmail({ to, name, agencyName, loginUrl }) {
     await transporter.sendMail({ from, to, subject, html });
   } catch (err) {
     console.error(`[Email] Failed to send welcome email to ${to}:`, err.message);
+  }
+}
+
+/** Sent on signup, after a guest checkout, and on demand (resend) — see
+ * utils/emailVerification.js. Never throws, same posture as
+ * sendTicketEmail/sendWelcomeEmail.
+ *
+ * When SMTP isn't configured the email can't go anywhere, so outside
+ * production the verification link is printed to the server console instead
+ * — otherwise a developer running locally could never complete signup. It is
+ * deliberately NOT logged in production (the link is a credential). */
+export async function sendVerificationEmail({ to, name, verifyUrl }) {
+  if (!to) return;
+  const transporter = getTransporter();
+  const from = smtpFromAddress();
+  const subject = "Verify your email address";
+  const html = wrapHtml(
+    "Confirm your email address",
+    `<p>Hi ${name || "there"},</p>
+     <p>Thanks for signing up! Please confirm this is your email address to verify your account.</p>
+     <p><a href="${verifyUrl}" style="display:inline-block;padding:10px 18px;background:#0f172a;color:#ffffff;border-radius:8px;text-decoration:none;font-weight:700;">Verify my email</a></p>
+     <p style="color:#64748b;font-size:0.82rem;">Or paste this link into your browser:<br/><span style="word-break:break-all;">${verifyUrl}</span></p>
+     <p style="color:#64748b;">This link expires in 24 hours. If you didn't create an account, you can safely ignore this email.</p>`,
+    "This is an automated message about your account."
+  );
+
+  if (!transporter) {
+    console.log(`[Email:not-sent] to=${to} subject="${subject}" — SMTP not configured`);
+    if (process.env.NODE_ENV !== "production") console.log(`[Email:dev] verification link for ${to}: ${verifyUrl}`);
+    return;
+  }
+
+  try {
+    await transporter.sendMail({ from, to, subject, html });
+  } catch (err) {
+    console.error(`[Email] Failed to send verification email to ${to}:`, err.message);
   }
 }

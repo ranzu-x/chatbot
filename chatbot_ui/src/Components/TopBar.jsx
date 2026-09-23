@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router';
 import { useAuth } from '../Provider/AuthContext';
 import { useLayout } from '../Provider/LayoutContext';
 import { useNotification } from '../Provider/NotificationContext';
-import { Menu, PanelLeft, PanelLeftClose, Sun, Moon, Plug, LogOut, Bell, UserCircle, Palette, LifeBuoy, ShieldCheck, Building2, KeyRound } from 'lucide-react';
+import { Menu, PanelLeft, PanelLeftClose, Sun, Moon, Plug, LogOut, Bell, UserCircle, Palette, LifeBuoy, ShieldCheck, Building2, KeyRound, Gift, MessagesSquare } from 'lucide-react';
 
 // Internal role identifiers (ADMIN/RESELLER/USER) now match the human-facing
 // label, consistent with Sidebar.jsx's ROLE_SUBTITLES.
@@ -156,9 +156,9 @@ export default function TopBar() {
               </Link>
 
               {apiLink && (
-                <Link 
+                <Link
                   to={apiLink}
-                  className="dropdown-item" 
+                  className="dropdown-item"
                   onClick={() => setMenuOpen(false)}
                   style={{ textDecoration: 'none', color: 'inherit' }}
                 >
@@ -166,6 +166,40 @@ export default function TopBar() {
                   <div className="dropdown-text">
                     <div className="dropdown-label">API & Integrations</div>
                     <div className="dropdown-desc">Manage API connections</div>
+                  </div>
+                </Link>
+              )}
+
+              {/* Affiliate Program — Super Admin tenant only (see CLAUDE.md /
+                  routes/affiliate.js). Super Admin gets platform-wide
+                  management; a DIRECT_CUSTOMER/RESELLER tenant (signed up
+                  directly under the platform, never a Reseller's own end
+                  user) gets its own referral link + earnings. */}
+              {user?.role === 'ADMIN' && (
+                <Link
+                  to="/admin/affiliates"
+                  className="dropdown-item"
+                  onClick={() => setMenuOpen(false)}
+                  style={{ textDecoration: 'none', color: 'inherit' }}
+                >
+                  <Gift size={15} style={{ marginRight: 8 }} />
+                  <div className="dropdown-text">
+                    <div className="dropdown-label">Affiliate Management</div>
+                    <div className="dropdown-desc">Affiliates, referrals & payouts</div>
+                  </div>
+                </Link>
+              )}
+              {(user?.accountType === 'DIRECT_CUSTOMER' || user?.accountType === 'RESELLER') && (
+                <Link
+                  to="/affiliate"
+                  className="dropdown-item"
+                  onClick={() => setMenuOpen(false)}
+                  style={{ textDecoration: 'none', color: 'inherit' }}
+                >
+                  <Gift size={15} style={{ marginRight: 8 }} />
+                  <div className="dropdown-text">
+                    <div className="dropdown-label">Affiliate Program</div>
+                    <div className="dropdown-desc">Earn 25% referring new customers</div>
                   </div>
                 </Link>
               )}
@@ -204,6 +238,28 @@ export default function TopBar() {
                   <div className="dropdown-desc">{user?.accountType === 'PLATFORM' ? 'Manage support tickets' : 'Get help or open a ticket'}</div>
                 </div>
               </a>
+
+              {/* Like the Support Desk, the Community Forum is a deliberately
+                  separate portal (own login, own session, own design — see
+                  Forum/ForumApp.jsx), not a dashboard page, so it opens in a
+                  new tab. Shown to whoever can use it: End Users, Resellers
+                  and the Super Admin — never a Reseller's own customers. */}
+              {(user?.role === 'ADMIN' || user?.accountType === 'DIRECT_CUSTOMER' || user?.accountType === 'RESELLER') && (
+                <a
+                  href="/forum"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="dropdown-item"
+                  onClick={() => setMenuOpen(false)}
+                  style={{ textDecoration: 'none', color: 'inherit' }}
+                >
+                  <MessagesSquare size={15} style={{ marginRight: 8 }} />
+                  <div className="dropdown-text">
+                    <div className="dropdown-label">Community Forum</div>
+                    <div className="dropdown-desc">{user?.role === 'ADMIN' ? 'Moderate threads & announcements' : 'Bugs, ideas & announcements'}</div>
+                  </div>
+                </a>
+              )}
 
               <Link
                 to="/settings/appearance"

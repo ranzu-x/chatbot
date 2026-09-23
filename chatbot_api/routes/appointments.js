@@ -116,10 +116,12 @@ router.post("/appointments/book-public", async (req, res) => {
     if (existingContacts.length > 0) {
       contactId = existingContacts[0].id;
     } else {
+      const validPlatforms = ["WHATSAPP", "FACEBOOK", "INSTAGRAM", "TELEGRAM", "WEBCHAT", "TIKTOK"];
+      const contactPlatform = validPlatforms.includes(channel) ? channel : "WEBCHAT";
       const [newContact] = await conn.query(
         `INSERT INTO contacts (agency_id, platform, external_id, name, phone, email)
          VALUES (?, ?, ?, ?, ?, ?)`,
-        [agency_id, channel || "WHATSAPP", cleanPhone, customer_name, cleanPhone, customer_email]
+        [agency_id, contactPlatform, cleanPhone, customer_name, cleanPhone, customer_email]
       );
       contactId = newContact.insertId;
     }
@@ -186,23 +188,29 @@ router.use("/appointments", authMiddleware, requireModule("feature_appointments"
 // GET /api/v1/appointments/stats - Dashboard metric cards
 router.get("/appointments/stats", async (req, res) => {
   try {
-    const agencyId = req.user?.agencyId;
+    const agencyId = req.user?.agencyId || (req.user?.role === "ADMIN" ? req.query.agencyId : null);
     if (!agencyId && req.user?.role !== "ADMIN") {
       return res.status(403).json({ success: false, message: "Workspace required" });
     }
 
-    const [totalRows] = await pool.query(
-      `SELECT COUNT(*) as total,
+    let query = `SELECT COUNT(*) as total,
               SUM(CASE WHEN appointment_date = CURDATE() THEN 1 ELSE 0 END) as today,
               SUM(CASE WHEN status = 'scheduled' THEN 1 ELSE 0 END) as scheduled,
               SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
               SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-              SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled
-       FROM appointments WHERE agency_id = ?`,
-      [agencyId]
-    );
+              SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
+              SUM(CASE WHEN status = 'no_show' THEN 1 ELSE 0 END) as no_show,
+              COALESCE(SUM(CASE WHEN status IN ('confirmed', 'completed') THEN fee ELSE 0 END), 0) as total_revenue
+       FROM appointments`;
+    const params = [];
+    if (agencyId) {
+      query += " WHERE agency_id = ?";
+      params.push(agencyId);
+    }
 
-    const stats = totalRows[0] || { total: 0, today: 0, scheduled: 0, confirmed: 0, completed: 0, cancelled: 0 };
+    const [totalRows] = await pool.query(query, params);
+
+    const stats = totalRows[0] || { total: 0, today: 0, scheduled: 0, confirmed: 0, completed: 0, cancelled: 0, no_show: 0, total_revenue: 0 };
     return res.json({ success: true, stats });
   } catch (err) {
     console.error("[APPOINTMENT STATS ERROR]", err);
@@ -213,7 +221,7 @@ router.get("/appointments/stats", async (req, res) => {
 // GET /api/v1/appointments - List with filters & pagination
 router.get("/appointments", async (req, res) => {
   try {
-    const agencyId = req.user?.agencyId;
+    const agencyId = req.user?.agencyId || (req.user?.role === "ADMIN" ? req.query.agencyId : null);
     if (!agencyId && req.user?.role !== "ADMIN") {
       return res.status(403).json({ success: false, message: "Workspace required" });
     }
@@ -224,8 +232,12 @@ router.get("/appointments", async (req, res) => {
 
     const { search, status, channel, staffId, serviceId, date, fromDate, toDate } = req.query;
 
-    let whereSql = "WHERE a.agency_id = ?";
-    const params = [agencyId];
+    let whereSql = "WHERE 1=1";
+    const params = [];
+    if (agencyId) {
+      whereSql += " AND a.agency_id = ?";
+      params.push(agencyId);
+    }
 
     const searchClause = await buildSearch({
       term: search,
@@ -390,13 +402,19 @@ router.post("/appointments", async (req, res) => {
   try {
     await conn.beginTransaction();
 
-    if (slot_id) {
+    const cleanSlotId = slot_id ? parseInt(slot_id) : null;
+    const cleanStaffId = staff_id ? parseInt(staff_id) : null;
+    const cleanServiceId = service_id ? parseInt(service_id) : null;
+    const cleanContactId = contact_id ? parseInt(contact_id) : null;
+    const cleanEmail = customer_email && String(customer_email).trim() ? String(customer_email).trim() : null;
+
+    if (cleanSlotId) {
       const [slots] = await conn.query(
         "SELECT id, booked_count, max_capacity FROM appointment_slots WHERE id = ? AND agency_id = ? FOR UPDATE",
-        [slot_id, agencyId]
+        [cleanSlotId, agencyId]
       );
       if (slots.length && slots[0].booked_count < slots[0].max_capacity) {
-        await conn.query("UPDATE appointment_slots SET booked_count = booked_count + 1 WHERE id = ?", [slot_id]);
+        await conn.query("UPDATE appointment_slots SET booked_count = booked_count + 1 WHERE id = ?", [cleanSlotId]);
       }
     }
 
@@ -408,10 +426,10 @@ router.post("/appointments", async (req, res) => {
         duration, fee, payment_status, channel, status, notes, booking_source
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'AGENT')`,
       [
-        agencyId, service_id || null, contact_id, staff_id, slot_id,
-        customer_name, customer_phone, customer_email,
+        agencyId, cleanServiceId, cleanContactId, cleanStaffId, cleanSlotId,
+        customer_name, customer_phone, cleanEmail,
         service_name, appointment_date, appointment_time,
-        duration, fee, payment_status, channel, status, notes
+        parseInt(duration) || 30, parseFloat(fee) || 0, payment_status || "unpaid", channel || "MANUAL", status || "scheduled", notes || null
       ]
     );
 

@@ -38,6 +38,10 @@ export const authAPI = {
   register: (data) => api.post("/auth/register", data),
   logout: () => api.post("/auth/logout"),
   me: () => api.get("/auth/me"),
+  // Email verification — public to click (the emailed link carries the token);
+  // resend needs a signed-in user and is rate-limited server-side (1/minute).
+  verifyEmail: (token) => api.post("/auth/verify-email", { token }),
+  resendVerification: () => api.post("/auth/resend-verification"),
 };
 
 export const tenantAPI = {
@@ -94,7 +98,29 @@ export const billingAPI = {
   openCustomerPortal: (data) => api.post("/billing/customer-portal", data),
   getInvoices: () => api.get("/billing/invoices"),
   // Public — no auth. Pricing page's "Buy Now" -> guest checkout.
+  // `affiliateCode` (from utils/affiliateTracking.js) attributes the new
+  // account to whichever Super Admin affiliate referred it, if any.
   guestCheckout: (data) => api.post("/billing/guest-checkout", data),
+};
+
+// ─── Affiliate Program (Super Admin tenant only) ───────────────────
+// Tenant-side: own referral link, referrals and commission ledger.
+export const affiliateAPI = {
+  getMe: () => api.get("/affiliate/me"),
+  getReferrals: () => api.get("/affiliate/me/referrals"),
+  getCommissions: (params) => api.get("/affiliate/me/commissions", { params }),
+};
+
+// Admin-side: every affiliate platform-wide + manual payouts.
+export const adminAffiliateAPI = {
+  getAll: () => api.get("/admin/affiliates"),
+  getOne: (id) => api.get(`/admin/affiliates/${id}`),
+  suspend: (id) => api.post(`/admin/affiliates/${id}/suspend`),
+  reactivate: (id) => api.post(`/admin/affiliates/${id}/reactivate`),
+  updateCommissionRate: (id, commissionRate) => api.patch(`/admin/affiliates/${id}/commission-rate`, { commissionRate }),
+  recordPayout: (id, data) => api.post(`/admin/affiliates/${id}/payouts`, data),
+  getPayouts: (id) => api.get(`/admin/affiliates/${id}/payouts`),
+  voidCommission: (affiliateId, commissionId) => api.post(`/admin/affiliates/${affiliateId}/commissions/${commissionId}/void`),
 };
 
 // ─── Platform Payment Gateways (Admin — Stripe/SSLCommerz/PortWallet/AamarPay) ──
@@ -480,6 +506,7 @@ export const googleSheetsAPI = {
   disconnect: () => api.delete('/integrations/google-sheets'),
   listSpreadsheets: () => api.get('/integrations/google-sheets/spreadsheets'),
   listTabs: (spreadsheetId) => api.get(`/integrations/google-sheets/spreadsheets/${spreadsheetId}/tabs`),
+  getValues: (spreadsheetId, tab) => api.get(`/integrations/google-sheets/spreadsheets/${spreadsheetId}/values`, { params: { tab } }),
 };
 
 export const flowAPI = {
@@ -517,7 +544,8 @@ export const contactAPI = {
   block: (id, reason) => api.patch(`/contacts/${id}/block`, { reason }),
   unblock: (id) => api.patch(`/contacts/${id}/unblock`),
   bulkSequence: (contactIds, sequenceId) => api.post('/contacts/bulk-sequence', { contactIds, sequenceId }),
-  import: (platform, rows) => api.post('/contacts/import', { platform, rows }),
+  // payload: { integrationId, rows, customFields, labelId | labelName } — see POST /contacts/import
+  import: (payload) => api.post('/contacts/import', payload),
 };
 
 // ─── Unified Labels ───────────────────────────────────────────────────
@@ -626,4 +654,12 @@ export const whatsappCallAPI = {
 
 // (sequenceAPI now defined once, above, alongside the other Sequence Messages exports)
 
-export default api;
+// ─── Appointment Campaigns ─────────────────────────────────────────────────
+export const appointmentCampaignAPI = {
+  getAll: () => api.get('/appointment-campaigns'),
+  create: (data) => api.post('/appointment-campaigns', data),
+  update: (id, data) => api.put(`/appointment-campaigns/${id}`, data),
+  delete: (id) => api.delete(`/appointment-campaigns/${id}`),
+};
+
+export default api;

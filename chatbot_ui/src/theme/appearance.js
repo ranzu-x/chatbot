@@ -60,6 +60,7 @@ export const FONTS = [
 ];
 
 export const ACCENTS = [
+  { id: 'graphite', label: 'Graphite', base: '#18181b', dark: '#000000', light: '#3f3f46' },
   { id: 'blue',    label: 'Blue',    base: '#2563eb', dark: '#1d4ed8', light: '#3b82f6' },
   { id: 'indigo',  label: 'Indigo',  base: '#4f46e5', dark: '#4338ca', light: '#6366f1' },
   { id: 'violet',  label: 'Violet',  base: '#7c3aed', dark: '#6d28d9', light: '#8b5cf6' },
@@ -67,7 +68,6 @@ export const ACCENTS = [
   { id: 'emerald', label: 'Emerald', base: '#059669', dark: '#047857', light: '#10b981' },
   { id: 'amber',   label: 'Amber',   base: '#d97706', dark: '#b45309', light: '#f59e0b' },
   { id: 'rose',    label: 'Rose',    base: '#e11d48', dark: '#be123c', light: '#f43f5e' },
-  { id: 'slate',   label: 'Graphite', base: '#334155', dark: '#1e293b', light: '#475569' },
 ];
 
 export const DENSITIES = [
@@ -76,7 +76,8 @@ export const DENSITIES = [
   { id: 'comfortable', label: 'Comfortable', note: 'Easier to read',  rootSize: '17px' },
 ];
 
-export const DEFAULT_APPEARANCE = { font: 'inter', accent: 'blue', density: 'default' };
+// Matches the ManyChat reference look's near-black primary buttons/text — see index.css's :root for why.
+export const DEFAULT_APPEARANCE = { font: 'inter', accent: 'graphite', density: 'default' };
 
 function hexToRgba(hex, alpha) {
   const h = hex.replace('#', '');

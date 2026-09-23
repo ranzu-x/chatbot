@@ -81,6 +81,7 @@ import {
   Archive,
   MinusCircle,
   UserMinus,
+  PanelRight,
 } from 'lucide-react';
 
 /* ─── Platform Map ───────────────────────────────────────────────
@@ -2960,8 +2961,11 @@ export default function InboxPage() {
                       alignItems: 'center',
                       gap: 9,
                       cursor: 'pointer',
-                      borderBottom: '1px solid #f1f5f9',
-                      background: isSelected ? '#f0f4ff' : 'transparent',
+                      borderBottom: '1px solid var(--border)',
+                      // Same treatment as the sidebar's selected nav item
+                      // (Components/Sidebar.jsx: background: 'var(--border)')
+                      // so "selected" reads the same everywhere.
+                      background: isSelected ? 'var(--bg-selected)' : 'transparent',
                       borderLeft: isSelected ? '3px solid var(--primary)' : '3px solid transparent',
                       transition: 'background 0.15s ease',
                     }}
@@ -3126,22 +3130,103 @@ export default function InboxPage() {
         <main className="chat-area" style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#ffffff', overflow: 'hidden', position: 'relative' }}>
           {selectedConv ? (
             <>
-              {/* Chat Header */}
-              <div className="chat-header" style={{ height: 56, padding: '0 20px', background: '#ffffff', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexShrink: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-                  <ContactAvatar
-                    avatar={selectedConv.contactAvatar || selectedConv.avatar}
-                    name={selectedConv.contactName || selectedConv.contact_name || selectedConv.external_id}
-                    size={36}
-                    pInfo={activePlatformInfo}
-                  />
+              {/* Chat Header — Clean Professional Human-Made Design */}
+              <div
+                className="chat-header"
+                style={{
+                  height: 60,
+                  padding: '0 20px',
+                  background: '#ffffff',
+                  borderBottom: '1px solid #e2e8f0',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 16,
+                  flexShrink: 0,
+                  boxShadow: '0 1px 2px rgba(15, 23, 42, 0.02)',
+                }}
+              >
+                {/* Contact Identity & Metadata */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
+                  <div style={{ position: 'relative', flexShrink: 0 }}>
+                    <ContactAvatar
+                      avatar={selectedConv.contactAvatar || selectedConv.avatar}
+                      name={selectedConv.contactName || selectedConv.contact_name || selectedConv.external_id}
+                      size={40}
+                      pInfo={activePlatformInfo}
+                    />
+                  </div>
 
-                  <div style={{ fontWeight: 700, fontSize: '0.92rem', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
-                    {selectedConv.contactName || selectedConv.contact_name || selectedConv.external_id || 'Subscriber'}
+                  <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                      <span
+                        style={{
+                          fontWeight: 800,
+                          fontSize: '0.96rem',
+                          color: '#0f172a',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          lineHeight: 1.2,
+                        }}
+                      >
+                        {selectedConv.contactName || selectedConv.contact_name || selectedConv.external_id || 'Subscriber'}
+                      </span>
+                      {selectedConv?.contactIsBlocked && (
+                        <span
+                          title={selectedConv?.contactBlockedReason || 'Blocked'}
+                          style={{
+                            fontSize: '0.68rem',
+                            fontWeight: 700,
+                            padding: '1px 6px',
+                            borderRadius: 6,
+                            background: '#fee2e2',
+                            color: '#dc2626',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 3,
+                            flexShrink: 0,
+                          }}
+                        >
+                          <Ban size={10} /> Blocked
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Metadata Subtitle */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.74rem', color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: activePlatformInfo.color, fontWeight: 600 }}>
+                        <ActivePlatformIcon size={12} />
+                        {activePlatformInfo.label}
+                      </span>
+                      {selectedConv.integrationName && (
+                        <>
+                          <span style={{ color: '#cbd5e1' }}>•</span>
+                          <span style={{ color: '#475569', fontWeight: 500 }}>{selectedConv.integrationName}</span>
+                        </>
+                      )}
+                      {(selectedConv.contactPhone || selectedConv.contactEmail) && (
+                        <>
+                          <span style={{ color: '#cbd5e1' }}>•</span>
+                          <span style={{ color: '#64748b' }}>{selectedConv.contactPhone || selectedConv.contactEmail}</span>
+                        </>
+                      )}
+                      {currentAgentName && (
+                        <>
+                          <span style={{ color: '#cbd5e1' }}>•</span>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#475569' }}>
+                            <User size={10} color="#94a3b8" />
+                            {currentAgentName}
+                          </span>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, overflowX: 'auto' }}>
+                {/* Header Actions */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  {/* WhatsApp Voice Call */}
                   {(selectedConv.platform || selectedConv.integrationPlatform || selectedConv.contactPlatform || '').toUpperCase() === 'WHATSAPP' && (
                     <button
                       onClick={() => whatsappCall.placeCall(
@@ -3152,91 +3237,123 @@ export default function InboxPage() {
                       )}
                       disabled={whatsappCall.callState !== 'idle'}
                       title="Call this subscriber on WhatsApp"
-                      className="transition-all duration-150 hover:brightness-95 active:scale-95"
                       style={{
-                        display: 'flex',
+                        display: 'inline-flex',
                         alignItems: 'center',
-                        gap: 5,
-                        padding: '4px 11px',
-                        height: 28,
-                        borderRadius: 16,
+                        gap: 6,
+                        height: 32,
+                        padding: '0 12px',
+                        borderRadius: 8,
                         border: '1px solid #86efac',
-                        background: '#dcfce7',
+                        background: '#f0fdf4',
                         color: '#15803d',
-                        fontSize: '0.74rem',
+                        fontSize: '0.78rem',
                         fontWeight: 700,
                         whiteSpace: 'nowrap',
-                        flexShrink: 0,
                         cursor: whatsappCall.callState !== 'idle' ? 'default' : 'pointer',
                         opacity: whatsappCall.callState !== 'idle' ? 0.6 : 1,
-                        boxShadow: '0 1px 3px rgba(34, 197, 94, 0.12)',
+                        boxShadow: '0 1px 2px rgba(22, 163, 74, 0.06)',
                         transition: 'all 0.15s ease',
                       }}
+                      onMouseEnter={(e) => { if (whatsappCall.callState === 'idle') e.currentTarget.style.background = '#dcfce7'; }}
+                      onMouseLeave={(e) => { if (whatsappCall.callState === 'idle') e.currentTarget.style.background = '#f0fdf4'; }}
                     >
-                      <PhoneCall size={12} />
+                      <PhoneCall size={13} />
                       <span>Call</span>
                     </button>
                   )}
+
+                  {/* Bot/AI Status & Pause/Resume Control */}
                   <button
                     onClick={handleToggleBot}
                     disabled={togglingBot}
-                    title={botPaused ? 'Click to resume automated Bot & AI replies' : 'Click to pause automated Bot & AI replies'}
-                    className="transition-all duration-150 hover:brightness-95 active:scale-95"
+                    title={botPaused ? 'Bot & AI replies are paused. Click to resume automated replies.' : 'Bot & AI replies are active. Click to pause automated replies.'}
                     style={{
-                      display: 'flex',
+                      display: 'inline-flex',
                       alignItems: 'center',
-                      gap: 5,
-                      padding: '4px 11px',
-                      height: 28,
-                      borderRadius: 16,
-                      border: botPaused ? '1px solid #fca5a5' : '1px solid #86efac',
-                      background: botPaused ? '#fee2e2' : '#dcfce7',
-                      color: botPaused ? '#b91c1c' : '#15803d',
-                      fontSize: '0.74rem',
+                      gap: 7,
+                      height: 32,
+                      padding: '0 12px',
+                      borderRadius: 8,
+                      border: botPaused ? '1px solid #fecdd3' : '1px solid #e2e8f0',
+                      background: botPaused ? '#fff1f2' : '#f8fafc',
+                      color: botPaused ? '#be123c' : '#334155',
+                      fontSize: '0.78rem',
                       fontWeight: 700,
                       whiteSpace: 'nowrap',
-                      flexShrink: 0,
                       cursor: togglingBot ? 'default' : 'pointer',
                       opacity: togglingBot ? 0.6 : 1,
-                      boxShadow: botPaused ? '0 1px 3px rgba(239, 68, 68, 0.12)' : '0 1px 3px rgba(34, 197, 94, 0.12)',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
                       transition: 'all 0.15s ease',
                     }}
+                    onMouseEnter={(e) => {
+                      if (!togglingBot) {
+                        e.currentTarget.style.background = botPaused ? '#ffe4e6' : '#f1f5f9';
+                        e.currentTarget.style.borderColor = botPaused ? '#fda4af' : '#cbd5e1';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!togglingBot) {
+                        e.currentTarget.style.background = botPaused ? '#fff1f2' : '#f8fafc';
+                        e.currentTarget.style.borderColor = botPaused ? '#fecdd3' : '#e2e8f0';
+                      }
+                    }}
                   >
-                    <span
-                      style={{
-                        width: 6,
-                        height: 6,
-                        borderRadius: '50%',
-                        background: botPaused ? '#ef4444' : '#22c55e',
-                        display: 'inline-block',
-                        flexShrink: 0,
-                      }}
-                    />
-                    {botPaused ? <Play size={10} fill="#b91c1c" /> : <Pause size={10} />}
-                    <span>{botPaused ? 'Resume Bot/AI' : 'Pause Bot/AI'}</span>
+                    {botPaused ? (
+                      <>
+                        <Play size={11} fill="#be123c" />
+                        <span>Resume Bot/AI</span>
+                      </>
+                    ) : (
+                      <>
+                        <span
+                          style={{
+                            width: 7,
+                            height: 7,
+                            borderRadius: '50%',
+                            background: '#22c55e',
+                            boxShadow: '0 0 0 2px rgba(34, 197, 94, 0.25)',
+                            display: 'inline-block',
+                          }}
+                        />
+                        <Pause size={11} color="#64748b" />
+                        <span>Pause Bot/AI</span>
+                      </>
+                    )}
                   </button>
 
+                  {/* Toggle Subscriber Drawer */}
                   <button
                     onClick={() => setShowSubscriberPanel((p) => !p)}
-                    title={showSubscriberPanel ? 'Hide subscriber info' : 'Show subscriber info'}
-                    className="transition-all duration-150 hover:brightness-95 active:scale-95"
+                    title={showSubscriberPanel ? 'Hide contact profile' : 'Show contact profile'}
                     style={{
                       width: 32,
                       height: 32,
-                      flexShrink: 0,
-                      borderRadius: '50%',
+                      borderRadius: 8,
                       border: '1px solid',
-                      borderColor: showSubscriberPanel ? 'var(--primary-light)' : '#e2e8f0',
-                      background: showSubscriberPanel ? 'var(--primary-soft)' : '#ffffff',
-                      color: showSubscriberPanel ? 'var(--primary-dark)' : '#475569',
+                      borderColor: showSubscriberPanel ? 'var(--primary, #6366f1)' : '#e2e8f0',
+                      background: showSubscriberPanel ? '#eef2ff' : '#ffffff',
+                      color: showSubscriberPanel ? '#4f46e5' : '#64748b',
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      transition: 'transform 0.12s ease, background 0.12s ease',
+                      transition: 'all 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!showSubscriberPanel) {
+                        e.currentTarget.style.borderColor = '#cbd5e1';
+                        e.currentTarget.style.background = '#f8fafc';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!showSubscriberPanel) {
+                        e.currentTarget.style.borderColor = '#e2e8f0';
+                        e.currentTarget.style.background = '#ffffff';
+                      }
                     }}
                   >
-                    <MoreVertical size={16} />
+                    <PanelRight size={16} />
                   </button>
                 </div>
               </div>
@@ -3331,9 +3448,9 @@ export default function InboxPage() {
                             maxWidth: '72%',
                             padding: (isImage && isMediaOnly && !buttons) ? '4px' : '10px 14px',
                             borderRadius: isOutbound ? '14px 14px 2px 14px' : '14px 14px 14px 2px',
-                            background: isOutbound ? '#f1f5f9' : '#ffffff',
-                            color: '#0f172a',
-                            border: '1px solid #e2e8f0',
+                            background: isOutbound ? 'var(--bg-selected)' : 'var(--bg-card)',
+                            color: 'var(--text-primary)',
+                            border: '1px solid var(--border)',
                             fontSize: '0.86rem',
                             lineHeight: 1.45,
                             boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
@@ -3343,7 +3460,7 @@ export default function InboxPage() {
                         >
                           {/* ── Interactive Header (if present) ── */}
                           {meta?.headerText && (
-                            <div style={{ fontWeight: 700, fontSize: '0.9rem', marginBottom: 4, color: '#0f172a' }}>
+                            <div style={{ fontWeight: 700, fontSize: '0.9rem', marginBottom: 4, color: 'var(--text-primary)' }}>
                               {meta.headerText}
                             </div>
                           )}
@@ -4161,37 +4278,74 @@ export default function InboxPage() {
         {/* ── 3. Comprehensive Subscriber Details & Management Drawer ── */}
         {selectedConv && showSubscriberPanel && (
           <aside style={{ width: 330, flexShrink: 0, borderLeft: '1px solid #e2e8f0', background: '#ffffff', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-            {/* Subscriber Header Card */}
-            <div style={{ padding: '16px 18px', borderBottom: '1px solid #e2e8f0', background: '#ffffff' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <span
-                  style={{
-                    fontSize: '0.72rem',
-                    fontWeight: 700,
-                    padding: '2px 8px',
-                    borderRadius: 12,
-                    background: activePlatformInfo.bg,
-                    color: activePlatformInfo.color,
-                  }}
-                >
-                  {activePlatformInfo.label}
-                </span>
-                {selectedConv?.contactIsBlocked && (
+            {/* Subscriber Header Card — Clean Professional Human-Made Design */}
+            <div style={{ padding: '18px 20px', borderBottom: '1px solid #e2e8f0', background: '#ffffff' }}>
+              {/* Top row: Platform Channel Badge + More Actions Dropdown */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   <span
-                    title={selectedConv?.contactBlockedReason || 'Blocked'}
-                    style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: 12, background: '#fee2e2', color: '#dc2626', display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 6 }}
+                    style={{
+                      fontSize: '0.74rem',
+                      fontWeight: 700,
+                      padding: '3px 10px',
+                      borderRadius: 999,
+                      background: activePlatformInfo.bg,
+                      color: activePlatformInfo.color,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      border: `1px solid ${activePlatformInfo.color}33`,
+                    }}
                   >
-                    <Ban size={11} /> Blocked
+                    <ActivePlatformIcon size={12} />
+                    <span>{activePlatformInfo.label}</span>
+                    {selectedConv?.integrationName && (
+                      <span style={{ opacity: 0.85, fontWeight: 500 }}>• {selectedConv.integrationName}</span>
+                    )}
                   </span>
-                )}
-                <div ref={subscriberMenuRef} style={{ position: 'relative', marginLeft: 'auto' }}>
+
+                  {selectedConv?.contactIsBlocked && (
+                    <span
+                      title={selectedConv?.contactBlockedReason || 'Blocked'}
+                      style={{
+                        fontSize: '0.72rem',
+                        fontWeight: 700,
+                        padding: '3px 9px',
+                        borderRadius: 999,
+                        background: '#fee2e2',
+                        color: '#dc2626',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                      }}
+                    >
+                      <Ban size={11} /> Blocked
+                    </span>
+                  )}
+                </div>
+
+                <div ref={subscriberMenuRef} style={{ position: 'relative' }}>
                   <button
                     onClick={() => setShowSubscriberMenu((v) => !v)}
                     disabled={subscriberActionBusy}
-                    style={{ color: '#94a3b8', cursor: 'pointer', background: 'none', border: 'none', padding: 4, borderRadius: 6 }}
-                    title="More actions"
+                    style={{
+                      color: '#64748b',
+                      cursor: 'pointer',
+                      background: '#f8fafc',
+                      border: '1px solid #e2e8f0',
+                      width: 28,
+                      height: 28,
+                      borderRadius: 8,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      transition: 'all 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = '#f1f5f9'; e.currentTarget.style.borderColor = '#cbd5e1'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = '#f8fafc'; e.currentTarget.style.borderColor = '#e2e8f0'; }}
+                    title="More contact options"
                   >
-                    <MoreVertical size={17} />
+                    <MoreVertical size={15} />
                   </button>
 
                   {showSubscriberMenu && (
@@ -4200,15 +4354,15 @@ export default function InboxPage() {
                         position: 'absolute',
                         top: '100%',
                         right: 0,
-                        marginTop: 4,
+                        marginTop: 6,
                         width: 230,
                         background: '#fff',
                         border: '1px solid #e2e8f0',
-                        borderRadius: 10,
-                        boxShadow: '0 8px 24px rgba(15, 23, 42, 0.12)',
+                        borderRadius: 12,
+                        boxShadow: '0 10px 28px rgba(15, 23, 42, 0.12)',
                         zIndex: 20,
                         overflow: 'hidden',
-                        padding: 4,
+                        padding: 6,
                       }}
                     >
                       <button
@@ -4216,7 +4370,7 @@ export default function InboxPage() {
                         disabled={subscriberActionBusy}
                         style={subscriberMenuItemStyle}
                       >
-                        <LogOut size={14} color="var(--primary)" /> Leave Chat
+                        <LogOut size={14} color="var(--primary, #6366f1)" /> Leave Chat
                       </button>
                       <button
                         onClick={handleResetFlow}
@@ -4252,24 +4406,35 @@ export default function InboxPage() {
                 </div>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {/* Contact Profile Row */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
                 <ContactAvatar
                   avatar={selectedConv.contactAvatar || selectedConv.avatar}
                   name={selectedConv.contactName || selectedConv.contact_name || selectedConv.external_id}
-                  size={38}
+                  size={48}
                   pInfo={activePlatformInfo}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <h4 style={{ fontSize: '0.88rem', fontWeight: 800, color: '#0f172a', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {selectedConv.contactName || selectedConv.contact_name || selectedConv.external_id || 'Subscriber'}
-                  </h4>
-                  <div style={{ fontSize: '0.7rem', color: '#64748b', marginTop: 1 }}>
-                    ID: <strong>{selectedConv.contact_id || selectedConv.id}</strong>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <h4 style={{ fontSize: '0.98rem', fontWeight: 800, color: '#0f172a', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.3 }}>
+                      {selectedConv.contactName || selectedConv.contact_name || selectedConv.external_id || 'Subscriber'}
+                    </h4>
                   </div>
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 3.5, marginTop: 3, fontSize: '0.69rem', background: '#f1f5f9', padding: '1px 6px', borderRadius: 4, color: '#334155', border: '1px solid #e2e8f0', maxWidth: '100%' }}>
-                    <User size={10} color="#64748b" style={{ flexShrink: 0 }} />
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      Agent: <strong style={{ color: currentAgentName ? '#0f172a' : '#94a3b8' }}>{currentAgentName || 'Unassigned'}</strong>
+
+                  {(selectedConv.contactPhone || selectedConv.contactEmail) && (
+                    <div style={{ fontSize: '0.78rem', color: '#475569', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>
+                      {selectedConv.contactPhone || selectedConv.contactEmail}
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: 600 }}>
+                      ID #{String(selectedConv.contact_id || selectedConv.id).padStart(4, '0')}
+                    </span>
+                    <span style={{ color: '#cbd5e1' }}>•</span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', color: '#475569', fontWeight: 600 }}>
+                      <User size={11} color="#64748b" />
+                      {currentAgentName || 'Unassigned'}
                     </span>
                   </div>
                 </div>

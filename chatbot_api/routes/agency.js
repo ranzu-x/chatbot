@@ -270,8 +270,10 @@ router.post("/agency/agents", async (req, res) => {
       return res.status(400).json({ success: false, message: "Email already in use" });
     }
     const hashed = await bcrypt.hash(password, 10);
+    // Created by a logged-in admin/reseller, who vouches for the address — so it's
+    // marked verified directly instead of emailing a link (see utils/emailVerification.js).
     const [userResult] = await conn.query(
-      "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, 'USER')",
+      "INSERT INTO users (name, email, password, role, email_verified_at) VALUES (?, ?, ?, 'USER', NOW())",
       [name, email, hashed]
     );
     await conn.query(

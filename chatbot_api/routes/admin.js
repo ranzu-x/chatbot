@@ -127,8 +127,10 @@ router.post("/admin/agencies", requirePermission("admin.agencies.manage"), async
     }
 
     const hashed = await bcrypt.hash(ownerPassword, 10);
+    // Created by a logged-in admin/reseller, who vouches for the address — so it's
+    // marked verified directly instead of emailing a link (see utils/emailVerification.js).
     const [userResult] = await conn.query(
-      "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, 'RESELLER')",
+      "INSERT INTO users (name, email, password, role, email_verified_at) VALUES (?, ?, ?, 'RESELLER', NOW())",
       [ownerName, ownerEmail, hashed]
     );
     const ownerId = userResult.insertId;
@@ -459,7 +461,8 @@ router.post("/admin/users", requirePermission("admin.users.manage"), async (req,
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const [result] = await pool.query(
-      "INSERT INTO users (name, email, password, role, is_active, created_at) VALUES (?, ?, ?, ?, 1, NOW())",
+      // Created by an admin, who vouches for the address — marked verified directly.
+      "INSERT INTO users (name, email, password, role, is_active, created_at, email_verified_at) VALUES (?, ?, ?, ?, 1, NOW(), NOW())",
       [name, email, hashedPassword, role]
     );
 
@@ -657,8 +660,10 @@ router.post("/admin/team", requirePermission("admin.team.manage"), async (req, r
     // in the app that haven't been retrofitted with requirePermission yet)
     // — real restriction for /admin/* itself comes entirely from their
     // seeded platform role's permission set, not this flag.
+    // Created by a logged-in admin/reseller, who vouches for the address — so it's
+    // marked verified directly instead of emailing a link (see utils/emailVerification.js).
     const [userResult] = await conn.query(
-      "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, 'ADMIN')",
+      "INSERT INTO users (name, email, password, role, email_verified_at) VALUES (?, ?, ?, 'ADMIN', NOW())",
       [name, email, hashed]
     );
     await conn.query(

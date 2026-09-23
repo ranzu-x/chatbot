@@ -2,43 +2,61 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
 /* ═══════════════════════════════════════════════════════════════════
-   LIGHT THEME (Clean Enterprise White & Slate Gray, Blue Primary)
+   LIGHT THEME — matched directly against the ManyChat reference
+   screenshot: near-black primary buttons/text (their "New Automation"
+   button, sidebar active icon, headings are all near-black, not blue or
+   green — green in that screenshot is ONLY their upgrade/trial banner,
+   never used as the app's own primary), a soft neutral-gray app
+   background with white cards/sidebar/top-bar on top, and a neutral
+   (not blue-tinted) gray scale for borders/hover/secondary text.
    Primary/background/text here is THE color system — change a value once
    and every component that reads the variable (not a hardcoded hex)
    follows. See theme/appearance.js for the runtime accent-swap mechanism
    (Settings → Appearance) that overwrites --primary/-dark/-light/-soft/-ring
    on top of these defaults; DEFAULT_APPEARANCE.accent there must stay in
-   sync with the values below. (Indigo was tried and reverted — Blue is
-   the decided primary for now; the Indigo swatches are still available
-   from the accent picker for anyone who wants them personally.)
+   sync with the values below. (Blue, Indigo and Green were all tried
+   before — near-black "Graphite" is the decided primary now, matching
+   the reference look; the other swatches are still available from the
+   accent picker for anyone who wants them personally.)
 ═══════════════════════════════════════════════════════════════════ */
 :root {
-  --primary: #2563eb;
-  --primary-dark: #1d4ed8;
-  --primary-light: #3b82f6;
-  --secondary: #64748b;
-  --accent: #2563eb;
+  --primary: #18181b;
+  --primary-dark: #000000;
+  --primary-light: #3f3f46;
+  --secondary: #71717a;
+  --accent: #18181b;
   --success: #10b981;
   --warning: #f59e0b;
   --danger: #ef4444;
 
-  /* Primary background is pure white; --bg-input/--bg-hover are the
-     secondary/tertiary greys used for input fields, nested panels and
-     hover/active states (see CLAUDE.md's color-system notes). */
-  --bg-base: #ffffff;
+  /* --bg-base is the app/page background (body, .main-content) — a soft
+     neutral gray so white cards/sidebar/top-bar (--bg-surface/--bg-card)
+     stand out against it, same as the reference look. --bg-input/--bg-hover
+     are the secondary/tertiary greys used for input fields, nested panels
+     and hover/active states (see CLAUDE.md's color-system notes). */
+  --bg-base: #f6f6f7;
   --bg-surface: #ffffff;
   --bg-card: #ffffff;
-  --bg-hover: #f1f5f9;
-  --bg-input: #f8fafc;
+  --bg-hover: #f4f4f5;
+  --bg-input: #fafafa;
+  /* A light, dedicated tint for "this is the one that's picked" — the
+     selected conversation/subscriber row, the selected sidebar nav item,
+     and the outbound message bubble. Deliberately its own variable rather
+     than reusing --border (too dark for a fill) or --bg-hover (meant for
+     transient mouse-hover, not a standing selected state) — tune this one
+     value to relight all three at once. */
+  --bg-selected: #f7f8fa;
 
-  --border: #e2e8f0;
-  --border-light: #cbd5e1;
+  --border: #e4e4e7;
+  --border-light: #d4d4d8;
 
-  /* Four-tier text scale — darkest/most-emphasis to lightest/least. */
-  --text-primary: #0f172a;
-  --text-secondary: #334155;
-  --text-tertiary: #64748b;
-  --text-muted: #94a3b8;
+  /* Four-tier text scale — darkest/most-emphasis to lightest/least. Neutral
+     gray (zinc), not the blue-tinted slate this used to be — matches the
+     reference screenshot's true black/gray text. */
+  --text-primary: #18181b;
+  --text-secondary: #52525b;
+  --text-tertiary: #71717a;
+  --text-muted: #a1a1aa;
 
   /* Channel/brand colors — WhatsApp/Facebook/Instagram/Telegram/TikTok are
      real external brand colors and are never affected by the accent
@@ -58,8 +76,8 @@
   --instagram: var(--channel-instagram);
 
   /* Derived from --primary; Settings → Appearance rewrites these at runtime */
-  --primary-soft: rgba(37, 99, 235, 0.09);
-  --primary-ring: rgba(37, 99, 235, 0.16);
+  --primary-soft: rgba(24, 24, 27, 0.06);
+  --primary-ring: rgba(24, 24, 27, 0.14);
 
   /* Typography — swap these (or use Settings → Appearance) to restyle the
      whole app's type at once. Every component inherits from --font-sans. */
@@ -79,19 +97,20 @@
    DARK THEME
 ═══════════════════════════════════════════════════════════════════ */
 [data-theme="dark"] {
-  --bg-base: #090d16;
-  --bg-surface: #0f172a;
-  --bg-card: #1e293b;
-  --bg-hover: #334155;
-  --bg-input: #0f172a;
+  --bg-base: #09090b;
+  --bg-surface: #18181b;
+  --bg-card: #27272a;
+  --bg-hover: #3f3f46;
+  --bg-input: #18181b;
+  --bg-selected: #38383f;
 
-  --border: #334155;
-  --border-light: #475569;
+  --border: #3f3f46;
+  --border-light: #52525b;
 
-  --text-primary: #f8fafc;
-  --text-secondary: #cbd5e1;
-  --text-tertiary: #94a3b8;
-  --text-muted: #64748b;
+  --text-primary: #fafafa;
+  --text-secondary: #d4d4d8;
+  --text-tertiary: #a1a1aa;
+  --text-muted: #71717a;
 
   --shadow: 0 4px 20px rgba(0,0,0,0.4);
   --shadow-sm: 0 2px 6px rgba(0,0,0,0.3);
@@ -122,7 +141,7 @@ input, textarea, select { font-family: inherit; }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg-base); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
 
 /* ─── Utilities ─────────────────────────────────────────────────── */
 .flex { display: flex; }
@@ -500,13 +519,13 @@ tr:hover td { background: var(--bg-hover); }
   align-items: center;
   gap: 12px;
   padding: 18px 16px 16px;
-  background: linear-gradient(180deg, var(--primary-soft, rgba(37, 99, 235, 0.07)) 0%, transparent 100%);
+  background: linear-gradient(180deg, var(--primary-soft, rgba(24, 24, 27, 0.05)) 0%, transparent 100%);
   border-bottom: 1px solid var(--border);
 }
 .dropdown-header .avatar-lg {
   background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
   color: #fff;
-  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.3), 0 0 0 3px var(--bg-card);
+  box-shadow: 0 4px 14px rgba(24, 24, 27, 0.25), 0 0 0 3px var(--bg-card);
   flex-shrink: 0;
 }
 .dropdown-header-text { min-width: 0; flex: 1; }
@@ -522,8 +541,8 @@ tr:hover td { background: var(--bg-hover); }
   display: inline-flex; align-items: center; gap: 4px;
   margin-top: 7px; padding: 2px 8px; border-radius: 999px;
   font-size: 0.64rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
-  background: var(--primary-soft, rgba(37, 99, 235, 0.1)); color: var(--primary);
-  border: 1px solid var(--primary-ring, rgba(37, 99, 235, 0.2));
+  background: var(--primary-soft, rgba(24, 24, 27, 0.08)); color: var(--primary);
+  border: 1px solid var(--primary-ring, rgba(24, 24, 27, 0.16));
 }
 .dropdown-footer { border-bottom: none; }
 
@@ -569,7 +588,9 @@ tr:hover td { background: var(--bg-hover); }
 }
 .conversation-item:hover { background: var(--bg-hover); }
 .conversation-item.active {
-  background: rgba(37, 99, 235, 0.06);
+  /* Same treatment as the sidebar's selected nav item (.nav-item.active,
+     Components/Sidebar.jsx) so "selected" reads the same everywhere. */
+  background: var(--bg-selected);
   border-left: 3px solid var(--primary);
 }
 
@@ -651,7 +672,7 @@ tr:hover td { background: var(--bg-hover); }
 }
 
 .gradient-text {
-  background: linear-gradient(135deg, #6366f1 0%, #2563eb 60%, #22d3ee 100%);
+  background: linear-gradient(135deg, #18181b 0%, #3f3f46 60%, #71717a 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;

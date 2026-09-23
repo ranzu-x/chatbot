@@ -285,6 +285,32 @@ export default function FlowPhonePreview({
       window.open(urlToOpen, '_blank', 'noopener,noreferrer');
     }
 
+    // If button or quick reply is Go To Flow action, show flow transfer notice in preview
+    if (action === 'goToFlow') {
+      const flowName = typeof buttonObjOrTitle === 'object' ? buttonObjOrTitle?.flowName : '';
+      const userMsg = {
+        id: `user-${Date.now()}`,
+        sender: 'user',
+        type: 'text',
+        text: title,
+      };
+      const jumpMsg = {
+        id: `sys-${Date.now() + 1}`,
+        sender: 'bot',
+        type: 'text',
+        text: `↪ [Jumps to flow: ${flowName || 'Selected Flow'}]`,
+      };
+      setMessages([...messages, userMsg]);
+      scrollToBottom();
+      setIsTyping(true);
+      setTimeout(() => {
+        setIsTyping(false);
+        setMessages((prev) => [...prev, jumpMsg]);
+        scrollToBottom();
+      }, 600);
+      return;
+    }
+
     // Append user response
     const userMsg = {
       id: `user-${Date.now()}`,
@@ -624,7 +650,7 @@ export default function FlowPhonePreview({
                               key={rIdx}
                               type="button"
                               className="flow-phone-qr-btn"
-                              onClick={() => handleButtonClick(title, rIdx, m.nodeId)}
+                              onClick={() => handleButtonClick(r, rIdx, m.nodeId)}
                             >
                               {title}
                             </button>

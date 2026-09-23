@@ -5,6 +5,8 @@ import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { assertLimit } from "../utils/entitlements.js";
 import { buildSearch } from "../utils/searchQuery.js";
 import { emitToAgency } from "../utils/socket.js";
+import { getOwnedIntegration } from "../utils/botScope.js";
+import { getOrgMember, integrationAccessClause } from "../utils/teamAccess.js";
 
 const router = express.Router();
 router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
@@ -635,78 +637,321 @@ router.post("/contacts/bulk-sequence", async (req, res) => {
   }
 });
 
-// ─── IMPORT CONTACTS (WhatsApp phone numbers / Telegram chat IDs) ────────────
-// Deliberately restricted to WhatsApp and Telegram — the only two channels
-// where a "cold" identifier (a phone number a business already has consent
-// for, or a Telegram chat_id from a subscriber who has already started a
-// chat elsewhere) is enough to message someone. Facebook Messenger and
-// Instagram only ever hand out a PSID/IGSID once a user messages the Page
-// first (Meta Messenger Platform policy — no way to mint one from an
-// imported identifier), and Webchat contacts only exist for the lifetime of
-// an actual widget session, so neither can be "pre-created" here.
+// ─── BULK IMPORT (CSV / Google Sheet → subscribers of ONE bot account) ───────
+// The client parses the file/sheet and applies the user's column mapping, so
+// this endpoint always receives the same shape:
+//   { integrationId, rows: [{ name, email, phone|chatId, custom: { "<col>": value } }],
+//     customFields: [{ col, fieldId } | { col, name }], labelId | labelName }
+// Every imported subscriber is attached to the chosen bot (a conversation row
+// on that integration — that is what makes a contact "belong" to a bot for
+// sequences, broadcasts and the Account filter) and gets the chosen label.
+//
+// Only WhatsApp and Telegram can be imported: those are the two channels where
+// a "cold" identifier (a phone number the business has consent for, or a
+// Telegram chat_id) is enough to message someone. Facebook Messenger and
+// Instagram only hand out a PSID/IGSID once a user messages the Page first
+// (Meta Messenger Platform policy), and Webchat contacts only exist for the
+// lifetime of a widget session, so neither can be "pre-created" here.
+//
+// Keep IMPORT_MAX_ROWS in step with MAX_ROWS in chatbot_ui ImportModal.jsx and
+// the body-size limit for this path in index.js.
+const IMPORT_MAX_ROWS = 50000;
+const IMPORT_CHUNK = 1000;
+const IMPORT_MAX_CUSTOM_COLUMNS = 30;
+
+const importSlug = (name) =>
+  String(name || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 90) || "field";
+
+// WhatsApp identifies people by wa_id = the number in international format,
+// digits only. Store it that way so an imported "+880 1712-345678" is the same
+// contact as the one the webhook later creates from "8801712345678".
+function normalizeWhatsAppNumber(value) {
+  let digits = String(value ?? "").replace(/[^0-9]/g, "");
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  return digits;
+}
+
 router.post("/contacts/import", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    const { platform, rows } = req.body;
+    const { integrationId, rows, customFields, labelId, labelName } = req.body;
 
-    if (platform !== "WHATSAPP" && platform !== "TELEGRAM") {
-      return res.status(400).json({ success: false, message: "Import is only available for WhatsApp and Telegram." });
+    // ── Bot account: required, must be this workspace's, must be importable ──
+    const bot = await getOwnedIntegration(agencyId, integrationId);
+    if (!bot) {
+      return res.status(400).json({ success: false, message: "Choose the bot account to import these subscribers into." });
     }
+    const platform = bot.platform;
+    if (platform !== "WHATSAPP" && platform !== "TELEGRAM") {
+      return res.status(400).json({ success: false, message: "Import is only available for WhatsApp and Telegram bot accounts." });
+    }
+    // A team member limited to specific channels can't import into another one.
+    const orgMember = await getOrgMember(req.user.id, agencyId);
+    const access = await integrationAccessClause(orgMember?.id, "id");
+    if (access.clause) {
+      const [allowed] = await pool.query(`SELECT id FROM integrations WHERE id = ?${access.clause}`, [bot.id, ...access.params]);
+      if (!allowed.length) return res.status(404).json({ success: false, message: "Bot account not found" });
+    }
+
     if (!Array.isArray(rows) || rows.length === 0) {
       return res.status(400).json({ success: false, message: "No rows to import" });
     }
-    if (rows.length > 5000) {
-      return res.status(400).json({ success: false, message: "Import is limited to 5000 rows at a time — split the file and try again." });
+    if (rows.length > IMPORT_MAX_ROWS) {
+      return res.status(400).json({ success: false, message: `Import is limited to ${IMPORT_MAX_ROWS.toLocaleString()} rows at a time — split the file and try again.` });
+    }
+    const defs = Array.isArray(customFields) ? customFields : [];
+    if (defs.length > IMPORT_MAX_CUSTOM_COLUMNS) {
+      return res.status(400).json({ success: false, message: `At most ${IMPORT_MAX_CUSTOM_COLUMNS} columns can be imported as custom fields.` });
     }
 
-    let created = 0, updated = 0, skipped = 0;
-    const errors = [];
-
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const externalId = (platform === "WHATSAPP" ? row.phone : row.chatId || row.externalId || "")?.toString().trim();
-      const name = (row.name || "").toString().trim() || externalId;
-      const phone = platform === "WHATSAPP" ? externalId : (row.phone || "").toString().trim() || null;
-      const email = (row.email || "").toString().trim() || null;
-
-      if (!externalId) {
-        skipped++;
-        errors.push({ row: i + 2, reason: platform === "WHATSAPP" ? "Missing phone number" : "Missing Telegram Chat ID" });
-        continue;
-      }
-
-      const [existing] = await pool.query(
-        "SELECT id FROM contacts WHERE agency_id = ? AND platform = ? AND external_id = ?",
-        [agencyId, platform, externalId]
-      );
-
-      if (existing.length) {
-        await pool.query(
-          "UPDATE contacts SET name = COALESCE(NULLIF(?, ''), name), phone = COALESCE(?, phone), email = COALESCE(?, email) WHERE id = ?",
-          [name, phone, email, existing[0].id]
-        );
-        updated++;
-        continue;
-      }
-
-      if (req.user.role !== "ADMIN") {
+    // ── Label: an existing one, or a name (created if it doesn't exist yet) ──
+    let label;
+    let labelCreated = false;
+    if (labelId) {
+      const [[found]] = await pool.query("SELECT id, name FROM labels WHERE id = ? AND agency_id = ?", [labelId, agencyId]);
+      if (!found) return res.status(404).json({ success: false, message: "Label not found" });
+      label = found;
+    } else {
+      const name = String(labelName || "").trim().slice(0, 100) || `Import ${new Date().toISOString().slice(0, 10)}`;
+      const [[found]] = await pool.query("SELECT id, name FROM labels WHERE agency_id = ? AND LOWER(name) = LOWER(?)", [agencyId, name]);
+      if (found) {
+        label = found;
+      } else {
         try {
-          await assertLimit(agencyId, "max_subscribers", 1, req.user.id);
-        } catch (limitErr) {
-          errors.push({ row: i + 2, reason: limitErr.message || "Subscriber limit reached for your current plan." });
-          skipped += rows.length - i; // stop here — every remaining row would hit the same limit
-          break;
+          const [ins] = await pool.query("INSERT INTO labels (agency_id, name, color) VALUES (?, ?, '#2563eb')", [agencyId, name]);
+          label = { id: ins.insertId, name };
+          labelCreated = true;
+        } catch (e) {
+          if (e.code !== "ER_DUP_ENTRY") throw e;
+          [[label]] = await pool.query("SELECT id, name FROM labels WHERE agency_id = ? AND LOWER(name) = LOWER(?)", [agencyId, name]);
+        }
+      }
+    }
+
+    // ── Custom-field columns → field ids (existing ones checked, new ones created) ──
+    const fieldByCol = new Map();
+    let fieldsCreated = 0;
+    for (const def of defs) {
+      const col = String(def?.col ?? "");
+      if (!col || fieldByCol.has(col)) continue;
+      if (def.fieldId) {
+        const [[f]] = await pool.query("SELECT id FROM custom_field_definitions WHERE id = ? AND agency_id = ? AND is_active = 1", [def.fieldId, agencyId]);
+        if (!f) return res.status(404).json({ success: false, message: "One of the selected custom fields no longer exists." });
+        fieldByCol.set(col, f.id);
+        continue;
+      }
+      const name = String(def.name || "").trim().slice(0, 100);
+      if (!name) continue;
+      const key = importSlug(name);
+      const [[existing]] = await pool.query("SELECT id, is_active FROM custom_field_definitions WHERE agency_id = ? AND field_key = ?", [agencyId, key]);
+      if (existing) {
+        // A removed field keeps its key (unique per workspace) — bring it back rather than fail.
+        if (!existing.is_active) await pool.query("UPDATE custom_field_definitions SET is_active = 1 WHERE id = ?", [existing.id]);
+        fieldByCol.set(col, existing.id);
+        continue;
+      }
+      const [[{ nextSort }]] = await pool.query("SELECT COALESCE(MAX(sort_order), -1) + 1 AS nextSort FROM custom_field_definitions WHERE agency_id = ?", [agencyId]);
+      const [ins] = await pool.query(
+        "INSERT INTO custom_field_definitions (agency_id, name, field_key, field_type, options, sort_order) VALUES (?, ?, ?, 'TEXT', NULL, ?)",
+        [agencyId, name, key, nextSort]
+      );
+      fieldByCol.set(col, ins.insertId);
+      fieldsCreated++;
+    }
+    if (fieldsCreated) emitToAgency(agencyId, "custom_fields_updated", { reason: "created" });
+
+    let created = 0, updated = 0, skipped = 0, duplicatesMerged = 0;
+    const errors = [];
+    const enforceLimit = req.user.role !== "ADMIN";
+
+    // ── Normalise every row. `row` is the spreadsheet line number (header = 1)
+    // so messages match what the user sees. Repeated ids in the file collapse
+    // into one contact — later non-empty values win. ──
+    const byId = new Map();
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i] || {};
+      let externalId;
+      if (platform === "WHATSAPP") {
+        externalId = normalizeWhatsAppNumber(row.phone);
+        if (!externalId) {
+          skipped++;
+          errors.push({ row: i + 2, reason: "Missing phone number" });
+          continue;
+        }
+        if (externalId.length < 7 || externalId.length > 15) {
+          skipped++;
+          errors.push({ row: i + 2, reason: `"${String(row.phone).slice(0, 30)}" isn't a valid phone number` });
+          continue;
+        }
+      } else {
+        externalId = String(row.chatId ?? row.externalId ?? "").trim();
+        if (!externalId) {
+          skipped++;
+          errors.push({ row: i + 2, reason: "Missing Telegram Chat ID" });
+          continue;
+        }
+        if (!/^-?[0-9]{1,20}$/.test(externalId)) {
+          skipped++;
+          errors.push({ row: i + 2, reason: `"${externalId.slice(0, 30)}" isn't a Telegram Chat ID (it must be a number)` });
+          continue;
         }
       }
 
-      await pool.query(
-        `INSERT INTO contacts (agency_id, platform, external_id, name, phone, email, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-        [agencyId, platform, externalId, name, phone, email]
-      );
-      created++;
+      const custom = new Map();
+      if (row.custom && typeof row.custom === "object") {
+        for (const [col, value] of Object.entries(row.custom)) {
+          const fieldId = fieldByCol.get(col);
+          const text = String(value ?? "").trim();
+          if (fieldId && text) custom.set(fieldId, text.slice(0, 2000));
+        }
+      }
+      const item = {
+        row: i + 2,
+        externalId,
+        name: String(row.name ?? "").trim().slice(0, 200) || null,
+        phone: platform === "WHATSAPP" ? externalId : String(row.phone ?? "").trim().slice(0, 50) || null,
+        email: String(row.email ?? "").trim().slice(0, 255) || null,
+        custom,
+      };
+      const prev = byId.get(externalId);
+      if (prev) {
+        duplicatesMerged++;
+        prev.name = item.name || prev.name;
+        prev.phone = item.phone || prev.phone;
+        prev.email = item.email || prev.email;
+        for (const [fid, v] of item.custom) prev.custom.set(fid, v);
+      } else {
+        byId.set(externalId, item);
+      }
     }
 
-    return res.json({ success: true, created, updated, skipped, errors: errors.slice(0, 20) });
+    // ── Work in chunks: one lookup + one multi-row INSERT per step instead of
+    // several queries per row, which is what makes tens of thousands of rows practical. ──
+    const items = [...byId.values()];
+    const insertOne = async (it) => {
+      await pool.query(
+        `INSERT INTO contacts (agency_id, platform, external_id, name, phone, email, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+        [agencyId, platform, it.externalId, it.name || it.externalId, it.phone, it.email]
+      );
+    };
+    let limitHit = false;
+
+    for (let start = 0; start < items.length && !limitHit; start += IMPORT_CHUNK) {
+      const chunk = items.slice(start, start + IMPORT_CHUNK);
+      const [found] = await pool.query(
+        "SELECT id, external_id FROM contacts WHERE agency_id = ? AND platform = ? AND external_id IN (?)",
+        [agencyId, platform, chunk.map((c) => c.externalId)]
+      );
+      const existingIds = new Map(found.map((f) => [String(f.external_id), f.id]));
+
+      const touched = []; // items that were really created/updated in this chunk
+      const toInsert = [];
+      for (const it of chunk) {
+        const id = existingIds.get(it.externalId);
+        if (id === undefined) { toInsert.push(it); continue; }
+        // Only overwrite what the file actually provides — a blank cell keeps the current value.
+        await pool.query(
+          "UPDATE contacts SET name = COALESCE(?, name), phone = COALESCE(?, phone), email = COALESCE(?, email) WHERE id = ?",
+          [it.name, it.phone, it.email, id]
+        );
+        updated++;
+        touched.push(it);
+      }
+
+      if (toInsert.length > 0) {
+        let allowed = true;
+        if (enforceLimit) {
+          try {
+            await assertLimit(agencyId, "max_subscribers", toInsert.length, req.user.id);
+          } catch {
+            allowed = false;
+          }
+        }
+
+        if (allowed) {
+          const [ins] = await pool.query(
+            "INSERT IGNORE INTO contacts (agency_id, platform, external_id, name, phone, email, created_at) VALUES ?",
+            [toInsert.map((it) => [agencyId, platform, it.externalId, it.name || it.externalId, it.phone, it.email, new Date()])]
+          );
+          created += ins.affectedRows;
+          skipped += toInsert.length - ins.affectedRows;
+          touched.push(...toInsert);
+        } else {
+          // The whole chunk doesn't fit the plan — add rows one by one until the limit bites.
+          for (let k = 0; k < toInsert.length; k++) {
+            try {
+              await assertLimit(agencyId, "max_subscribers", 1, req.user.id);
+            } catch (limitErr) {
+              errors.push({ row: toInsert[k].row, reason: limitErr.message || "Subscriber limit reached for your current plan." });
+              // stop here — every remaining row would hit the same limit
+              skipped += (toInsert.length - k) + Math.max(0, items.length - (start + chunk.length));
+              limitHit = true;
+              break;
+            }
+            await insertOne(toInsert[k]);
+            created++;
+            touched.push(toInsert[k]);
+          }
+        }
+      }
+      if (touched.length === 0) continue;
+
+      // Everything below applies to the contacts that actually made it in.
+      const [ids] = await pool.query(
+        "SELECT id, external_id FROM contacts WHERE agency_id = ? AND platform = ? AND external_id IN (?)",
+        [agencyId, platform, touched.map((t) => t.externalId)]
+      );
+      const idByExternal = new Map(ids.map((r) => [String(r.external_id), r.id]));
+      const contactIds = ids.map((r) => r.id);
+
+      // Belong to the chosen bot: a conversation on that integration. Created
+      // RESOLVED with no messages so 50,000 imported people don't flood the
+      // Inbox's Open list — the moment one of them writes in, the bot opens a
+      // normal conversation as usual.
+      const [haveConv] = await pool.query(
+        "SELECT DISTINCT contact_id FROM conversations WHERE agency_id = ? AND integration_id = ? AND contact_id IN (?)",
+        [agencyId, bot.id, contactIds]
+      );
+      const hasConv = new Set(haveConv.map((r) => r.contact_id));
+      const newConvs = contactIds.filter((id) => !hasConv.has(id));
+      if (newConvs.length) {
+        await pool.query(
+          "INSERT INTO conversations (agency_id, contact_id, integration_id, status, unread_count, created_at) VALUES ?",
+          [newConvs.map((cid) => [agencyId, cid, bot.id, "RESOLVED", 0, new Date()])]
+        );
+      }
+
+      // Label (and the denormalised contacts.tags the Inbox reads).
+      await pool.query("INSERT IGNORE INTO contact_labels (contact_id, label_id) VALUES ?", [contactIds.map((cid) => [cid, label.id])]);
+      await pool.query(
+        `UPDATE contacts c SET c.tags = (
+           SELECT JSON_ARRAYAGG(l.name) FROM contact_labels cl JOIN labels l ON l.id = cl.label_id WHERE cl.contact_id = c.id
+         ) WHERE c.id IN (?)`,
+        [contactIds]
+      );
+
+      // Custom-field values.
+      const valueRows = [];
+      for (const t of touched) {
+        const cid = idByExternal.get(t.externalId);
+        if (!cid) continue;
+        for (const [fid, v] of t.custom) valueRows.push([cid, fid, v]);
+      }
+      if (valueRows.length) {
+        await pool.query(
+          "INSERT INTO contact_custom_field_values (contact_id, field_id, value) VALUES ? ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = NOW()",
+          [valueRows]
+        );
+      }
+    }
+
+    return res.json({
+      success: true, created, updated, skipped, duplicatesMerged,
+      errors: errors.slice(0, 20),
+      label: { id: label.id, name: label.name, created: labelCreated },
+      bot: { id: bot.id, name: bot.name },
+      customFieldsCreated: fieldsCreated,
+    });
   } catch (err) {
     console.error("Import contacts error:", err);
     return res.status(500).json({ success: false, message: "Server error" });

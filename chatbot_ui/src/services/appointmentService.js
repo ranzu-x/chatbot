@@ -1,6 +1,6 @@
 import api from "./api";
 
-const API_BASE = "/api/v1/appointments";
+const API_BASE = "/appointments";
 
 /**
  * Fetch paginated appointments with all filter criteria
@@ -20,7 +20,9 @@ export const fetchAppointments = async (params = {}) => {
     if (params.fromDate) queryParams.append("fromDate", params.fromDate);
     if (params.toDate) queryParams.append("toDate", params.toDate);
 
-    const response = await api.get(`${API_BASE}?${queryParams.toString()}`);
+    const queryString = queryParams.toString();
+    const endpoint = queryString ? `${API_BASE}?${queryString}` : API_BASE;
+    const response = await api.get(endpoint);
     return response.data;
   } catch (error) {
     console.error("❌ Error fetching appointments:", error);
@@ -68,7 +70,7 @@ export const updateAppointment = async (id, appointmentData) => {
 };
 
 /**
- * Update appointment status
+ * Update appointment status (scheduled, confirmed, completed, cancelled, no_show)
  */
 export const updateAppointmentStatus = async (id, newStatus, reason = null) => {
   try {
@@ -114,7 +116,8 @@ export const fetchAppointmentStats = async () => {
 export const fetchSlots = async (params = {}) => {
   try {
     const query = new URLSearchParams(params).toString();
-    const res = await api.get(`/api/v1/slots?${query}`);
+    const endpoint = query ? `/slots?${query}` : "/slots";
+    const res = await api.get(endpoint);
     return res.data;
   } catch (error) {
     console.error("❌ Error fetching slots:", error);
@@ -124,7 +127,7 @@ export const fetchSlots = async (params = {}) => {
 
 export const createSlots = async (slotData) => {
   try {
-    const res = await api.post("/api/v1/slots", slotData);
+    const res = await api.post("/slots", slotData);
     return res.data;
   } catch (error) {
     console.error("❌ Error creating slots:", error);
@@ -134,7 +137,7 @@ export const createSlots = async (slotData) => {
 
 export const updateSlot = async (id, slotData) => {
   try {
-    const res = await api.put(`/api/v1/slots/${id}`, slotData);
+    const res = await api.put(`/slots/${id}`, slotData);
     return res.data;
   } catch (error) {
     console.error("❌ Error updating slot:", error);
@@ -144,7 +147,7 @@ export const updateSlot = async (id, slotData) => {
 
 export const deleteSlot = async (id) => {
   try {
-    const res = await api.delete(`/api/v1/slots/${id}`);
+    const res = await api.delete(`/slots/${id}`);
     return res.data;
   } catch (error) {
     console.error("❌ Error deleting slot:", error);
@@ -154,7 +157,7 @@ export const deleteSlot = async (id) => {
 
 export const toggleSlot = async (id) => {
   try {
-    const res = await api.put(`/api/v1/slots/${id}/toggle`);
+    const res = await api.put(`/slots/${id}/toggle`);
     return res.data;
   } catch (error) {
     console.error("❌ Error toggling slot:", error);
@@ -164,7 +167,7 @@ export const toggleSlot = async (id) => {
 
 export const bulkDeleteSlots = async (ids) => {
   try {
-    const res = await api.post("/api/v1/slots/bulk-delete", { ids });
+    const res = await api.post("/slots/bulk-delete", { ids });
     return res.data;
   } catch (error) {
     console.error("❌ Error bulk deleting slots:", error);
@@ -174,7 +177,7 @@ export const bulkDeleteSlots = async (ids) => {
 
 export const bulkToggleSlots = async (ids, is_active) => {
   try {
-    const res = await api.post("/api/v1/slots/bulk-toggle", { ids, is_active });
+    const res = await api.post("/slots/bulk-toggle", { ids, is_active });
     return res.data;
   } catch (error) {
     console.error("❌ Error bulk toggling slots:", error);
@@ -184,7 +187,7 @@ export const bulkToggleSlots = async (ids, is_active) => {
 
 export const purgePastSlots = async () => {
   try {
-    const res = await api.delete("/api/v1/slots/purge-past");
+    const res = await api.delete("/slots/purge-past");
     return res.data;
   } catch (error) {
     console.error("❌ Error purging past slots:", error);
@@ -194,10 +197,11 @@ export const purgePastSlots = async () => {
 
 export const fetchAvailableSlots = async (agencyId, date = null, staffId = null) => {
   try {
-    const params = new URLSearchParams({ agencyId });
+    const params = new URLSearchParams();
+    if (agencyId) params.append("agencyId", agencyId.toString());
     if (date) params.append("date", date);
-    if (staffId) params.append("staffId", staffId);
-    const res = await api.get(`/api/v1/slots/availability?${params}`);
+    if (staffId) params.append("staffId", staffId.toString());
+    const res = await api.get(`/slots/availability?${params.toString()}`);
     return res.data;
   } catch (error) {
     console.error("❌ Error fetching available slots:", error);
@@ -207,11 +211,12 @@ export const fetchAvailableSlots = async (agencyId, date = null, staffId = null)
 
 export const fetchAvailableDates = async (agencyId, fromDate = null, staffId = null, daysAhead = 30) => {
   try {
-    const params = new URLSearchParams({ agencyId });
+    const params = new URLSearchParams();
+    if (agencyId) params.append("agencyId", agencyId.toString());
     if (fromDate) params.append("fromDate", fromDate);
-    if (staffId) params.append("staffId", staffId);
+    if (staffId) params.append("staffId", staffId.toString());
     if (daysAhead) params.append("daysAhead", daysAhead.toString());
-    const res = await api.get(`/api/v1/slots/availability/dates?${params}`);
+    const res = await api.get(`/slots/availability/dates?${params.toString()}`);
     return res.data;
   } catch (error) {
     console.error("❌ Error fetching available dates:", error);
@@ -223,7 +228,7 @@ export const fetchAvailableDates = async (agencyId, fromDate = null, staffId = n
 
 export const fetchAppointmentServices = async () => {
   try {
-    const res = await api.get("/api/v1/appointment-services");
+    const res = await api.get("/appointment-services");
     return res.data;
   } catch (error) {
     console.error("❌ Error fetching services:", error);
@@ -233,7 +238,7 @@ export const fetchAppointmentServices = async () => {
 
 export const createAppointmentService = async (serviceData) => {
   try {
-    const res = await api.post("/api/v1/appointment-services", serviceData);
+    const res = await api.post("/appointment-services", serviceData);
     return res.data;
   } catch (error) {
     console.error("❌ Error creating service:", error);
@@ -243,7 +248,7 @@ export const createAppointmentService = async (serviceData) => {
 
 export const updateAppointmentService = async (id, serviceData) => {
   try {
-    const res = await api.put(`/api/v1/appointment-services/${id}`, serviceData);
+    const res = await api.put(`/appointment-services/${id}`, serviceData);
     return res.data;
   } catch (error) {
     console.error("❌ Error updating service:", error);
@@ -253,7 +258,7 @@ export const updateAppointmentService = async (id, serviceData) => {
 
 export const deleteAppointmentService = async (id) => {
   try {
-    const res = await api.delete(`/api/v1/appointment-services/${id}`);
+    const res = await api.delete(`/appointment-services/${id}`);
     return res.data;
   } catch (error) {
     console.error("❌ Error deleting service:", error);
@@ -263,7 +268,7 @@ export const deleteAppointmentService = async (id) => {
 
 export const fetchPublicServices = async (agencyId) => {
   try {
-    const res = await api.get(`/api/v1/appointment-services/public?agencyId=${agencyId}`);
+    const res = await api.get(`/appointment-services/public?agencyId=${agencyId}`);
     return res.data;
   } catch (error) {
     console.error("❌ Error fetching public services:", error);
@@ -273,7 +278,7 @@ export const fetchPublicServices = async (agencyId) => {
 
 export const bookAppointmentPublic = async (bookingData) => {
   try {
-    const res = await api.post("/api/v1/appointments/book-public", bookingData);
+    const res = await api.post("/appointments/book-public", bookingData);
     return res.data;
   } catch (error) {
     console.error("❌ Error booking public appointment:", error);

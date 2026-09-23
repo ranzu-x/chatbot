@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import {
   Search, ChevronDown, Download, RefreshCw, ChevronLeft, ChevronRight,
   Eye, Edit2, Trash2, Clock, Users, Key, MoreVertical, Plus, Check
@@ -40,7 +40,7 @@ export default function DataTable({
   columns = [],
   data = [],
   loading = false,
-  emptyIcon = <Users size={40} color="#94a3b8" />,
+  emptyIcon = <Users size={40} color="var(--text-muted)" />,
   emptyTitle = "No records found",
   emptySubtitle = "Try adjusting your filters or create a new entry.",
   onRowClick,
@@ -76,30 +76,30 @@ export default function DataTable({
           font-size: 0.74rem;
           font-weight: 700;
           letter-spacing: 0.5px;
-          color: #5c5c80;
-          border-bottom: 1px solid #e4e4f0;
-          background: #f8f8fc;
+          color: var(--text-secondary);
+          border-bottom: 1px solid var(--border);
+          background: var(--bg-input);
           white-space: nowrap;
           text-align: left;
         }
         .bs-table td {
           padding: 13px 14px;
           font-size: 0.83rem;
-          border-bottom: 1px solid #e4e4f0;
+          border-bottom: 1px solid var(--border);
           vertical-align: middle;
-          background: #ffffff;
+          background: var(--bg-card);
           transition: background 0.15s;
         }
         .bs-table tr:hover td {
-          background: #f8f8fc;
+          background: var(--bg-hover);
         }
         .bs-action-btn {
           width: 28px;
           height: 28px;
           border-radius: 6px;
-          border: 1px solid #e4e4f0;
-          background: #ffffff;
-          color: #5c5c80;
+          border: 1px solid var(--border);
+          background: var(--bg-card);
+          color: var(--text-secondary);
           display: inline-flex;
           align-items: center;
           justify-content: center;
@@ -108,14 +108,14 @@ export default function DataTable({
           transition: all 0.15s ease;
         }
         .bs-action-btn:hover {
-          border-color: #6366f1;
-          color: #6366f1;
-          background: rgba(99, 102, 241, 0.08);
+          border-color: var(--primary);
+          color: var(--primary);
+          background: var(--primary-soft);
           transform: translateY(-1px);
         }
         .bs-action-btn.delete:hover {
-          border-color: #ef4444;
-          color: #ef4444;
+          border-color: var(--danger);
+          color: var(--danger);
           background: rgba(239, 68, 68, 0.08);
         }
         .bs-toggle-switch {
@@ -134,7 +134,7 @@ export default function DataTable({
           position: absolute;
           cursor: pointer;
           top: 0; left: 0; right: 0; bottom: 0;
-          background-color: #cbd5e1;
+          background-color: var(--border-light);
           transition: .22s;
           border-radius: 20px;
         }
@@ -151,7 +151,7 @@ export default function DataTable({
           box-shadow: 0 1px 3px rgba(0,0,0,0.2);
         }
         input:checked + .bs-toggle-slider {
-          background-color: #10b981;
+          background-color: var(--success);
         }
         input:checked + .bs-toggle-slider:before {
           transform: translateX(16px);
@@ -163,12 +163,12 @@ export default function DataTable({
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18, flexWrap: 'wrap', gap: 12 }}>
           <div>
             {title && (
-              <h1 style={{ fontSize: '1.4rem', fontWeight: 700, margin: 0, color: '#1a1a2e' }}>
+              <h1 style={{ fontSize: '1.4rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
                 {title}
               </h1>
             )}
             {subtitle && (
-              <p style={{ fontSize: '0.82rem', color: '#5c5c80', margin: '3px 0 0 0' }}>
+              <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '3px 0 0 0' }}>
                 {subtitle}
               </p>
             )}
@@ -185,8 +185,8 @@ export default function DataTable({
       {/* ── Filter / Search Bar ── */}
       <div
         style={{
-          background: '#ffffff',
-          border: '1px solid #e4e4f0',
+          background: 'var(--bg-card)',
+          border: '1px solid var(--border)',
           borderRadius: 12,
           padding: '12px 16px',
           marginBottom: 16,
@@ -207,9 +207,9 @@ export default function DataTable({
                 width: '100%',
                 padding: '9px 30px 9px 12px',
                 borderRadius: 8,
-                border: '1px solid #e4e4f0',
-                background: '#f8f8fc',
-                color: '#1a1a2e',
+                border: '1px solid var(--border)',
+                background: 'var(--bg-input)',
+                color: 'var(--text-primary)',
                 fontSize: '0.84rem',
                 appearance: 'none',
                 cursor: 'pointer',
@@ -225,7 +225,7 @@ export default function DataTable({
             </select>
             <ChevronDown
               size={14}
-              color="#9999bb"
+              color="var(--text-muted)"
               style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}
             />
           </div>
@@ -236,7 +236,7 @@ export default function DataTable({
           <div style={{ position: 'relative', flex: '2 1 220px', minWidth: 180 }}>
             <Search
               size={15}
-              color="#9999bb"
+              color="var(--text-muted)"
               style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }}
             />
             <input
@@ -248,9 +248,9 @@ export default function DataTable({
                 width: '100%',
                 padding: '9px 12px 9px 34px',
                 borderRadius: 8,
-                border: '1px solid #e4e4f0',
-                background: '#f8f8fc',
-                color: '#1a1a2e',
+                border: '1px solid var(--border)',
+                background: 'var(--bg-input)',
+                color: 'var(--text-primary)',
                 fontSize: '0.84rem',
                 outline: 'none',
               }}
@@ -266,9 +266,9 @@ export default function DataTable({
               style={{
                 padding: '9px 14px',
                 borderRadius: 8,
-                border: '1px solid #e4e4f0',
-                background: '#ffffff',
-                color: '#5c5c80',
+                border: '1px solid var(--border)',
+                background: 'var(--bg-card)',
+                color: 'var(--text-secondary)',
                 fontSize: '0.84rem',
                 fontWeight: 500,
                 cursor: 'pointer',
@@ -286,8 +286,8 @@ export default function DataTable({
                   position: 'absolute',
                   right: 0,
                   top: '110%',
-                  background: '#ffffff',
-                  border: '1px solid #e4e4f0',
+                  background: 'var(--bg-card)',
+                  border: '1px solid var(--border)',
                   borderRadius: 8,
                   boxShadow: '0 8px 24px rgba(0,0,0,0.1)',
                   zIndex: 100,
@@ -308,13 +308,13 @@ export default function DataTable({
                       display: 'flex',
                       alignItems: 'center',
                       gap: 8,
-                      borderBottom: '1px solid #f0f0fa',
-                      color: '#1a1a2e',
+                      borderBottom: '1px solid var(--border)',
+                      color: 'var(--text-primary)',
                     }}
-                    onMouseOver={(e) => (e.currentTarget.style.background = '#f8f8fc')}
-                    onMouseOut={(e) => (e.currentTarget.style.background = '#ffffff')}
+                    onMouseOver={(e) => (e.currentTarget.style.background = 'var(--bg-hover)')}
+                    onMouseOut={(e) => (e.currentTarget.style.background = 'var(--bg-card)')}
                   >
-                    <Download size={14} color="#6366f1" /> Export CSV
+                    <Download size={14} color="var(--primary)" /> Export CSV
                   </div>
                 )}
                 {onRefresh && (
@@ -330,12 +330,12 @@ export default function DataTable({
                       display: 'flex',
                       alignItems: 'center',
                       gap: 8,
-                      color: '#1a1a2e',
+                      color: 'var(--text-primary)',
                     }}
-                    onMouseOver={(e) => (e.currentTarget.style.background = '#f8f8fc')}
-                    onMouseOut={(e) => (e.currentTarget.style.background = '#ffffff')}
+                    onMouseOver={(e) => (e.currentTarget.style.background = 'var(--bg-hover)')}
+                    onMouseOut={(e) => (e.currentTarget.style.background = 'var(--bg-card)')}
                   >
-                    <RefreshCw size={14} color="#10b981" /> Refresh List
+                    <RefreshCw size={14} color="var(--success)" /> Refresh List
                   </div>
                 )}
               </div>
@@ -347,8 +347,8 @@ export default function DataTable({
       {/* ── Table Card ── */}
       <div
         style={{
-          background: '#ffffff',
-          border: '1px solid #e4e4f0',
+          background: 'var(--bg-card)',
+          border: '1px solid var(--border)',
           borderRadius: 12,
           overflow: 'hidden',
           boxShadow: '0 1px 4px rgba(0,0,0,0.04)',
@@ -381,7 +381,7 @@ export default function DataTable({
                 <tr>
                   <td colSpan={columns.length + (selectable ? 1 : 0)} style={{ padding: 50, textAlign: 'center' }}>
                     <div className="loading-spinner" style={{ margin: '0 auto 10px' }} />
-                    <p style={{ color: '#5c5c80', fontSize: '0.84rem' }}>Loading records...</p>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.84rem' }}>Loading records...</p>
                   </td>
                 </tr>
               ) : data.length === 0 ? (
@@ -390,10 +390,10 @@ export default function DataTable({
                     <div style={{ margin: '0 auto 10px', display: 'flex', justifyContent: 'center' }}>
                       {emptyIcon}
                     </div>
-                    <h3 style={{ fontSize: '0.98rem', fontWeight: 600, margin: '0 0 4px 0', color: '#1a1a2e' }}>
+                    <h3 style={{ fontSize: '0.98rem', fontWeight: 600, margin: '0 0 4px 0', color: 'var(--text-primary)' }}>
                       {emptyTitle}
                     </h3>
-                    <p style={{ color: '#5c5c80', fontSize: '0.82rem', margin: 0 }}>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', margin: 0 }}>
                       {emptySubtitle}
                     </p>
                   </td>
@@ -413,7 +413,7 @@ export default function DataTable({
                       {selectable && (
                         <td onClick={(e) => e.stopPropagation()}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#5c5c80', minWidth: 16 }}>
+                            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', minWidth: 16 }}>
                               {rowNumber}
                             </span>
                             <label className="bs-toggle-switch" style={{ transform: 'scale(0.72)', margin: 0 }}>
@@ -451,23 +451,23 @@ export default function DataTable({
               alignItems: 'center',
               justifyContent: 'space-between',
               padding: '12px 18px',
-              borderTop: '1px solid #e4e4f0',
+              borderTop: '1px solid var(--border)',
               flexWrap: 'wrap',
               gap: 10,
             }}
           >
             {/* Limit Selector */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: '0.8rem', color: '#9999bb' }}>Showing</span>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Showing</span>
               <select
                 value={limit}
                 onChange={(e) => pagination.onLimitChange && pagination.onLimitChange(Number(e.target.value))}
                 style={{
                   padding: '4px 8px',
                   borderRadius: 6,
-                  border: '1px solid #e4e4f0',
-                  background: '#ffffff',
-                  color: '#1a1a2e',
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-card)',
+                  color: 'var(--text-primary)',
                   fontSize: '0.8rem',
                   cursor: 'pointer',
                 }}
@@ -477,7 +477,7 @@ export default function DataTable({
                 <option value={50}>50</option>
                 <option value={100}>100</option>
               </select>
-              <span style={{ fontSize: '0.8rem', color: '#9999bb' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                 {total === 0 ? 0 : (page - 1) * limit + 1}–{Math.min(page * limit, total)} of {total}
               </span>
             </div>
@@ -490,9 +490,9 @@ export default function DataTable({
                 style={{
                   padding: '5px 10px',
                   borderRadius: 6,
-                  border: '1px solid #e4e4f0',
-                  background: '#ffffff',
-                  color: page <= 1 ? '#9999bb' : '#5c5c80',
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-card)',
+                  color: page <= 1 ? 'var(--text-muted)' : 'var(--text-secondary)',
                   fontSize: '0.8rem',
                   cursor: page <= 1 ? 'not-allowed' : 'pointer',
                   display: 'flex',
@@ -514,9 +514,9 @@ export default function DataTable({
                       height: 30,
                       padding: '0 8px',
                       borderRadius: 6,
-                      border: `1px solid ${p === page ? '#6366f1' : '#e4e4f0'}`,
-                      background: p === page ? '#6366f1' : '#ffffff',
-                      color: p === page ? '#ffffff' : '#5c5c80',
+                      border: `1px solid ${p === page ? 'var(--primary)' : 'var(--border)'}`,
+                      background: p === page ? 'var(--primary)' : 'var(--bg-card)',
+                      color: p === page ? '#ffffff' : 'var(--text-secondary)',
                       fontWeight: p === page ? 700 : 400,
                       fontSize: '0.8rem',
                       cursor: 'pointer',
@@ -532,9 +532,9 @@ export default function DataTable({
                 style={{
                   padding: '5px 10px',
                   borderRadius: 6,
-                  border: '1px solid #e4e4f0',
-                  background: '#ffffff',
-                  color: page >= totalPages ? '#9999bb' : '#5c5c80',
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-card)',
+                  color: page >= totalPages ? 'var(--text-muted)' : 'var(--text-secondary)',
                   fontSize: '0.8rem',
                   cursor: page >= totalPages ? 'not-allowed' : 'pointer',
                   display: 'flex',

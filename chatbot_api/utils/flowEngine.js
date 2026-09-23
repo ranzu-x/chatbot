@@ -345,6 +345,11 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             const flatItems = flattenListMenuItems(normalizeListMenuData(sourceNode.data));
             tappedButton = flatItems.find((f) => f.globalIndex === decodedRoute.idx)?.item;
           }
+          if (!tappedButton && (sourceNode.type === "quickReplies" || sourceNode.type === "quick_reply")) {
+            const replies = sourceNode.data?.quickReplies || sourceNode.data?.replies || [];
+            const r = replies[decodedRoute.idx];
+            tappedButton = typeof r === "string" ? { title: r, action: "flow" } : r;
+          }
 
           // "Also enroll in a Sequence": independent of whatever the tap's
           // primary action does (continue the flow, jump elsewhere, open a
@@ -910,19 +915,86 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         }
 
         if (matchedIdx !== -1) {
-          nextNodeId = getNextNodeId(currentNodeId, matchedHandleId) ||
-                       getNextNodeId(currentNodeId, `qr-${matchedIdx}`) ||
-                       getNextNodeId(currentNodeId, `qr_${matchedIdx}`);
+          const matchedQr = replies[matchedIdx];
+          const qrObj = typeof matchedQr === "string" ? { title: matchedQr, action: "flow" } : (matchedQr || {});
 
-          // Same single-option exception as buttons above — unambiguous when
-          // there's only one quick reply to begin with.
-          if (!nextNodeId && replies.length === 1) {
-            nextNodeId = getNextNodeId(currentNodeId);
+          // Fire sequence and label actions
+          if (qrObj.sequenceId) {
+            try {
+              await enrollContactsInSequence(qrObj.sequenceId, agencyId, { contactId: contact?.id, enrolledVia: "button-tap", integrationId: flow?.integration_id ?? null });
+            } catch (err) {
+              console.error(`[Flow Engine] Attach-Sequence ${qrObj.sequenceId} on quick reply failed:`, err.message);
+            }
+          }
+          if (qrObj.removeSequenceId) {
+            try {
+              await unsubscribeContactFromSequence(qrObj.removeSequenceId, agencyId, contact?.id, { integrationId: flow?.integration_id ?? null });
+            } catch (err) {
+              console.error(`[Flow Engine] Remove-Sequence ${qrObj.removeSequenceId} on quick reply failed:`, err.message);
+            }
+          }
+          if (Array.isArray(qrObj.labelIds) && contact?.id) {
+            for (const labelId of qrObj.labelIds) {
+              await applyLabelToContact(agencyId, contact.id, labelId);
+            }
+          }
+          if (Array.isArray(qrObj.removeLabelIds) && contact?.id) {
+            for (const labelId of qrObj.removeLabelIds) {
+              await removeLabelFromContact(agencyId, contact.id, labelId);
+            }
+          }
+
+          if (qrObj.action === "goToFlow" && qrObj.flowId) {
+            const [[targetFlow]] = await pool.query(
+              "SELECT * FROM flows WHERE id = ? AND agency_id = ? AND integration_id = ? AND is_active = 1",
+              [qrObj.flowId, agencyId, flow.integration_id ?? null]
+            );
+            const targetStart = targetFlow
+              ? JSON.parse(targetFlow.nodes_json || "[]").find((n) => n.type === "start")
+              : null;
+            if (targetStart) {
+              await pool.query("UPDATE flow_sessions SET status = 'COMPLETED' WHERE id = ?", [session.id]);
+              const [newSess] = await pool.query(
+                "INSERT INTO flow_sessions (agency_id, conversation_id, flow_id, current_node_id, variables, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')",
+                [agencyId, conversationId, targetFlow.id, targetStart.id, JSON.stringify({})]
+              );
+              flow = targetFlow;
+              const expanded = expandMessageBlocks(
+                JSON.parse(targetFlow.nodes_json || "[]"),
+                JSON.parse(targetFlow.edges_json || "[]")
+              );
+              nodes = expanded.nodes;
+              edges = expanded.edges;
+              session = {
+                id: newSess.insertId,
+                agency_id: agencyId,
+                conversation_id: conversationId,
+                flow_id: targetFlow.id,
+                current_node_id: targetStart.id,
+                variables: {},
+                status: "ACTIVE"
+              };
+              variables = {};
+              currentNodeId = targetStart.id;
+              nextNodeId = targetStart.id;
+            }
           }
 
           if (!nextNodeId) {
-            await pool.query("UPDATE flow_sessions SET status = 'COMPLETED', current_node_id = ? WHERE id = ?", [currentNodeId, session.id]);
-            return true;
+            nextNodeId = getNextNodeId(currentNodeId, matchedHandleId) ||
+                         getNextNodeId(currentNodeId, `qr-${matchedIdx}`) ||
+                         getNextNodeId(currentNodeId, `qr_${matchedIdx}`);
+
+            // Same single-option exception as buttons above — unambiguous when
+            // there's only one quick reply to begin with.
+            if (!nextNodeId && replies.length === 1) {
+              nextNodeId = getNextNodeId(currentNodeId);
+            }
+
+            if (!nextNodeId) {
+              await pool.query("UPDATE flow_sessions SET status = 'COMPLETED', current_node_id = ? WHERE id = ?", [currentNodeId, session.id]);
+              return true;
+            }
           }
         } else {
           const newMatch = await findMatchingFlow(agencyId, platform, conversationId, integration, incomingMsgBody, msgType);
@@ -1017,6 +1089,56 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             nextNodeId = newMatch.startNode.id;
           } else {
             console.log(`🤖 [Flow Engine] User input "${incomingMsgBody}" did not match listMenu on node ${currentNode.id}, nor any flow trigger.`);
+            return false;
+          }
+        }
+      }
+      else if (currentNode.type === "appointment") {
+        // Flow is parked on an appointment node waiting for the user to complete
+        // the multi-step booking conversation. Delegate this message to the engine.
+        // The engine will:
+        //   - Continue the booking steps (date/slot/confirm)
+        //   - On completion: advance the flow session to "confirmed" or "cancelled" handle
+        //   - Return true to indicate it handled the message
+        const aptCampaignIdResume = currentNode.data?.campaignId ? parseInt(currentNode.data.campaignId) : null;
+        const aptHandled = await handleAppointmentBooking(
+          agencyId, platform, conversation, contact,
+          incomingMsgBody, integration, msgType, buttonRoute,
+          aptCampaignIdResume,
+          { flowSessionId: session.id, flowNodeId: currentNode.id }
+        );
+
+        if (aptHandled) {
+          // Check if booking is now completed/cancelled — reload session to see if node advanced
+          const [[reloadedFlowSess]] = await pool.query(
+            "SELECT current_node_id FROM flow_sessions WHERE id = ?",
+            [session.id]
+          );
+          if (reloadedFlowSess && reloadedFlowSess.current_node_id !== currentNode.id) {
+            // Booking engine advanced us — continue execution at the new node
+            nextNodeId = reloadedFlowSess.current_node_id;
+          } else {
+            // Still mid-booking — stay parked
+            stopFlow = true;
+            return true;
+          }
+        } else {
+          // Engine didn't handle it (e.g. trigger check failed) — check for new flow trigger
+          const newMatch = await findMatchingFlow(agencyId, platform, conversationId, integration, incomingMsgBody, msgType);
+          if (newMatch) {
+            await pool.query("UPDATE flow_sessions SET status = 'COMPLETED' WHERE id = ?", [session.id]);
+            flow = newMatch.flow;
+            nodes = newMatch.nodes;
+            edges = newMatch.edges;
+            const [newSess] = await pool.query(
+              "INSERT INTO flow_sessions (agency_id, conversation_id, flow_id, current_node_id, variables, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')",
+              [agencyId, conversationId, flow.id, newMatch.startNode.id, JSON.stringify({})]
+            );
+            session = { id: newSess.insertId, agency_id: agencyId, conversation_id: conversationId, flow_id: flow.id, current_node_id: newMatch.startNode.id, variables: {}, status: "ACTIVE" };
+            variables = {};
+            currentNodeId = newMatch.startNode.id;
+            nextNodeId = newMatch.startNode.id;
+          } else {
             return false;
           }
         }
@@ -1951,9 +2073,53 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         }
 
         case "appointment": {
-          const aptRoute = node.data?.serviceId ? `apt:svc:${node.data.serviceId}` : "book_appointment";
-          await handleAppointmentBooking(agencyId, platform, conversation, contact, "book appointment", integration, "TEXT", aptRoute);
-          stopFlow = true; // Wait for customer's interactive appointment slot selection
+          // ── Appointment Booking Node ─────────────────────────────────────
+          // This node launches the multi-step appointment booking conversation
+          // (service → date → slot → confirm) using the appointmentBookingEngine.
+          // It supports two output handles on the canvas:
+          //   "confirmed" → contact confirmed a booking
+          //   "cancelled" → contact cancelled or no slots available
+          //
+          // The node parks the flow session here. The booking engine stores
+          // the flow_session_id + flow_node_id on the booking session so it
+          // can advance the flow to the correct next node once booking ends.
+
+          const aptCampaignId = node.data?.campaignId ? parseInt(node.data.campaignId) : null;
+
+          // Check if there is already an ACTIVE booking session for this conversation
+          const [existingAptSessions] = await pool.query(
+            `SELECT * FROM appointment_booking_sessions
+             WHERE conversation_id = ? AND status = 'ACTIVE' AND expires_at > NOW()
+             ORDER BY id DESC LIMIT 1`,
+            [conversationId]
+          );
+          const existingAptSession = existingAptSessions[0] || null;
+
+          if (existingAptSession) {
+            // Already mid-booking — hand off this message to the engine for continuation
+            await handleAppointmentBooking(
+              agencyId, platform, conversation, contact,
+              incomingMsgBody, integration, msgType, buttonRoute,
+              aptCampaignId,
+              { flowSessionId: session.id, flowNodeId: node.id }
+            );
+            // Stay parked on this node
+            stopFlow = true;
+            break;
+          }
+
+          // First time hitting this node — start a new booking session
+          // Pass flowContext so the engine can resume the flow on completion
+          await handleAppointmentBooking(
+            agencyId, platform, conversation, contact,
+            "book appointment", integration, "TEXT", "book_appointment",
+            aptCampaignId,
+            { flowSessionId: session.id, flowNodeId: node.id }
+          );
+
+          // Park the flow session on this node — the booking engine will
+          // advance it to "confirmed" or "cancelled" handle when done
+          stopFlow = true;
           break;
         }
 

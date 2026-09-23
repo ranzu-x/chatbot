@@ -9,6 +9,8 @@ import pool from "../db.js";
 import { createAccount } from "../utils/accountProvisioning.js";
 import { assignPackageLocally } from "./stripeService.js";
 import { sendWelcomeEmail } from "../utils/emailNotifications.js";
+import { sendVerificationEmail } from "../utils/emailVerification.js";
+import { recordCommissionForInvoice } from "../utils/affiliateCommission.js";
 
 export async function consumePendingSignup(referenceToken, gatewayTxnId, amountPaid) {
   const [[row]] = await pool.query("SELECT * FROM pending_signups WHERE reference_token = ? LIMIT 1", [referenceToken]);
@@ -42,15 +44,23 @@ export async function consumePendingSignup(referenceToken, gatewayTxnId, amountP
     email: row.email,
     passwordHash: row.password_hash,
     businessName: row.business_name,
+    affiliateCode: row.affiliate_code,
   });
 
   await assignPackageLocally({ agencyId, packageId: row.package_id, notes: `Guest checkout via ${row.provider}` });
 
-  await pool.query(
+  const finalAmountPaid = amountPaid ?? row.amount;
+  const [invoiceResult] = await pool.query(
     `INSERT INTO invoices (agency_id, package_id, provider, gateway_txn_id, amount_paid, currency, status, paid_at)
      VALUES (?, ?, ?, ?, ?, ?, 'PAID', NOW())`,
-    [agencyId, row.package_id, row.provider, gatewayTxnId, amountPaid ?? row.amount, row.currency]
+    [agencyId, row.package_id, row.provider, gatewayTxnId, finalAmountPaid, row.currency]
   );
+  await recordCommissionForInvoice({
+    agencyId,
+    invoiceId: invoiceResult.insertId,
+    amountPaid: finalAmountPaid,
+    currency: row.currency,
+  });
 
   await pool.query(
     "UPDATE pending_signups SET status = 'CONSUMED', created_agency_id = ?, created_user_id = ? WHERE id = ?",
@@ -59,6 +69,9 @@ export async function consumePendingSignup(referenceToken, gatewayTxnId, amountP
 
   const loginUrl = `${(process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/+$/, "")}/login`;
   sendWelcomeEmail({ to: row.email, name: row.full_name, agencyName, loginUrl }).catch(() => {});
+  // The buyer typed this address at checkout without proving they own it —
+  // same verification as a normal signup (non-blocking; soft-enforced).
+  sendVerificationEmail({ userId, to: row.email, name: row.full_name }).catch(() => {});
 
   return { success: true, agencyId, userId, agencyName };
 }

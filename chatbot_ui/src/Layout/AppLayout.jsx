@@ -1,6 +1,7 @@
 import Sidebar from '../Components/Sidebar';
 import TopBar from '../Components/TopBar';
 import { useLayout } from '../Provider/LayoutContext';
+import EmailVerifyBanner from '../Components/Auth/EmailVerifyBanner';
 
 export default function AppLayout({ children }) {
   const { collapsed, isInbox } = useLayout();
@@ -10,6 +11,7 @@ export default function AppLayout({ children }) {
       <Sidebar />
       <div className="main-content">
         {!isInbox && <TopBar />}
+        {!isInbox && <EmailVerifyBanner />}
         <div className="page-wrapper" style={{ height: isInbox ? '100vh' : 'auto', overflow: isInbox ? 'hidden' : 'visible' }}>
           {children}
         </div>

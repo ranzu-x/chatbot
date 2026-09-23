@@ -1,11 +1,20 @@
-import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
+import { lazy, Suspense, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router';
 import { AuthProvider } from './Provider/AuthContext';
 import { LayoutProvider } from './Provider/LayoutContext';
 import { NotificationProvider } from './Provider/NotificationContext';
 import ProtectedRoute from './Router/ProtectedRoute';
 import PublicRoute from './Router/PublicRoute';
 import RootRedirect from './Router/RootRedirect';
+import { captureAffiliateRef } from './utils/affiliateTracking';
+
+function AffiliateTracker() {
+  const location = useLocation();
+  useEffect(() => {
+    captureAffiliateRef();
+  }, [location.search]);
+  return null;
+}
 
 // Public landing pages
 import PublicLayout   from './Pages/Landing/PublicLayout';
@@ -17,6 +26,12 @@ import CheckoutCompletePage from './Pages/Landing/CheckoutCompletePage';
 import TermsOfService from './Pages/Landing/TermsOfService';
 import BlogListPage   from './Pages/Landing/BlogListPage';
 import BlogDetailPage from './Pages/Landing/BlogDetailPage';
+import VerifyEmailPage from './Pages/Auth/VerifyEmailPage';
+
+// Community Forum — a fully standalone portal (own shell, session and
+// design system), mounted as ONE catch-all route below exactly like the
+// Support Desk. Nothing in ./Forum touches the dashboard.
+import ForumApp from './Forum/ForumApp';
 
 // Core pages
 import Login            from './Pages/LogIn/Login';
@@ -36,6 +51,8 @@ const BlogManagerPage      = lazy(() => import('./Pages/SuperAdmin/BlogManagerPa
 const BlogEditorPage       = lazy(() => import('./Pages/SuperAdmin/BlogEditorPage'));
 const PackagesPage         = lazy(() => import('./Pages/SuperAdmin/PackagesPage'));
 const PaymentGatewaysPage  = lazy(() => import('./Pages/SuperAdmin/PaymentGatewaysPage'));
+const AffiliatesPage       = lazy(() => import('./Pages/SuperAdmin/AffiliatesPage'));
+const AffiliateDashboardPage = lazy(() => import('./Pages/Affiliate/AffiliateDashboardPage'));
 import TeamMembersPage  from './Pages/Team/TeamMembersPage';
 import RolesPage        from './Pages/Roles/RolesPage';
 import ResellerCustomersPage from './Pages/Agency/ResellerCustomersPage';
@@ -68,6 +85,7 @@ import MetaAppPage           from './Pages/Settings/MetaAppPage';
 import TikTokAppPage         from './Pages/Settings/TikTokAppPage';
 import AIProvidersPage       from './Pages/Settings/AIProvidersPage';
 import CannedResponsesPage   from './Pages/Settings/CannedResponsesPage';
+import BusinessHoursPage     from './Pages/Settings/BusinessHoursPage';
 
 // Flow Builder — by far the single biggest file in the app (10k+ lines: the
 // canvas, every node type's property panel, Sequence/User-Input-Flow modes).
@@ -96,10 +114,15 @@ const ADMIN_AGENCY = ['ADMIN', 'RESELLER'];
 const ALL_ROLES    = ['ADMIN', 'RESELLER', 'USER'];
 
 export default function App() {
+  useEffect(() => {
+    captureAffiliateRef();
+  }, []);
+
   return (
     <AuthProvider>
       <AppToaster />
       <BrowserRouter>
+        <AffiliateTracker />
         <LayoutProvider>
           <NotificationProvider>
             <Suspense fallback={<div className="loading-overlay"><div className="loading-spinner" /></div>}>
@@ -123,6 +146,7 @@ export default function App() {
                   now just a capability flag on an agency, not a separate page. */}
               <Route path="/admin/resellers" element={<Navigate to="/admin/agencies" replace />} />
               <Route path="/admin/platform-settings" element={<ProtectedRoute roles={['ADMIN']}><PlatformSettingsPage /></ProtectedRoute>} />
+              <Route path="/admin/affiliates" element={<ProtectedRoute roles={['ADMIN']}><AffiliatesPage /></ProtectedRoute>} />
               <Route path="/roles" element={<ProtectedRoute roles={ADMIN_AGENCY}><RolesPage /></ProtectedRoute>} />
               <Route path="/admin/audit-log" element={<ProtectedRoute roles={ADMIN_AGENCY}><AuditLogPage /></ProtectedRoute>} />
               <Route path="/reseller/customers" element={<ProtectedRoute roles={['RESELLER']}><ResellerCustomersPage /></ProtectedRoute>} />
@@ -139,6 +163,9 @@ export default function App() {
             <Route path="/agency/plan" element={<Navigate to="/my-account?tab=billing" replace />} />
             <Route path="/plan" element={<Navigate to="/my-account?tab=billing" replace />} />
             <Route path="/my-account" element={<ProtectedRoute roles={ALL_ROLES}><MyAccountPage /></ProtectedRoute>} />
+            {/* Affiliate Program — DIRECT_CUSTOMER/RESELLER tenants only (self-guards
+                on accountType inside; TopBar.jsx only shows the menu link to them). */}
+            <Route path="/affiliate" element={<ProtectedRoute roles={ALL_ROLES}><AffiliateDashboardPage /></ProtectedRoute>} />
             <Route path="/billing/success" element={<ProtectedRoute roles={ADMIN_AGENCY}><BillingSuccessPage /></ProtectedRoute>} />
             <Route path="/agency/agents" element={<ProtectedRoute roles={['RESELLER']}><TeamMembersPage /></ProtectedRoute>} />
             <Route path="/agency/team" element={<ProtectedRoute roles={['RESELLER']}><TeamMembersPage /></ProtectedRoute>} />
@@ -211,6 +238,7 @@ export default function App() {
             <Route path="/payments/orders" element={<ProtectedRoute roles={ALL_ROLES}><OrdersPage /></ProtectedRoute>} />
             <Route path="/appointments" element={<ProtectedRoute roles={ALL_ROLES}><AppointmentList /></ProtectedRoute>} />
             <Route path="/appointments/slots" element={<ProtectedRoute roles={ADMIN_AGENCY}><SlotManager /></ProtectedRoute>} />
+            <Route path="/appointments/campaigns" element={<ProtectedRoute roles={ADMIN_AGENCY}><SlotManager defaultTab="campaigns" /></ProtectedRoute>} />
             <Route path="/slots" element={<ProtectedRoute roles={ADMIN_AGENCY}><SlotManager /></ProtectedRoute>} />
 
             {/* ── Settings & App Integrations Hub ── */}
@@ -229,6 +257,8 @@ export default function App() {
             <Route path="/settings/whatsapp-flows" element={<Navigate to="/bots" state={{ activeCategory: 'dataCollection', activeSubTab: 'whatsappFlows' }} replace />} />
             <Route path="/settings/appearance" element={<ProtectedRoute roles={ALL_ROLES}><AppearancePage /></ProtectedRoute>} />
             <Route path="/settings/canned-responses" element={<ProtectedRoute roles={ALL_ROLES}><CannedResponsesPage /></ProtectedRoute>} />
+            <Route path="/settings/business-hours" element={<ProtectedRoute roles={ALL_ROLES}><BusinessHoursPage /></ProtectedRoute>} />
+            <Route path="/bots/business-hours" element={<ProtectedRoute roles={ALL_ROLES}><BusinessHoursPage /></ProtectedRoute>} />
 
             {/* ── Inbox & Contacts ── */}
             <Route path="/inbox" element={<ProtectedRoute roles={ALL_ROLES}><InboxPage /></ProtectedRoute>} />
@@ -254,6 +284,13 @@ export default function App() {
             <Route path="/book/:agencyId" element={<PublicBookingPage />} />
             <Route path="/checkout"         element={<GuestCheckoutPage />} />
             <Route path="/checkout/complete" element={<CheckoutCompletePage />} />
+            {/* ── Community Forum — a standalone portal, not part of the dashboard
+                 (own login, own layout, own design — see Forum/ForumApp.jsx).
+                 Publicly readable, so it sits outside ProtectedRoute. ── */}
+            <Route path="/forum/*" element={<ForumApp />} />
+            {/* Where the account-verification email's link lands. Public: the
+                link is often opened on a different device than the signup. */}
+            <Route path="/verify-email" element={<VerifyEmailPage />} />
 
             {/* ── Admin Payment Gateways ── */}
             <Route path="/admin/payment-gateways" element={<ProtectedRoute roles={['ADMIN']}><PaymentGatewaysPage /></ProtectedRoute>} />
