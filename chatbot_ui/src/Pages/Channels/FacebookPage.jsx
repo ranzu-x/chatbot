@@ -167,6 +167,8 @@ export default function FacebookPage({ embedded = false }) {
     setImporting(true);
     let successCount = 0;
     try {
+      // Whole selection refused up front if its new Pages would go over the plan limit.
+      await channelAPI.importCheck('FACEBOOK', selected.map((pg) => pg.id));
       for (const page of selected) {
         await channelAPI.addFacebook({
           name: page.name,

@@ -86,30 +86,36 @@ let cachedTunnelUrl = null;
 let lastTunnelCheck = 0;
 
 export async function getPublicBackendUrl() {
-  const envUrl = process.env.BACKEND_URL || process.env.PUBLIC_URL;
-  if (envUrl && !isLocalHostUrl(envUrl)) {
-    return envUrl.replace(/\/+$/, "");
-  }
-
-  // Check ngrok tunnel if running locally
   const now = Date.now();
   if (cachedTunnelUrl && (now - lastTunnelCheck < 30000)) {
     return cachedTunnelUrl;
   }
 
-  try {
-    const res = await axios.get("http://127.0.0.1:4040/api/tunnels", { timeout: 1500 });
-    const httpsTunnel = res.data?.tunnels?.find((t) => t.proto === "https") || res.data?.tunnels?.[0];
-    if (httpsTunnel?.public_url) {
-      cachedTunnelUrl = httpsTunnel.public_url.replace(/\/+$/, "");
-      lastTunnelCheck = now;
-      return cachedTunnelUrl;
+  const envUrl = (process.env.BACKEND_URL || process.env.PUBLIC_URL || "").trim().replace(/\/+$/, "");
+  const isNgrokEnv = /ngrok/i.test(envUrl);
+
+  // If running locally, check if local ngrok agent is active on port 4040.
+  // When ngrok is running locally or envUrl is a dynamic ngrok URL, the live tunnel from
+  // port 4040 takes precedence because ngrok assigns new URLs on every restart.
+  if (!envUrl || isLocalHostUrl(envUrl) || isNgrokEnv) {
+    try {
+      const res = await axios.get("http://127.0.0.1:4040/api/tunnels", { timeout: 1500 });
+      const httpsTunnel = res.data?.tunnels?.find((t) => t.proto === "https") || res.data?.tunnels?.[0];
+      if (httpsTunnel?.public_url) {
+        cachedTunnelUrl = httpsTunnel.public_url.replace(/\/+$/, "");
+        lastTunnelCheck = now;
+        return cachedTunnelUrl;
+      }
+    } catch (e) {
+      // ngrok not running or not reachable
     }
-  } catch (e) {
-    // ngrok not running or not reachable
   }
 
-  return envUrl ? envUrl.replace(/\/+$/, "") : "http://localhost:5000";
+  if (envUrl && !isLocalHostUrl(envUrl)) {
+    return envUrl;
+  }
+
+  return "http://localhost:5000";
 }
 
 export function resolvePublicImageUrl(rawUrl, publicBackendUrl) {
@@ -213,6 +219,33 @@ async function uploadLocalWhatsAppMedia(phoneNumberId, accessToken, localPath, m
     }
   );
   return uploadRes.data?.id || null;
+}
+
+const whatsAppMediaUploadCache = new Map();
+
+export async function getOrUploadWhatsAppMedia(phoneNumberId, accessToken, localPath, mimeType) {
+  let stat;
+  try {
+    stat = fs.statSync(localPath);
+  } catch (e) {
+    return null;
+  }
+  const cacheKey = `${phoneNumberId}:${localPath}:${stat.mtimeMs}`;
+  const now = Date.now();
+  const cached = whatsAppMediaUploadCache.get(cacheKey);
+  if (cached && cached.expiresAt > now && cached.mediaId) {
+    return cached.mediaId;
+  }
+
+  const mediaId = await uploadLocalWhatsAppMedia(phoneNumberId, accessToken, localPath, mimeType);
+  if (mediaId) {
+    // Meta media IDs remain valid for 30 days; cache for 24 hours
+    whatsAppMediaUploadCache.set(cacheKey, {
+      mediaId,
+      expiresAt: now + 24 * 60 * 60 * 1000,
+    });
+  }
+  return mediaId;
 }
 
 async function uploadFacebookAttachment(accessToken, localPath, fullMediaUrl, defaultType = "IMAGE") {
@@ -327,13 +360,89 @@ export async function sendPlatformMessage(platform, integration, contactExternal
       // this). `components` is optional — omitted, this behaves exactly as
       // before (name + language only, for templates that need no variables).
       if (whatsappTemplate?.name) {
+        let components = Array.isArray(whatsappTemplate.components) ? whatsappTemplate.components : [];
+        // A header image/video/document may be an uploaded file (/uploads/…)
+        // — Meta fetches the link itself, so it must be a public absolute URL.
+        const hasHeaderMedia = components.some((c) => c.type === "header" && c.parameters?.some((p) => p[p.type]?.link));
+        const hasCarouselMedia = components.some((c) => c.type === "carousel" && Array.isArray(c.cards) && c.cards.some((card) =>
+          card.components?.some((cc) => cc.type === "header" && cc.parameters?.some((p) => p[p.type]?.link))
+        ));
+
+        if (hasHeaderMedia || hasCarouselMedia) {
+          const publicBase = await getPublicBackendUrl();
+          const resolveParams = async (params) => {
+            const out = [];
+            for (const p of params || []) {
+              const mediaType = p?.type;
+              const rawLink = p?.[mediaType]?.link;
+              if (!rawLink || !["image", "video", "document"].includes(mediaType)) {
+                out.push(p);
+                continue;
+              }
+
+              const localPath = resolveLocalMediaPath(rawLink);
+              let mediaId = null;
+              if (localPath && fs.existsSync(localPath)) {
+                try {
+                  const mime = getMimeType(localPath, mediaType.toUpperCase());
+                  console.log(`📤 [WhatsApp Template Media] Uploading binary to Meta: ${localPath} (${mime})`);
+                  mediaId = await getOrUploadWhatsAppMedia(phoneNumberId, accessToken, localPath, mime);
+                  if (mediaId && (mediaType === "video" || mediaType === "document")) {
+                    await sleep(1500);
+                  }
+                } catch (upErr) {
+                  console.warn(`[WhatsApp Template Media Upload Warning] Binary upload failed, falling back to link:`, upErr.response?.data || upErr.message);
+                }
+              }
+
+              const existingFilename = p?.[mediaType]?.filename;
+              const extraDoc = existingFilename ? { filename: existingFilename } : {};
+              if (mediaId) {
+                out.push({
+                  type: mediaType,
+                  [mediaType]: { id: mediaId, ...extraDoc },
+                });
+              } else {
+                out.push({
+                  type: mediaType,
+                  [mediaType]: { link: resolvePublicImageUrl(rawLink, publicBase), ...extraDoc },
+                });
+              }
+            }
+            return out;
+          };
+
+          const newComponents = [];
+          for (const c of components) {
+            if (c.type === "header" && Array.isArray(c.parameters)) {
+              const newParams = await resolveParams(c.parameters);
+              newComponents.push({ ...c, parameters: newParams });
+            } else if (c.type === "carousel" && Array.isArray(c.cards)) {
+              const newCards = [];
+              for (const card of c.cards) {
+                const newCardComps = [];
+                for (const cc of card.components || []) {
+                  if (cc.type === "header" && Array.isArray(cc.parameters)) {
+                    const newParams = await resolveParams(cc.parameters);
+                    newCardComps.push({ ...cc, parameters: newParams });
+                  } else {
+                    newCardComps.push(cc);
+                  }
+                }
+                newCards.push({ ...card, components: newCardComps });
+              }
+              newComponents.push({ ...c, cards: newCards });
+            } else {
+              newComponents.push(c);
+            }
+          }
+          components = newComponents;
+        }
         payload.type = "template";
         payload.template = {
           name: whatsappTemplate.name,
           language: { code: whatsappTemplate.language || "en_US" },
-          ...(Array.isArray(whatsappTemplate.components) && whatsappTemplate.components.length
-            ? { components: whatsappTemplate.components }
-            : {}),
+          ...(components.length ? { components } : {}),
         };
         const response = await axios.post(url, payload, {
           headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
@@ -460,12 +569,12 @@ export async function sendPlatformMessage(platform, integration, contactExternal
           if (localHeaderPath && fs.existsSync(localHeaderPath)) {
             try {
               const mime = getMimeType(localHeaderPath, effectiveHeaderType.toUpperCase());
-              headerMediaId = await uploadLocalWhatsAppMedia(phoneNumberId, accessToken, localHeaderPath, mime);
+              headerMediaId = await getOrUploadWhatsAppMedia(phoneNumberId, accessToken, localHeaderPath, mime);
             } catch (upErr) {
               console.warn(`[WhatsApp Header Upload Warning]`, upErr.response?.data || upErr.message);
             }
           }
-          const fullHeaderMediaUrl = headerMedia && !headerMedia.startsWith("http") ? `${backendUrl}${headerMedia}` : headerMedia;
+          const fullHeaderMediaUrl = resolvePublicImageUrl(headerMedia, backendUrl);
 
           if (effectiveHeaderType === "image") {
             payload.interactive.header = {
@@ -588,7 +697,7 @@ export async function sendPlatformMessage(platform, integration, contactExternal
 
             const mimeType = getMimeType(localPath, upperType);
             console.log(`📤 [WhatsApp Upload] Uploading binary to Meta: ${localPath} (${mimeType})`);
-            mediaId = await uploadLocalWhatsAppMedia(phoneNumberId, accessToken, localPath, mimeType);
+            mediaId = await getOrUploadWhatsAppMedia(phoneNumberId, accessToken, localPath, mimeType);
             console.log(`📤 [WhatsApp Upload] Got media ID: ${mediaId}`);
 
             if (mediaId && (upperType === "VIDEO" || upperType === "DOCUMENT" || upperType === "FILE")) {

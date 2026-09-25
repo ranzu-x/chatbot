@@ -202,6 +202,21 @@ export default function FlowPhonePreview({
       return;
     }
 
+    // 6a. Message Template — shown as its body text (parameters as typed)
+    else if (node.type === 'whatsappTemplate') {
+      const meta = data.templateMeta || {};
+      const params = data.params || {};
+      const fill = (text, section) => String(text || '').replace(/{{\s*([A-Za-z0-9_]+)\s*}}/g, (m, ph) => params[section]?.[ph] || m);
+      newItems.push({
+        id: `msg-${Date.now()}-template`,
+        sender: 'bot',
+        type: 'text',
+        text: data.templateId ? [meta.headerText ? fill(meta.headerText, 'header') : '', fill(meta.bodyText, 'body') || `[Template: ${data.templateName}]`].filter(Boolean).join('\n\n') : '[Message Template — none selected]',
+        buttons: (meta.buttons || []).map((b) => ({ title: b.text })),
+        nodeId: node.id,
+      });
+    }
+
     // 6b. Audio / File / Card / Carousel / List Menu
     else if (node.type === 'audio') {
       newItems.push({ id: `msg-${Date.now()}-audio`, sender: 'bot', type: 'audio', audioUrl: data.audioUrl || data.mediaUrl || '', nodeId: node.id });

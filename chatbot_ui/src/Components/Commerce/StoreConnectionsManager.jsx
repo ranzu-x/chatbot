@@ -36,6 +36,25 @@ function timeAgo(value) {
   return new Date(value).toLocaleDateString();
 }
 
+/**
+ * Turns the two Shopify permission errors a store owner can fix themselves
+ * into what to do (the raw error stays visible above). null = no hint.
+ */
+function shopifyFixHint(errors) {
+  const text = errors.filter(Boolean).join(' ');
+  if (/not approved to access the \w+ object|protected-customer-data/i.test(text)) {
+    return 'Fix in Shopify: this app has no access to protected customer data (names, phone numbers, addresses on orders). '
+      + 'Request protected customer data access for the app — Name, Email, Phone and Address — then release the app version '
+      + 'and update it on the store. Apps created in Shopify admin (shpat_ token) have this automatically.';
+  }
+  const scope = text.match(/Access denied for (\w+) field/i);
+  if (scope) {
+    return `Fix in Shopify: the app is missing a permission for "${scope[1]}". Add the Admin API scopes read_orders, write_orders `
+      + 'and read_products to the app version, release it and update the app on the store.';
+  }
+  return null;
+}
+
 function SetupSteps({ platform, method }) {
   const [open, setOpen] = useState(false);
   const steps = platform === 'WOOCOMMERCE'
@@ -49,6 +68,7 @@ function SetupSteps({ platform, method }) {
       ? [
           'Open the Shopify Dev Dashboard (dev.shopify.com) of the organization that owns the store and create an app.',
           'In the app version, add the Admin API scopes read_orders, write_orders and read_products, then release it and install the app on the store.',
+          'Request protected customer data access for the app (Name, Email, Phone and Address) — without it Shopify refuses to return orders. See shopify.dev/docs/apps/launch/protected-customer-data.',
           'Copy the app\'s Client ID and Client secret from its Settings and paste them here. We exchange them for a 24-hour access token and renew it automatically.',
         ]
       : [
@@ -254,6 +274,14 @@ export default function StoreConnectionsManager() {
                       <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 3 }}>Checked {timeAgo(c.last_polled_at)}</div>
                       {error && c.is_active && (
                         <div style={{ fontSize: '0.7rem', color: 'var(--danger, #dc2626)', marginTop: 2, maxWidth: 260 }}>{error}</div>
+                      )}
+                      {c.is_active && c.last_sync_error && c.last_sync_error !== error && (
+                        <div style={{ fontSize: '0.7rem', color: 'var(--danger, #dc2626)', marginTop: 2, maxWidth: 260 }}>Products: {c.last_sync_error}</div>
+                      )}
+                      {c.is_active && c.platform === 'SHOPIFY' && shopifyFixHint([error, c.last_sync_error]) && (
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: 4, maxWidth: 300, lineHeight: 1.45, padding: '6px 8px', borderRadius: 6, background: 'var(--bg-hover)', border: '1px solid var(--border)' }}>
+                          {shopifyFixHint([error, c.last_sync_error])}
+                        </div>
                       )}
                     </td>
                     <td style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>

@@ -27,6 +27,8 @@ import {
   shopifyAddOrderTags, shopifyCancelOrder, wooAddOrderNote, wooSetOrderStatus, itemsSummary,
 } from "./commerceService.js";
 import { sendPlatformMessage } from "./platformSender.js";
+import { templatePlaceholders, describeTemplate, buildTemplateComponents } from "./whatsappTemplateParams.js";
+export { templatePlaceholders, describeTemplate, buildTemplateComponents };
 import { sendMsg } from "./flowEngine.js";
 import { findOrCreateConversationForBroadcast } from "./broadcastRunner.js";
 import { assertLimit } from "./entitlements.js";
@@ -294,30 +296,6 @@ function parseJson(value, fallback) {
   }
 }
 
-/** Placeholders in order of appearance: ["1","2"] or ["customer_name", ...] (named). */
-export function templatePlaceholders(text) {
-  const out = [];
-  for (const m of String(text || "").matchAll(/{{\s*([A-Za-z0-9_]+)\s*}}/g)) if (!out.includes(m[1])) out.push(m[1]);
-  return out;
-}
-
-/** What a campaign editor needs to map: header / body placeholders and buttons. */
-export function describeTemplate(tpl) {
-  const buttons = parseJson(tpl.buttons_json, []).map((b, index) => ({
-    index,
-    type: String(b.type || "").toUpperCase(),
-    text: b.text || b.title || `Button ${index + 1}`,
-    url: b.url || null,
-    dynamic: String(b.type || "").toUpperCase() === "URL" && /{{\s*1\s*}}/.test(b.url || ""),
-  }));
-  return {
-    header: tpl.header_type === "TEXT" ? templatePlaceholders(tpl.header_text) : [],
-    body: templatePlaceholders(tpl.body_text),
-    buttons,
-    quickReplyCount: buttons.filter((b) => b.type === "QUICK_REPLY").length,
-  };
-}
-
 function money(amount, currency) {
   if (amount === null || amount === undefined || amount === "") return "";
   const n = Number(amount);
@@ -369,60 +347,6 @@ export function buildFieldValues({ connection, order, cart }) {
     tracking_url: tracking.url || tracking.custom_tracking_link || "",
     checkout_url: cart?.recovery_url || "",
     checkout_url_path: urlPath(cart?.recovery_url || ""),
-  };
-}
-
-function valueFor(source, fields) {
-  if (!source) return "";
-  const s = String(source);
-  if (s.startsWith("text:")) return s.slice(5);
-  return fields[s] ?? "";
-}
-
-// WhatsApp rejects empty text parameters and ones with newlines/tabs or 4+ spaces.
-function cleanParam(v) {
-  const s = String(v ?? "").replace(/[\n\t]+/g, " ").replace(/ {4,}/g, "   ").trim();
-  return s || "-";
-}
-
-/**
- * Builds Meta's `components` for this template from the campaign's
- * variable_map ({ header: {ph: src}, body: {ph: src}, buttons: {index: src} })
- * plus the COD quick-reply payloads. Returns the rendered body too, for the
- * Inbox copy of the message.
- */
-export function buildTemplateComponents(tpl, variableMap, fields, { quickReplyPayloads = [] } = {}) {
-  const map = variableMap || {};
-  const desc = describeTemplate(tpl);
-  const components = [];
-  const toParams = (placeholders, section) => placeholders.map((ph) => {
-    const text = cleanParam(valueFor(map[section]?.[ph], fields));
-    return /^\d+$/.test(ph) ? { type: "text", text } : { type: "text", parameter_name: ph, text };
-  });
-
-  if (desc.header.length) components.push({ type: "header", parameters: toParams(desc.header, "header") });
-  else if (["IMAGE", "VIDEO", "DOCUMENT"].includes(tpl.header_type) && /^https?:\/\//.test(tpl.header_media_url || "")) {
-    const kind = tpl.header_type.toLowerCase();
-    components.push({ type: "header", parameters: [{ type: kind, [kind]: { link: tpl.header_media_url } }] });
-  }
-  if (desc.body.length) components.push({ type: "body", parameters: toParams(desc.body, "body") });
-
-  let qr = 0;
-  for (const b of desc.buttons) {
-    if (b.type === "QUICK_REPLY") {
-      const payload = quickReplyPayloads[qr++];
-      if (payload) components.push({ type: "button", sub_type: "quick_reply", index: String(b.index), parameters: [{ type: "payload", payload }] });
-    } else if (b.dynamic) {
-      components.push({ type: "button", sub_type: "url", index: String(b.index), parameters: [{ type: "text", text: cleanParam(valueFor(map.buttons?.[b.index], fields)) }] });
-    }
-  }
-
-  const render = (text, section) => String(text || "").replace(/{{\s*([A-Za-z0-9_]+)\s*}}/g, (_, ph) => valueFor(map[section]?.[ph], fields) || `{{${ph}}}`);
-  return {
-    components,
-    renderedBody: render(tpl.body_text, "body"),
-    renderedHeader: tpl.header_type === "TEXT" ? render(tpl.header_text, "header") : null,
-    buttons: desc.buttons.map((b) => ({ title: b.text, type: b.type === "URL" ? "url" : "postback" })),
   };
 }
 

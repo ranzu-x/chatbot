@@ -76,7 +76,10 @@ export const commerceAPI = {
   disconnect: (id) => api.delete(`/commerce/connections/${id}`),
   getProducts: (params) => api.get("/commerce/products", { params }),
   getTemplates: (integrationId) => api.get("/commerce/templates", { params: { integrationId } }),
-  getCampaigns: () => api.get("/commerce/campaigns"),
+  getCampaigns: (params) => {
+    const p = typeof params === 'object' ? params : (params ? { integrationId: params } : undefined);
+    return api.get("/commerce/campaigns", { params: p });
+  },
   getCampaign: (id) => api.get(`/commerce/campaigns/${id}`),
   createCampaign: (data) => api.post("/commerce/campaigns", data),
   updateCampaign: (id, data) => api.put(`/commerce/campaigns/${id}`, data),
@@ -339,6 +342,8 @@ export const channelAPI = {
   // Facebook
   getFacebook: () => api.get('/channels/facebook'),
   addFacebook: (data) => api.post('/channels/facebook', data),
+  // Refuses a multi-account import whose NEW accounts don't fit the plan (reconnects never count).
+  importCheck: (platform, accountIds) => api.post('/channels/import-check', { platform, accountIds }),
   importFBPages: (token) => api.post('/channels/facebook/import-pages', { userAccessToken: token }),
   quickConnectFacebook: (token) => api.post('/channels/facebook/quick-connect', { token }),
   syncFBSubscriptions: () => api.post('/channels/facebook/sync-subscriptions'),
@@ -377,6 +382,8 @@ export const commentAPI = {
   updateCampaign: (id, data) => api.put(`/comments/campaigns/${id}`, data),
   toggleCampaign: (id) => api.patch(`/comments/campaigns/${id}/toggle`),
   deleteCampaign: (id) => api.delete(`/comments/campaigns/${id}`),
+  // "Use an existing campaign" on a post: the server copies it into a new campaign of that post.
+  copyCampaignToPost: (id, data) => api.post(`/comments/campaigns/${id}/copy`, data),
   // Manual Comment Moderation & Publishing
   getPostComments: (params) => api.get('/comments/post-comments', { params }),
   postComment: (data) => api.post('/comments/post-comment', data),
@@ -648,13 +655,14 @@ export const broadcastAPI = {
   getAll: (platform) => api.get('/broadcasts', { params: platform ? { platform } : {} }),
   getOne: (id) => api.get(`/broadcasts/${id}`),
   getByFlow: (flowId) => api.get(`/broadcasts/by-flow/${flowId}`),
-  getFormData: (platform) => api.get('/broadcasts/form-data', { params: platform ? { platform } : {} }),
+  getFormData: (platform, integrationId) => api.get('/broadcasts/form-data', { params: { ...(platform ? { platform } : {}), ...(integrationId ? { integrationId } : {}) } }),
   audiencePreview: (data) => api.post('/broadcasts/audience-preview', data),
   startWithFlow: (data) => api.post('/broadcasts/start-with-flow', data),
   createTemplateCampaign: (data) => api.post('/broadcasts', data),
   update: (id, data) => api.put(`/broadcasts/${id}`, data),
-  sendNow: (id) => api.post(`/broadcasts/${id}/send`),
-  schedule: (id, scheduledAt) => api.post(`/broadcasts/${id}/schedule`, { scheduledAt }),
+  // confirmAudience: the user explicitly confirmed a "no filter" / large audience (server re-checks and asks with 409 otherwise).
+  sendNow: (id, { confirmAudience = false } = {}) => api.post(`/broadcasts/${id}/send`, { confirmAudience }),
+  schedule: (id, scheduledAt, { confirmAudience = false } = {}) => api.post(`/broadcasts/${id}/schedule`, { scheduledAt, confirmAudience }),
   cancelSchedule: (id) => api.post(`/broadcasts/${id}/cancel`),
   delete: (id) => api.delete(`/broadcasts/${id}`),
 };

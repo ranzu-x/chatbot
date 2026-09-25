@@ -36,7 +36,9 @@ import pool from "../db.js";
 import { sendMsg, replaceVariables, encodeButtonRoute, normalizeButtonType } from "./flowEngine.js";
 import { canSendNow } from "./messagingWindow.js";
 import { syncContactTagsJson } from "../routes/labels.js";
-import { expandMessageBlocks } from "./flowGraph.js";
+import { expandMessageBlocks, isOptionHandle } from "./flowGraph.js";
+import { recountBroadcastStats, emitBroadcastUpdate } from "./broadcastStats.js";
+import { loadApprovedTemplate, buildTemplateSend, missingTemplateParams, TEMPLATE_NODE_TYPE } from "./templateMessage.js";
 
 /**
  * Finds or creates the conversation a broadcast send goes into. Deliberately
@@ -132,6 +134,13 @@ function nodeToSendArgs(node, flow, contact) {
     case "audio":
       if (!data.mediaUrl) return null;
       return { type: "AUDIO", bodyText: "", extraFields: { mediaUrl: data.mediaUrl } };
+    case TEMPLATE_NODE_TYPE: {
+      if (!node._template) return null;
+      const send = buildTemplateSend(node._template, data.params, (t) => replaceVariables(t, vars, contact), {
+        routeFor: flow?.id ? (idx) => encodeButtonRoute(flow.id, node.id, idx) : null,
+      });
+      return { type: "TEXT", bodyText: send.bodyText, extraFields: send.extraFields };
+    }
     case "file":
       if (!data.mediaUrl) return null;
       return { type: "DOCUMENT", bodyText: "", extraFields: { mediaUrl: data.mediaUrl, caption: replaceVariables(data.caption || "", vars, contact) } };
@@ -146,8 +155,11 @@ function collectSendableNodes(flow, nodes, edges) {
   if (!startNode) return [];
 
   const byId = new Map(nodes.map((n) => [n.id, n]));
+  // A button / quick-reply wire only runs when that button is tapped (its
+  // routing token, see flowEngine.js) — never part of the broadcast itself.
   const outgoing = new Map();
   for (const e of edges) {
+    if (isOptionHandle(e.sourceHandle)) continue;
     if (!outgoing.has(e.source)) outgoing.set(e.source, []);
     outgoing.get(e.source).push(e.target);
   }
@@ -181,12 +193,21 @@ export async function computeAudience(agencyId, platform, targeting = {}) {
     excludeLabelIds = [],
     includeContactIds = [],
     excludeContactIds = [],
+    integrationId = null,
   } = targeting;
 
   const params = [agencyId, platform];
   // subscription_status — a subscriber who opted out (Subscribers page) is
-  // never a valid broadcast recipient regardless of label/contact targeting.
-  let sql = `SELECT DISTINCT c.id, c.external_id, c.name, c.phone, c.email, c.platform FROM contacts c WHERE c.agency_id = ? AND c.platform = ? AND c.subscription_status = 'SUBSCRIBED'`;
+  // never a valid broadcast recipient regardless of label/contact targeting;
+  // nor is a blocked one.
+  let sql = `SELECT DISTINCT c.id, c.external_id, c.name, c.phone, c.email, c.platform FROM contacts c WHERE c.agency_id = ? AND c.platform = ? AND c.subscription_status = 'SUBSCRIBED' AND COALESCE(c.is_blocked, 0) = 0`;
+  // A campaign sends from one bot account, so only that bot's subscribers
+  // (a conversation on it — the same "belongs to a bot" rule as imports and
+  // the Subscribers page's Account filter) are eligible.
+  if (integrationId) {
+    sql += ` AND EXISTS (SELECT 1 FROM conversations cv WHERE cv.contact_id = c.id AND cv.agency_id = c.agency_id AND cv.integration_id = ?)`;
+    params.push(integrationId);
+  }
 
   const includeClauses = [];
   if (includeLabelIds.length) {
@@ -218,7 +239,7 @@ export async function computeAudience(agencyId, platform, targeting = {}) {
   return rows;
 }
 
-function parseTargeting(campaign) {
+export function parseTargeting(campaign) {
   const parseIds = (v) => {
     if (!v) return [];
     if (Array.isArray(v)) return v.map(Number);
@@ -229,7 +250,102 @@ function parseTargeting(campaign) {
     excludeLabelIds: parseIds(campaign.exclude_label_ids),
     includeContactIds: parseIds(campaign.include_contact_ids),
     excludeContactIds: parseIds(campaign.exclude_contact_ids),
+    integrationId: campaign.integration_id || null,
   };
+}
+
+/** True when the campaign targets no label / subscriber at all — i.e. every eligible subscriber of its bot. */
+export function hasNoAudienceFilter(targeting) {
+  return !targeting.includeLabelIds.length && !targeting.includeContactIds.length;
+}
+
+/** First node the Start node leads to (after expanding Message Blocks), or null. */
+function firstStepNode(nodes, edges) {
+  const start = nodes.find((n) => n.type === "start");
+  if (!start) return null;
+  const edge = edges.find((e) => e.source === start.id);
+  return edge ? nodes.find((n) => n.id === edge.target) || null : null;
+}
+
+/**
+ * Everything a campaign needs before it may be sent or scheduled, checked on
+ * the server (the UI's own checks can be bypassed): its bot account, its
+ * content for the chosen mode, and its audience — computed here, never taken
+ * from the client. Returns { errors: [..], audienceCount, noFilter }.
+ */
+export async function inspectCampaign(campaign) {
+  const errors = [];
+  const targeting = parseTargeting(campaign);
+  let integration = null;
+  if (!campaign.integration_id) {
+    errors.push("This campaign has no bot account to send from.");
+  } else {
+    [[integration]] = await pool.query(
+      "SELECT * FROM integrations WHERE id = ? AND agency_id = ? AND platform = ? AND is_active = 1",
+      [campaign.integration_id, campaign.agency_id, campaign.platform]
+    );
+    if (!integration) errors.push("The bot account this campaign sends from is no longer connected.");
+  }
+  if (campaign.mode === "TEMPLATE" && campaign.platform !== "WHATSAPP") errors.push("Anytime (template) sending is only available on WhatsApp.");
+
+  if (!errors.length) {
+    const content = await loadCampaignContent(campaign, integration);
+    if (content.error) errors.push(content.error);
+  }
+
+  const audience = await computeAudience(campaign.agency_id, campaign.platform, targeting);
+  if (!errors.length && audience.length === 0) errors.push("No subscribers match this audience.");
+  return { errors, audienceCount: audience.length, noFilter: hasNoAudienceFilter(targeting) };
+}
+
+/**
+ * What the campaign sends. WINDOW: the flow's leading run of message nodes.
+ * TEMPLATE: the flow's Message Template element (the Start node's first
+ * step) — or, for a campaign made on the Broadcasting page without a flow,
+ * its own template_id (+ A/B variant). Returns { flow, sendableNodes,
+ * templateNode, error }.
+ */
+async function loadCampaignContent(campaign, integration) {
+  const out = { flow: null, sendableNodes: [], templateNode: null, error: null };
+  let nodes = [], edges = [];
+  if (campaign.flow_id) {
+    const [[flowRow]] = await pool.query("SELECT * FROM flows WHERE id = ? AND agency_id = ?", [campaign.flow_id, campaign.agency_id]);
+    if (!flowRow) { out.error = "The flow linked to this campaign no longer exists."; return out; }
+    out.flow = flowRow;
+    try { nodes = JSON.parse(flowRow.nodes_json || "[]"); } catch { nodes = []; }
+    try { edges = JSON.parse(flowRow.edges_json || "[]"); } catch { edges = []; }
+    ({ nodes, edges } = expandMessageBlocks(nodes, edges));
+  }
+
+  if (campaign.mode === "TEMPLATE") {
+    const first = out.flow ? firstStepNode(nodes, edges) : null;
+    if (first?.type === TEMPLATE_NODE_TYPE) {
+      const tpl = integration ? await loadApprovedTemplate(campaign.agency_id, integration.id, first.data?.templateId) : null;
+      if (!tpl) { out.error = "Choose an approved template of this WhatsApp account in the Message Template element."; return out; }
+      const missing = missingTemplateParams(tpl, first.data?.params);
+      if (missing.length) { out.error = `Fill in the Message Template's parameters: ${missing.join(", ")}.`; return out; }
+      out.templateNode = { ...first, _template: tpl };
+      return out;
+    }
+    if (out.flow) { out.error = "Anytime sending needs a Message Template element connected right after the Broadcast element."; return out; }
+    if (!campaign.template_id) out.error = "Choose an approved template for this campaign.";
+    return out;
+  }
+
+  if (!out.flow) { out.error = "No flow is linked to this campaign."; return out; }
+  const sendable = collectSendableNodes(out.flow, nodes, edges);
+  for (const node of sendable) {
+    if (node.type === TEMPLATE_NODE_TYPE) {
+      const tpl = integration ? await loadApprovedTemplate(campaign.agency_id, integration.id, node.data?.templateId) : null;
+      if (!tpl) { out.error = "A Message Template element has no approved template of this WhatsApp account."; return out; }
+      node._template = tpl;
+    }
+  }
+  if (!sendable.some((n) => nodeToSendArgs(n, out.flow, {}) !== null)) {
+    out.error = "Add a message after the Broadcast element — nothing would be sent yet.";
+  }
+  out.sendableNodes = sendable;
+  return out;
 }
 
 /** Which A/B variant a given contact falls into for this campaign —
@@ -247,8 +363,22 @@ function assignVariant(campaign, contactId) {
   return hash < splitPercent ? "A" : "B";
 }
 
-async function sendToContact(campaign, contact, flow, sendableNodes, integration, variant) {
+async function sendToContact(campaign, contact, flow, sendableNodes, integration, variant, templateNode = null) {
   const conversation = await findOrCreateConversationForBroadcast(campaign.agency_id, contact.id, integration.id);
+
+  if (campaign.mode === "TEMPLATE" && templateNode) {
+    const send = buildTemplateSend(templateNode._template, templateNode.data?.params, (t) => replaceVariables(t, {}, contact), {
+      routeFor: flow?.id ? (idx) => encodeButtonRoute(flow.id, templateNode.id, idx) : null,
+    });
+    const message = await sendMsg(campaign.agency_id, conversation, send.bodyText, "TEXT", integration, {
+      ...send.extraFields,
+      flowId: flow?.id || null,
+      nodeId: templateNode.id,
+      contactIdentifier: contact.external_id,
+    });
+    if (!message.external_msg_id) throw new Error("Template send did not return a message id — check the integration's credentials");
+    return message;
+  }
 
   if (campaign.mode === "TEMPLATE") {
     const templateId = variant === "B" && campaign.variant_b_template_id ? campaign.variant_b_template_id : campaign.template_id;
@@ -258,8 +388,9 @@ async function sendToContact(campaign, contact, flow, sendableNodes, integration
     );
     if (!tpl) throw new Error(`Linked WhatsApp Template${variant ? ` (Variant ${variant})` : ""} is missing or not approved`);
 
-    const message = await sendMsg(campaign.agency_id, conversation, `[Template: ${tpl.template_name}]`, "TEXT", integration, {
-      whatsappTemplate: { name: tpl.template_name, language: tpl.language },
+    const send = buildTemplateSend(tpl, {}, (t) => replaceVariables(t, {}, contact));
+    const message = await sendMsg(campaign.agency_id, conversation, send.bodyText, "TEXT", integration, {
+      ...send.extraFields,
       flowId: null,
       contactIdentifier: contact.external_id,
     });
@@ -302,6 +433,7 @@ export async function executeBroadcast(campaignId) {
     [campaignId]
   );
   if (claim.affectedRows !== 1) return;
+  await emitBroadcastUpdate(campaignId); // Sending — live on the Broadcasting page
 
   try {
     // The campaign's OWN chosen account (set at creation/configure time via
@@ -318,17 +450,9 @@ export async function executeBroadcast(campaignId) {
     );
     if (!integration) throw new Error(`The account this campaign sends from is no longer connected`);
 
-    let flow = null, nodes = [], edges = [], sendableNodes = [];
-    if (campaign.mode === "WINDOW") {
-      if (!campaign.flow_id) throw new Error("No flow linked to this campaign — click Create to build one in the Flow Builder");
-      const [[flowRow]] = await pool.query("SELECT * FROM flows WHERE id = ? AND agency_id = ?", [campaign.flow_id, campaign.agency_id]);
-      if (!flowRow) throw new Error("Linked flow not found");
-      flow = flowRow;
-      try { nodes = JSON.parse(flow.nodes_json || "[]"); } catch { nodes = []; }
-      try { edges = JSON.parse(flow.edges_json || "[]"); } catch { edges = []; }
-      ({ nodes, edges } = expandMessageBlocks(nodes, edges));
-      sendableNodes = collectSendableNodes(flow, nodes, edges);
-    }
+    const content = await loadCampaignContent(campaign, integration);
+    if (content.error) throw new Error(content.error);
+    const { flow, sendableNodes, templateNode } = content;
 
     const audience = await computeAudience(campaign.agency_id, campaign.platform, parseTargeting(campaign));
 
@@ -347,13 +471,15 @@ export async function executeBroadcast(campaignId) {
 
     await pool.query("UPDATE broadcast_campaigns SET total_targeted = ? WHERE id = ?", [audience.length, campaignId]);
 
-    let sentCount = campaign.sent_count || 0;
-    let failedCount = campaign.failed_count || 0;
+    // This run's tallies are only for the log line — the campaign's counters
+    // are recounted from broadcast_logs (recountBroadcastStats).
+    let sentCount = 0;
+    let failedCount = 0;
 
     for (const contact of pendingTargets) {
       try {
         const variant = assignVariant(campaign, contact.id);
-        const message = await sendToContact(campaign, contact, flow, sendableNodes, integration, variant);
+        const message = await sendToContact(campaign, contact, flow, sendableNodes, integration, variant, templateNode);
         await pool.query(
           "UPDATE broadcast_logs SET status = 'SENT', external_msg_id = ?, sent_at = NOW() WHERE campaign_id = ? AND contact_id = ?",
           [message.external_msg_id, campaignId, contact.id]
@@ -377,7 +503,7 @@ export async function executeBroadcast(campaignId) {
         failedCount++;
       }
 
-      await pool.query("UPDATE broadcast_campaigns SET sent_count = ?, failed_count = ? WHERE id = ?", [sentCount, failedCount, campaignId]);
+      await recountBroadcastStats(campaignId);
 
       // Rate-limit friendly pacing — well under Telegram's 30msg/sec global cap
       // and gentle on Meta/TikTok's per-second limits too.
@@ -385,9 +511,11 @@ export async function executeBroadcast(campaignId) {
     }
 
     await pool.query("UPDATE broadcast_campaigns SET status = 'COMPLETED' WHERE id = ?", [campaignId]);
+    await emitBroadcastUpdate(campaignId);
     console.log(`✅ Broadcast #${campaignId} "${campaign.name}" completed! Sent: ${sentCount}, Failed: ${failedCount}`);
   } catch (err) {
     console.error(`❌ Broadcast #${campaignId} execution error:`, err.message);
     await pool.query("UPDATE broadcast_campaigns SET status = 'FAILED', error_message = ? WHERE id = ?", [err.message, campaignId]);
+    await emitBroadcastUpdate(campaignId);
   }
 }

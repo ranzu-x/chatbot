@@ -12,8 +12,10 @@
     "lint:tenant": "node scripts/check-tenant-queries.mjs",
     "check:tenant": "node scripts/check-tenant-integrity.mjs",
     "migrate": "node scripts/migrate.mjs",
+    "test:broadcast": "node scripts/test-broadcast-workflow.mjs",
     "test:email": "node scripts/test-email.mjs",
-    "pretest": "npm run lint:tenant"
+    "pretest": "npm run lint:tenant",
+    "test:reconnect-limit": "node scripts/test-reconnect-limit.mjs"
   },
   "keywords": [],
   "author": "",

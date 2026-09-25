@@ -9,6 +9,7 @@ import { unsubscribeContactFromSequence } from "./sequences.js";
 import { requireModule, assertLimit } from "../utils/entitlements.js";
 import { translateText } from "../utils/translateMessage.js";
 import { buildSearch } from "../utils/searchQuery.js";
+import { buildTemplateSend } from "../utils/templateMessage.js";
 
 const router = express.Router();
 
@@ -678,7 +679,7 @@ router.patch("/conversations/bulk-status", async (req, res) => {
 // ─── SEND MESSAGE (Outbound) ──────────────────────────────────────────────────
 router.post("/conversations/:id/messages", async (req, res) => {
   try {
-    const { body, type = "TEXT", mediaUrl, templateId, variableValues, whatsappFlowRefId } = req.body;
+    const { body, type = "TEXT", mediaUrl, templateId, templateParams, variableValues, whatsappFlowRefId } = req.body;
     const agencyId = req.user.agencyId;
 
     if (!body && !mediaUrl && !templateId && !whatsappFlowRefId) {
@@ -688,7 +689,7 @@ router.post("/conversations/:id/messages", async (req, res) => {
     // Get conversation + integration details
     const [rows] = await pool.query(`
       SELECT cv.*, i.platform, i.access_token, i.wa_phone_number_id, i.fb_page_id, i.ig_account_id,
-             c.external_id as contactExternalId
+             c.external_id as contactExternalId, c.first_name, c.last_name, c.name as contact_name, c.phone_number
       FROM conversations cv
       JOIN integrations i ON i.id = cv.integration_id
       JOIN contacts c ON c.id = cv.contact_id
@@ -722,30 +723,41 @@ router.post("/conversations/:id/messages", async (req, res) => {
       mediaUrl: mediaUrl || null,
     };
 
-    // Send Menu → Message Template: build Meta's `components` array from the
-    // template's stored variables_json + the agent-filled values (keyed by
-    // the "{{n}}" param string), so {{1}}/{{2}}/... actually get substituted
-    // at send time — previously platformSender.js only ever sent name+language.
-    // Only BODY-component variables are supported for now (the overwhelming
-    // majority of real templates); a header/footer variable is left as-is.
+    // Send Menu → Message Template: builds complete Meta components array supporting
+    // all header types (TEXT with {{1}}, IMAGE/VIDEO/DOCUMENT with binary upload, LOCATION),
+    // body parameters, interactive buttons (dynamic URL, copy_code, quick_reply),
+    // and multi-card Carousel templates.
     if (templateId) {
       const [[tpl]] = await pool.query("SELECT * FROM whatsapp_templates WHERE id = ? AND agency_id = ?", [templateId, agencyId]);
       if (!tpl) return res.status(404).json({ success: false, message: "Template not found" });
-      let variables = [];
-      try { variables = typeof tpl.variables_json === "string" ? JSON.parse(tpl.variables_json || "[]") : (tpl.variables_json || []); } catch { variables = []; }
-      const components = [];
-      if (variables.length) {
-        components.push({
-          type: "body",
-          parameters: variables.map((v, idx) => ({
-            type: "text",
-            text: String(variableValues?.[v.param] ?? variableValues?.[idx] ?? v.sample ?? ""),
-          })),
-        });
+
+      // Normalize parameters from full templateParams or structured/legacy variableValues
+      let normalizedParams = templateParams || {};
+      if (!templateParams && variableValues) {
+        if (variableValues.body || variableValues.header || variableValues.buttons || variableValues.cards || variableValues.headerMedia || variableValues.location) {
+          normalizedParams = variableValues;
+        } else {
+          // Legacy flat variableValues { "{{1}}": "val" or "1": "val" }
+          const bodyMap = {};
+          for (const [k, v] of Object.entries(variableValues)) {
+            const cleanKey = String(k).replace(/[{}]/g, "");
+            bodyMap[cleanKey] = v;
+          }
+          normalizedParams = { body: bodyMap };
+        }
       }
+
+      const subscriberName = conv.contact_name || [conv.first_name, conv.last_name].filter(Boolean).join(" ") || "Customer";
+      const render = (text) => String(text || "")
+        .replace(/{{\s*(contact\.)?name\s*}}/gi, subscriberName)
+        .replace(/{{\s*(contact\.)?first_name\s*}}/gi, conv.first_name || subscriberName)
+        .replace(/{{\s*(contact\.)?last_name\s*}}/gi, conv.last_name || "")
+        .replace(/{{\s*(contact\.)?phone(_number)?\s*}}/gi, conv.phone_number || conv.contactExternalId || "");
+
+      const sendData = buildTemplateSend(tpl, normalizedParams, render);
       messagePayload.type = "TEMPLATE";
-      messagePayload.body = tpl.body_text;
-      messagePayload.whatsappTemplate = { name: tpl.template_name, language: tpl.language, components };
+      messagePayload.body = sendData.bodyText || tpl.body_text;
+      messagePayload.whatsappTemplate = sendData.extraFields.whatsappTemplate;
     }
 
     // Send Menu → WhatsApp Flow: reference an already-Meta-published Flow by

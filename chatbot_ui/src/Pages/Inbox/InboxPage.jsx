@@ -4349,6 +4349,7 @@ export default function InboxPage() {
                 conversationId={selectedId}
                 integrationId={selectedConv?.integration_id || selectedConv?.integrationId}
                 platform={selectedConv?.platform}
+                contactName={selectedConv?.contactName || selectedConv?.contact_name || ''}
                 onSent={handleSendMenuResult}
                 initialSection={sendMenuSection}
                 cannedResponses={cannedResponses}

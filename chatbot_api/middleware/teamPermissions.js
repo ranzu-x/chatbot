@@ -68,6 +68,7 @@ const RULES = [
   ...crud("/user-input-flows", "bot_manager"),
   ["POST", /^\/comments\/(link-user-token|post-comment|reply-comment|like-comment|hide-comment)$/, "comment_automation.special"],
   ["DELETE", /^\/comments\/delete-comment\//, "comment_automation.delete"],
+  // (POST /comments/campaigns/:id/copy makes a new campaign → comment_automation.create via crud below.)
   ...crud("/comments/campaigns", "comment_automation"),
 
   // ── Marketing ──

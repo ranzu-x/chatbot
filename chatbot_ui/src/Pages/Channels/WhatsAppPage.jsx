@@ -601,7 +601,7 @@ export default function WhatsAppPage({ embedded = false }) {
               onClick={e => { e.stopPropagation(); setView('manual'); }}
               style={{
                 flex: 1, height: 38, borderRadius: 9, border: 'none', cursor: 'pointer',
-                background: '#0f172a', color: '#fff', fontSize: '0.82rem', fontWeight: 700,
+                background: 'var(--primary)', color: '#fff', fontSize: '0.82rem', fontWeight: 700,
               }}
             >
               Manual Setup
@@ -792,7 +792,7 @@ export default function WhatsAppPage({ embedded = false }) {
                   type="submit"
                   disabled={connecting}
                   className="btn btn-primary btn-sm"
-                  style={{ background: '#0f172a', borderColor: '#0f172a', fontWeight: 700, minWidth: 130 }}
+                  style={{ fontWeight: 700, minWidth: 130 }}
                 >
                   {connecting ? 'Connecting...' : 'Connect WhatsApp'}
                 </button>
@@ -1446,7 +1446,7 @@ export default function WhatsAppPage({ embedded = false }) {
               type="submit"
               disabled={savingEdit || !editForm.accessToken}
               className="btn btn-primary btn-sm"
-              style={{ background: '#0f172a', borderColor: '#0f172a', fontWeight: 700, minWidth: 120 }}
+              style={{ fontWeight: 700, minWidth: 120 }}
             >
               {savingEdit ? 'Updating…' : 'Update Token'}
             </button>

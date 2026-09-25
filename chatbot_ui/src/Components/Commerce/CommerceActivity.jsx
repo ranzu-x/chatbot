@@ -23,23 +23,25 @@ const fmt = (d) => (d ? new Date(d).toLocaleString() : '—');
 const money = (v, c) => (v === null || v === undefined ? '—' : `${c ? `${c} ` : ''}${Number(v).toFixed(2)}`);
 
 /** Automation → Commerce → Activity: what the campaigns sent, COD answers, carts. */
-export default function CommerceActivity() {
+export default function CommerceActivity({ selectedAccount, integrationId }) {
   const [view, setView] = useState('messages');
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
   const [data, setData] = useState({ rows: [], total: 0, pageSize: 25 });
   const [loading, setLoading] = useState(true);
 
+  const targetIntegrationId = integrationId || (selectedAccount?.id && selectedAccount.id !== 'all' ? selectedAccount.id : null);
+
   const load = useCallback(() => {
     setLoading(true);
-    const params = { page, pageSize: 25 };
+    const params = { page, pageSize: 25, ...(targetIntegrationId ? { integrationId: targetIntegrationId } : {}) };
     const req = view === 'messages'
       ? commerceAPI.getActivity({ ...params, status: status || undefined }).then((r) => ({ rows: r.data.activity, total: r.data.total, pageSize: r.data.pageSize }))
       : view === 'cod'
         ? commerceAPI.getOrders({ ...params, cod: 1 }).then((r) => ({ rows: r.data.orders, total: r.data.total, pageSize: r.data.pageSize }))
         : commerceAPI.getCarts({ ...params, status: status || undefined }).then((r) => ({ rows: r.data.carts, total: r.data.total, pageSize: r.data.pageSize }));
     req.then(setData).catch(() => notify.error('Failed to load activity')).finally(() => setLoading(false));
-  }, [view, status, page]);
+  }, [view, status, page, targetIntegrationId]);
 
   useEffect(() => { load(); }, [load]);
 

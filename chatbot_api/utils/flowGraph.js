@@ -28,6 +28,11 @@ export function resolveNextNodeId(edges, sourceId, sourceHandle = null) {
  * Strictly whatever is wired to a node's own "Next Step" handle — never a
  * button/option branch, and does NOT fall back to "any edge from this node".
  */
+/** True for a button / quick-reply / list-item handle (btn-0, qr_1, item-2) — wires that only run on a tap. */
+export function isOptionHandle(handle) {
+  return typeof handle === "string" && /^(btn|qr|item)[-_]\d+$/.test(handle);
+}
+
 export function resolveNextStepNodeId(edges, sourceId) {
   const matchedEdge = edges.find((e) => e.source === sourceId && e.sourceHandle === "next-step");
   return matchedEdge ? matchedEdge.target : null;

@@ -1,5 +1,6 @@
 import pool from "../db.js";
-import { sendMsg, normalizeListMenuData } from "./flowEngine.js";
+import { sendMsg, normalizeListMenuData, replaceVariables } from "./flowEngine.js";
+import { loadApprovedTemplate, buildTemplateSend } from "./templateMessage.js";
 import { resolveNextNodeId } from "./flowGraph.js";
 import { canSendNow } from "./messagingWindow.js";
 import { logBotError } from "./botLogger.js";
@@ -159,6 +160,15 @@ async function sendSequenceContent(node, contact, agencyId, conversation, integr
           imageUrl: c.imageUrl || "", buttons: c.buttons || [],
         })),
       });
+      return;
+    }
+    case "whatsappTemplate": {
+      // Message Template element (utils/templateMessage.js) — WhatsApp only.
+      if ((integration?.platform || "").toUpperCase() !== "WHATSAPP") return;
+      const tpl = await loadApprovedTemplate(agencyId, integration.id, data.templateId);
+      if (!tpl) throw new Error("Message Template: the selected template is missing, not approved, or belongs to another WhatsApp account");
+      const send = buildTemplateSend(tpl, data.params, (t) => replaceVars(replaceVariables(t, {}, contact || {}), contact));
+      await sendMsg(agencyId, conversation, send.bodyText, "TEXT", integration, { ...common, ...send.extraFields });
       return;
     }
     case "text":

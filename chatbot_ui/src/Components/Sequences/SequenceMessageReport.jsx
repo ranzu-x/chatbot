@@ -234,7 +234,7 @@ export default function SequenceMessageReport({ integrationId = null }) {
           onClick={() => setShowCreate(true)}
           style={{
             display: 'flex', alignItems: 'center', gap: 6, padding: '7px 16px', borderRadius: 8, border: 'none',
-            background: '#0f172a',
+            background: 'var(--primary)',
             color: '#fff', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer',
           }}
         >

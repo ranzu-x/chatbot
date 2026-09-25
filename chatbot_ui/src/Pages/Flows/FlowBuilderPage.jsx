@@ -9,7 +9,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
-  ArrowLeft, Save, Loader2, Check, AlertTriangle,
+  ArrowLeft, Save, Loader2, Check, AlertTriangle, Send,
   MessageSquare, MessageCircle, ListOrdered, LayoutGrid, CreditCard,
   Layers, Keyboard, GitBranch, Clock, Headphones,
   CircleStop, Play, Type, GripVertical, X, Plus, Trash2,
@@ -23,6 +23,10 @@ import {
 import FlowPhonePreview from './FlowPhonePreview';
 import PlatformIcon, { getPlatformMeta } from '../../Components/Common/PlatformIcon';
 import BroadcastStartNodeProperties from '../../Components/Broadcast/BroadcastStartNodeProperties';
+import BroadcastSendDialog from '../../Components/Broadcast/BroadcastSendDialog';
+import useBroadcastCampaign, { BroadcastCampaignContext } from '../../Components/Broadcast/useBroadcastCampaign';
+import MessageTemplateFields from '../../Components/Templates/MessageTemplateFields';
+import { validateMessageTemplate } from '../../Components/Templates/messageTemplateUtils';
 import ChatWidgetStartNodeProperties from '../../Components/Engagement/ChatWidgetStartNodeProperties';
 import { buildDefaultWidgetFlowGraph } from '../../utils/chatWidgetHelpers';
 import { flowAPI, uploadAPI, integrationAPI, customFieldAPI, userInputFlowAPI, sequenceAPI, labelAPI, googleSheetsAPI, channelAPI, httpApiCampaignAPI, appointmentCampaignAPI } from '../../services/api';
@@ -36,6 +40,9 @@ import Swal from 'sweetalert2';
 const PLATFORM_RULES = {
   WHATSAPP: {
     text: true,
+    // Message Template element — an approved template, the only message WhatsApp
+    // accepts outside the 24-hour window. WhatsApp-only (absent elsewhere = unsupported).
+    whatsappTemplate: true,
     interactive: true, // WhatsApp Interactive message with Header, Body, Footer & Reply/CTA buttons
     image: true,
     video: true,
@@ -351,6 +358,7 @@ const NODE_COLORS = {
   startAutomation: '#4d7c0f',
   messageBlock: '#0284c7',
   appointment: '#0d9488',   // Teal — healthcare/calendar feel
+  whatsappTemplate: '#15803d', // WhatsApp green — approved template
 };
 
 // Dynamic light-color styling themes per connected channel for the main Save button
@@ -454,6 +462,7 @@ const NODE_ICONS = {
   startAutomation: Workflow,
   messageBlock: MessagesSquare,
   appointment: CalendarDays,
+  whatsappTemplate: FileText,
 };
 
 const PALETTE_CATEGORIES = [
@@ -461,6 +470,7 @@ const PALETTE_CATEGORIES = [
     label: 'Messages',
     items: [
       { type: 'messageBlock', label: 'Send Message' },
+      { type: 'whatsappTemplate', label: 'Message Template' },
       { type: 'interactive', label: 'Interactive (Header/Footer)' },
       { type: 'buttons', label: 'Text Message' },
       { type: 'quickReplies', label: 'Quick Replies' },
@@ -552,6 +562,8 @@ const SEQUENCE_PALETTE = [
       { type: 'video', label: 'Video' },
       { type: 'audio', label: 'Audio' },
       { type: 'file', label: 'File / Document' },
+      // For a step days after the last message — outside WhatsApp's 24-hour window.
+      { type: 'whatsappTemplate', label: 'Message Template' },
     ],
   },
   {
@@ -600,6 +612,7 @@ const DEFAULT_NODE_DATA = {
   startAutomation: { label: 'Start Automation', flowId: null, flowName: '' },
   messageBlock: { label: 'Send Message', items: [{ id: 'it_first', type: 'buttons', data: { label: 'Text Message', message: '', buttons: [] } }] },
   appointment:  { label: 'Appointment Booking', campaignId: null, campaignName: '' },
+  whatsappTemplate: { label: 'Message Template', templateId: null, templateName: '', language: '', params: { header: {}, body: {}, buttons: {} }, templateMeta: null },
   // Sequence-only delay step, between two content nodes — see SEQUENCE_PALETTE.
   wait: { label: 'Wait', preset: '5m', customValue: '', customUnit: 'minutes' },
   // The following two only ever appear inside a User Input Flow's own mini-builder:
@@ -610,7 +623,8 @@ const DEFAULT_NODE_DATA = {
 // Every node type can optionally hold `data.delay: {hours,minutes,seconds}`
 // (scheduled — see flowDelayScheduler.js on the backend, never a blocking
 // sleep) EXCEPT `start` (a trigger definition, not a runtime step) and `wait`
-const DELAY_EXCLUDED_NODE_TYPES = new Set(['start', 'wait', 'delay']);
+// A Message Template element has no Delay / typing options either (a template is sent as-is).
+const DELAY_EXCLUDED_NODE_TYPES = new Set(['start', 'wait', 'delay', 'whatsappTemplate']);
 
 // A "typing…" indicator before sending only makes sense for node types that
 // actually send a message to the contact.
@@ -2262,6 +2276,9 @@ function validateNodeData(node) {
       return null;
     }
 
+    case 'whatsappTemplate':
+      return validateMessageTemplate(data);
+
     case 'video':
       if (!(data.mediaUrl || '').trim()) {
         return 'Video URL or uploaded video is required';
@@ -2532,6 +2549,7 @@ function getNodeDimensions(node) {
     case 'payment':
     case 'webhook':
     case 'runUserInputFlow':
+    case 'whatsappTemplate':
       return { width, height: 130 };
     case 'delay':
     case 'video':
@@ -3067,7 +3085,7 @@ function StartNode({ id, data = {}, selected }) {
             <Megaphone size={11} color="#fff" />
           </div>
           <div style={{ fontSize: 11.5, color: '#1d4ed8', lineHeight: 1.4 }}>
-            Click here to set the audience, tag label, and Send Now / Schedule for this campaign.
+            Click here to set the audience, sending mode, and Instant / Schedule for this campaign.
           </div>
         </div>
         <div className="fb-next-step-row" style={{ marginTop: 14, marginRight: -16, marginLeft: -16, paddingLeft: 16 }}>
@@ -4396,6 +4414,113 @@ function AudioNode({ id, data, selected }) {
         <Music size={24} style={{ color: NODE_COLORS.audio }} />
         <span style={{ fontSize: 11, fontWeight: 600 }}>{audioUrl ? 'Audio Attached' : 'Audio Clip'}</span>
       </div>
+      <div className="fb-next-step-row" style={{ marginTop: 8, marginRight: -14, marginLeft: -14, paddingLeft: 14 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
+        <Handle type="source" position={Position.Right} id="next-step" className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`} />
+      </div>
+    </div>
+  );
+}
+
+/** An uploaded file's path (/uploads/…) → a URL the browser can load; absolute URLs pass through. */
+function resolveMediaPreviewUrl(url) {
+  if (!url || url.startsWith('http')) return url;
+  const backendUrl = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace('/api/v1', '') : 'http://localhost:5000';
+  return `${backendUrl}${url}`;
+}
+
+/* ── Message Template Node (approved WhatsApp template) ────────── */
+function MessageTemplateNode({ id, data, selected }) {
+  const validationError = data?._validationError;
+  const connectedHandles = useConnectedHandles(id);
+  const color = NODE_COLORS.whatsappTemplate;
+  const body = data?.templateMeta?.bodyText || '';
+  // Quick-reply buttons get their own wire (btn-<index>) — only in a flow,
+  // where a tap is routed back to this node (not in a Sequence).
+  const { currentFlowId } = useContext(FlowNodeActionsContext);
+  const routable = Boolean(currentFlowId);
+  const tplButtons = data?.templateMeta?.buttons || [];
+  const mediaHeader = ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(data?.templateMeta?.headerType) ? data.templateMeta.headerType : null;
+  const headerMedia = data?.params?.headerMedia || '';
+
+  return (
+    <div
+      className={`fb-node${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
+      style={{
+        borderRadius: 16,
+        background: '#ffffff',
+        border: selected ? `1.5px solid ${color}` : '1.5px solid #e2e8f0',
+        boxShadow: selected ? `0 0 0 3px ${color}26, 0 6px 24px rgba(0,0,0,0.10)` : '0 4px 20px rgba(0,0,0,0.06)',
+        width: 270,
+        minWidth: 270,
+        maxWidth: 270,
+        overflow: 'visible',
+        position: 'relative',
+        padding: '14px 14px 10px 14px',
+      }}
+    >
+      <NodeHoverActions nodeId={id} nodeType="whatsappTemplate" />
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 24 }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <div style={{ width: 20, height: 20, borderRadius: '50%', background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <FileText size={11} color="#ffffff" />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', lineHeight: 1.2 }}>Message Template</div>
+          <div style={{ fontSize: 10.5, color: '#94a3b8', fontWeight: 600 }}>Sends outside the 24-hour window</div>
+        </div>
+      </div>
+      {data?.templateId && mediaHeader && (
+        mediaHeader === 'IMAGE' && headerMedia && !headerMedia.includes('{{') ? (
+          <img
+            draggable={false}
+            src={resolveMediaPreviewUrl(headerMedia)}
+            alt=""
+            style={{ width: '100%', height: 110, objectFit: 'cover', borderRadius: 12, display: 'block', marginBottom: 8, border: '1px solid #e2e8f0' }}
+          />
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px', marginBottom: 8, borderRadius: 12, fontSize: 11, fontWeight: 600, background: headerMedia ? '#f8fafc' : '#fffbeb', border: `1px ${headerMedia ? 'solid #e2e8f0' : 'dashed #fcd34d'}`, color: headerMedia ? '#475569' : '#92400e' }}>
+            {mediaHeader === 'IMAGE' ? <Image size={13} /> : mediaHeader === 'VIDEO' ? <Video size={13} /> : <FileText size={13} />}
+            {headerMedia ? `${mediaHeader.toLowerCase()} header set` : `Header ${mediaHeader.toLowerCase()}: template sample`}
+          </div>
+        )
+      )}
+      {data?.templateId && data?.templateMeta?.isCarousel && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px', marginBottom: 8, borderRadius: 12, fontSize: 11, fontWeight: 600, background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#166534' }}>
+          <Layers size={13} />
+          <span>Carousel ({data.templateMeta.cards?.length || 0} Cards)</span>
+        </div>
+      )}
+      {data?.templateId ? (
+        <div style={{ padding: '9px 11px', borderRadius: 12, background: '#f0fdf4', border: '1px solid #dcfce7' }}>
+          <div style={{ fontSize: 11.5, fontWeight: 700, color: '#166534', marginBottom: body ? 4 : 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {data.templateName}{data.language ? ` · ${data.language}` : ''}
+          </div>
+          {body && (
+            <div style={{ fontSize: 11.5, color: '#334155', lineHeight: 1.45, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', whiteSpace: 'pre-wrap' }}>
+              {body}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div style={{ padding: '16px 12px', borderRadius: 12, background: '#f8fafc', border: '1.5px dashed #cbd5e1', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, color: '#94a3b8' }}>
+          <FileText size={22} style={{ color }} />
+          <span style={{ fontSize: 11, fontWeight: 600 }}>Select an approved template</span>
+        </div>
+      )}
+      {tplButtons.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+          {tplButtons.map((b) => (
+            <BlockButtonRow
+              key={b.index}
+              title={b.text}
+              handleId={`btn-${b.index}`}
+              connected={connectedHandles.has(`btn-${b.index}`)}
+              icon={b.type === 'URL' ? ExternalLink : b.type === 'PHONE_NUMBER' ? Phone : (b.type === 'QUICK_REPLY' && routable) ? null : CornerDownRight}
+            />
+          ))}
+        </div>
+      )}
       <div className="fb-next-step-row" style={{ marginTop: 8, marginRight: -14, marginLeft: -14, paddingLeft: 14 }}>
         <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
         <Handle type="source" position={Position.Right} id="next-step" className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`} />
@@ -6974,6 +7099,9 @@ function ButtonActionEditor({
   const p = (platform || 'WEBCHAT').toUpperCase();
   const isItem = variant === 'item';
   const isQR = variant === 'quickReply';
+  // A Message Template's own button: its text and type are fixed by the
+  // approved template — only what a tap does is set here, and it can't be removed.
+  const isTplBtn = variant === 'templateButton';
   const [menuOpen, setMenuOpen] = useState(false);
   const [creatingSeq, setCreatingSeq] = useState(false);
   const [newSeqName, setNewSeqName] = useState('');
@@ -7002,7 +7130,7 @@ function ButtonActionEditor({
   // Allowed action types, per Meta's docs:
   // Quick replies support continuing in flow or jumping directly to another flow.
   const skipUrlPhoneOnWA = isWA && isItem;
-  const actionOptions = isQR
+  const actionOptions = (isQR || isTplBtn)
     ? [
         { value: 'flow', label: 'Continue Flow (Next Step)', description: 'Follows the wire connected to this reply on the canvas.', Icon: CornerDownRight },
         { value: 'goToFlow', label: 'Go to Existing Flow', description: "Jumps straight to another flow's start — no wire needed.", Icon: Workflow },
@@ -7131,7 +7259,7 @@ function ButtonActionEditor({
         >
           <Settings2 size={13} />
         </span>
-        <button
+        {!isTplBtn && (<button
           type="button"
           onClick={(e) => { e.stopPropagation(); onRemove(); }}
           style={{
@@ -7147,7 +7275,7 @@ function ButtonActionEditor({
           title={isQR ? 'Remove reply' : isItem ? 'Remove item' : 'Remove button'}
         >
           <Trash2 size={13} />
-        </button>
+        </button>)}
       </div>
 
       {/* "Edit Button" submenu */}
@@ -7240,7 +7368,13 @@ function ButtonActionEditor({
                 );
               })()}
 
-              {isSpecial ? (
+              {isTplBtn ? (
+                <div className="fb-field" style={{ margin: 0 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: '#475569' }}>Button text</label>
+                  <div style={{ fontSize: 13, fontWeight: 600, padding: '7px 9px', borderRadius: 7, border: '1px solid #e2e8f0', background: '#f8fafc', color: '#0f172a' }}>{btnObj.title}</div>
+                  <span style={{ fontSize: 9.5, color: '#64748b', fontStyle: 'italic', marginTop: 2 }}>Set by the approved template — it can't be changed here.</span>
+                </div>
+              ) : isSpecial ? (
                 <div style={{ padding: '8px 10px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, fontSize: 11.5, color: '#92400e', lineHeight: 1.45 }}>
                   {QUICK_REPLY_UNROUTABLE_HINT[qrKind]}
                 </div>
@@ -7565,7 +7699,7 @@ function ButtonActionEditor({
                 flexShrink: 0,
               }}
             >
-              <button
+              {isTplBtn ? <span /> : <button
                 type="button"
                 onClick={() => { onRemove(); setMenuOpen(false); }}
                 style={{
@@ -7582,7 +7716,7 @@ function ButtonActionEditor({
                 }}
               >
                 <Trash2 size={13} /> {isItem ? 'Delete item' : 'Delete button'}
-              </button>
+              </button>}
               <button
                 type="button"
                 onClick={() => setMenuOpen(false)}
@@ -8726,6 +8860,7 @@ function UserInputFlowStartProperties({ data, updateField, platform, flowName, o
 }
 
 function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFields = [], onCustomFieldCreated, userInputFlows = [], onUserInputFlowCreated, isUserInputFlow = false, sequences = [], onSequenceCreated, isSequence = false, isBroadcastFlow = false, isChatWidgetFlow = false, linkedWidget = null, widgetAppearanceForm = null, onWidgetAppearanceChange = null, onAddReplyNode = null, flows = [], httpApiCampaigns = [], appointmentCampaigns = [], currentFlowId = null, flowName, onFlowNameChange, onDrillIn, embedded = false }) {
+  const { currentIntegrationId: panelIntegrationId } = useContext(FlowNodeActionsContext);
   if (!node) return null;
 
   const { data, type } = node;
@@ -8792,7 +8927,6 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
         if (isBroadcastFlow) {
           return (
             <BroadcastStartNodeProperties
-              flowId={currentFlowId}
               flowName={flowName}
               onFlowNameChange={onFlowNameChange}
               platform={platform}
@@ -10441,6 +10575,35 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
           />
         );
 
+      case 'whatsappTemplate':
+        return (
+          <MessageTemplateFields
+            data={data}
+            updateFields={updateFields}
+            integrationId={panelIntegrationId}
+            platform={platform}
+            routable={Boolean(currentFlowId)}
+            renderMediaField={({ kind, value, onChange }) => (kind === 'IMAGE'
+              ? <ImageUploadField label="Header Image" value={value} onChange={onChange} placeholder="https://… or {{variable}}" />
+              : <MediaUploadField label={kind === 'VIDEO' ? 'Header Video' : 'Header Document'} value={value} onChange={onChange} accept={kind === 'VIDEO' ? 'video/*' : '.pdf,application/pdf'} placeholder="https://… or {{variable}}" />)}
+            renderButtonEditor={(btn, index, onChange) => (
+              <ButtonActionEditor
+                key={index}
+                btn={btn}
+                index={index}
+                variant="templateButton"
+                onChange={onChange}
+                onRemove={() => {}}
+                platform={platform}
+                flows={flows}
+                currentFlowId={currentFlowId}
+                sequences={sequences}
+                onSequenceCreated={onSequenceCreated}
+              />
+            )}
+          />
+        );
+
       case 'messageBlock':
         return (
           <MessageBlockFields
@@ -10687,6 +10850,7 @@ const nodeTypes = {
   startAutomation: StartAutomationNode,
   messageBlock: MessageBlockNode,
   appointment: AppointmentNode,
+  whatsappTemplate: MessageTemplateNode,
 };
 
 /* ── Removable / Deletable Edge ────────────────────────────── */
@@ -11259,6 +11423,67 @@ function FlowBuilderInner() {
     nodes.some((n) => n.type === 'start' && n.data?.chatWidgetStart)
   );
 
+  // Broadcast element's sending mode decides what it is connected to:
+  // 'message' (Inside 24 hours) → a message element, 'template' (Anytime) →
+  // a Message Template element. Reuses a matching element already on the
+  // canvas, otherwise adds one. Whatever was connected before stays on the
+  // canvas — only the Broadcast element's own connection is swapped.
+  // { onlyIfEmpty } = only when nothing is connected yet (first open).
+  const handleSetBroadcastFirstStep = useCallback((kind, { onlyIfEmpty = false } = {}) => {
+    const currentNodes = nodesRef.current || [];
+    const currentEdges = edgesRef.current || [];
+    const startNode = currentNodes.find((n) => n.type === 'start');
+    if (!startNode) return;
+    const startEdges = currentEdges.filter((e) => e.source === startNode.id);
+    if (onlyIfEmpty && startEdges.length) return;
+    const connected = startEdges.length ? currentNodes.find((n) => n.id === startEdges[0].target) : null;
+    const wantedType = kind === 'template' ? 'whatsappTemplate' : 'messageBlock';
+    const alreadyRight = kind === 'template'
+      ? connected?.type === 'whatsappTemplate'
+      : Boolean(connected) && connected.type !== 'whatsappTemplate';
+    if (alreadyRight) return;
+
+    let target = currentNodes.find((n) => n.type === wantedType);
+    if (!target) {
+      target = {
+        id: generateNodeId(wantedType),
+        type: wantedType,
+        position: { x: startNode.position.x + 380, y: startNode.position.y + (connected ? 240 : 0) },
+        sourcePosition: Position.Right,
+        targetPosition: Position.Left,
+        data: {
+          ...(DEFAULT_NODE_DATA[wantedType] || {}),
+          _unsupported: !isNodeSupportedOnPlatform(wantedType, platform),
+        },
+      };
+      const created = target;
+      setNodes((nds) => [...nds, created]);
+    }
+    const targetId = target.id;
+    setEdges((eds) => [
+      ...eds.filter((e) => e.source !== startNode.id),
+      { id: `e-${startNode.id}-${targetId}`, source: startNode.id, sourceHandle: 'next-step', target: targetId, type: 'default', animated: false },
+    ]);
+  }, [setNodes, setEdges, platform]);
+
+  // The campaign behind a Broadcast flow — shared by the top bar (Save /
+  // Review & Send) and the Broadcast element's settings panel.
+  const broadcast = useBroadcastCampaign({
+    enabled: isBroadcastFlow, flowId: id, platform, flowName, onSetFirstStep: handleSetBroadcastFirstStep,
+  });
+  const { flush: flushBroadcast, persist: persistBroadcast, editable: broadcastEditable, canSend: broadcastCanSend } = broadcast;
+  const [sendDialogOpen, setSendDialogOpen] = useState(false);
+
+  // A broadcast opens with its Broadcast element's settings showing.
+  const broadcastPanelOpened = useRef(false);
+  useEffect(() => {
+    if (!isBroadcastFlow || broadcastPanelOpened.current) return;
+    const startNode = nodes.find((n) => n.type === 'start');
+    if (!startNode) return;
+    broadcastPanelOpened.current = true;
+    setSelectedNode(startNode);
+  }, [isBroadcastFlow, nodes]);
+
   // Quick-add bot reply action for Chat Widget start node
   const handleAddReplyNode = useCallback((type) => {
     const startNode = nodesRef.current.find((n) => n.type === 'start');
@@ -11790,6 +12015,7 @@ function FlowBuilderInner() {
   /* ── Go back to origin page ───────────────────────────────── */
   const handleGoBack = useCallback(async () => {
     await flushAutoSave();
+    await flushBroadcast();
 
     // 1. Explicit return URL from caller or session
     if (returnUrl) {
@@ -11807,9 +12033,9 @@ function FlowBuilderInner() {
       return;
     }
 
-    // 3. Fallback
-    navigate('/bots');
-  }, [flushAutoSave, returnUrl, referrerState, navigate]);
+    // 3. Fallback — a broadcast belongs to the Broadcasting page
+    navigate(isBroadcastFlow ? '/campaigns' : '/bots');
+  }, [flushAutoSave, flushBroadcast, isBroadcastFlow, returnUrl, referrerState, navigate]);
 
   /* ── Auto-Layout / Rearrange Flow ───────────────────────── */
   const handleAutoLayout = useCallback(() => {
@@ -11893,7 +12119,10 @@ function FlowBuilderInner() {
   /* ── Manual save (with strict data validation) ─────────── */
   // Memoised because drillBackToMain depends on it; an inline function here
   // would change identity every render and defeat that useCallback entirely.
-  const handleSave = useCallback(async () => {
+  // Returns true when saved. { silent: true } skips the success toast (used by
+  // a Broadcast flow's Save / Review & Send, which show their own). Also used directly as an onClick handler, so opts may be an event.
+  const handleSave = useCallback(async (opts) => {
+    const silent = opts?.silent === true;
     try {
       // 1. Validate all components have required data
       const currentNodes = nodesRef.current || [];
@@ -11918,7 +12147,7 @@ function FlowBuilderInner() {
             confirmButtonColor: '#4f46e5',
           });
           setSelectedNode(branchNode || null);
-          return;
+          return false;
         }
       }
 
@@ -11941,7 +12170,7 @@ function FlowBuilderInner() {
         surfaceProblems(problems, invalidList.length > 0
           ? { title: 'Missing Component Data', intro: 'The flow cannot be saved because some components have missing data:', confirmText: 'Fill In Data' }
           : { title: 'Wrong bot account', intro: "The flow cannot be saved because it uses components that don't belong to this bot account:", confirmText: 'Fix it' });
-        return;
+        return false;
       }
 
       setSaving(true);
@@ -11997,6 +12226,7 @@ function FlowBuilderInner() {
       setAutoSaveStatus('saved');
       setTimeout(() => setAutoSaveStatus(''), 2500);
       if (drilledIn) setUifDirty(false);
+      if (silent) return true;
 
       const currentPlatformKey = (platform || 'WEBCHAT').toUpperCase();
       const currentTheme = PLATFORM_SAVE_THEMES[currentPlatformKey] || PLATFORM_SAVE_THEMES.WEBCHAT;
@@ -12049,12 +12279,13 @@ function FlowBuilderInner() {
           </div>
         `,
       });
+      return true;
     } catch (err) {
       console.error('Save failed:', err);
       const refused = err?.response?.data;
       if (refused?.code === 'BOT_SCOPE_VIOLATION' && Array.isArray(refused.violations) && refused.violations.length) {
         surfaceProblems(refused.violations, { title: 'Wrong bot account', intro: "The flow cannot be saved because it uses components that don't belong to this bot account:", confirmText: 'Fix it' });
-        return;
+        return false;
       }
       Swal.fire({
         title: 'Save Failed',
@@ -12062,6 +12293,7 @@ function FlowBuilderInner() {
         icon: 'error',
         confirmButtonColor: '#4f46e5',
       });
+      return false;
     } finally {
       setSaving(false);
     }
@@ -12069,6 +12301,43 @@ function FlowBuilderInner() {
     id, isSequence, isUserInputFlow, edges, flowName, flowData,
     platform, integrationId, drilledIn, linkedWidget, widgetAppearanceForm, isChatWidgetFlow, surfaceProblems,
   ]);
+
+  // Save on a Broadcast flow = save the flow + the campaign as a draft. Never
+  // sends and never leaves the builder; what still blocks sending is shown as
+  // a non-blocking notice (sending happens only via Review & Send).
+  const handleBroadcastSave = useCallback(async () => {
+    if (!(await handleSave({ silent: true }))) return false;
+    if (!broadcastEditable) {
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Broadcast saved', timer: 2600, showConfirmButton: false });
+      return true;
+    }
+    try {
+      const res = await persistBroadcast();
+      const count = Number(res?.audienceCount || 0);
+      const reach = `Currently reaches ${count.toLocaleString()} ${count === 1 ? 'subscriber' : 'subscribers'}${res?.noFilter ? ' (no audience filter — all eligible subscribers)' : ''}.`;
+      const problems = res?.readyErrors || [];
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: problems.length ? 'warning' : 'success',
+        title: problems.length ? 'Draft saved — not ready to send yet' : 'Broadcast draft saved',
+        text: problems.length ? `${problems[0]}${problems.length > 1 ? ` (+${problems.length - 1} more)` : ''}` : `${reach} Nothing was sent.`,
+        timer: problems.length ? 6000 : 3500,
+        timerProgressBar: true,
+        showConfirmButton: false,
+      });
+      return true;
+    } catch (err) {
+      Swal.fire({ icon: 'error', title: 'Could not save the broadcast', text: err?.response?.data?.message || err.message, confirmButtonColor: '#2563eb' });
+      return false;
+    }
+  }, [handleSave, broadcastEditable, persistBroadcast]);
+
+  // Review & Send: save everything first (the builder shows what's missing), then open the send dialog.
+  const handleReviewAndSend = useCallback(async () => {
+    if (!(await handleSave({ silent: true }))) return;
+    setSendDialogOpen(true);
+  }, [handleSave]);
 
   // Fresh Start + Question pair for a brand-new User Input Flow — matches what a
   // linear form needs to open ready-to-fill rather than as a bare canvas. Shared
@@ -12638,6 +12907,7 @@ function FlowBuilderInner() {
       currentPlatform: platform,
       isChatWidgetFlow,
     }}>
+    <BroadcastCampaignContext.Provider value={broadcast}>
       <div className="flow-builder-root">
       {/* ── Flow Top Bar ────────────────────────────────── */}
       <div
@@ -12908,63 +13178,29 @@ function FlowBuilderInner() {
             <span style={{ fontSize: 9, opacity: 0.7 }}>▾</span>
           </button>
 
-          {/* Save Button with dynamic light-color channel theme, generous padding, and gorgeous micro-effects */}
-          {(() => {
-            const currentPlatformKey = (platform || 'WEBCHAT').toUpperCase();
-            const theme = PLATFORM_SAVE_THEMES[currentPlatformKey] || PLATFORM_SAVE_THEMES.WEBCHAT;
+          {/* Save — light channel-themed button (TopBarThemedButton) */}
+          <TopBarThemedButton
+            platform={platform}
+            onClick={isBroadcastFlow && !drilledIn ? handleBroadcastSave : handleSave}
+            disabled={saving}
+            busy={saving}
+            title={`Save flow for ${currentAccountName || getPlatformMeta(platform).label}`}
+            icon={Save}
+            label="Save"
+            busyLabel="Saving..."
+          />
 
-            return (
-              <button
-                type="button"
-                onClick={handleSave}
-                disabled={saving}
-                title={`Save flow for ${currentAccountName || getPlatformMeta(platform).label}`}
-                className="group relative overflow-hidden inline-flex items-center justify-center gap-2 rounded-lg text-[13px] font-bold h-[34px] cursor-pointer transition-all duration-200 ease-out active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100 select-none"
-                style={{
-                  padding: '7px 22px',
-                  background: theme.bg,
-                  border: `1.5px solid ${theme.border}`,
-                  color: theme.color,
-                  boxShadow: theme.shadow,
-                }}
-                onMouseEnter={(e) => {
-                  if (!saving) {
-                    e.currentTarget.style.background = theme.hoverBg;
-                    e.currentTarget.style.borderColor = theme.hoverBorder;
-                    e.currentTarget.style.boxShadow = theme.hoverShadow;
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!saving) {
-                    e.currentTarget.style.background = theme.bg;
-                    e.currentTarget.style.borderColor = theme.border;
-                    e.currentTarget.style.boxShadow = theme.shadow;
-                  }
-                }}
-              >
-                {/* Subtle light sweep shimmer animation across the button */}
-                <span
-                  className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-in-out pointer-events-none"
-                  style={{
-                    background: 'linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent)',
-                  }}
-                />
-
-                {/* Save icon / spinner */}
-                {saving ? (
-                  <Loader2 size={15} className="animate-spin" style={{ color: theme.iconColor }} />
-                ) : (
-                  <Save
-                    size={15}
-                    className="transition-transform duration-200 group-hover:scale-110"
-                    style={{ color: theme.iconColor }}
-                  />
-                )}
-
-                <span className="relative tracking-wide font-bold">{saving ? 'Saving...' : 'Save'}</span>
-              </button>
-            );
-          })()}
+          {/* Broadcast only: the one place a broadcast is sent or scheduled from the builder. Same design as Save. */}
+          {isBroadcastFlow && !drilledIn && broadcastCanSend && (
+            <TopBarThemedButton
+              platform={platform}
+              onClick={handleReviewAndSend}
+              disabled={saving}
+              title="Check the audience, then send now or schedule"
+              icon={Send}
+              label="Review & Send"
+            />
+          )}
         </div>
       </div>
 
@@ -13084,8 +13320,52 @@ function FlowBuilderInner() {
           />
         )}
       </div>
+
+      {sendDialogOpen && (
+        <BroadcastSendDialog
+          platform={platform}
+          onClose={() => setSendDialogOpen(false)}
+          onDone={() => { setSendDialogOpen(false); navigate('/campaigns'); }}
+        />
+      )}
     </div>
+    </BroadcastCampaignContext.Provider>
     </FlowNodeActionsContext.Provider>
+  );
+}
+
+/** The Flow Builder top bar's light, channel-themed button (Save, Review & Send). */
+function TopBarThemedButton({ platform, onClick, disabled = false, busy = false, title, icon, label, busyLabel }) {
+  const Icon = icon;
+  const theme = PLATFORM_SAVE_THEMES[(platform || 'WEBCHAT').toUpperCase()] || PLATFORM_SAVE_THEMES.WEBCHAT;
+  const paint = (el, hover) => {
+    el.style.background = hover ? theme.hoverBg : theme.bg;
+    el.style.borderColor = hover ? theme.hoverBorder : theme.border;
+    el.style.boxShadow = hover ? theme.hoverShadow : theme.shadow;
+  };
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="group relative overflow-hidden inline-flex items-center justify-center gap-2 rounded-lg text-[13px] font-bold h-[34px] cursor-pointer transition-all duration-200 ease-out active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100 select-none"
+      style={{ padding: '7px 22px', background: theme.bg, border: `1.5px solid ${theme.border}`, color: theme.color, boxShadow: theme.shadow }}
+      onMouseEnter={(e) => { if (!disabled) paint(e.currentTarget, true); }}
+      onMouseLeave={(e) => { if (!disabled) paint(e.currentTarget, false); }}
+    >
+      {/* Subtle light sweep shimmer animation across the button */}
+      <span
+        className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-in-out pointer-events-none"
+        style={{ background: 'linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent)' }}
+      />
+      {busy ? (
+        <Loader2 size={15} className="animate-spin" style={{ color: theme.iconColor }} />
+      ) : (
+        <Icon size={15} className="transition-transform duration-200 group-hover:scale-110" style={{ color: theme.iconColor }} />
+      )}
+      <span className="relative tracking-wide font-bold">{busy ? busyLabel : label}</span>
+    </button>
   );
 }
 

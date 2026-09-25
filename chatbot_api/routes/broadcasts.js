@@ -3,11 +3,61 @@ import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { requireModule } from "../utils/entitlements.js";
-import { executeBroadcast, computeAudience } from "../utils/broadcastRunner.js";
+import { executeBroadcast, computeAudience, inspectCampaign, hasNoAudienceFilter } from "../utils/broadcastRunner.js";
+import { emitBroadcastUpdate } from "../utils/broadcastStats.js";
 import { findOutOfScopeRefs, describeOutOfScope, violationsForClient } from "../utils/botScope.js";
 
 const router = express.Router();
 router.use("/broadcasts", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_broadcasts"));
+
+// Audiences at or above this size get an extra "Large Audience" confirmation
+// (UI dialog + server-side confirmAudience check). Configurable per server.
+const LARGE_AUDIENCE_THRESHOLD = Math.max(1, Number(process.env.BROADCAST_LARGE_AUDIENCE_THRESHOLD) || 5000);
+
+/** What must be confirmed before this audience may be sent / scheduled. */
+// A WhatsApp "Inside 24 hours" (WINDOW) broadcast can't be scheduled
+// (decided with the user): who is inside the 24-hour window changes by the
+// hour, so it's sent now or not at all. Only Anytime (TEMPLATE) schedules.
+const NO_SCHEDULE_MESSAGE = "An Inside 24 hours broadcast can't be scheduled — send it now, or switch it to Anytime (template) to schedule it.";
+function canSchedule(campaign) {
+  return !(campaign.platform === "WHATSAPP" && campaign.mode === "WINDOW");
+}
+
+function audienceWarnings(inspection) {
+  return {
+    noFilter: inspection.noFilter,
+    large: inspection.audienceCount >= LARGE_AUDIENCE_THRESHOLD,
+    audienceCount: inspection.audienceCount,
+    largeAudienceThreshold: LARGE_AUDIENCE_THRESHOLD,
+  };
+}
+
+/**
+ * Server-side gate for send / schedule: re-checks the campaign from the DB
+ * (account, content, audience) and refuses an audience the user hasn't
+ * explicitly confirmed (no filter = everyone, or a large audience) — so the
+ * UI's warnings can't be skipped by calling the API directly.
+ */
+async function gateSend(campaign, body, res) {
+  const inspection = await inspectCampaign(campaign);
+  if (inspection.errors.length) {
+    res.status(400).json({ success: false, code: "BROADCAST_NOT_READY", message: inspection.errors[0], errors: inspection.errors, audienceCount: inspection.audienceCount });
+    return null;
+  }
+  const warnings = audienceWarnings(inspection);
+  if ((warnings.noFilter || warnings.large) && body?.confirmAudience !== true) {
+    res.status(409).json({ success: false, code: "AUDIENCE_CONFIRMATION_REQUIRED", message: "Confirm the audience before sending.", ...warnings });
+    return null;
+  }
+  return inspection;
+}
+
+/** A JSON id list for an UPDATE: the request's value, or the stored one when the request left it out. */
+function idsOrExisting(value, existing) {
+  if (value !== undefined) return JSON.stringify(toIdArray(value));
+  if (existing == null) return JSON.stringify([]);
+  return typeof existing === "string" ? existing : JSON.stringify(existing);
+}
 
 function toIdArray(v) {
   if (!v) return [];
@@ -91,11 +141,14 @@ router.get("/broadcasts/by-flow/:flowId", async (req, res) => {
 router.get("/broadcasts/form-data", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    const { platform } = req.query;
+    const { platform, integrationId } = req.query;
     const [labels] = await pool.query("SELECT id, name, color FROM labels WHERE agency_id = ? ORDER BY name", [agencyId]);
+    // A template belongs to the WhatsApp account it was synced from — only
+    // offer the chosen bot account's own when one is given.
     const [templates] = await pool.query(
-      "SELECT id, template_name, language, category, status FROM whatsapp_templates WHERE agency_id = ? AND status = 'APPROVED' ORDER BY template_name",
-      [agencyId]
+      `SELECT id, template_name, language, category, status FROM whatsapp_templates
+       WHERE agency_id = ? AND status = 'APPROVED' ${integrationId ? "AND integration_id = ?" : ""} ORDER BY template_name`,
+      integrationId ? [agencyId, integrationId] : [agencyId]
     );
     let contactCount = 0;
     let integrations = [];
@@ -107,7 +160,7 @@ router.get("/broadcasts/form-data", async (req, res) => {
         [agencyId, platform]
       );
     }
-    return res.json({ success: true, labels, templates, contactCount, integrations });
+    return res.json({ success: true, labels, templates, contactCount, integrations, largeAudienceThreshold: LARGE_AUDIENCE_THRESHOLD });
   } catch (err) {
     console.error("Broadcast form-data error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -118,15 +171,33 @@ router.get("/broadcasts/form-data", async (req, res) => {
 router.post("/broadcasts/audience-preview", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    const { platform, includeLabelIds, excludeLabelIds, includeContactIds, excludeContactIds } = req.body;
+    const { includeLabelIds, excludeLabelIds, includeContactIds, excludeContactIds, campaignId } = req.body;
+    let { platform, integrationId } = req.body;
+    // With a campaign, its own platform + bot account are used (never the client's).
+    if (campaignId) {
+      const [[c]] = await pool.query("SELECT platform, integration_id FROM broadcast_campaigns WHERE id = ? AND agency_id = ?", [campaignId, agencyId]);
+      if (!c) return res.status(404).json({ success: false, message: "Campaign not found" });
+      platform = c.platform;
+      integrationId = c.integration_id;
+    } else if (integrationId) {
+      integrationId = await validateIntegration(agencyId, platform, integrationId);
+      if (!integrationId) return res.status(400).json({ success: false, message: "That account isn't a valid, active connection for this platform" });
+    }
     if (!platform) return res.status(400).json({ success: false, message: "platform is required" });
-    const audience = await computeAudience(agencyId, platform, {
+    const targeting = {
       includeLabelIds: toIdArray(includeLabelIds),
       excludeLabelIds: toIdArray(excludeLabelIds),
       includeContactIds: toIdArray(includeContactIds),
       excludeContactIds: toIdArray(excludeContactIds),
+      integrationId: integrationId || null,
+    };
+    const audience = await computeAudience(agencyId, platform, targeting);
+    return res.json({
+      success: true,
+      count: audience.length,
+      noFilter: hasNoAudienceFilter(targeting),
+      largeAudienceThreshold: LARGE_AUDIENCE_THRESHOLD,
     });
-    return res.json({ success: true, count: audience.length });
   } catch (err) {
     console.error("Audience preview error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -190,6 +261,12 @@ router.get("/broadcasts/:id", async (req, res) => {
 router.post("/broadcasts/start-with-flow", async (req, res) => {
   const { name, platform } = req.body;
   if (!name || !platform) return res.status(400).json({ success: false, message: "name and platform are required" });
+  // The broadcast type chosen on the Broadcasting page: WINDOW (Inside 24
+  // hours → a Send Message element) or TEMPLATE (Anytime, WhatsApp only → a
+  // Message Template element). Still changeable in the Broadcast element.
+  const mode = req.body.mode === undefined ? "WINDOW" : req.body.mode;
+  if (!["WINDOW", "TEMPLATE"].includes(mode)) return res.status(400).json({ success: false, message: "Unknown sending mode" });
+  if (mode === "TEMPLATE" && platform !== "WHATSAPP") return res.status(400).json({ success: false, message: "Anytime (template) sending is only available on WhatsApp" });
   const agencyId = req.user.agencyId;
 
   let integrationId = await validateIntegration(agencyId, platform, req.body.integrationId);
@@ -213,22 +290,39 @@ router.post("/broadcasts/start-with-flow", async (req, res) => {
     // branch that recognizes trigger_type "broadcast", so this flow structurally
     // never fires from an inbound keyword/first-contact/postback match; it is
     // only ever read directly by broadcastRunner.js via this campaign's flow_id.
+    // The Broadcast element comes already connected to what its type needs —
+    // a Send Message block (Inside 24 hours) or a Message Template element
+    // (Anytime) — so the user only fills in the content. Switching the mode
+    // in the builder swaps the connected element.
+    const firstStep = mode === "TEMPLATE"
+      ? {
+          id: "template_1", type: "whatsappTemplate", position: { x: 380, y: 0 },
+          data: { label: "Message Template", templateId: null, templateName: "", language: "", params: { header: {}, body: {}, buttons: {} }, templateMeta: null },
+        }
+      : {
+          id: "message_1", type: "messageBlock", position: { x: 380, y: 0 },
+          data: { label: "Send Message", items: [{ id: "it_first", type: "buttons", data: { label: "Text Message", message: "", buttons: [] } }] },
+        };
     const nodesJson = JSON.stringify([
       { id: "start_1", type: "start", position: { x: 0, y: 0 }, data: { label: "Broadcast", trigger_type: "broadcast" } },
+      firstStep,
+    ]);
+    const edgesJson = JSON.stringify([
+      { id: `e-start_1-${firstStep.id}`, source: "start_1", sourceHandle: "next-step", target: firstStep.id, type: "default", animated: false },
     ]);
     // The flow lives on the campaign's own bot account — without it the Flow
     // Builder has no account for the flow and shows the platform's first one.
     const [flowResult] = await conn.query(
       `INSERT INTO flows (agency_id, integration_id, name, platform, trigger_type, nodes_json, edges_json, is_active)
-       VALUES (?, ?, ?, ?, 'BROADCAST', ?, '[]', 1)`,
-      [agencyId, integrationId, name, platform, nodesJson]
+       VALUES (?, ?, ?, ?, 'BROADCAST', ?, ?, 1)`,
+      [agencyId, integrationId, name, platform, nodesJson, edgesJson]
     );
     const flowId = flowResult.insertId;
 
     const [campResult] = await conn.query(
       `INSERT INTO broadcast_campaigns (agency_id, name, platform, integration_id, flow_id, mode, status, created_by)
-       VALUES (?, ?, ?, ?, ?, 'WINDOW', 'DRAFT', ?)`,
-      [agencyId, name, platform, integrationId, flowId, req.user.id]
+       VALUES (?, ?, ?, ?, ?, ?, 'DRAFT', ?)`,
+      [agencyId, name, platform, integrationId, flowId, mode, req.user.id]
     );
 
     await conn.commit();
@@ -282,13 +376,14 @@ router.put("/broadcasts/:id", async (req, res) => {
   const agencyId = req.user.agencyId;
   const {
     name, includeLabelIds, excludeLabelIds, includeContactIds, excludeContactIds,
-    tagLabelId, scheduledAt, templateId, integrationId, variantBTemplateId, abSplitPercent,
+    tagLabelId, scheduledAt, templateId, integrationId, variantBTemplateId, abSplitPercent, mode,
   } = req.body;
 
   try {
     const [[existing]] = await pool.query("SELECT * FROM broadcast_campaigns WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
     if (!existing) return res.status(404).json({ success: false, message: "Campaign not found" });
-    if (existing.status !== "DRAFT") return res.status(400).json({ success: false, message: "Only a draft campaign can be edited — this one has already been scheduled or sent" });
+    // DRAFT / FAILED (fix and retry) / SCHEDULED (audience only — its time changes via /schedule).
+    if (!["DRAFT", "FAILED", "SCHEDULED"].includes(existing.status)) return res.status(400).json({ success: false, message: "This campaign is already sending or sent, so it can't be edited" });
 
     let resolvedIntegrationId = existing.integration_id;
     if (integrationId !== undefined) {
@@ -329,28 +424,58 @@ router.put("/broadcasts/:id", async (req, res) => {
     }
     const resolvedSplit = abSplitPercent !== undefined ? Math.min(99, Math.max(1, Number(abSplitPercent) || 50)) : existing.ab_split_percent;
 
+    // Sending mode of a flow-built campaign (Broadcast element: Inside 24
+    // hours = WINDOW, Anytime = TEMPLATE via a Message Template element).
+    // A campaign made on the Broadcasting page without a flow is always TEMPLATE.
+    let resolvedMode = existing.mode;
+    if (mode !== undefined) {
+      if (!["WINDOW", "TEMPLATE"].includes(mode)) return res.status(400).json({ success: false, message: "Unknown sending mode" });
+      if (mode === "TEMPLATE" && existing.platform !== "WHATSAPP") return res.status(400).json({ success: false, message: "Anytime (template) sending is only available on WhatsApp" });
+      if (!existing.flow_id && mode !== "TEMPLATE") return res.status(400).json({ success: false, message: "This campaign has no flow, so it can only send a template" });
+      resolvedMode = mode;
+    }
+
+    // A planned send time kept on a draft (the Broadcast element's "Schedule"
+    // choice) — only a real, future date; scheduling itself happens on send.
+    let resolvedScheduledAt = scheduledAt === undefined || existing.status === "SCHEDULED" ? existing.scheduled_at : (scheduledAt || null);
+    if (resolvedScheduledAt && !(resolvedScheduledAt instanceof Date)) {
+      const when = new Date(resolvedScheduledAt);
+      if (Number.isNaN(when.getTime())) return res.status(400).json({ success: false, message: "Invalid send time" });
+      resolvedScheduledAt = when;
+    }
+    // Inside 24 hours can't be scheduled: a scheduled one can't switch to it,
+    // and a draft switching to it drops its planned time.
+    if (!canSchedule({ platform: existing.platform, mode: resolvedMode })) {
+      if (existing.status === "SCHEDULED") return res.status(400).json({ success: false, code: "SCHEDULE_NOT_ALLOWED", message: "Cancel the schedule first — an Inside 24 hours broadcast can't be scheduled." });
+      resolvedScheduledAt = null;
+    }
+
     await pool.query(
       `UPDATE broadcast_campaigns SET
         name = COALESCE(?, name),
         integration_id = ?,
         include_label_ids = ?, exclude_label_ids = ?, include_contact_ids = ?, exclude_contact_ids = ?,
         tag_label_id = ?, scheduled_at = ?, template_id = COALESCE(?, template_id),
-        variant_b_template_id = ?, ab_split_percent = ?
+        variant_b_template_id = ?, ab_split_percent = ?, mode = ?
        WHERE id = ? AND agency_id = ?`,
       [
         name || null,
         resolvedIntegrationId,
-        JSON.stringify(toIdArray(includeLabelIds)), JSON.stringify(toIdArray(excludeLabelIds)),
-        JSON.stringify(toIdArray(includeContactIds)), JSON.stringify(toIdArray(excludeContactIds)),
-        tagLabelId || null, scheduledAt || null, templateId || null,
-        resolvedVariantB, resolvedSplit,
+        // Audience fields left out of the request keep their stored value
+        // (a mode-only change must not clear the audience).
+        idsOrExisting(includeLabelIds, existing.include_label_ids), idsOrExisting(excludeLabelIds, existing.exclude_label_ids),
+        idsOrExisting(includeContactIds, existing.include_contact_ids), idsOrExisting(excludeContactIds, existing.exclude_contact_ids),
+        tagLabelId === undefined ? existing.tag_label_id : (tagLabelId || null), resolvedScheduledAt, templateId || null,
+        resolvedVariantB, resolvedSplit, resolvedMode,
         req.params.id, agencyId,
       ]
     );
     if (existing.flow_id && resolvedIntegrationId) {
       await pool.query("UPDATE flows SET integration_id = ? WHERE id = ? AND agency_id = ?", [resolvedIntegrationId, existing.flow_id, agencyId]);
     }
-    return res.json({ success: true, message: "Campaign updated" });
+    const [[updated]] = await pool.query("SELECT * FROM broadcast_campaigns WHERE id = ?", [req.params.id]);
+    const inspection = await inspectCampaign(updated);
+    return res.json({ success: true, message: "Campaign updated", ...audienceWarnings(inspection), readyErrors: inspection.errors });
   } catch (err) {
     console.error("Update broadcast error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -366,9 +491,7 @@ router.post("/broadcasts/:id/send", async (req, res) => {
     if (!["DRAFT", "SCHEDULED", "FAILED"].includes(campaign.status)) {
       return res.status(400).json({ success: false, message: `Campaign is already ${campaign.status.toLowerCase()}` });
     }
-    if (!campaign.integration_id) {
-      return res.status(400).json({ success: false, message: "This campaign has no account chosen to send from yet" });
-    }
+    if (!(await gateSend(campaign, req.body, res))) return;
     await pool.query("UPDATE broadcast_campaigns SET scheduled_at = NULL WHERE id = ?", [campaign.id]);
     executeBroadcast(campaign.id).catch((err) => console.error("Background broadcast error:", err));
     return res.json({ success: true, message: "Broadcast started" });
@@ -384,13 +507,23 @@ router.post("/broadcasts/:id/schedule", async (req, res) => {
   if (!scheduledAt) return res.status(400).json({ success: false, message: "scheduledAt is required" });
   try {
     const agencyId = req.user.agencyId;
-    const [[campaign]] = await pool.query("SELECT id, status, integration_id FROM broadcast_campaigns WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
+    const [[campaign]] = await pool.query("SELECT * FROM broadcast_campaigns WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
     if (!campaign) return res.status(404).json({ success: false, message: "Campaign not found" });
-    if (campaign.status !== "DRAFT") return res.status(400).json({ success: false, message: "Only a draft campaign can be scheduled" });
-    if (!campaign.integration_id) return res.status(400).json({ success: false, message: "This campaign has no account chosen to send from yet" });
+    // DRAFT / FAILED → schedule; SCHEDULED → reschedule (the same row's time changes — never a second schedule).
+    if (!["DRAFT", "SCHEDULED", "FAILED"].includes(campaign.status)) return res.status(400).json({ success: false, message: "Only a draft, failed or scheduled campaign can be scheduled" });
+    if (!canSchedule(campaign)) return res.status(400).json({ success: false, code: "SCHEDULE_NOT_ALLOWED", message: NO_SCHEDULE_MESSAGE });
+    const when = new Date(scheduledAt);
+    if (Number.isNaN(when.getTime())) return res.status(400).json({ success: false, message: "Invalid send time" });
+    if (when.getTime() < Date.now() + 60 * 1000) return res.status(400).json({ success: false, message: "Pick a time at least a minute from now" });
+    if (!(await gateSend(campaign, req.body, res))) return;
 
-    await pool.query("UPDATE broadcast_campaigns SET status = 'SCHEDULED', scheduled_at = ? WHERE id = ?", [scheduledAt, req.params.id]);
-    return res.json({ success: true, message: "Broadcast scheduled" });
+    const [upd] = await pool.query(
+      "UPDATE broadcast_campaigns SET status = 'SCHEDULED', scheduled_at = ? WHERE id = ? AND agency_id = ? AND status IN ('DRAFT', 'SCHEDULED', 'FAILED')",
+      [when, req.params.id, agencyId]
+    );
+    if (upd.affectedRows !== 1) return res.status(409).json({ success: false, message: "The campaign changed state meanwhile — reload and try again" });
+    await emitBroadcastUpdate(campaign.id);
+    return res.json({ success: true, message: campaign.status === "SCHEDULED" ? "Broadcast rescheduled" : "Broadcast scheduled", rescheduled: campaign.status === "SCHEDULED" });
   } catch (err) {
     console.error("Schedule broadcast error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -405,6 +538,7 @@ router.post("/broadcasts/:id/cancel", async (req, res) => {
     if (!campaign) return res.status(404).json({ success: false, message: "Campaign not found" });
     if (campaign.status !== "SCHEDULED") return res.status(400).json({ success: false, message: "Only a scheduled campaign can be cancelled" });
     await pool.query("UPDATE broadcast_campaigns SET status = 'DRAFT', scheduled_at = NULL WHERE id = ?", [req.params.id]);
+    await emitBroadcastUpdate(campaign.id);
     return res.json({ success: true, message: "Schedule cancelled — back to draft" });
   } catch (err) {
     console.error("Cancel broadcast error:", err);

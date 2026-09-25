@@ -2,7 +2,11 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
 import { broadcastAPI } from '../../services/api';
+import { io } from 'socket.io-client';
+import { getSocketUrl, socketAuth } from '../../utils/socketAuth';
 import AudienceForm from '../../Components/Broadcast/AudienceForm';
+import { resolveContacts } from '../../Components/Broadcast/useBroadcastCampaign';
+import { confirmBroadcastAudience, showBroadcastError, canScheduleBroadcast } from '../../Components/Broadcast/broadcastDialogs';
 import {
   Megaphone, MessageCircle, Facebook, Send, Video, BarChart3, Trash2, X, ArrowRight,
   Plus, Clock, Tag, Workflow, FileText, CheckCircle2, AlertTriangle, Loader2,
@@ -17,7 +21,7 @@ const CHANNELS = [
 ];
 
 const WINDOW_NOTE = {
-  WHATSAPP: 'Free-form messages to anyone who messaged you in the last 24 hours.',
+  WHATSAPP: 'Two broadcast types, chosen when you create one (and changeable in the Broadcast element): Anytime (an approved template, which reaches subscribers outside the 24-hour window) or Inside 24 hours (free-form messages to anyone who messaged you in the last 24 hours).',
   FACEBOOK: 'Messenger only allows automated sends to subscribers inside their 24-hour window — Meta retired the old outside-window broadcast tools in Feb 2026, and the replacement is not yet open to new integrations.',
   TELEGRAM: 'No time window — reaches anyone who has ever started a chat with your bot.',
   TIKTOK: "TikTok's Business Messaging API is reply-only: a business can never start a conversation, only reply within 48 hours of the subscriber's last message. This is a platform policy, not a limitation of this app.",
@@ -27,7 +31,7 @@ const STATUS_META = {
   DRAFT:      { label: 'Draft',     badge: 'badge-muted',   Icon: FileText },
   SCHEDULED:  { label: 'Scheduled', badge: 'badge-primary', Icon: CalendarClock },
   PROCESSING: { label: 'Sending',   badge: 'badge-warning', Icon: Loader2 },
-  COMPLETED:  { label: 'Completed', badge: 'badge-success', Icon: CheckCircle2 },
+  COMPLETED:  { label: 'Sent',      badge: 'badge-success', Icon: CheckCircle2 },
   FAILED:     { label: 'Failed',    badge: 'badge-danger',  Icon: AlertTriangle },
   CANCELLED:  { label: 'Cancelled', badge: 'badge-muted',   Icon: Ban },
 };
@@ -45,6 +49,15 @@ const M = {
 
 const nf = (v) => (v || 0).toLocaleString();
 const pctOf = (v, total) => (total > 0 ? Math.round(((v || 0) / total) * 100) : 0);
+
+/** Date → value for <input type="datetime-local"> in the viewer's local time. */
+function toLocalInput(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 function formatWhen(value) {
   if (!value) return '';
@@ -91,6 +104,14 @@ const PAGE_CSS = `
 .bc-slide{position:fixed;top:0;right:0;bottom:0;width:440px;max-width:94vw;background:var(--bg-card);border-left:1px solid var(--border);z-index:1001;display:flex;flex-direction:column;box-shadow:-12px 0 40px rgba(0,0,0,.16);animation:bcSlide .2s ease}
 .bc-toast{position:fixed;bottom:24px;right:24px;z-index:1100;display:flex;align-items:center;gap:9px;padding:12px 16px;border-radius:var(--radius);font-weight:600;font-size:.85rem;color:#fff;box-shadow:var(--shadow-md);animation:bcUp .18s ease}
 .bc-sq{border-radius:10px;display:grid;place-items:center;flex-shrink:0}
+.bc-types{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:520px){.bc-types{grid-template-columns:1fr}}
+.bc-type{display:flex;flex-direction:column;gap:6px;padding:12px 13px;border:1.5px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-surface);cursor:pointer;text-align:left;transition:border-color .15s,background .15s;color:var(--text-primary);font:inherit}
+.bc-type:hover{border-color:var(--primary-ring)}
+.bc-type.active{border-color:var(--primary);background:var(--primary-soft)}
+.bc-type-title{display:flex;align-items:center;gap:7px;font-weight:700;font-size:.84rem}
+.bc-type-title svg{color:var(--primary);flex-shrink:0}
+.bc-type-desc{font-size:.74rem;line-height:1.45;color:var(--text-secondary)}
 .bc-spin{animation:bcSpin 1s linear infinite}
 @keyframes bcFade{from{opacity:0}to{opacity:1}}
 @keyframes bcPop{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
@@ -134,9 +155,13 @@ function StatCard({ icon, tint, value, label, sub }) {
 function MetricCell({ value, total, color }) {
   const pct = pctOf(value, total);
   return (
-    <div style={{ minWidth: 86 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-        <span style={{ fontWeight: 700 }}>{nf(value)}</span>
+    <div style={{ minWidth: 96 }} title={total > 0 ? `${nf(value)} of ${nf(total)} (${pct}%)` : undefined}>
+      {/* "x / total" — every column counts against the same total (the campaign's targeted subscribers). */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, whiteSpace: 'nowrap' }}>
+        <span>
+          <span style={{ fontWeight: 700 }}>{nf(value)}</span>
+          {total > 0 && <span style={{ fontSize: '.78rem', color: 'var(--text-muted)' }}> / {nf(total)}</span>}
+        </span>
         {total > 0 && <span style={{ fontSize: '.72rem', color: 'var(--text-muted)' }}>{pct}%</span>}
       </div>
       <div className="bc-mini">
@@ -173,7 +198,6 @@ export default function CampaignListPage() {
   const location = useLocation();
 
   const [activeTab, setActiveTab] = useState('WHATSAPP');
-  const [waMode, setWaMode] = useState('WINDOW'); // 'WINDOW' | 'TEMPLATE'
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [labels, setLabels] = useState([]);
@@ -187,8 +211,8 @@ export default function CampaignListPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createName, setCreateName] = useState('');
-  const [createTemplateId, setCreateTemplateId] = useState('');
   const [createIntegrationId, setCreateIntegrationId] = useState('');
+  const [createMode, setCreateMode] = useState('TEMPLATE');
 
   const [configuring, setConfiguring] = useState(null);
   const [configIntegrationId, setConfigIntegrationId] = useState('');
@@ -223,6 +247,30 @@ export default function CampaignListPage() {
   }, [activeTab]);
 
   useEffect(() => { loadCampaigns(); }, [loadCampaigns]);
+
+  // Live status + numbers (Sending → Sent / Failed, delivered, read…) pushed
+  // by the server as a broadcast runs — see utils/broadcastStats.js. A
+  // reconnect reloads the list, in case an update was missed while offline.
+  useEffect(() => {
+    let socket;
+    let connectedOnce = false;
+    try {
+      socket = io(getSocketUrl(), { auth: socketAuth(), transports: ['websocket', 'polling'] });
+      socket.on('connect', () => {
+        if (connectedOnce) loadCampaigns();
+        connectedOnce = true;
+      });
+      socket.on('broadcast_update', (update) => {
+        if (!update?.id) return;
+        const merge = (c) => (c && c.id === update.id ? { ...c, ...update } : c);
+        setCampaigns((prev) => prev.map(merge));
+        setSelectedCampaign((prev) => merge(prev));
+      });
+    } catch (err) {
+      console.error('[Broadcasting] live updates unavailable:', err);
+    }
+    return () => { socket?.disconnect(); };
+  }, [loadCampaigns]);
 
   useEffect(() => {
     broadcastAPI.getFormData(activeTab).then((res) => {
@@ -267,7 +315,7 @@ export default function CampaignListPage() {
     const t = setTimeout(async () => {
       try {
         const res = await broadcastAPI.audiencePreview({
-          platform: configuring.platform,
+          campaignId: configuring.id,
           includeLabelIds: audienceForm.includeLabelIds,
           excludeLabelIds: audienceForm.excludeLabelIds,
           includeContactIds: audienceForm.includeContacts.map((c) => c.id),
@@ -281,8 +329,9 @@ export default function CampaignListPage() {
 
   const handleCreateClick = () => {
     setCreateName('');
-    setCreateTemplateId('');
     setCreateIntegrationId(integrations.length === 1 ? String(integrations[0].id) : '');
+    // Most WhatsApp audiences are outside the 24-hour window, so Anytime is the default.
+    setCreateMode('TEMPLATE');
     setShowCreateModal(true);
   };
 
@@ -297,7 +346,14 @@ export default function CampaignListPage() {
       excludeContacts: [],
       tagLabelId: camp.tag_label_id || null,
     });
-    setScheduleAt('');
+    // Individually picked subscribers are stored as ids — load their names back,
+    // or saving here would clear them.
+    Promise.all([resolveContacts(parseIds(camp.include_contact_ids)), resolveContacts(parseIds(camp.exclude_contact_ids))])
+      .then(([includeContacts, excludeContacts]) => {
+        if (includeContacts.length || excludeContacts.length) setAudienceForm((f) => ({ ...f, includeContacts, excludeContacts }));
+      })
+      .catch(() => {});
+    setScheduleAt(toLocalInput(camp.scheduled_at));
     setAbEnabled(!!camp.variant_b_template_id);
     setVariantBTemplateId(camp.variant_b_template_id ? String(camp.variant_b_template_id) : '');
     setAbSplitPercent(camp.ab_split_percent || 50);
@@ -309,20 +365,17 @@ export default function CampaignListPage() {
     if (!createIntegrationId) { showToast(`Choose which ${channel.label} account to send from`, 'error'); return; }
     setCreating(true);
     try {
-      if (activeTab === 'WHATSAPP' && waMode === 'TEMPLATE') {
-        if (!createTemplateId) { showToast('Pick an approved template', 'error'); setCreating(false); return; }
-        const res = await broadcastAPI.createTemplateCampaign({ name: createName, platform: 'WHATSAPP', templateId: createTemplateId, integrationId: createIntegrationId });
-        showToast('Campaign created — configure its audience next');
-        setShowCreateModal(false);
-        loadCampaigns();
-        openConfigure({ id: res.data.campaignId, name: createName, platform: 'WHATSAPP', mode: 'TEMPLATE', status: 'DRAFT', integration_id: createIntegrationId, include_label_ids: null, exclude_label_ids: null, include_contact_ids: null, exclude_contact_ids: null, tag_label_id: null });
-      } else {
-        const res = await broadcastAPI.startWithFlow({ name: createName, platform: activeTab, integrationId: createIntegrationId });
-        setShowCreateModal(false);
-        navigate(`/flows/${res.data.flowId}/edit`, {
-          state: { from: location.pathname, label: 'Broadcasting', broadcastCampaignId: res.data.campaignId },
-        });
-      }
+      // Every broadcast is built in the Flow Builder, which opens with the
+      // element this type needs already connected to the Broadcast element.
+      // Only WhatsApp has the Anytime (template) type.
+      const res = await broadcastAPI.startWithFlow({
+        name: createName, platform: activeTab, integrationId: createIntegrationId,
+        mode: activeTab === 'WHATSAPP' ? createMode : 'WINDOW',
+      });
+      setShowCreateModal(false);
+      navigate(`/flows/${res.data.flowId}/edit`, {
+        state: { from: location.pathname, label: 'Broadcasting', broadcastCampaignId: res.data.campaignId },
+      });
     } catch (err) {
       showToast(err.response?.data?.message || 'Failed to create campaign', 'error');
     } finally {
@@ -330,12 +383,18 @@ export default function CampaignListPage() {
     }
   };
 
+  // 'draft' saves only. 'now' / 'schedule' save, then confirm the server's
+  // audience count (+ no-filter / large-audience warnings) before sending.
   const saveConfigure = async (sendMode) => {
     if (!configIntegrationId) { showToast('Choose which account this campaign sends from', 'error'); return; }
+    if (sendMode === 'schedule') {
+      if (!scheduleAt) { showToast('Pick a date/time to schedule', 'error'); return; }
+      if (new Date(scheduleAt).getTime() < Date.now() + 60 * 1000) { showToast('Pick a time at least a minute from now', 'error'); return; }
+    }
     setSavingConfig(true);
     try {
-      await broadcastAPI.update(configuring.id, {
-        integrationId: configIntegrationId,
+      const saved = await broadcastAPI.update(configuring.id, {
+        ...(configuring.integration_id ? {} : { integrationId: configIntegrationId }),
         includeLabelIds: audienceForm.includeLabelIds,
         excludeLabelIds: audienceForm.excludeLabelIds,
         includeContactIds: audienceForm.includeContacts.map((c) => c.id),
@@ -346,20 +405,35 @@ export default function CampaignListPage() {
           abSplitPercent: abEnabled ? abSplitPercent : null,
         } : {}),
       });
-      if (sendMode === 'now') {
-        await broadcastAPI.sendNow(configuring.id);
-        showToast('Broadcast started!');
-      } else if (sendMode === 'schedule') {
-        if (!scheduleAt) { showToast('Pick a date/time to schedule', 'error'); setSavingConfig(false); return; }
-        await broadcastAPI.schedule(configuring.id, new Date(scheduleAt).toISOString());
-        showToast('Broadcast scheduled!');
-      } else {
+      if (sendMode === 'draft') {
         showToast('Draft saved');
+        setConfiguring(null);
+        loadCampaigns();
+        return;
+      }
+      if (saved.data.readyErrors?.length) {
+        showBroadcastError({ response: { data: { message: saved.data.readyErrors[0], errors: saved.data.readyErrors } } });
+        return;
+      }
+      const whenIso = sendMode === 'schedule' ? new Date(scheduleAt).toISOString() : null;
+      const ok = await confirmBroadcastAudience({
+        audience: saved.data,
+        action: whenIso ? 'schedule' : 'send',
+        accountLabel: configuring.wa_display_phone || configuring.integration_name,
+        scheduledAt: whenIso,
+      });
+      if (!ok) return;
+      if (whenIso) {
+        const res = await broadcastAPI.schedule(configuring.id, whenIso, { confirmAudience: true });
+        showToast(res.data.rescheduled ? 'Broadcast rescheduled' : 'Broadcast scheduled');
+      } else {
+        await broadcastAPI.sendNow(configuring.id, { confirmAudience: true });
+        showToast('Broadcast started');
       }
       setConfiguring(null);
       loadCampaigns();
     } catch (err) {
-      showToast(err.response?.data?.message || 'Failed to save', 'error');
+      showBroadcastError(err, 'Failed to save');
     } finally {
       setSavingConfig(false);
     }
@@ -381,8 +455,14 @@ export default function CampaignListPage() {
   };
 
   const handleCancelSchedule = async (camp) => {
-    try { await broadcastAPI.cancelSchedule(camp.id); showToast('Schedule cancelled'); loadCampaigns(); }
+    try { await broadcastAPI.cancelSchedule(camp.id); showToast('Schedule cancelled — back to Draft'); loadCampaigns(); }
     catch { showToast('Failed to cancel', 'error'); }
+  };
+
+  // The row's button for a scheduled broadcast — cancelling puts it back to Draft (nothing is sent).
+  const confirmCancelSchedule = async (camp) => {
+    if (!window.confirm(`Cancel the schedule of "${camp.name}"? It goes back to Draft and won't be sent.`)) return;
+    await handleCancelSchedule(camp);
   };
 
   const handleDelete = async (camp) => {
@@ -395,10 +475,7 @@ export default function CampaignListPage() {
     } catch { showToast('Delete failed', 'error'); }
   };
 
-  const isTemplateMode = activeTab === 'WHATSAPP' && waMode === 'TEMPLATE';
-  const contextNote = isTemplateMode
-    ? 'Sends a pre-approved WhatsApp Template — reaches subscribers regardless of the 24-hour window, exactly what Meta requires for outreach outside it.'
-    : WINDOW_NOTE[activeTab];
+  const contextNote = WINDOW_NOTE[activeTab];
   const filtersActive = Boolean(statusFilter || accountFilter || search.trim());
 
   return (
@@ -439,21 +516,11 @@ export default function CampaignListPage() {
           <div style={{ flex: 1, minWidth: 260 }}>
             <div style={{ fontSize: '.85rem', fontWeight: 700, marginBottom: 3 }}>
               {activeTab === 'WHATSAPP'
-                ? (isTemplateMode ? 'Anytime — approved template' : 'Inside the 24-hour window')
+                ? 'Inside 24 hours or Anytime (template)'
                 : `${channel.label} · ${channel.hint}`}
             </div>
             <p style={{ fontSize: '.8rem', color: 'var(--text-secondary)', lineHeight: 1.55, maxWidth: 680 }}>{contextNote}</p>
           </div>
-          {activeTab === 'WHATSAPP' && (
-            <div className="bc-seg">
-              <button className={waMode === 'WINDOW' ? 'active' : ''} onClick={() => setWaMode('WINDOW')}>
-                <Clock size={13} /> Inside 24 Hours
-              </button>
-              <button className={waMode === 'TEMPLATE' ? 'active' : ''} onClick={() => setWaMode('TEMPLATE')}>
-                <Zap size={13} /> Anytime (Template)
-              </button>
-            </div>
-          )}
         </div>
 
         {/* Summary */}
@@ -516,9 +583,7 @@ export default function CampaignListPage() {
               </div>
               <h3 style={{ fontWeight: 700, fontSize: '1rem', marginBottom: 6 }}>No {channel.label} broadcasts yet</h3>
               <p style={{ color: 'var(--text-secondary)', fontSize: '.85rem', maxWidth: 390, margin: '0 auto' }}>
-                {isTemplateMode
-                  ? 'Create one, pick an approved template, then choose who receives it.'
-                  : 'Create one, design the message in the Flow Builder, then choose who receives it.'}
+                Create one, design the message in the Flow Builder, then choose who receives it.
               </p>
               <button className="btn btn-primary" onClick={handleCreateClick} style={{ marginTop: 18 }}>
                 <Plus size={15} /> New {channel.label} Broadcast
@@ -575,16 +640,20 @@ export default function CampaignListPage() {
                                 <CalendarClock size={13} /> {formatWhen(camp.scheduled_at)}
                               </span>
                             : camp.status === 'DRAFT'
-                              ? <span style={{ color: 'var(--text-muted)' }}>Not scheduled</span>
+                              ? <span style={{ color: 'var(--text-muted)' }}>{camp.scheduled_at ? `Planned · ${formatWhen(camp.scheduled_at)}` : 'Not scheduled'}</span>
                               : formatWhen(camp.updated_at || camp.created_at)}
                         </td>
                         <td>
                           <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end' }}>
-                            {camp.status === 'DRAFT' && (
-                              <button className="btn btn-primary btn-sm" onClick={() => openConfigure(camp)}>Configure &amp; Send</button>
+                            {camp.status === 'SCHEDULED' ? (
+                              <button className="btn btn-sm btn-secondary" onClick={() => confirmCancelSchedule(camp)}>Cancel Schedule</button>
+                            ) : ['DRAFT', 'FAILED'].includes(camp.status) && (
+                              <button className="btn btn-sm btn-primary" onClick={() => openConfigure(camp)}>Configure &amp; Send</button>
                             )}
-                            {camp.status === 'SCHEDULED' && (
-                              <button className="btn btn-secondary btn-sm" onClick={() => handleCancelSchedule(camp)}>Cancel</button>
+                            {camp.flow_id && ['DRAFT', 'FAILED', 'SCHEDULED'].includes(camp.status) && (
+                              <button className="bc-iconbtn" title="Edit in Flow Builder" onClick={() => navigate(`/flows/${camp.flow_id}/edit`, { state: { from: location.pathname, label: 'Broadcasting' } })}>
+                                <Workflow size={14} />
+                              </button>
                             )}
                             <button className="bc-iconbtn" title="Delivery report" onClick={() => handleViewLogs(camp)}>
                               <BarChart3 size={14} />
@@ -721,7 +790,7 @@ export default function CampaignListPage() {
         <ModalShell
           icon={<channel.Icon size={18} />}
           title={`New ${channel.label} Broadcast`}
-          subtitle={isTemplateMode ? 'Pick an approved template — you will set the audience next.' : 'Name it, then design the message in the Flow Builder.'}
+          subtitle="Name it and pick the account — then design the message and audience in the Flow Builder."
           onClose={() => setShowCreateModal(false)}
         >
           <form onSubmit={handleCreateSubmit}>
@@ -751,26 +820,39 @@ export default function CampaignListPage() {
                 )}
               </div>
 
-              {isTemplateMode && (
+              {activeTab === 'WHATSAPP' && (
                 <div className="form-group">
-                  <label className="form-label">Approved template</label>
-                  <select className="form-input" required value={createTemplateId} onChange={(e) => setCreateTemplateId(e.target.value)}>
-                    <option value="">— Select a template —</option>
-                    {templates.map((t) => <option key={t.id} value={t.id}>{t.template_name} ({t.language}, {t.category})</option>)}
-                  </select>
-                  {templates.length === 0 && (
-                    <p style={{ fontSize: '.74rem', color: 'var(--danger)' }}>
-                      No approved templates yet — create one under Settings → WhatsApp Templates first.
-                    </p>
-                  )}
+                  <label className="form-label">Broadcast type</label>
+                  <div className="bc-types" role="radiogroup" aria-label="Broadcast type">
+                    {[
+                      { value: 'TEMPLATE', Icon: FileText, title: 'Anytime', desc: 'An approved message template. Reaches subscribers even if they haven’t written in the last 24 hours.' },
+                      { value: 'WINDOW', Icon: MessageCircle, title: 'Inside 24 hours', desc: 'Free-form messages, only to subscribers who wrote to you in the last 24 hours.' },
+                    ].map((t) => (
+                      <button
+                        key={t.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={createMode === t.value}
+                        className={`bc-type${createMode === t.value ? ' active' : ''}`}
+                        onClick={() => setCreateMode(t.value)}
+                      >
+                        <span className="bc-type-title"><t.Icon size={15} />{t.title}</span>
+                        <span className="bc-type-desc">{t.desc}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <p style={{ fontSize: '.73rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                    You can still switch it later in the Broadcast element’s settings.
+                  </p>
                 </div>
               )}
+
             </div>
 
             <div className="bc-modal-foot" style={{ justifyContent: 'flex-end' }}>
               <button type="button" className="btn btn-secondary" onClick={() => setShowCreateModal(false)}>Cancel</button>
               <button type="submit" className="btn btn-primary" disabled={creating || integrations.length === 0}>
-                {creating ? <><Loader2 size={14} className="bc-spin" /> Creating…</> : isTemplateMode ? 'Create campaign' : <>Create &amp; open Flow Builder <ArrowRight size={14} /></>}
+                {creating ? <><Loader2 size={14} className="bc-spin" /> Creating…</> : <>Create &amp; open Flow Builder <ArrowRight size={14} /></>}
               </button>
             </div>
           </form>
@@ -783,18 +865,37 @@ export default function CampaignListPage() {
           <div className="bc-modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
             <div className="form-group">
               <label className="form-label">Send from</label>
-              <select className="form-input" value={configIntegrationId} onChange={(e) => setConfigIntegrationId(e.target.value)}>
-                <option value="">— Select an account —</option>
-                {integrations.map((i) => <option key={i.id} value={i.id}>{integrationLabel(i)}</option>)}
-              </select>
-              {!configIntegrationId && (
-                <p style={{ fontSize: '.73rem', color: 'var(--danger)' }}>Required — a campaign with no account chosen cannot be sent.</p>
+              {configuring.integration_id ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-hover)', fontSize: '.85rem', fontWeight: 600 }}>
+                  <Phone size={14} style={{ color: 'var(--text-muted)' }} />
+                  {configuring.wa_display_phone || configuring.integration_name || `Account #${configuring.integration_id}`}
+                  <span style={{ marginLeft: 'auto', fontSize: '.72rem', fontWeight: 500, color: 'var(--text-muted)' }}>Fixed for this broadcast</span>
+                </div>
+              ) : (
+                <>
+                  <select className="form-input" value={configIntegrationId} onChange={(e) => setConfigIntegrationId(e.target.value)}>
+                    <option value="">— Select an account —</option>
+                    {integrations.map((i) => <option key={i.id} value={i.id}>{integrationLabel(i)}</option>)}
+                  </select>
+                  {!configIntegrationId && (
+                    <p style={{ fontSize: '.73rem', color: 'var(--danger)' }}>Required — a campaign with no account chosen cannot be sent.</p>
+                  )}
+                </>
+              )}
+              {configuring.flow_id && (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/flows/${configuring.flow_id}/edit`, { state: { from: location.pathname, label: 'Broadcasting' } })}
+                  style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 6, background: 'none', border: 'none', padding: 0, color: 'var(--primary)', fontWeight: 600, fontSize: '.78rem', cursor: 'pointer' }}
+                >
+                  <Workflow size={13} /> Edit the message in the Flow Builder
+                </button>
               )}
             </div>
 
             <div style={{ height: 1, background: 'var(--border)' }} />
 
-            <AudienceForm platform={configuring.platform} labels={labels} value={audienceForm} onChange={setAudienceForm} previewCount={previewCount} />
+            <AudienceForm platform={configuring.platform} integrationId={configuring.integration_id || configIntegrationId || null} labels={labels} value={audienceForm} onChange={setAudienceForm} previewCount={previewCount} />
 
             {configuring.mode === 'TEMPLATE' && (
               <>
@@ -835,17 +936,32 @@ export default function CampaignListPage() {
             <div style={{ height: 1, background: 'var(--border)' }} />
 
             <div>
-              <label className="form-label" style={{ display: 'block', marginBottom: 8 }}>When to send</label>
+              <label className="form-label" style={{ display: 'block', marginBottom: 8 }}>{configuring.status === 'SCHEDULED' ? 'Schedule' : 'When to send'}</label>
+              {configuring.status === 'SCHEDULED' && configuring.scheduled_at && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px', marginBottom: 10, borderRadius: 'var(--radius-sm)', background: 'var(--primary-soft)', border: '1px solid var(--primary-ring)', fontSize: '.82rem' }}>
+                  <CalendarClock size={15} style={{ color: 'var(--primary)', flexShrink: 0 }} />
+                  <span>Scheduled for <strong>{new Date(configuring.scheduled_at).toLocaleString()}</strong></span>
+                </div>
+              )}
               <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                 <button className="btn btn-primary" disabled={savingConfig || !previewCount || !configIntegrationId} onClick={() => saveConfigure('now')}>
-                  {savingConfig ? <><Loader2 size={14} className="bc-spin" /> Working…</> : <><Send size={14} /> Send now</>}
+                  {savingConfig ? <><Loader2 size={14} className="bc-spin" /> Working…</> : <><Send size={14} /> Send Now</>}
                 </button>
-                <span style={{ fontSize: '.78rem', color: 'var(--text-muted)' }}>or</span>
-                <input type="datetime-local" className="form-input" style={{ flex: 1, minWidth: 190, width: 'auto' }} value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} />
-                <button className="btn btn-secondary" disabled={savingConfig || !previewCount || !configIntegrationId} onClick={() => saveConfigure('schedule')}>
-                  <CalendarClock size={14} /> Schedule
-                </button>
+                {canScheduleBroadcast(configuring.platform, configuring.mode) && (
+                  <>
+                    <span style={{ fontSize: '.78rem', color: 'var(--text-muted)' }}>or</span>
+                    <input type="datetime-local" aria-label="Send date and time" className="form-input" style={{ flex: 1, minWidth: 190, width: 'auto' }} min={toLocalInput(Date.now() + 60 * 1000)} value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} />
+                    <button className="btn btn-secondary" disabled={savingConfig || !previewCount || !configIntegrationId} onClick={() => saveConfigure('schedule')}>
+                      <CalendarClock size={14} /> {configuring.status === 'SCHEDULED' ? 'Reschedule' : 'Schedule'}
+                    </button>
+                  </>
+                )}
               </div>
+              {!canScheduleBroadcast(configuring.platform, configuring.mode) && (
+                <p style={{ fontSize: '.76rem', color: 'var(--text-muted)', marginTop: 9, lineHeight: 1.5 }}>
+                  An Inside 24 hours broadcast can&apos;t be scheduled — who is inside the window changes by the hour. To schedule it, switch it to Anytime (template) in the Flow Builder.
+                </p>
+              )}
               {!previewCount && (
                 <p style={{ fontSize: '.76rem', color: 'var(--danger)', marginTop: 9 }}>
                   No subscribers match this targeting yet — adjust the Include/Exclude rules above.
@@ -855,7 +971,13 @@ export default function CampaignListPage() {
           </div>
 
           <div className="bc-modal-foot">
-            <button className="btn btn-secondary" onClick={() => saveConfigure('draft')} disabled={savingConfig}>Save as draft</button>
+            {configuring.status === 'SCHEDULED' ? (
+              <button className="btn btn-secondary" onClick={async () => { await handleCancelSchedule(configuring); setConfiguring(null); }} disabled={savingConfig}>
+                <Ban size={14} /> Cancel schedule
+              </button>
+            ) : (
+              <button className="btn btn-secondary" onClick={() => saveConfigure('draft')} disabled={savingConfig}>Save as draft</button>
+            )}
             <button className="btn btn-secondary" onClick={() => setConfiguring(null)}>Close</button>
           </div>
         </ModalShell>

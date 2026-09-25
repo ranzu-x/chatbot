@@ -59,7 +59,7 @@ function SourcePicker({ value, onChange, fields }) {
   );
 }
 
-function CampaignEditor({ initial, meta, connections, whatsappAccounts, labels, onClose, onSaved }) {
+function CampaignEditor({ initial, meta, connections, whatsappAccounts, labels, targetIntegrationId, selectedAccount, onClose, onSaved }) {
   const [form, setForm] = useState(initial);
   const [templates, setTemplates] = useState([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
@@ -158,12 +158,22 @@ function CampaignEditor({ initial, meta, connections, whatsappAccounts, labels, 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
             <div className="form-group">
               <label className="form-label">WhatsApp account *</label>
-              <select className="form-input" value={form.integrationId} onChange={(e) => set({ integrationId: e.target.value, templateId: '', sequenceId: '', variableMap: { header: {}, body: {}, buttons: {} } })} required>
-                <option value="">Choose an account…</option>
-                {whatsappAccounts.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name || a.wa_display_phone || `Account #${a.id}`}{a.wa_display_phone && a.name ? ` (${a.wa_display_phone})` : ''}</option>
-                ))}
-              </select>
+              {targetIntegrationId && selectedAccount ? (
+                <div style={{ padding: '9px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-hover)', fontSize: '0.82rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, minHeight: 38 }}>
+                  <span style={{ color: '#10b981', fontSize: '1rem' }}>●</span>
+                  <span>{selectedAccount.name || selectedAccount.wa_display_phone || `Account #${selectedAccount.id}`}</span>
+                  {selectedAccount.wa_display_phone && selectedAccount.name && (
+                    <span style={{ color: 'var(--text-muted)', fontWeight: 500, fontSize: '0.76rem' }}>({selectedAccount.wa_display_phone})</span>
+                  )}
+                </div>
+              ) : (
+                <select className="form-input" value={form.integrationId} onChange={(e) => set({ integrationId: e.target.value, templateId: '', sequenceId: '', variableMap: { header: {}, body: {}, buttons: {} } })} required>
+                  <option value="">Choose an account…</option>
+                  {whatsappAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name || a.wa_display_phone || `Account #${a.id}`}{a.wa_display_phone && a.name ? ` (${a.wa_display_phone})` : ''}</option>
+                  ))}
+                </select>
+              )}
             </div>
             <div className="form-group">
               <label className="form-label">Message template *</label>
@@ -305,9 +315,9 @@ function CampaignEditor({ initial, meta, connections, whatsappAccounts, labels, 
 /**
  * Automation → Commerce → Automation Campaigns: order notifications, COD
  * verification and abandoned-cart recovery over WhatsApp templates.
- * Engine: chatbot_api/utils/commerceEvents.js.
+ * Scoped to the active WhatsApp bot account.
  */
-export default function CommerceCampaignsManager({ onOpenStores }) {
+export default function CommerceCampaignsManager({ onOpenStores, selectedAccount, integrationId }) {
   const [meta, setMeta] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
   const [connections, setConnections] = useState([]);
@@ -316,18 +326,26 @@ export default function CommerceCampaignsManager({ onOpenStores }) {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
 
+  const targetIntegrationId = integrationId || (selectedAccount?.id && selectedAccount.id !== 'all' ? selectedAccount.id : null);
+
   const load = () => {
     setLoading(true);
+    const campaignParams = targetIntegrationId ? { integrationId: targetIntegrationId } : {};
     Promise.all([
       commerceAPI.getMeta(),
-      commerceAPI.getCampaigns(),
+      commerceAPI.getCampaigns(campaignParams),
       commerceAPI.getConnections(),
       channelAPI.getWhatsApp().catch(() => ({ data: { accounts: [] } })),
       labelAPI.getAll().catch(() => ({ data: { labels: [] } })),
     ])
       .then(([m, c, s, w, l]) => {
         setMeta(m.data);
-        setCampaigns(c.data?.campaigns || []);
+        const rawCampaigns = c.data?.campaigns || [];
+        // Scope strictly to the bot if an integration is selected
+        const filtered = targetIntegrationId
+          ? rawCampaigns.filter((camp) => String(camp.integration_id) === String(targetIntegrationId))
+          : rawCampaigns;
+        setCampaigns(filtered);
         setConnections(s.data?.connections || []);
         setWhatsappAccounts((w.data?.accounts || []).filter((a) => a.is_active !== 0));
         setLabels(l.data?.labels || []);
@@ -336,11 +354,16 @@ export default function CommerceCampaignsManager({ onOpenStores }) {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [targetIntegrationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const triggerLabel = useMemo(() => Object.fromEntries((meta?.triggers || []).map((t) => [t.id, t.label])), [meta]);
 
-  const openNew = () => setEditing({ ...EMPTY, connectionId: connections[0]?.id || '', integrationId: whatsappAccounts.length === 1 ? whatsappAccounts[0].id : '' });
+  const openNew = () => setEditing({
+    ...EMPTY,
+    connectionId: connections[0]?.id || '',
+    integrationId: targetIntegrationId || (whatsappAccounts.length === 1 ? whatsappAccounts[0].id : ''),
+  });
+
   const openEdit = (c) => setEditing({
     id: c.id,
     name: c.name,
@@ -398,9 +421,17 @@ export default function CommerceCampaignsManager({ onOpenStores }) {
   return (
     <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-        <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)', maxWidth: 580 }}>
-          Each campaign sends one approved WhatsApp template when something happens in your store. Templates are required because store customers usually haven't messaged you in the last 24 hours.
-        </p>
+        <div>
+          {selectedAccount && (
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 999, background: 'rgba(16, 185, 129, 0.1)', color: '#059669', fontSize: '0.74rem', fontWeight: 700, marginBottom: 6, border: '1px solid rgba(16, 185, 129, 0.2)' }}>
+              <span>●</span>
+              <span>{selectedAccount.name || selectedAccount.wa_display_phone || `Account #${selectedAccount.id}`}</span>
+            </div>
+          )}
+          <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)', maxWidth: 580 }}>
+            Each campaign sends one approved WhatsApp template when something happens in your store. Templates are required because store customers usually haven't messaged you in the last 24 hours.
+          </p>
+        </div>
         <button className="btn btn-primary" onClick={openNew} disabled={!whatsappAccounts.length} title={whatsappAccounts.length ? '' : 'Connect a WhatsApp account first'}>
           <Plus size={15} /> New Campaign
         </button>
@@ -409,8 +440,8 @@ export default function CommerceCampaignsManager({ onOpenStores }) {
       {campaigns.length === 0 ? (
         <div className="empty-state">
           <div className="empty-icon"><MessageCircle size={28} /></div>
-          <div className="empty-title">No campaigns yet</div>
-          <div className="empty-desc">Create one for new orders, COD verification or abandoned carts.</div>
+          <div className="empty-title">No campaigns for this bot yet</div>
+          <div className="empty-desc">Create one for new orders, COD verification or abandoned carts on {selectedAccount?.name || 'this WhatsApp bot'}.</div>
         </div>
       ) : (
         <div className="table-wrapper">
@@ -468,6 +499,8 @@ export default function CommerceCampaignsManager({ onOpenStores }) {
           connections={connections}
           whatsappAccounts={whatsappAccounts}
           labels={labels}
+          targetIntegrationId={targetIntegrationId}
+          selectedAccount={selectedAccount}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); load(); }}
         />

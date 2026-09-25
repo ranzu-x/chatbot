@@ -437,7 +437,7 @@ export default function PackagesPage() {
             <button
               type="button"
               onClick={handleCreateNewPackage}
-              style={{ padding: '8px 16px', borderRadius: 8, background: '#0f172a', color: '#ffffff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.82rem', fontWeight: 700 }}
+              style={{ padding: '8px 16px', borderRadius: 8, background: 'var(--primary)', color: '#ffffff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.82rem', fontWeight: 700 }}
             >
               <Plus size={15} /> Create Package
             </button>
@@ -621,7 +621,7 @@ export default function PackagesPage() {
                   style={{
                     padding: '8px 20px',
                     borderRadius: 8,
-                    background: '#0f172a',
+                    background: 'var(--primary)',
                     color: '#ffffff',
                     border: 'none',
                     fontSize: '0.82rem',
@@ -987,7 +987,7 @@ export default function PackagesPage() {
                 style={{
                   padding: '9px 24px',
                   borderRadius: 8,
-                  background: '#0f172a',
+                  background: 'var(--primary)',
                   color: '#ffffff',
                   border: 'none',
                   fontSize: '0.84rem',
@@ -1068,7 +1068,7 @@ export default function PackagesPage() {
                   <button
                     type="submit"
                     disabled={assigning}
-                    style={{ padding: '8px 18px', borderRadius: 8, background: '#0f172a', color: '#ffffff', border: 'none', fontSize: '0.8rem', fontWeight: 700, cursor: assigning ? 'not-allowed' : 'pointer' }}
+                    style={{ padding: '8px 18px', borderRadius: 8, background: 'var(--primary)', color: '#ffffff', border: 'none', fontSize: '0.8rem', fontWeight: 700, cursor: assigning ? 'not-allowed' : 'pointer' }}
                   >
                     {assigning ? 'Assigning...' : 'Confirm Assignment'}
                   </button>

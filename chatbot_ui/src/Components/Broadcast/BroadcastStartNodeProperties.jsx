@@ -1,7 +1,13 @@
-import { useState, useEffect, useCallback } from 'react';
-import { broadcastAPI } from '../../services/api';
+import { useNavigate } from 'react-router';
 import AudienceForm from './AudienceForm';
-import { Megaphone, Send, Loader2, CircleCheck, CircleX, Clock } from 'lucide-react';
+import { useBroadcastCampaignContext } from './useBroadcastCampaign';
+import { Megaphone, Loader2, CircleX, Clock, Lock, FileText, MessagesSquare, Send } from 'lucide-react';
+
+const BROADCASTING_PAGE = '/campaigns';
+
+const STATUS_LABEL = {
+  DRAFT: 'Draft', SCHEDULED: 'Scheduled', PROCESSING: 'Sending', COMPLETED: 'Sent', FAILED: 'Failed', CANCELLED: 'Cancelled',
+};
 
 /** Grayscale delivery bar + legend — the same read as the Broadcasting page. */
 function MetricBars({ campaign }) {
@@ -34,130 +40,52 @@ function MetricBars({ campaign }) {
   );
 }
 
+/** Two-option segmented control in the builder's style. */
+export function Segmented({ value, options, onChange, ariaLabel, disabled = false }) {
+  return (
+    <div role="radiogroup" aria-label={ariaLabel} style={{ display: 'flex', gap: 4, padding: 3, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-base, transparent)' }}>
+      {options.map((o) => {
+        const active = value === o.value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            disabled={disabled}
+            onClick={() => onChange(o.value)}
+            style={{
+              flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '7px 8px',
+              borderRadius: 7, border: 'none', fontSize: '0.78rem', fontWeight: 700, cursor: disabled ? 'not-allowed' : 'pointer',
+              background: active ? 'var(--primary)' : 'transparent', color: active ? '#fff' : 'var(--text-secondary)',
+              transition: 'background .15s, color .15s',
+            }}
+          >
+            {o.icon}{o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /**
- * Replaces the regular Start node's keyword-trigger panel for a
- * BROADCAST-typed flow (Flow Builder opened from the Broadcasting page's
- * "Create" button). A broadcast flow is never keyword-triggered — its Start
- * node instead holds the whole campaign: who it goes to (Include/Exclude
- * labels + subscribers), what label to tag them with on send, WhatsApp's
- * Inside-24h-vs-Anytime choice, and Send Now / Schedule. This is the SAME
- * campaign record routes/broadcasts.js's start-with-flow created — found via
- * GET /broadcasts/by-flow/:flowId, so it works regardless of how this editor
- * session was opened.
+ * The Broadcast element (Start node of a BROADCAST flow — opened from the
+ * Broadcasting page's "New Broadcast"). Its settings are the campaign's name,
+ * sending mode (WhatsApp: Inside 24 hours → a Send Message element, Anytime →
+ * a Message Template element, swapped on the canvas) and audience. The bot
+ * account is fixed. Campaign state lives in useBroadcastCampaign (shared with
+ * the builder's top bar); audience edits save themselves.
+ *
+ * Saving and sending are NOT here: the builder's Save saves the draft, and
+ * its Review & Send button opens the send / schedule dialog. This panel only
+ * has the builder's standard Done button.
  */
-export default function BroadcastStartNodeProperties({ flowId, flowName, onFlowNameChange, platform }) {
-  const [campaign, setCampaign] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [labels, setLabels] = useState([]);
-  const [templates, setTemplates] = useState([]);
-  const [integrations, setIntegrations] = useState([]);
-  const [integrationId, setIntegrationId] = useState('');
-  const [audienceForm, setAudienceForm] = useState({ includeLabelIds: [], excludeLabelIds: [], includeContacts: [], excludeContacts: [], tagLabelId: null });
-  const [previewCount, setPreviewCount] = useState(null);
-  const [waMode, setWaMode] = useState('WINDOW');
-  const [templateId, setTemplateId] = useState('');
-  const [scheduleAt, setScheduleAt] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [savedTick, setSavedTick] = useState(false);
+export default function BroadcastStartNodeProperties({ flowName, onFlowNameChange, platform }) {
+  const navigate = useNavigate();
+  const bc = useBroadcastCampaignContext();
 
-  const load = useCallback(async () => {
-    if (!flowId) return;
-    setLoading(true);
-    try {
-      const [campRes, formRes] = await Promise.allSettled([
-        broadcastAPI.getByFlow(flowId),
-        broadcastAPI.getFormData(platform),
-      ]);
-      if (campRes.status === 'fulfilled') {
-        const c = campRes.value.data.campaign;
-        setCampaign(c);
-        const parseIds = (v) => { try { return Array.isArray(v) ? v : JSON.parse(v || '[]'); } catch { return []; } };
-        setAudienceForm({
-          includeLabelIds: parseIds(c.include_label_ids),
-          excludeLabelIds: parseIds(c.exclude_label_ids),
-          includeContacts: [],
-          excludeContacts: [],
-          tagLabelId: c.tag_label_id,
-        });
-        setWaMode(c.mode === 'TEMPLATE' ? 'TEMPLATE' : 'WINDOW');
-        setTemplateId(c.template_id || '');
-        setIntegrationId(c.integration_id ? String(c.integration_id) : '');
-      }
-      if (formRes.status === 'fulfilled') {
-        setLabels(formRes.value.data.labels || []);
-        setTemplates(formRes.value.data.templates || []);
-        const integs = formRes.value.data.integrations || [];
-        setIntegrations(integs);
-        if (campRes.status === 'fulfilled' && !campRes.value.data.campaign.integration_id && integs.length === 1) {
-          setIntegrationId(String(integs[0].id));
-        }
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [flowId, platform]);
-
-  useEffect(() => { load(); }, [load]);
-
-  // Live audience preview
-  useEffect(() => {
-    if (!campaign) return;
-    setPreviewCount(null);
-    const t = setTimeout(async () => {
-      try {
-        const res = await broadcastAPI.audiencePreview({
-          platform,
-          includeLabelIds: audienceForm.includeLabelIds,
-          excludeLabelIds: audienceForm.excludeLabelIds,
-          includeContactIds: audienceForm.includeContacts.map((c) => c.id),
-          excludeContactIds: audienceForm.excludeContacts.map((c) => c.id),
-        });
-        setPreviewCount(res.data.count);
-      } catch { setPreviewCount(null); }
-    }, 350);
-    return () => clearTimeout(t);
-  }, [campaign, audienceForm, platform]);
-
-  const persist = async () => {
-    if (!campaign) return;
-    setSaving(true);
-    try {
-      await broadcastAPI.update(campaign.id, {
-        name: flowName,
-        integrationId: integrationId || undefined,
-        includeLabelIds: audienceForm.includeLabelIds,
-        excludeLabelIds: audienceForm.excludeLabelIds,
-        includeContactIds: audienceForm.includeContacts.map((c) => c.id),
-        excludeContactIds: audienceForm.excludeContacts.map((c) => c.id),
-        tagLabelId: audienceForm.tagLabelId,
-        templateId: platform === 'WHATSAPP' && waMode === 'TEMPLATE' ? templateId : undefined,
-      });
-      setSavedTick(true);
-      setTimeout(() => setSavedTick(false), 1800);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleSendNow = async () => {
-    await persist();
-    await broadcastAPI.sendNow(campaign.id);
-    load();
-  };
-
-  const handleSchedule = async () => {
-    if (!scheduleAt) return;
-    await persist();
-    await broadcastAPI.schedule(campaign.id, new Date(scheduleAt).toISOString());
-    load();
-  };
-
-  const handleCancelSchedule = async () => {
-    await broadcastAPI.cancelSchedule(campaign.id);
-    load();
-  };
-
-  if (loading) {
+  if (!bc || bc.loading) {
     return (
       <div className="fb-field" style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted, #64748b)' }}>
         <Loader2 size={14} style={{ animation: 'spin 0.8s linear infinite' }} /> Loading campaign…
@@ -165,6 +93,7 @@ export default function BroadcastStartNodeProperties({ flowId, flowName, onFlowN
     );
   }
 
+  const { campaign, accountLabel, editable, mode } = bc;
   if (!campaign) {
     return (
       <div className="fb-field">
@@ -172,40 +101,33 @@ export default function BroadcastStartNodeProperties({ flowId, flowName, onFlowN
       </div>
     );
   }
-
-  const canSend = !loading && !saving && previewCount && !!integrationId && ['DRAFT', 'SCHEDULED', 'FAILED'].includes(campaign.status);
-  const isFinal = ['PROCESSING', 'COMPLETED'].includes(campaign.status);
-  const integrationLabel = (i) => i.wa_display_phone || i.fb_page_name || i.name || `Account #${i.id}`;
+  const isFinal = ['PROCESSING', 'COMPLETED', 'CANCELLED'].includes(campaign.status);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div className="fb-field">
         <label>Campaign Name</label>
-        <input value={flowName || ''} onChange={(e) => onFlowNameChange?.(e.target.value)} placeholder="e.g. Weekend Sale Announcement" />
+        <input value={flowName || ''} onChange={(e) => onFlowNameChange?.(e.target.value)} placeholder="e.g. Weekend Sale Announcement" disabled={!editable} />
       </div>
 
+      {/* Fixed bot account — chosen on the Broadcasting page, never changed here. */}
       <div className="fb-field">
-        <label>Send From</label>
-        {isFinal ? (
-          <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>
-            {integrations.find((i) => String(i.id) === String(integrationId))
-              ? integrationLabel(integrations.find((i) => String(i.id) === String(integrationId)))
-              : 'Account no longer connected'}
+        <label>Sending From</label>
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, padding: '9px 11px', borderRadius: 10,
+            border: '1px solid var(--border)', background: 'var(--bg-hover)', fontSize: '0.82rem', fontWeight: 600,
+          }}
+        >
+          <Lock size={13} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {accountLabel || (campaign.integration_id ? 'Account no longer connected' : 'No account')}
           </span>
-        ) : integrations.length === 0 ? (
-          <span className="fb-hint" style={{ color: 'var(--danger)', fontWeight: 600 }}>No active {platform} account connected — connect one on the Channels page first.</span>
-        ) : (
-          <>
-            <select className="form-input w-full" value={integrationId} onChange={(e) => setIntegrationId(e.target.value)}>
-              <option value="">— Select an account —</option>
-              {integrations.map((i) => <option key={i.id} value={i.id}>{integrationLabel(i)}</option>)}
-            </select>
-            {!integrationId && <span className="fb-hint" style={{ color: 'var(--danger)', fontWeight: 600 }}>Required — pick which connected account this campaign sends from.</span>}
-          </>
-        )}
+        </div>
+        <span className="fb-hint">Fixed for this broadcast — chosen when it was created.</span>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', borderRadius: 999,
@@ -213,11 +135,11 @@ export default function BroadcastStartNodeProperties({ flowId, flowName, onFlowN
             background: 'var(--primary-soft)', border: '1px solid var(--primary-ring)',
           }}
         >
-          {campaign.status}
+          {STATUS_LABEL[campaign.status] || campaign.status}
         </span>
-        {campaign.scheduled_at && campaign.status === 'SCHEDULED' && (
+        {campaign.scheduled_at && (
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted, #64748b)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <Clock size={12} /> {new Date(campaign.scheduled_at).toLocaleString()}
+            <Clock size={12} /> {campaign.status === 'SCHEDULED' ? '' : 'Planned: '}{new Date(campaign.scheduled_at).toLocaleString()}
           </span>
         )}
       </div>
@@ -228,86 +150,60 @@ export default function BroadcastStartNodeProperties({ flowId, flowName, onFlowN
         </div>
       )}
 
-      {isFinal ? (
-        <MetricBars campaign={campaign} />
-      ) : (
+      {isFinal && <MetricBars campaign={campaign} />}
+
+      {campaign.status === 'SCHEDULED' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-hover)' }}>
+          <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            This broadcast is scheduled. Use Review &amp; Send at the top to reschedule it or send it now, or cancel the schedule to edit it here.
+          </span>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={bc.cancelSchedule}>Cancel Schedule</button>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => navigate(BROADCASTING_PAGE)}>Open Broadcasting</button>
+          </div>
+        </div>
+      )}
+
+      {editable && (
         <>
           {platform === 'WHATSAPP' && (
             <div className="fb-field">
               <label>Sending Mode</label>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button
-                  type="button"
-                  onClick={() => setWaMode('WINDOW')}
-                  style={{ flex: 1, padding: '6px 10px', borderRadius: 8, fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: waMode === 'WINDOW' ? 'var(--primary)' : 'transparent', color: waMode === 'WINDOW' ? '#fff' : 'var(--text-secondary)' }}
-                >
-                  Inside 24 Hours
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setWaMode('TEMPLATE')}
-                  style={{ flex: 1, padding: '6px 10px', borderRadius: 8, fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer', border: '1px solid var(--border)', background: waMode === 'TEMPLATE' ? 'var(--primary)' : 'transparent', color: waMode === 'TEMPLATE' ? '#fff' : 'var(--text-secondary)' }}
-                >
-                  Anytime (Template)
-                </button>
-              </div>
-              {waMode === 'TEMPLATE' && (
-                <>
-                  <span className="fb-hint">Anytime mode sends an approved Template instead of this flow's message nodes — Meta requires a pre-approved Template outside the 24-hour window.</span>
-                  <select className="form-input w-full" value={templateId} onChange={(e) => setTemplateId(e.target.value)} style={{ marginTop: 8 }}>
-                    <option value="">— Select an approved template —</option>
-                    {templates.map((t) => <option key={t.id} value={t.id}>{t.template_name} ({t.language})</option>)}
-                  </select>
-                </>
-              )}
+              <Segmented
+                ariaLabel="Sending mode"
+                value={mode}
+                onChange={bc.changeMode}
+                disabled={bc.modeBusy}
+                options={[
+                  { value: 'TEMPLATE', label: 'Anytime', icon: <FileText size={13} /> },
+                  { value: 'WINDOW', label: 'Inside 24 Hours', icon: <MessagesSquare size={13} /> },
+                ]}
+              />
+              <span className="fb-hint">
+                {mode === 'TEMPLATE'
+                  ? 'Reaches subscribers outside the 24-hour window with an approved template — set it in the Message Template element connected to this Broadcast.'
+                  : 'Free-form messages to subscribers who wrote in during the last 24 hours — write them in the Send Message element connected to this Broadcast.'}
+              </span>
             </div>
           )}
 
-          <AudienceForm platform={platform} labels={labels} value={audienceForm} onChange={setAudienceForm} previewCount={previewCount} />
+          <AudienceForm platform={platform} integrationId={campaign.integration_id} labels={bc.labels} value={bc.audienceForm} onChange={bc.setAudienceForm} previewCount={bc.previewCount} />
 
-          <div className="fb-field">
-            <label>When to send</label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <button
-                type="button"
-                onClick={handleSendNow}
-                disabled={!canSend}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '9px 14px',
-                  borderRadius: 8, border: 'none', fontWeight: 700, fontSize: '0.85rem', cursor: canSend ? 'pointer' : 'not-allowed',
-                  background: canSend ? 'var(--primary)' : 'var(--border-light)', color: '#fff',
-                }}
-              >
-                <Send size={14} /> Send Now
-              </button>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input type="datetime-local" className="form-input" style={{ flex: 1 }} value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} />
-                <button
-                  type="button"
-                  onClick={handleSchedule}
-                  disabled={!canSend || !scheduleAt}
-                  className="btn btn-secondary btn-sm"
-                >
-                  Schedule
-                </button>
-              </div>
-              {campaign.status === 'SCHEDULED' && (
-                <button type="button" onClick={handleCancelSchedule} className="btn btn-secondary btn-sm">Cancel Schedule</button>
-              )}
-              {!previewCount && <span className="fb-hint" style={{ color: 'var(--danger)', fontWeight: 600 }}>No subscribers match this targeting yet.</span>}
-            </div>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px', borderRadius: 10, border: '1px dashed var(--border)' }}>
+            <Send size={14} style={{ marginTop: 1, flexShrink: 0, color: 'var(--text-muted)' }} />
+            <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary, #64748b)', lineHeight: 1.5 }}>
+              <strong>Save</strong> keeps this as a draft — nothing is sent. When it&apos;s ready, click <strong>Review &amp; Send</strong> at the top to send it now or schedule it.
+            </span>
           </div>
-
-          <button type="button" onClick={persist} disabled={saving} className="btn btn-secondary btn-sm" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-            {savedTick ? <><CircleCheck size={13} /> Saved</> : saving ? 'Saving…' : 'Save Draft'}
-          </button>
         </>
       )}
 
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px', borderRadius: 10, background: 'var(--primary-soft)', border: '1px solid var(--primary-ring)' }}>
         <Megaphone size={14} style={{ marginTop: 1, flexShrink: 0, color: 'var(--primary)' }} />
         <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary, #64748b)', lineHeight: 1.5 }}>
-          Add message nodes after this Start node for what gets sent{waMode === 'TEMPLATE' ? ' (skipped in Anytime mode — the Template above is sent instead)' : ''}.
+          {mode === 'TEMPLATE'
+            ? 'Anytime sends only the Message Template element connected right after this Broadcast.'
+            : 'Everything connected after this Broadcast, up to the first question, condition or delay, is sent.'}
         </span>
       </div>
     </div>

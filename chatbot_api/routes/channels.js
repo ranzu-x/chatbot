@@ -8,6 +8,7 @@ import { buildDeepLink } from "../utils/deepLinkBuilder.js";
 import { resolveMetaAppSettings, resolveWhatsAppOnboardingAppId } from "../utils/appCredentials.js";
 import { looksLikeTechProviderSuspension } from "../utils/metaAppHealth.js";
 import { deleteIntegrationCascade } from "../utils/integrationCascade.js";
+import { countNewAccounts, assertRoomForNewAccounts } from "../utils/botAccountLimit.js";
 import { registerTelegramWebhook } from "../utils/webhookAuth.js";
 
 const router = express.Router();
@@ -48,6 +49,9 @@ function stripSecrets(rowOrRows, req) {
   };
   return Array.isArray(rowOrRows) ? rowOrRows.map(redact) : redact(rowOrRows);
 }
+
+// Bot-account limit on (re)connect: only accounts that would become a NEW row
+// count against max_bot_accounts — see utils/botAccountLimit.js.
 
 // Helper to resolve agencyId cleanly for both AGENCY owners and ADMIN users.
 // SECURITY: Only looks up agency owned by the current user — never picks up
@@ -515,7 +519,13 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
   try {
     await assertModuleAccess(agencyId, "channel_whatsapp", req.user?.id);
     await assertModuleAccess(agencyId, "feature_whatsapp_embedded_signup", req.user?.id);
-    await assertLimit(agencyId, "max_bot_accounts", 1, req.user?.id);
+    // Re-running signup for a number that is already a bot account is a
+    // reconnect and never counts against the plan. When the popup told us the
+    // number, check now (before any Meta call); the insert below re-checks
+    // with the number Meta actually resolved.
+    if (phoneNumberId) {
+      await assertRoomForNewAccounts(agencyId, req.user?.id, await countNewAccounts(agencyId, "WHATSAPP", "wa_phone_number_id", [phoneNumberId]));
+    }
 
     // 1. Fetch Meta App credentials — this agency's own if configured,
     // otherwise its parent Reseller's, otherwise the Platform's (Super
@@ -699,6 +709,8 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
          verifyToken, pId, phoneDisplay || null, effectiveWabaId || null, catalogFlag, integrationId]
       );
     } else {
+      // A new number: this is where it would become a new bot account.
+      await assertRoomForNewAccounts(agencyId, req.user?.id, 1);
       const [ins] = await pool.query(
         `INSERT INTO integrations
            (agency_id, platform, name, access_token, verify_token,
@@ -802,6 +814,28 @@ router.get("/channels/facebook", async (req, res) => {
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
+// ─── Pre-import limit check for a multi-account selection ─────────────────
+// The Facebook / Instagram import screens save each selected account with its
+// own request; they call this first so a selection whose NEW accounts don't
+// fit the plan is refused as a whole before anything is saved (already
+// connected accounts = reconnect, never counted). 403 LIMIT_EXCEEDED /
+// RESELLER_POOL_LIMIT_EXCEEDED when it doesn't fit, else { newCount }.
+const IMPORT_CHECK_COLUMN = { FACEBOOK: "fb_page_id", INSTAGRAM: "ig_account_id" };
+router.post("/channels/import-check", async (req, res) => {
+  const platform = String(req.body?.platform || "").toUpperCase();
+  const column = IMPORT_CHECK_COLUMN[platform];
+  if (!column) return res.status(400).json({ success: false, message: "platform must be FACEBOOK or INSTAGRAM" });
+  const ids = Array.isArray(req.body?.accountIds) ? req.body.accountIds.slice(0, 500) : [];
+  try {
+    const agencyId = req.agencyId || await resolveAgencyId(req);
+    const newCount = await countNewAccounts(agencyId, platform, column, ids);
+    await assertRoomForNewAccounts(agencyId, req.user?.id, newCount, { batch: true });
+    return res.json({ success: true, newCount, reconnectCount: new Set(ids.filter(Boolean).map(String)).size - newCount });
+  } catch (err) {
+    return res.status(err.status || 500).json({ success: false, message: err.message || "Server error", code: err.code });
+  }
+});
+
 router.post("/channels/facebook", async (req, res) => {
   const { name, accessToken, userAccessToken, verifyToken, fbPageId, fbPageName, profilePictureUrl, profile_picture_url } = req.body;
   if (!name || !accessToken || !fbPageId)
@@ -811,7 +845,8 @@ router.post("/channels/facebook", async (req, res) => {
 
   try {
     await assertModuleAccess(req.agencyId, "channel_facebook", req.user?.id);
-    await assertLimit(req.agencyId, "max_bot_accounts", 1, req.user?.id);
+    // Only a Page that isn't connected yet counts against the plan (reconnect never does).
+    await assertRoomForNewAccounts(req.agencyId, req.user?.id, await countNewAccounts(req.agencyId, "FACEBOOK", "fb_page_id", [fbPageId]));
 
     // Try auto-exchanging for a permanent never-expiring Page Access Token
     let finalAccessToken = accessToken;
@@ -897,7 +932,8 @@ router.post("/channels/facebook/quick-connect", async (req, res) => {
 
   try {
     await assertModuleAccess(agencyId, "channel_facebook", req.user?.id);
-    await assertLimit(agencyId, "max_bot_accounts", 1, req.user?.id);
+    // The bot-account limit is checked below, once the Pages are known —
+    // only Pages not connected yet count (reconnecting never does).
 
     // Was "WHERE agency_id = ? OR is_configured = 1" — due to SQL operator
     // precedence that matched ANY configured agency's row, not necessarily
@@ -948,6 +984,11 @@ router.post("/channels/facebook/quick-connect", async (req, res) => {
         });
       }
     }
+
+    // Whole batch refused (nothing saved or subscribed) if its NEW Pages don't fit the plan.
+    const importable = pageList.filter((p) => p.id && p.access_token);
+    await assertRoomForNewAccounts(agencyId, req.user?.id,
+      await countNewAccounts(agencyId, "FACEBOOK", "fb_page_id", importable.map((p) => p.id)), { batch: true });
 
     const savedPages = [];
     for (const page of pageList) {
@@ -1450,7 +1491,8 @@ router.post("/channels/instagram", async (req, res) => {
 
   try {
     await assertModuleAccess(req.agencyId, "channel_instagram", req.user?.id);
-    await assertLimit(req.agencyId, "max_bot_accounts", 1, req.user?.id);
+    // Only an account that isn't connected yet counts against the plan (reconnect never does).
+    await assertRoomForNewAccounts(req.agencyId, req.user?.id, await countNewAccounts(req.agencyId, "INSTAGRAM", "ig_account_id", [igAccountId]));
 
     // Check if account already exists for this agency
     const [existing] = await pool.query(
@@ -1503,7 +1545,8 @@ router.post("/channels/instagram/quick-connect", async (req, res) => {
 
   try {
     await assertModuleAccess(agencyId, "channel_instagram", req.user?.id);
-    await assertLimit(agencyId, "max_bot_accounts", 1, req.user?.id);
+    // The bot-account limit is checked below, once the accounts are known —
+    // only accounts not connected yet count (reconnecting never does).
     const rawToken = userAccessToken.trim();
 
     // 1. Fetch Meta App Credentials to auto-upgrade to long-lived token
@@ -1579,6 +1622,10 @@ router.post("/channels/instagram/quick-connect", async (req, res) => {
       });
     }
 
+    // Whole batch refused (nothing saved or subscribed) if its NEW accounts don't fit the plan.
+    await assertRoomForNewAccounts(agencyId, req.user?.id,
+      await countNewAccounts(agencyId, "INSTAGRAM", "ig_account_id", discoveredIgAccounts.map((a) => a.id)), { batch: true });
+
     const savedAccounts = [];
 
     // 4. Save and auto-subscribe all discovered accounts
@@ -1642,18 +1689,32 @@ router.post("/channels/instagram/sync-from-facebook", async (req, res) => {
 
     const connectedIgList = [];
 
+    // 1. Find the Instagram account linked to each connected Page (nothing saved yet).
+    const found = [];
     for (const fb of fbIntegrations) {
       const pageToken = fb.access_token;
       if (!pageToken) continue;
-
       try {
         const checkRes = await fetch(
           `https://graph.facebook.com/v21.0/me?fields=id,name,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${pageToken}`
         );
         const checkData = await checkRes.json();
         const ig = checkData.instagram_business_account || checkData.connected_instagram_account;
+        if (ig && ig.id) found.push({ fb, pageToken, checkData, ig });
+      } catch (err) {
+        console.warn(`[Sync IG from Page ${fb.name}] warning:`, err.message);
+      }
+    }
 
-        if (ig && ig.id) {
+    // 2. Whole sync refused (nothing saved or subscribed) if its NEW accounts
+    // don't fit the plan — already-connected ones never count.
+    await assertRoomForNewAccounts(agencyId, req.user?.id,
+      await countNewAccounts(agencyId, "INSTAGRAM", "ig_account_id", found.map((f) => f.ig.id)), { batch: true });
+
+    // 3. Subscribe and save each one (reconnect = update the same row).
+    for (const { fb, pageToken, checkData, ig } of found) {
+      try {
+        {
           const displayName = ig.name || `@${ig.username}` || `${fb.name} Instagram`;
 
           // Subscribe Page to Instagram webhooks
@@ -1702,6 +1763,9 @@ router.post("/channels/instagram/sync-from-facebook", async (req, res) => {
     });
   } catch (err) {
     console.error("[Sync IG error]", err);
+    if (["LIMIT_EXCEEDED", "RESELLER_POOL_LIMIT_EXCEEDED", "MODULE_DISABLED"].includes(err.code)) {
+      return res.status(err.status || 403).json({ success: false, message: err.message, code: err.code });
+    }
     return res.status(500).json({ success: false, message: "Failed to sync Instagram accounts: " + err.message });
   }
 });

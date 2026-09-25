@@ -20,6 +20,9 @@ import { runPrivateReplyFlow, generateCommentReply } from "../utils/commentPriva
 import { handleAppointmentBooking } from "../utils/appointmentBookingEngine.js";
 import { isCommerceButton, handleCommerceButton } from "../utils/commerceEvents.js";
 import { isValidTelegramSecret, isValidTikTokSignature } from "../utils/webhookAuth.js";
+import { recountBroadcastStats } from "../utils/broadcastStats.js";
+import { loadRuleLinks, findRuleForPost } from "../utils/commentRulePosts.js";
+import { getPublicBackendUrl, resolvePublicImageUrl } from "../utils/platformSender.js";
 
 const router = express.Router();
 
@@ -158,7 +161,9 @@ async function markBroadcastLogStatus(externalMsgId, status, errorMessage = null
     if (!log) return;
     // Never move a log backwards (e.g. a late "delivered" event arriving
     // after "read" already landed) — READ implies DELIVERED already happened.
+    // FAILED is final, and a repeated "failed" event changes nothing.
     const rank = { PENDING: 0, SENT: 1, DELIVERED: 2, READ: 3, FAILED: 4 };
+    if (log.status === "FAILED") return;
     if (status !== "FAILED" && rank[status] <= rank[log.status]) return;
 
     const column = status === "DELIVERED" ? "delivered_at" : status === "READ" ? "read_at" : null;
@@ -166,10 +171,9 @@ async function markBroadcastLogStatus(externalMsgId, status, errorMessage = null
       `UPDATE broadcast_logs SET status = ?${column ? `, ${column} = NOW()` : ""}${status === "FAILED" ? ", error_message = ?" : ""} WHERE id = ?`,
       status === "FAILED" ? [status, errorMessage, log.id] : [status, log.id]
     );
-    const counterColumn = status === "DELIVERED" ? "delivered_count" : status === "READ" ? "read_count" : status === "FAILED" ? "failed_count" : null;
-    if (counterColumn) {
-      await pool.query(`UPDATE broadcast_campaigns SET ${counterColumn} = ${counterColumn} + 1 WHERE id = ?`, [log.campaign_id]);
-    }
+    // Recount rather than +1: a message accepted and then reported failed
+    // moves from Sent to Failed instead of being counted in both.
+    await recountBroadcastStats(log.campaign_id);
   } catch (err) {
     console.error("[Broadcast] failed to mirror status update:", err.message);
   }
@@ -671,11 +675,12 @@ async function processCommentAutomation({ commentId, postId, senderId, senderNam
       return;
     }
 
-    // Find all active comment rules for this agency and platform
+    // Find all active comment rules for this agency and platform (a SAVED
+    // campaign is a reusable copy that runs on no post — never matched)
     const [rules] = await pool.query(
       `SELECT * FROM comment_automation_rules
        WHERE agency_id = ? AND (integration_id = ? OR integration_id IS NULL)
-         AND platform = ? AND is_active = 1`,
+         AND platform = ? AND is_active = 1 AND post_id <> 'SAVED_CAMPAIGN'`,
       [agencyId, integrationId, platform]
     );
 
@@ -684,18 +689,11 @@ async function processCommentAutomation({ commentId, postId, senderId, senderNam
       return;
     }
 
-    // 1. Try to find a rule matching the specific post ID
-    let selectedRule = null;
+    // 1. The campaign running on this post — a campaign can run on several
+    // posts (comment_rule_posts), matched with the same loose post-id
+    // comparison this used before.
     const specificRules = rules.filter(r => r.post_id && r.post_id !== "ALL_POSTS");
-    for (const r of specificRules) {
-      if (
-        r.post_id === postId ||
-        (postId && (r.post_id.endsWith(`_${postId}`) || postId.endsWith(`_${r.post_id}`) || r.post_id.includes(postId) || postId.includes(r.post_id)))
-      ) {
-        selectedRule = r;
-        break;
-      }
-    }
+    let selectedRule = findRuleForPost(specificRules, await loadRuleLinks(specificRules.map(r => r.id)), postId, { loose: true });
 
     // 2. Fallback to an ALL_POSTS rule if no post-specific rule was found
     if (!selectedRule) {
@@ -832,50 +830,52 @@ async function processCommentAutomation({ commentId, postId, senderId, senderNam
         .replace(/\{\{first_name\}\}/gi, (senderName || "").split(" ")[0] || "there");
 
       const tokensToTry = [integration.access_token, integration.user_access_token].filter(Boolean);
-      let replySuccess = false;
       // Meta's /comments edge accepts message + attachment_url together — an
-      // image can accompany (or stand in for) the text reply.
-      const baseBody = { message: formattedReply };
-      if (rule.auto_reply_media_url) baseBody.attachment_url = rule.auto_reply_media_url;
+      // image can accompany (or stand in for) the text reply. Meta downloads
+      // the image itself, so an uploaded file (stored as "/uploads/…") must
+      // be sent as a full public link — sending the bare path made Meta
+      // refuse the whole reply, text included.
+      const attachmentUrl = rule.auto_reply_media_url
+        ? resolvePublicImageUrl(rule.auto_reply_media_url, await getPublicBackendUrl())
+        : null;
 
-      for (const tok of tokensToTry) {
-        if (replySuccess) break;
-        try {
-          await axios.post(
-            `https://graph.facebook.com/v21.0/${commentId}/comments`,
-            baseBody,
-            {
-              headers: {
-                Authorization: `Bearer ${tok}`,
-                "Content-Type": "application/json",
-              },
-              params: { access_token: tok },
-            }
-          );
-          replySuccess = true;
-        } catch (postErr) {
-          // Try URL encoded params format
+      // Tries every token, JSON body then form params; returns Meta's last error message on failure.
+      const postCommentReply = async (body) => {
+        let lastError = null;
+        for (const tok of tokensToTry) {
           try {
-            await axios.post(
-              `https://graph.facebook.com/v21.0/${commentId}/comments`,
-              null,
-              {
-                params: {
-                  ...baseBody,
-                  access_token: tok,
-                },
-              }
-            );
-            replySuccess = true;
-          } catch (postErr2) {}
+            await axios.post(`https://graph.facebook.com/v21.0/${commentId}/comments`, body, {
+              headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
+              params: { access_token: tok },
+            });
+            return { ok: true };
+          } catch (postErr) {
+            lastError = postErr.response?.data?.error?.message || postErr.message;
+            try {
+              await axios.post(`https://graph.facebook.com/v21.0/${commentId}/comments`, null, { params: { ...body, access_token: tok } });
+              return { ok: true };
+            } catch (postErr2) {
+              lastError = postErr2.response?.data?.error?.message || postErr2.message;
+            }
+          }
         }
+        return { ok: false, error: lastError };
+      };
+
+      let sent = await postCommentReply({ message: formattedReply, ...(attachmentUrl ? { attachment_url: attachmentUrl } : {}) });
+      let sentWithoutImage = false;
+      if (!sent.ok && attachmentUrl && formattedReply) {
+        // The image was refused (e.g. its link isn't reachable) — still send the text reply.
+        console.warn(`[Comment Automation] Reply image refused for ${commentId} (${attachmentUrl}): ${sent.error} — sending the text without it`);
+        sent = await postCommentReply({ message: formattedReply });
+        sentWithoutImage = sent.ok;
       }
 
-      if (replySuccess) {
+      if (sent.ok) {
         await pool.query("UPDATE comment_automation_rules SET total_comment_replies = total_comment_replies + 1 WHERE id = ?", [rule.id]);
-        console.log(`[Comment Automation] ✅ Public comment reply sent on ${platform} (${commentId}): "${formattedReply}"`);
+        console.log(`[Comment Automation] ✅ Public comment reply sent on ${platform} (${commentId})${attachmentUrl && !sentWithoutImage ? " with image" : ""}: "${formattedReply}"`);
       } else {
-        console.warn(`[Comment Automation] Public reply could not be sent for (${commentId}) due to token permissions.`);
+        console.warn(`[Comment Automation] Public reply could not be sent for (${commentId}): ${sent.error}`);
       }
     }
 

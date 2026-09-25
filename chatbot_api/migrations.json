@@ -79,7 +79,9 @@
     "migrate_package_role_options.js",
     "migrate_commerce_automation.js",
     "migrate_password_reset.js",
-    "migrate_broadcast_flow_integration.js"
+    "migrate_broadcast_flow_integration.js",
+    "migrate_recount_broadcast_stats.js",
+    "migrate_comment_rule_posts.js"
   ],
   "manual": {
     "migrate_widget_key_rotation.js": "Rotates every webchat widget key on each run - breaks every pasted embed snippet. Run by hand only when you mean it.",

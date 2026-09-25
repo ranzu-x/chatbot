@@ -39,6 +39,8 @@ export async function canSendNow(platform, conversationId, agencyId, node) {
 
   if (p === "WHATSAPP") {
     if (hoursSinceInbound <= 24) return { allowed: true };
+    // A Message Template element IS an approved template — always allowed.
+    if (node?.type === "whatsappTemplate") return { allowed: true };
 
     const templateId = node?.data?.whatsappTemplateId;
     if (!templateId) {

@@ -3,7 +3,9 @@ import axios from "axios";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
-import { requireModule, requireLimit } from "../utils/entitlements.js";
+import { getPostsPage, POSTS_PAGE_SIZE } from "../utils/metaPosts.js";
+import { loadRuleLinks, findRuleForPost, postBelongsToAccount, copyCampaign, SAVED_CAMPAIGN } from "../utils/commentRulePosts.js";
+import { requireModule, requireLimit, assertLimit } from "../utils/entitlements.js";
 
 const router = express.Router();
 router.use("/comments", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_comment_automation"));
@@ -11,10 +13,15 @@ router.use("/comments", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USE
 const META_API_VERSION = process.env.META_API_VERSION || "v21.0";
 
 // ─── GET POSTS & REELS FROM META (FB Page or Instagram) ─────────────────────
+// Posts & Reels list: newest first, never more than 12 per page (decided with
+// the user), with real page numbers — utils/metaPosts.js lists the post ids
+// (up to the latest 1000) for the total, then loads only the chosen page.
+
 router.get("/comments/posts", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
     const { integrationId, platform = "FACEBOOK" } = req.query;
+    const page = Math.max(1, Math.floor(Number(req.query.page) || 1));
 
     // Find integration
     let query = "SELECT * FROM integrations WHERE agency_id = ? AND is_active = 1";
@@ -40,60 +47,15 @@ router.get("/comments/posts", async (req, res) => {
     }
 
     const integration = integrations[0];
-    const pageToken = integration.access_token;
-    const isInstagram = (integration.platform || "").toUpperCase() === "INSTAGRAM";
-
-    let rawPosts = [];
-
-    if (isInstagram && integration.ig_account_id) {
-      // Instagram Media (Posts, Reels, Carousel)
-      const igMediaUrl = `https://graph.facebook.com/${META_API_VERSION}/${integration.ig_account_id}/media`;
-      const igRes = await axios.get(igMediaUrl, {
-        params: {
-          fields: "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count",
-          limit: 100,
-          access_token: pageToken,
-        },
-        timeout: 10000,
-      }).catch((err) => {
-        console.warn("Instagram media fetch warning:", err.response?.data || err.message);
-        return { data: { data: [] } };
-      });
-
-      rawPosts = (igRes.data?.data || []).map((p) => ({
-        id: p.id,
-        message: p.caption || "No caption",
-        picture: p.thumbnail_url || p.media_url || null,
-        permalink: p.permalink || `https://instagram.com/p/${p.id}`,
-        created_time: p.timestamp,
-        likes_count: p.like_count || 0,
-        comments_count: p.comments_count || 0,
-        media_type: p.media_type,
-        platform: "INSTAGRAM",
-      }));
-    } else if (integration.fb_page_id) {
-      // Facebook: Fetch timeline feed posts (returns all 7+ photo, video, status, and published posts)
-      const pageId = integration.fb_page_id;
-      const feedRes = await axios.get(
-        `https://graph.facebook.com/${META_API_VERSION}/${pageId}/feed?fields=id,message,story,created_time,full_picture,permalink_url,shares&limit=100&access_token=${pageToken}`,
-        { timeout: 10000 }
-      ).catch((err) => {
-        console.warn("Facebook feed fetch warning:", err.response?.data || err.message);
-        return { data: { data: [] } };
-      });
-
-      rawPosts = (feedRes.data?.data || []).map((p) => ({
-        id: p.id,
-        message: p.message || p.story || "Facebook Post",
-        picture: p.full_picture || null,
-        permalink: p.permalink_url || `https://facebook.com/${p.id}`,
-        created_time: p.created_time,
-        likes_count: 0,
-        comments_count: 0,
-        shares_count: p.shares?.count || 0,
-        platform: "FACEBOOK",
-      }));
+    // One page of posts, newest first — see utils/metaPosts.js. A Meta error
+    // (expired token, missing permission) shows as an empty list, as before.
+    let listing = { posts: [], page: 1, totalPages: 0, total: 0, truncated: false };
+    try {
+      listing = await getPostsPage(integration, META_API_VERSION, page);
+    } catch (err) {
+      console.warn("Posts fetch warning:", err.response?.data?.error?.message || err.message);
     }
+    const rawPosts = listing.posts;
 
     // Fetch existing comment automation rules for this integration
     const [rules] = await pool.query(
@@ -104,12 +66,11 @@ router.get("/comments/posts", async (req, res) => {
     // Find Page-Wide / All Posts Rule
     const pageWideRule = rules.find((r) => r.post_id === "ALL_POSTS" && r.is_active === 1) || null;
 
-    // Attach active rule to each post if assigned
+    // Attach the campaign running on each post (a campaign can run on several
+    // posts — comment_rule_posts), else the page-wide one.
+    const links = await loadRuleLinks(rules.map((r) => r.id));
     const postsWithRules = rawPosts.map((post) => {
-      const specificRule = rules.find((r) =>
-        r.post_id === post.id ||
-        (post.id && (r.post_id.endsWith(`_${post.id}`) || post.id.endsWith(`_${r.post_id}`)))
-      );
+      const specificRule = findRuleForPost(rules, links, post.id);
       return {
         ...post,
         rule: specificRule || (pageWideRule ? { ...pageWideRule, isInherited: true } : null),
@@ -127,6 +88,12 @@ router.get("/comments/posts", async (req, res) => {
       },
       pageWideRule,
       posts: postsWithRules,
+      pageSize: POSTS_PAGE_SIZE,
+      page: listing.page,
+      totalPages: listing.totalPages,
+      total: listing.total,
+      // Only the latest MAX_LISTED_POSTS posts are listed (see utils/metaPosts.js).
+      truncated: listing.truncated,
     });
   } catch (err) {
     console.error("Get posts error:", err);
@@ -160,6 +127,13 @@ router.get("/comments/campaigns", async (req, res) => {
     query += " ORDER BY r.created_at DESC";
 
     const [campaigns] = await pool.query(query, params);
+
+    // The posts each campaign runs on (none for a page-wide campaign).
+    const links = await loadRuleLinks(campaigns.map((c) => c.id));
+    for (const c of campaigns) {
+      c.posts = links.get(c.id) || [];
+      c.post_count = c.posts.length;
+    }
 
     return res.json({ success: true, campaigns });
   } catch (err) {
@@ -222,6 +196,29 @@ router.post("/comments/campaigns", requireLimit("max_comment_rules"), async (req
       }
     }
 
+    // A post runs at most one campaign (per bot account), and only a post of
+    // the campaign's OWN Page / Instagram account (its replies are written for it).
+    const isPostCampaign = postId && postId !== "ALL_POSTS" && postId !== SAVED_CAMPAIGN;
+    // "Also save as a campaign": a reusable copy kept in the list (runs on no post) — one more campaign.
+    const alsoSave = Boolean(req.body.saveAsCampaign) && isPostCampaign;
+    if (alsoSave) {
+      try {
+        await assertLimit(agencyId, "max_comment_rules", 2, req.user?.id);
+      } catch (limitErr) {
+        return res.status(limitErr.status || 403).json({ success: false, code: limitErr.code, message: `Saving it as a campaign too needs room for 2 campaigns. ${limitErr.message}` });
+      }
+    }
+    if (isPostCampaign) {
+      const [[account]] = await pool.query("SELECT * FROM integrations WHERE id = ? AND agency_id = ?", [integrationId, agencyId]);
+      if (!account || !(await postBelongsToAccount(account, postId))) {
+        return res.status(400).json({ success: false, code: "POST_OF_OTHER_ACCOUNT", message: "That post isn't one of this account's own posts, so a campaign for this account can't run on it." });
+      }
+      const current = await campaignOnPost(agencyId, integrationId, postId);
+      if (current) {
+        return res.status(409).json({ success: false, code: "POST_ALREADY_AUTOMATED", message: `This post already runs the campaign "${current.campaign_name}". Edit or delete it first.` });
+      }
+    }
+
     const [result] = await pool.query(
       `INSERT INTO comment_automation_rules (
         agency_id, integration_id, platform, campaign_name, post_id, post_data,
@@ -261,12 +258,29 @@ router.post("/comments/campaigns", requireLimit("max_comment_rules"), async (req
       ]
     );
 
+    // The post this campaign runs on.
+    if (isPostCampaign) {
+      await pool.query(
+        "INSERT IGNORE INTO comment_rule_posts (agency_id, integration_id, rule_id, post_id, post_data) VALUES (?, ?, ?, ?, ?)",
+        [agencyId, integrationId, result.insertId, postId, postData ? JSON.stringify(postData) : null]
+      );
+    }
+
+    // "Also save as a campaign": a reusable copy of the same settings, on no post.
+    let savedCopyId = null;
+    if (alsoSave) {
+      savedCopyId = await copyCampaign(pool, result.insertId, agencyId, { campaignName: campaignName.trim(), postId: SAVED_CAMPAIGN });
+    }
+
     const [newCampaign] = await pool.query("SELECT * FROM comment_automation_rules WHERE id = ?", [result.insertId]);
 
     return res.status(201).json({
       success: true,
-      message: `Comment Automation Campaign "${campaignName}" created successfully!`,
+      message: savedCopyId
+        ? `Campaign "${campaignName}" created for this post and saved as a reusable campaign.`
+        : `Comment Automation Campaign "${campaignName}" created successfully!`,
       campaign: newCampaign[0],
+      savedCampaignId: savedCopyId,
     });
   } catch (err) {
     console.error("Create campaign error:", err);
@@ -370,6 +384,70 @@ router.put("/comments/campaigns/:id", async (req, res) => {
     return res.json({ success: true, message: "Comment campaign updated successfully!" });
   } catch (err) {
     console.error("Update campaign error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── USE AN EXISTING CAMPAIGN ON A POST = COPY IT ─────────────────────────────
+// Reusing a campaign on a post COPIES it into a new campaign of that post
+// (decided with the user — campaigns are never shared, so editing one post's
+// replies never changes another's). A post runs at most one campaign per bot
+// account, and only a campaign of the post's OWN Page / Instagram account can
+// be used (its replies are written for that page).
+
+/** The post-specific campaign already running on this post of this bot account, or null. */
+async function campaignOnPost(agencyId, integrationId, postId) {
+  const [rules] = await pool.query(
+    "SELECT id, campaign_name, post_id FROM comment_automation_rules WHERE agency_id = ? AND integration_id = ? AND post_id NOT IN ('ALL_POSTS', ?)",
+    [agencyId, integrationId, SAVED_CAMPAIGN]
+  );
+  return findRuleForPost(rules, await loadRuleLinks(rules.map((r) => r.id)), postId);
+}
+
+router.post("/comments/campaigns/:id/copy", requireLimit("max_comment_rules"), async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const { postId, postData } = req.body || {};
+    if (!postId || typeof postId !== "string" || postId === "ALL_POSTS" || postId === SAVED_CAMPAIGN || postId.length > 255) {
+      return res.status(400).json({ success: false, message: "Choose a post" });
+    }
+    const [[source]] = await pool.query(
+      "SELECT id, integration_id, campaign_name FROM comment_automation_rules WHERE id = ? AND agency_id = ?",
+      [req.params.id, agencyId]
+    );
+    if (!source) return res.status(404).json({ success: false, message: "Campaign not found" });
+
+    const [[account]] = await pool.query("SELECT * FROM integrations WHERE id = ? AND agency_id = ?", [source.integration_id, agencyId]);
+    if (!account || !(await postBelongsToAccount(account, postId))) {
+      return res.status(400).json({ success: false, code: "POST_OF_OTHER_ACCOUNT", message: `"${source.campaign_name}" belongs to another Page / account, so it can't be used on this post.` });
+    }
+    const current = await campaignOnPost(agencyId, source.integration_id, postId);
+    if (current) {
+      return res.status(409).json({ success: false, code: "POST_ALREADY_AUTOMATED", message: `This post already runs the campaign "${current.campaign_name}". Edit or delete it first.` });
+    }
+
+    const newId = await copyCampaign(pool, source.id, agencyId, { campaignName: source.campaign_name, postId, postData });
+    const [[campaign]] = await pool.query("SELECT * FROM comment_automation_rules WHERE id = ?", [newId]);
+    return res.status(201).json({ success: true, message: `A copy of "${source.campaign_name}" now runs on this post — edit it without changing the original.`, campaign });
+  } catch (err) {
+    if (err.code === "ER_DUP_ENTRY") return res.status(409).json({ success: false, code: "POST_ALREADY_AUTOMATED", message: "This post already runs a campaign." });
+    console.error("Copy campaign to post error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+
+// ─── DELETE A COMMENT AUTOMATION CAMPAIGN ────────────────────────────────────
+// The UI's delete button always called this, but the route was missing. Its
+// post links (comment_rule_posts) go with it (ON DELETE CASCADE).
+router.delete("/comments/campaigns/:id", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const [result] = await pool.query("DELETE FROM comment_automation_rules WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
+    if (!result.affectedRows) return res.status(404).json({ success: false, message: "Campaign not found" });
+    return res.json({ success: true, message: "Campaign deleted" });
+  } catch (err) {
+    console.error("Delete campaign error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });

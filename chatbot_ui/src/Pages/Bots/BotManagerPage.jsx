@@ -542,6 +542,30 @@ export default function BotManagerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAccount?.id]);
 
+  const isWhatsAppSelected = Boolean(
+    selectedAccount &&
+    selectedAccount.id !== 'all' &&
+    (selectedAccount.platform || '').toUpperCase() === 'WHATSAPP'
+  );
+
+  // The Commerce menu is available under WhatsApp bot account only in automation
+  const visibleCategories = useMemo(() => {
+    return MAIN_CATEGORIES.filter((cat) => {
+      if (cat.id === 'commerce') {
+        return isWhatsAppSelected;
+      }
+      return true;
+    });
+  }, [isWhatsAppSelected]);
+
+  // Fallback to automation if currently on commerce and WhatsApp bot is deselected
+  useEffect(() => {
+    if (!isWhatsAppSelected && activeCategory === 'commerce') {
+      setActiveCategory('automation');
+      setActiveSubTab('keywordReplies');
+    }
+  }, [isWhatsAppSelected, activeCategory]);
+
   // Filter sub-tabs dynamically per channel platform (Message Templates for WhatsApp & Facebook)
   const currentSubTabs = useMemo(() => {
     const list = SUB_TABS[activeCategory] || [];
@@ -934,9 +958,9 @@ export default function BotManagerPage() {
           transition: all 0.15s;
         }
         .bm-pill.active {
-          background: var(--text-primary);
+          background: var(--primary);
           color: #ffffff;
-          border-color: var(--text-primary);
+          border-color: var(--primary);
         }
         .bm-account-list {
           flex: 1;
@@ -1474,7 +1498,7 @@ export default function BotManagerPage() {
 
           {/* Primary Category Tabs */}
           <div className="bm-category-tabs">
-            {MAIN_CATEGORIES.map((cat) => {
+            {visibleCategories.map((cat) => {
               const CatIcon = cat.icon;
               const isActive = activeCategory === cat.id;
               return (
@@ -1993,10 +2017,16 @@ export default function BotManagerPage() {
               <div className="bm-card-header">
                 <h3 className="bm-card-title">Commerce Automation Campaigns</h3>
                 <p className="bm-card-sub">
-                  Order notifications, Cash-on-Delivery verification and abandoned-cart recovery on WhatsApp.
+                  Order notifications, Cash-on-Delivery verification and abandoned-cart recovery on WhatsApp for {selectedAccount?.name || 'this bot'}.
                 </p>
               </div>
-              <CommerceCampaignsManager onOpenStores={() => setActiveSubTab('storeConnections')} />
+              <div style={{ padding: 20 }}>
+                <CommerceCampaignsManager
+                  selectedAccount={selectedAccount}
+                  integrationId={selectedAccount?.id && selectedAccount.id !== 'all' ? selectedAccount.id : null}
+                  onOpenStores={() => setActiveSubTab('storeConnections')}
+                />
+              </div>
             </div>
           )}
 
@@ -2004,9 +2034,14 @@ export default function BotManagerPage() {
             <div className="bm-content-card">
               <div className="bm-card-header">
                 <h3 className="bm-card-title">Orders & Activity</h3>
-                <p className="bm-card-sub">Messages the campaigns sent, COD answers and abandoned carts.</p>
+                <p className="bm-card-sub">Messages the campaigns sent, COD answers and abandoned carts for {selectedAccount?.name || 'this bot'}.</p>
               </div>
-              <CommerceActivity />
+              <div style={{ padding: 20 }}>
+                <CommerceActivity
+                  selectedAccount={selectedAccount}
+                  integrationId={selectedAccount?.id && selectedAccount.id !== 'all' ? selectedAccount.id : null}
+                />
+              </div>
             </div>
           )}
 
@@ -2018,7 +2053,9 @@ export default function BotManagerPage() {
                   Connect a Shopify or WooCommerce store to run order, COD and abandoned-cart automations on WhatsApp.
                 </p>
               </div>
-              <StoreConnectionsManager />
+              <div style={{ padding: 20 }}>
+                <StoreConnectionsManager />
+              </div>
             </div>
           )}
 

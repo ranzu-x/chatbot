@@ -200,6 +200,8 @@ export default function InstagramPage({ embedded = false }) {
     }
     setImporting(true);
     try {
+      // Whole selection refused up front if its new accounts would go over the plan limit.
+      await channelAPI.importCheck('INSTAGRAM', selected.map((a) => a.id));
       for (const acc of selected) {
         await channelAPI.addInstagram({
           name: acc.name || `@${acc.username}`,

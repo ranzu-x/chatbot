@@ -11,8 +11,13 @@
  *     grant_type=client_credentials) for a token valid 24h
  *     (expires_in 86399); getShopifyToken() refreshes it an hour early.
  *   Scopes the app needs: read_orders, write_orders (COD tag/cancel),
- *   read_products. Custom apps always get protected customer data (name,
- *   phone), so no approval step.
+ *   read_products. Orders include customer name / phone / address, which
+ *   Shopify treats as protected customer data: an app created in the store
+ *   admin (ACCESS_TOKEN) has it automatically, but a Dev Dashboard app
+ *   (CLIENT_CREDENTIALS) must request protected customer data access
+ *   (Name, Email, Phone, Address) — until then every order query fails with
+ *   "This app is not approved to access the Order object". Seen for real on
+ *   a Dev Dashboard store; the UI turns that error into fix-it steps.
  *
  * WooCommerce (REST API v3): consumer key + secret with Read/Write
  * permission, sent as query params over HTTPS (works on hosts that strip the

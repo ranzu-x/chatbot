@@ -5,12 +5,13 @@ import { logBotError, extractErrorMessage } from "./botLogger.js";
 import { applyLabelToContact, removeLabelFromContact } from "../routes/labels.js";
 import { sendWebhook } from "./outboundWebhook.js";
 import * as googleSheetsUtil from "./googleSheets.js";
-import { resolveNextNodeId, resolveNextStepNodeId, expandMessageBlocks } from "./flowGraph.js";
+import { resolveNextNodeId, resolveNextStepNodeId, expandMessageBlocks, isOptionHandle } from "./flowGraph.js";
 import { enrollContactsInSequence, unsubscribeContactFromSequence } from "../routes/sequences.js";
 import { executeHttpApiCampaign } from "../services/httpApiExecutor.js";
 import { scheduleFlowDelayResume } from "./flowDelayScheduler.js";
 import { getBusinessHoursStatus } from "./businessHours.js";
 import { handleAppointmentBooking } from "./appointmentBookingEngine.js";
+import { loadApprovedTemplate, buildTemplateSend } from "./templateMessage.js";
 
 // BOT SCOPE (see utils/botScope.js): a flow may only use Sequences, User Input Flows and
 // other Flows of ITS OWN bot account (same integration_id) — every lookup below is scoped
@@ -439,7 +440,8 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             )?.target;
             // Single-option nodes may only have a plain unlabeled edge (see the
             // strict-routing notes below) — unambiguous, safe to use here too.
-            if (!targetId && optionCount === 1) {
+            // (Not a Message Template: its plain wire is Next Step, not the button's.)
+            if (!targetId && optionCount === 1 && sourceNode.type !== "whatsappTemplate") {
               targetId = routedEdges.find((e) => e.source === decodedRoute.nodeId)?.target;
             }
 
@@ -1195,7 +1197,9 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
       // is set to this exact node id when the scheduler itself is the one
       // resuming it — without that check, resuming would just immediately
       // re-pause on the same node forever.
-      if (node.type !== "start" && node.type !== "wait" && node.id !== resumeContext?.skipDelayForNodeId) {
+      // A Message Template element has no delay option (removed from its
+      // settings) — an old saved one is ignored.
+      if (node.type !== "start" && node.type !== "wait" && node.type !== "whatsappTemplate" && node.id !== resumeContext?.skipDelayForNodeId) {
         const delayCfg = node.data?.delay;
         const delaySeconds = delayCfg && typeof delayCfg === "object"
           ? (Number(delayCfg.hours) || 0) * 3600 + (Number(delayCfg.minutes) || 0) * 60 + (Number(delayCfg.seconds) || 0)
@@ -1384,6 +1388,32 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           });
           
           currentNodeId = getNextNodeId(node.id);
+          break;
+        }
+
+        // Message Template element — an approved WhatsApp template (the only
+        // message WhatsApp accepts outside the 24h window). WhatsApp only; on
+        // any other channel it is skipped. See utils/templateMessage.js.
+        case "whatsappTemplate": {
+          const channel = (integration?.platform || platform || "").toUpperCase();
+          if (channel === "WHATSAPP") {
+            const tpl = await loadApprovedTemplate(agencyId, integration?.id, node.data?.templateId);
+            if (!tpl) throw new Error("Message Template: the selected template is missing, not approved, or belongs to another WhatsApp account");
+            const routeFlowId = flow?.id || session?.flow_id || null;
+            const send = buildTemplateSend(tpl, node.data?.params, (t) => replaceVariables(t, variables, contact), {
+              routeFor: routeFlowId ? (idx) => encodeButtonRoute(routeFlowId, node.id, idx) : null,
+            });
+            await sendMsg(agencyId, conversation, send.bodyText, "TEXT", integration, {
+              ...send.extraFields,
+              flowId: routeFlowId,
+              nodeId: node.id,
+              contactIdentifier: contact?.external_id || contact?.phone || null,
+            });
+          }
+          // Only the Next Step wire — a quick-reply button's own wire (btn-<i>)
+          // runs when that button is tapped, never straight away.
+          currentNodeId = getNextStepNodeId(node.id)
+            || (edges.some((e) => e.source === node.id && isOptionHandle(e.sourceHandle)) ? null : getNextNodeId(node.id));
           break;
         }
 

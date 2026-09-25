@@ -47,6 +47,23 @@ import {
 // first one, and `hideAccountSelector` hides this component's own internal
 // dropdown, since the page-level rail already is that picker — showing both
 // would let two controls disagree about which account is selected.
+// post_id of a saved (reusable) campaign that runs on no post — mirrors
+// SAVED_CAMPAIGN in chatbot_api/utils/commentRulePosts.js.
+const SAVED_CAMPAIGN = 'SAVED_CAMPAIGN';
+
+/** Page buttons to show: first, last, and two either side of the current one, with … gaps. */
+function pageNumberItems(current, total) {
+  const pages = new Set([1, total]);
+  for (let p = current - 2; p <= current + 2; p++) if (p >= 1 && p <= total) pages.add(p);
+  const sorted = [...pages].sort((a, b) => a - b);
+  const items = [];
+  sorted.forEach((p, i) => {
+    if (i > 0 && p - sorted[i - 1] > 1) items.push('…');
+    items.push(p);
+  });
+  return items;
+}
+
 export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK', lockPlatform, presetIntegrationId, hideAccountSelector }) {
   const [activeTab, setActiveTab] = useState('posts'); // 'posts' | 'campaigns'
   const [platform, setPlatform] = useState(lockPlatform || defaultPlatform); // 'FACEBOOK' | 'INSTAGRAM'
@@ -54,6 +71,12 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
   const [selectedIntegrationId, setSelectedIntegrationId] = useState('');
   
   const [posts, setPosts] = useState([]);
+  // The bot account the listed posts belong to (from GET /comments/posts).
+  const [postsAccountId, setPostsAccountId] = useState(null);
+  const [postsPage, setPostsPage] = useState(1); // 1-based
+  const [postsTotalPages, setPostsTotalPages] = useState(0);
+  const [postsTotal, setPostsTotal] = useState(0);
+  const [postsTruncated, setPostsTruncated] = useState(false);
   const [pageWideRule, setPageWideRule] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -62,6 +85,9 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
   // Modal State
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCampaignId, setEditingCampaignId] = useState(null);
+  // "Automate" on a post first asks: create a new campaign, or use an existing one.
+  const [automateChooserPost, setAutomateChooserPost] = useState(null);
+  const [linkingCampaignId, setLinkingCampaignId] = useState(null);
   const [saving, setSaving] = useState(false);
 
   // Manual Post Comments & Moderator Modal State
@@ -105,6 +131,7 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
     offensiveAction: 'HIDE', // 'NONE' | 'HIDE' | 'DELETE'
     offensiveReplyMessage: 'Hi {{first_name}}, please message our support team directly so we can resolve any issues for you.',
     replyMultipleTimes: false,
+    saveAsCampaign: false, // create only: also keep a reusable (saved) copy
   });
 
   // AI Agents (for "AI-Powered" public reply) & Bot Flows (for "Bot Flow" private reply)
@@ -146,7 +173,8 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
 
   useEffect(() => {
     if (selectedIntegrationId) {
-      loadPostsAndCampaigns();
+      // Another account / platform: back to its newest 12 posts.
+      loadPostsAndCampaigns({ page: 1 });
       flowAPI.getAll({ integrationId: selectedIntegrationId }).then((res) => setFlows(res.data?.flows || [])).catch(() => setFlows([]));
     } else {
       setFlows([]);
@@ -183,15 +211,23 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
     }
   };
 
-  const loadPostsAndCampaigns = async () => {
+  // Posts are paged 12 at a time, newest first, with real page numbers (the
+  // server lists the account's post ids — see utils/metaPosts.js). Called
+  // with no arguments (after a save) it reloads the page being viewed.
+  const loadPostsAndCampaigns = async ({ page = postsPage } = {}) => {
     setLoading(true);
     try {
       const [postsRes, campaignsRes] = await Promise.all([
-        commentAPI.getPosts({ integrationId: selectedIntegrationId, platform }),
+        commentAPI.getPosts({ integrationId: selectedIntegrationId, platform, page }),
         commentAPI.getCampaigns({ integrationId: selectedIntegrationId, platform }),
       ]);
 
+      setPostsPage(postsRes.data?.page || 1);
+      setPostsTotalPages(postsRes.data?.totalPages || 0);
+      setPostsTotal(postsRes.data?.total || 0);
+      setPostsTruncated(Boolean(postsRes.data?.truncated));
       setPosts(postsRes.data?.posts || []);
+      setPostsAccountId(postsRes.data?.account?.id ?? null);
       setPageWideRule(postsRes.data?.pageWideRule || null);
       setCampaigns(campaignsRes.data?.campaigns || []);
     } catch (err) {
@@ -200,6 +236,11 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
     } finally {
       setLoading(false);
     }
+  };
+
+  const goToPostsPage = (page) => {
+    if (loading || page < 1 || page > postsTotalPages || page === postsPage) return;
+    loadPostsAndCampaigns({ page });
   };
 
   const handleOpenCreateModal = (targetPost = null) => {
@@ -230,6 +271,7 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
       offensiveAction: 'HIDE',
       offensiveReplyMessage: 'Hi {{first_name}}, please send us a direct message so our team can assist you directly.',
       replyMultipleTimes: false,
+      saveAsCampaign: false,
     });
     setModalOpen(true);
   };
@@ -294,8 +336,8 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
         await commentAPI.updateCampaign(editingCampaignId, payload);
         showToast('Campaign updated successfully!');
       } else {
-        await commentAPI.createCampaign(payload);
-        showToast('Comment Automation Campaign created!');
+        const res = await commentAPI.createCampaign(payload);
+        showToast(res.data?.message || 'Comment Automation Campaign created!');
       }
       setModalOpen(false);
       loadPostsAndCampaigns();
@@ -315,6 +357,46 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
     } catch (err) {
       console.error(err);
       showToast('Failed to toggle campaign', 'error');
+    }
+  };
+
+  // "Use an existing campaign" on a post COPIES it into a new campaign of that
+  // post (never shared). Offered: this Page / Instagram account's own campaigns
+  // only — another page's campaign carries that page's replies (the server
+  // refuses it too). Saved campaigns first.
+  const kindOf = (c) => (c.post_id === 'ALL_POSTS' ? 'page' : c.post_id === SAVED_CAMPAIGN ? 'saved' : 'post');
+  const reusableCampaigns = campaigns
+    .filter((c) => postsAccountId != null && String(c.integration_id) === String(postsAccountId))
+    .sort((a, b) => (kindOf(a) === 'saved' ? 0 : 1) - (kindOf(b) === 'saved' ? 0 : 1));
+
+  const handleUseExistingCampaign = async (campaign, post) => {
+    setLinkingCampaignId(campaign.id);
+    try {
+      const res = await commentAPI.copyCampaignToPost(campaign.id, {
+        postId: post.id,
+        postData: { message: post.message, picture: post.picture, permalink: post.permalink },
+      });
+      showToast(res.data?.message || `A copy of "${campaign.campaign_name}" now runs on this post`);
+      setAutomateChooserPost(null);
+      loadPostsAndCampaigns();
+    } catch (err) {
+      showToast(err?.response?.data?.message || 'Could not use that campaign on this post', 'error');
+    } finally {
+      setLinkingCampaignId(null);
+    }
+  };
+
+  // A post's campaign is its own copy, so removing the automation deletes it.
+  const handleRemovePostFromCampaign = async (post) => {
+    const rule = post.rule;
+    if (!rule) return;
+    if (!window.confirm(`Remove the automation from this post? Its campaign "${rule.campaign_name}" is deleted (saved campaigns and other posts are not affected).`)) return;
+    try {
+      await commentAPI.deleteCampaign(rule.id);
+      showToast('Automation removed from this post');
+      loadPostsAndCampaigns();
+    } catch (err) {
+      showToast(err?.response?.data?.message || 'Could not remove the automation', 'error');
     }
   };
 
@@ -643,7 +725,7 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
             <button
               type="button"
               onClick={() => handleOpenCreateModal(null)}
-              style={{ padding: '7px 16px', borderRadius: 8, background: '#0f172a', color: '#ffffff', border: 'none', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+              style={{ padding: '7px 16px', borderRadius: 8, background: 'var(--primary)', color: '#ffffff', border: 'none', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
             >
               <Plus size={13} /> Set Whole-Page Automation
             </button>
@@ -671,7 +753,7 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
             gap: 6,
           }}
         >
-          <Layers size={14} /> Posts & Reels ({posts.length})
+          <Layers size={14} /> Posts & Reels
         </button>
 
         <button
@@ -811,17 +893,27 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
                           </button>
 
                           {hasRule && !isInherited ? (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEditModal(post.rule)}
-                              style={{ padding: '5px 10px', borderRadius: 6, background: '#eff6ff', border: '1px solid #bfdbfe', color: '#2563eb', fontSize: '0.74rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
-                            >
-                              <Edit2 size={11} /> Edit
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditModal(post.rule)}
+                                style={{ padding: '5px 10px', borderRadius: 6, background: '#eff6ff', border: '1px solid #bfdbfe', color: '#2563eb', fontSize: '0.74rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                              >
+                                <Edit2 size={11} /> Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRemovePostFromCampaign(post)}
+                                title={`Stop "${post.rule.campaign_name}" on this post (the campaign itself is kept)`}
+                                style={{ padding: '5px 8px', borderRadius: 6, background: '#fff', border: '1px solid #fecaca', color: '#dc2626', fontSize: '0.74rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                              >
+                                <X size={11} />
+                              </button>
+                            </>
                           ) : (
                             <button
                               type="button"
-                              onClick={() => handleOpenCreateModal(post)}
+                              onClick={() => setAutomateChooserPost(post)}
                               style={{ padding: '5px 12px', borderRadius: 6, background: '#2563eb', color: '#ffffff', border: 'none', fontSize: '0.74rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
                             >
                               <Plus size={11} /> Automate
@@ -833,6 +925,37 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* 12 posts per page, newest first, with page numbers. */}
+          {!loading && postsTotalPages > 1 && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, marginTop: 18 }}>
+              <nav aria-label="Posts pages" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => goToPostsPage(postsPage - 1)} disabled={postsPage === 1}>
+                  ← Previous
+                </button>
+                {pageNumberItems(postsPage, postsTotalPages).map((item, i) => (item === '…' ? (
+                  <span key={`gap-${i}`} style={{ padding: '0 4px', color: '#94a3b8', fontWeight: 700 }}>…</span>
+                ) : (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => goToPostsPage(item)}
+                    aria-current={item === postsPage ? 'page' : undefined}
+                    className={`btn btn-sm ${item === postsPage ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ minWidth: 34, justifyContent: 'center' }}
+                  >
+                    {item}
+                  </button>
+                )))}
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => goToPostsPage(postsPage + 1)} disabled={postsPage === postsTotalPages}>
+                  Next →
+                </button>
+              </nav>
+              <span style={{ fontSize: '0.74rem', color: '#94a3b8' }}>
+                {postsTotal.toLocaleString()} posts{postsTruncated ? ' (latest 1,000 shown)' : ''} · 12 per page
+              </span>
             </div>
           )}
         </div>
@@ -886,9 +1009,19 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
                         <span style={{ padding: '2px 8px', borderRadius: 6, background: '#f1f5f9', fontWeight: 700, fontSize: '0.72rem', color: '#0f172a' }}>
                           ⚡ All Posts (Page-Wide)
                         </span>
+                      ) : camp.post_id === SAVED_CAMPAIGN ? (
+                        <span style={{ padding: '2px 8px', borderRadius: 6, background: '#eff6ff', fontWeight: 700, fontSize: '0.72rem', color: '#2563eb' }} title="A reusable campaign — runs on no post. Use it on a post with Automate → Use a copy.">
+                          Saved campaign
+                        </span>
                       ) : (
-                        <span style={{ fontSize: '0.74rem', color: '#64748b' }}>
-                          Post: {camp.post_id.substring(0, 15)}...
+                        <span
+                          style={{ fontSize: '0.74rem', color: '#64748b' }}
+                          title={(camp.posts || []).map((p) => {
+                            const d = typeof p.post_data === 'string' ? (() => { try { return JSON.parse(p.post_data); } catch { return null; } })() : p.post_data;
+                            return d?.message ? d.message.slice(0, 60) : p.post_id;
+                          }).join('\n')}
+                        >
+                          {camp.post_count > 0 ? 'Post campaign' : 'Not on a post'}
                         </span>
                       )}
                     </td>
@@ -966,6 +1099,81 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
         </div>
       )}
 
+      {/* ─── MODAL: AUTOMATE A POST — create a new campaign or use an existing one ─── */}
+      {automateChooserPost && (
+        <div
+          role="presentation"
+          onMouseDown={(e) => { if (e.target === e.currentTarget && !linkingCampaignId) setAutomateChooserPost(null); }}
+          style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(15, 23, 42, 0.55)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+        >
+          <div role="dialog" aria-modal="true" aria-labelledby="automate-post-title" style={{ background: '#ffffff', borderRadius: 14, width: '100%', maxWidth: 520, maxHeight: '88vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 20px 40px rgba(0,0,0,0.25)' }}>
+            <div style={{ padding: '14px 18px', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 10 }}>
+              {automateChooserPost.picture && (
+                <img src={automateChooserPost.picture} alt="" style={{ width: 38, height: 38, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
+              )}
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div id="automate-post-title" style={{ fontWeight: 800, fontSize: '0.95rem', color: '#0f172a' }}>Automate this post</div>
+                <div style={{ fontSize: '0.74rem', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{automateChooserPost.message}</div>
+              </div>
+              <button type="button" aria-label="Close" onClick={() => setAutomateChooserPost(null)} disabled={!!linkingCampaignId} style={{ border: 'none', background: 'transparent', color: '#64748b', cursor: 'pointer', padding: 4 }}>
+                <X size={17} />
+              </button>
+            </div>
+
+            <div style={{ padding: 18, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <button
+                type="button"
+                onClick={() => { const post = automateChooserPost; setAutomateChooserPost(null); handleOpenCreateModal(post); }}
+                style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderRadius: 10, border: '1.5px solid #2563eb', background: '#eff6ff', cursor: 'pointer', textAlign: 'left' }}
+              >
+                <span style={{ width: 32, height: 32, borderRadius: 8, background: '#2563eb', color: '#fff', display: 'grid', placeItems: 'center', flexShrink: 0 }}><Plus size={16} /></span>
+                <span>
+                  <span style={{ display: 'block', fontWeight: 800, fontSize: '0.86rem', color: '#0f172a' }}>Create a new campaign</span>
+                  <span style={{ display: 'block', fontSize: '0.74rem', color: '#475569' }}>Set up replies and DMs just for this post.</span>
+                </span>
+              </button>
+
+              <div>
+                <div style={{ fontSize: '0.74rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>Or use an existing campaign</div>
+                {reusableCampaigns.length === 0 ? (
+                  <div style={{ padding: '12px 14px', borderRadius: 10, border: '1px dashed #cbd5e1', fontSize: '0.78rem', color: '#64748b' }}>
+                    This Page / account has no campaigns yet — create one first (tick "Also save as a reusable campaign" to reuse it on other posts). Campaigns of other pages can't be used here, because their replies are written for that page.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {reusableCampaigns.map((camp) => {
+                      const kind = kindOf(camp);
+                      return (
+                        <div key={camp.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, border: '1px solid #e2e8f0' }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, fontSize: '0.84rem', color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{camp.campaign_name}</div>
+                            <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                              {kind === 'saved' ? 'Saved campaign' : kind === 'page' ? 'Page-wide campaign' : "Another post's campaign"}
+                              {' · '}{camp.trigger_type === 'ALL' ? 'All comments' : 'Keywords'}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            disabled={!!linkingCampaignId}
+                            onClick={() => handleUseExistingCampaign(camp, automateChooserPost)}
+                          >
+                            {linkingCampaignId === camp.id ? 'Copying…' : 'Use a copy'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <p style={{ fontSize: '0.72rem', color: '#94a3b8', margin: '8px 0 0' }}>
+                  This post gets its own copy of the campaign — you can edit it without changing the original.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ─── MODAL: DEDICATED CAMPAIGN BUILDER & SIMULATOR ─── */}
       {modalOpen && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
@@ -981,7 +1189,9 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
                     {editingCampaignId ? 'Edit Comment Automation Campaign' : 'Create Comment Automation Campaign'}
                   </h3>
                   <span style={{ fontSize: '0.74rem', color: '#64748b' }}>
-                    {platform === 'FACEBOOK' ? 'Facebook Page' : 'Instagram Business'} • {form.postId === 'ALL_POSTS' ? 'All Posts (Page-Wide)' : 'Specific Post'}
+                    {platform === 'FACEBOOK' ? 'Facebook Page' : 'Instagram Business'} • {form.postId === 'ALL_POSTS'
+                      ? 'All Posts (Page-Wide)'
+                      : form.postId === SAVED_CAMPAIGN ? 'Saved campaign (not running on a post)' : 'Specific Post'}
                   </span>
                 </div>
               </div>
@@ -1341,7 +1551,21 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
             </div>
 
             {/* Modal Footer */}
-            <div style={{ padding: '14px 24px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end', gap: 10, background: '#f8fafc' }}>
+            <div style={{ padding: '14px 24px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, background: '#f8fafc', flexWrap: 'wrap' }}>
+              {/* A post's own new campaign can also be kept as a reusable (saved) campaign. */}
+              {!editingCampaignId && form.postId && form.postId !== 'ALL_POSTS' && form.postId !== SAVED_CAMPAIGN && (
+                <label
+                  title="Keeps a copy in your campaigns list that runs on no post — use it on other posts with Automate → Use a copy."
+                  style={{ marginRight: 'auto', display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: '0.8rem', fontWeight: 600, color: '#334155', cursor: 'pointer' }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={Boolean(form.saveAsCampaign)}
+                    onChange={(e) => setForm({ ...form, saveAsCampaign: e.target.checked })}
+                  />
+                  Also save as a reusable campaign
+                </label>
+              )}
               <button
                 type="button"
                 onClick={() => setModalOpen(false)}

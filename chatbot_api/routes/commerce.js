@@ -319,7 +319,13 @@ const CAMPAIGN_SELECT = `
 
 router.get("/commerce/campaigns", async (req, res) => {
   try {
-    const [rows] = await pool.query(`${CAMPAIGN_SELECT} WHERE cp.agency_id = ? ORDER BY cp.created_at DESC`, [agencyOf(req)]);
+    const where = ["cp.agency_id = ?"];
+    const params = [agencyOf(req)];
+    if (req.query.integrationId) {
+      where.push("cp.integration_id = ?");
+      params.push(Number(req.query.integrationId));
+    }
+    const [rows] = await pool.query(`${CAMPAIGN_SELECT} WHERE ${where.join(" AND ")} ORDER BY cp.created_at DESC`, params);
     return res.json({ success: true, campaigns: rows });
   } catch (err) {
     return fail(res, err);
@@ -410,6 +416,7 @@ router.get("/commerce/activity", async (req, res) => {
     const { pageSize, offset, page } = pageParams(req);
     const where = ["s.agency_id = ?"];
     const params = [agencyOf(req)];
+    if (req.query.integrationId) { where.push("cp.integration_id = ?"); params.push(Number(req.query.integrationId)); }
     if (req.query.campaignId) { where.push("s.campaign_id = ?"); params.push(Number(req.query.campaignId)); }
     if (["SCHEDULED", "SENDING", "SENT", "FAILED", "SKIPPED"].includes(req.query.status)) { where.push("s.status = ?"); params.push(req.query.status); }
     const [rows] = await pool.query(
@@ -425,7 +432,10 @@ router.get("/commerce/activity", async (req, res) => {
        ORDER BY s.id DESC LIMIT ? OFFSET ?`,
       [...params, pageSize, offset]
     );
-    const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total FROM commerce_campaign_sends s WHERE ${where.join(" AND ")}`, params);
+    const [[{ total }]] = await pool.query(
+      `SELECT COUNT(*) AS total FROM commerce_campaign_sends s JOIN commerce_campaigns cp ON cp.id = s.campaign_id WHERE ${where.join(" AND ")}`,
+      params
+    );
     return res.json({ success: true, activity: rows, total, page, pageSize });
   } catch (err) {
     return fail(res, err);
