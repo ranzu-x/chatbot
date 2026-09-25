@@ -27,6 +27,8 @@ import TermsOfService from './Pages/Landing/TermsOfService';
 import BlogListPage   from './Pages/Landing/BlogListPage';
 import BlogDetailPage from './Pages/Landing/BlogDetailPage';
 import VerifyEmailPage from './Pages/Auth/VerifyEmailPage';
+import ForgotPasswordPage from './Pages/Auth/ForgotPasswordPage';
+import ResetPasswordPage from './Pages/Auth/ResetPasswordPage';
 
 // Community Forum — a fully standalone portal (own shell, session and
 // design system), mounted as ONE catch-all route below exactly like the
@@ -44,6 +46,7 @@ import AgencyDashboard  from './Pages/Dashboard/AgencyDashboard';
 // overwhelming majority of sessions — never downloads any of it.
 const AgenciesPage         = lazy(() => import('./Pages/SuperAdmin/AgenciesPage'));
 const UsersPage            = lazy(() => import('./Pages/SuperAdmin/UsersPage'));
+const UserEditPage         = lazy(() => import('./Pages/SuperAdmin/UserEditPage'));
 const AdminTeamPage        = lazy(() => import('./Pages/SuperAdmin/AdminTeamPage'));
 const PlatformSettingsPage = lazy(() => import('./Pages/SuperAdmin/PlatformSettingsPage'));
 const AuditLogPage         = lazy(() => import('./Pages/SuperAdmin/AuditLogPage'));
@@ -131,6 +134,7 @@ export default function App() {
               <Route path="/" element={<RootRedirect />} />
               <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
               <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
+              <Route path="/forgot-password" element={<PublicRoute><ForgotPasswordPage /></PublicRoute>} />
 
               {/* ── Admin ── */}
               <Route path="/admin" element={<ProtectedRoute roles={['ADMIN']}><AdminDashboard /></ProtectedRoute>} />
@@ -138,6 +142,9 @@ export default function App() {
               <Route path="/packages" element={<ProtectedRoute roles={['ADMIN']}><PackagesPage /></ProtectedRoute>} />
               <Route path="/admin/agencies" element={<ProtectedRoute roles={['ADMIN']}><AgenciesPage /></ProtectedRoute>} />
               <Route path="/admin/users" element={<ProtectedRoute roles={['ADMIN']}><UsersPage /></ProtectedRoute>} />
+              {/* Full-page user create / edit (replaced the modal in UsersPage) */}
+              <Route path="/admin/users/new" element={<ProtectedRoute roles={['ADMIN']}><UserEditPage /></ProtectedRoute>} />
+              <Route path="/admin/users/:id/edit" element={<ProtectedRoute roles={['ADMIN']}><UserEditPage /></ProtectedRoute>} />
               <Route path="/users" element={<ProtectedRoute roles={['ADMIN']}><UsersPage /></ProtectedRoute>} />
               <Route path="/admin/agents" element={<ProtectedRoute roles={['ADMIN']}><TeamMembersPage /></ProtectedRoute>} />
               <Route path="/admin/team" element={<ProtectedRoute roles={['ADMIN']}><AdminTeamPage /></ProtectedRoute>} />
@@ -291,6 +298,7 @@ export default function App() {
             {/* Where the account-verification email's link lands. Public: the
                 link is often opened on a different device than the signup. */}
             <Route path="/verify-email" element={<VerifyEmailPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
 
             {/* ── Admin Payment Gateways ── */}
             <Route path="/admin/payment-gateways" element={<ProtectedRoute roles={['ADMIN']}><PaymentGatewaysPage /></ProtectedRoute>} />

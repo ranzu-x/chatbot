@@ -48,5 +48,5 @@ SELECT 'Drip sequences tables created!' AS result;
 try {
   await conn.query(sql);
   console.log('✅ Drip sequences tables created!');
-} catch(e) { console.error('❌', e.message); }
+} catch(e) { console.error('❌', e.message); process.exitCode = 1; }
 finally { await conn.end(); }

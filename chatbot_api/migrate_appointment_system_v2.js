@@ -88,8 +88,9 @@ async function run() {
     console.log('🎉 Appointment System V2 Migration completed successfully!');
   } catch (err) {
     console.error('Migration error:', err);
+    process.exitCode = 1;
   } finally {
-    process.exit(0);
+    process.exit();
   }
 }
 

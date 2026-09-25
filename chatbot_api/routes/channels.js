@@ -8,6 +8,7 @@ import { buildDeepLink } from "../utils/deepLinkBuilder.js";
 import { resolveMetaAppSettings, resolveWhatsAppOnboardingAppId } from "../utils/appCredentials.js";
 import { looksLikeTechProviderSuspension } from "../utils/metaAppHealth.js";
 import { deleteIntegrationCascade } from "../utils/integrationCascade.js";
+import { registerTelegramWebhook } from "../utils/webhookAuth.js";
 
 const router = express.Router();
 // Scoped to "/channels" — an unscoped router.use(mw) here runs for EVERY
@@ -513,6 +514,7 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
 
   try {
     await assertModuleAccess(agencyId, "channel_whatsapp", req.user?.id);
+    await assertModuleAccess(agencyId, "feature_whatsapp_embedded_signup", req.user?.id);
     await assertLimit(agencyId, "max_bot_accounts", 1, req.user?.id);
 
     // 1. Fetch Meta App credentials — this agency's own if configured,
@@ -1872,17 +1874,11 @@ router.post("/channels/telegram", async (req, res) => {
       botRecordId = result.insertId || (existing[0] && existing[0].id);
     }
 
-    // Set webhook
-    const backendBase = process.env.BACKEND_URL || process.env.PUBLIC_URL || `http://localhost:5000`;
-    const webhookUrl = `${backendBase}/api/v1/webhook/telegram/${req.agencyId}/${integrationId}`;
-    
+    // Set webhook — with a per-bot secret Telegram echoes back on every
+    // update, so the webhook route can reject forged calls (utils/webhookAuth.js).
     let webhookSet = false;
     try {
-      const webhookRes = await fetch(`https://api.telegram.org/bot${cleanToken}/setWebhook?url=${encodeURIComponent(webhookUrl)}`, {
-        signal: AbortSignal.timeout(10000),
-      });
-      const webhookData = await webhookRes.json();
-      webhookSet = Boolean(webhookData.ok);
+      webhookSet = await registerTelegramWebhook({ agencyId: req.agencyId, integrationId, botToken: cleanToken });
       if (webhookSet && botRecordId) {
         await pool.query("UPDATE telegram_bots SET webhook_set = 1 WHERE id = ?", [botRecordId]);
       }

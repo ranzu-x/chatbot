@@ -3,6 +3,10 @@ import { useNavigate } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
 import { adminAPI } from '../../services/api';
 import SubscriberGainChart from '../../Components/Dashboard/SubscriberGainChart';
+import { SummaryCards, EarningsComparisonChart, TopCountries } from '../../Components/Dashboard/EarningsWidgets';
+import DailyGainChart from '../../Components/Dashboard/DailyGainChart';
+import AutomationReports from '../../Components/Dashboard/AutomationReports';
+import { currentMonthKey } from '../../utils/dashboardFormat';
 import {
   Building2,
   Users,
@@ -13,9 +17,11 @@ import {
   CheckCircle2,
   Shield,
   Sparkles,
+  AlertCircle,
 } from 'lucide-react';
 
 function StatCard({ icon: Icon, label, value, color, bg }) {
+  const IconCmp = Icon;
   return (
     <div
       className="stat-card"
@@ -44,7 +50,7 @@ function StatCard({ icon: Icon, label, value, color, bg }) {
           flexShrink: 0,
         }}
       >
-        <Icon size={19} />
+        <IconCmp size={19} />
       </div>
       <div>
         <div className="stat-value" style={{ fontSize: '1.35rem', fontWeight: 800, color: '#0f172a', lineHeight: 1.1 }}>
@@ -70,6 +76,11 @@ export default function AdminDashboard() {
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState(14);
+  const [dashboard, setDashboard] = useState(null);
+  const [dashError, setDashError] = useState('');
+  const [month, setMonth] = useState(currentMonthKey());
+  const [gainLoading, setGainLoading] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -79,7 +90,9 @@ export default function AdminDashboard() {
           adminAPI.getAgencies(),
           adminAPI.getAnalytics(timeRange).catch(() => ({ data: { analytics: {} } })),
         ]);
-        setStats(sRes.data);
+        // The API nests the numbers under "stats" — reading sRes.data
+        // directly left every platform card at 0.
+        setStats(sRes.data?.stats || sRes.data);
         setAgencies(aRes.data.agencies || aRes.data || []);
         setAnalytics(anRes.data?.analytics || {});
       } catch (err) {
@@ -89,6 +102,17 @@ export default function AdminDashboard() {
       }
     })();
   }, [timeRange]);
+
+  // Users, earnings, daily gain (for the chosen month) and automation reports.
+  useEffect(() => {
+    let alive = true;
+    setGainLoading(true);
+    adminAPI.getDashboard(month)
+      .then((res) => { if (alive) { setDashboard(res.data.dashboard); setDashError(''); } })
+      .catch((err) => { if (alive) setDashError(err.response?.data?.message || 'Could not load earnings and reports.'); })
+      .finally(() => { if (alive) setGainLoading(false); });
+    return () => { alive = false; };
+  }, [month, reloadKey]);
 
   return (
     <AppLayout>
@@ -116,7 +140,7 @@ export default function AdminDashboard() {
               </h1>
             </div>
             <p style={{ fontSize: '0.8rem', color: '#64748b', marginTop: 2, marginLeft: 46 }}>
-              System-wide platform overview, agencies, subscriber acquisition and message traffic metrics
+              Platform-wide users, earnings, subscriber acquisition and automation activity
             </p>
           </div>
         </div>
@@ -127,7 +151,43 @@ export default function AdminDashboard() {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {/* Stat cards */}
+            {dashError && (
+              <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderRadius: 10, background: 'rgba(239,68,68,0.08)', color: '#b91c1c', fontSize: '0.8rem' }}>
+                <AlertCircle size={15} /> {dashError}
+                <button type="button" className="btn btn-secondary btn-sm" style={{ marginLeft: 'auto', height: 28 }} onClick={() => setReloadKey((k) => k + 1)}>
+                  Retry
+                </button>
+              </div>
+            )}
+
+            {/* ── Total users + earnings ── */}
+            <SummaryCards
+              users={dashboard?.users}
+              earnings={dashboard?.earnings}
+              usersHint={dashboard?.users ? `${dashboard.users.endUsers} end users · ${dashboard.users.resellers} resellers · ${dashboard.users.resellerCustomers} reseller customers` : null}
+            />
+
+            {/* ── SUBSCRIBER GAIN (imports excluded) ── */}
+            <SubscriberGainChart
+              rawData={analytics?.subscriberGain}
+              timeRange={timeRange}
+              onTimeRangeChange={setTimeRange}
+            />
+
+            {/* ── This year vs last year ── */}
+            <EarningsComparisonChart earnings={dashboard?.earnings} />
+
+            {/* ── Daily gain + top countries ── */}
+            <div className="dash-split-row">
+              <DailyGainChart gain={dashboard?.dailyGain} month={month} onMonthChange={setMonth} loading={gainLoading} />
+              <TopCountries earnings={dashboard?.earnings} />
+            </div>
+
+            {/* ── Broadcasting · Sequences · Workflows (platform-wide) ── */}
+            <AutomationReports automation={dashboard?.automation} links={false} />
+
+            {/* Platform activity */}
+            <h2 style={{ fontSize: '0.8rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5, margin: '6px 0 -4px' }}>Platform activity</h2>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
               <StatCard
                 icon={Building2}
@@ -158,13 +218,6 @@ export default function AdminDashboard() {
                 bg="rgba(16, 185, 129, 0.08)"
               />
             </div>
-
-            {/* ── SUBSCRIBER GAIN BAR GRAPH (Full Width) ── */}
-            <SubscriberGainChart
-              rawData={analytics?.subscriberGain}
-              timeRange={timeRange}
-              onTimeRangeChange={setTimeRange}
-            />
 
             {/* Agencies table */}
             <div className="card" style={{ padding: 0, background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>

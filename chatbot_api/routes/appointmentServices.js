@@ -1,7 +1,8 @@
 import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
-import { requireModule } from "../utils/entitlements.js";
+import { requireModule, requireLimit } from "../utils/entitlements.js";
+import { canUsePublicBooking, bookingKey, bookingUrl } from "../utils/publicBooking.js";
 
 const router = express.Router();
 
@@ -11,6 +12,9 @@ router.get("/appointment-services/public", async (req, res) => {
     const agencyId = req.query.agencyId || req.query.agency_id;
     if (!agencyId) {
       return res.status(400).json({ success: false, message: "agencyId is required" });
+    }
+    if (!canUsePublicBooking(req, agencyId)) {
+      return res.status(404).json({ success: false, message: "Booking page not found" });
     }
 
     const [services] = await pool.query(
@@ -30,6 +34,14 @@ router.get("/appointment-services/public", async (req, res) => {
 
 // ─── PROTECTED: AGENCY SERVICES MANAGEMENT ───────────────────────────────────
 router.use("/appointment-services", authMiddleware, requireModule("feature_appointments"));
+
+// GET /api/v1/appointment-services/booking-link — the workspace's public
+// booking portal URL, with its key (utils/publicBooking.js).
+router.get("/appointment-services/booking-link", (req, res) => {
+  const agencyId = req.tenant?.agencyId ?? req.user?.agencyId;
+  if (!agencyId) return res.status(403).json({ success: false, message: "Workspace required" });
+  return res.json({ success: true, url: bookingUrl(agencyId), key: bookingKey(agencyId) });
+});
 
 // GET /api/v1/appointment-services - List all services for workspace
 router.get("/appointment-services", async (req, res) => {
@@ -57,7 +69,7 @@ router.get("/appointment-services", async (req, res) => {
 });
 
 // POST /api/v1/appointment-services - Create new service
-router.post("/appointment-services", async (req, res) => {
+router.post("/appointment-services", requireLimit("max_appointment_services"), async (req, res) => {
   try {
     const agencyId = req.user?.agencyId;
     if (!agencyId && req.user?.role !== "ADMIN") {

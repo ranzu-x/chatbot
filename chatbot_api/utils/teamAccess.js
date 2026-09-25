@@ -66,7 +66,38 @@ export async function getOrgMember(userId, agencyId) {
  */
 export async function integrationAccessClause(organizationMemberId, integrationColumn = "integration_id") {
   const ids = await getAccessibleIntegrationIds(organizationMemberId);
-  if (ids === null) return { clause: "", params: [] };
-  if (!ids.length) return { clause: ` AND 1=0`, params: [] }; // restricted with zero grants = sees nothing
-  return { clause: ` AND ${integrationColumn} IN (${ids.map(() => "?").join(",")})`, params: ids };
+  const blocked = await getRoleDisabledChannels(organizationMemberId);
+  let clause = "";
+  const params = [];
+  if (ids !== null) {
+    if (!ids.length) return { clause: ` AND 1=0`, params: [] }; // restricted with zero grants = sees nothing
+    clause += ` AND ${integrationColumn} IN (${ids.map(() => "?").join(",")})`;
+    params.push(...ids);
+  }
+  if (blocked.length) {
+    clause += ` AND ${integrationColumn} NOT IN (SELECT id FROM integrations WHERE platform IN (${blocked.map(() => "?").join(",")}))`;
+    params.push(...blocked);
+  }
+  return { clause, params };
+}
+
+/**
+ * Platforms the member's team role is blocked from ("Disable WhatsApp" etc.
+ * on the Team Roles page, roles.disabled_channels). [] = none.
+ */
+export async function getRoleDisabledChannels(organizationMemberId) {
+  if (!organizationMemberId) return [];
+  const [rows] = await pool.query(
+    `SELECT r.disabled_channels FROM organization_members om
+     JOIN roles r ON r.id = om.role_id
+     WHERE om.id = ?`,
+    [organizationMemberId]
+  );
+  let list = rows[0]?.disabled_channels;
+  try {
+    if (typeof list === "string") list = JSON.parse(list);
+  } catch {
+    list = null;
+  }
+  return Array.isArray(list) ? list.filter((p) => typeof p === "string") : [];
 }

@@ -195,10 +195,13 @@ export const purgePastSlots = async () => {
   }
 };
 
-export const fetchAvailableSlots = async (agencyId, date = null, staffId = null) => {
+// bookingKey: the public booking portal's key (?k= in its URL); not needed
+// when called from the signed-in dashboard for the user's own workspace.
+export const fetchAvailableSlots = async (agencyId, date = null, staffId = null, bookingKey = null) => {
   try {
     const params = new URLSearchParams();
     if (agencyId) params.append("agencyId", agencyId.toString());
+    if (bookingKey) params.append("k", bookingKey);
     if (date) params.append("date", date);
     if (staffId) params.append("staffId", staffId.toString());
     const res = await api.get(`/slots/availability?${params.toString()}`);
@@ -209,10 +212,11 @@ export const fetchAvailableSlots = async (agencyId, date = null, staffId = null)
   }
 };
 
-export const fetchAvailableDates = async (agencyId, fromDate = null, staffId = null, daysAhead = 30) => {
+export const fetchAvailableDates = async (agencyId, fromDate = null, staffId = null, daysAhead = 30, bookingKey = null) => {
   try {
     const params = new URLSearchParams();
     if (agencyId) params.append("agencyId", agencyId.toString());
+    if (bookingKey) params.append("k", bookingKey);
     if (fromDate) params.append("fromDate", fromDate);
     if (staffId) params.append("staffId", staffId.toString());
     if (daysAhead) params.append("daysAhead", daysAhead.toString());
@@ -222,6 +226,12 @@ export const fetchAvailableDates = async (agencyId, fromDate = null, staffId = n
     console.error("❌ Error fetching available dates:", error);
     throw error;
   }
+};
+
+/** The signed-in workspace's public booking portal URL (includes its key). */
+export const fetchBookingLink = async () => {
+  const res = await api.get("/appointment-services/booking-link");
+  return res.data;
 };
 
 // ─── SERVICES CATALOG ─────────────────────────────────────────────────────────
@@ -266,9 +276,9 @@ export const deleteAppointmentService = async (id) => {
   }
 };
 
-export const fetchPublicServices = async (agencyId) => {
+export const fetchPublicServices = async (agencyId, bookingKey = null) => {
   try {
-    const res = await api.get(`/appointment-services/public?agencyId=${agencyId}`);
+    const res = await api.get("/appointment-services/public", { params: { agencyId, k: bookingKey || undefined } });
     return res.data;
   } catch (error) {
     console.error("❌ Error fetching public services:", error);

@@ -10,6 +10,7 @@ import * as sslcommerz from "../services/sslcommerzService.js";
 import * as aamarpay from "../services/aamarpayService.js";
 import * as portwallet from "../services/portwalletService.js";
 import { recordCommissionForInvoice } from "../utils/affiliateCommission.js";
+import { resolveInvoiceCountry } from "../utils/country.js";
 
 const router = express.Router();
 
@@ -21,7 +22,8 @@ const backendBase = () => (process.env.BACKEND_URL || "http://localhost:5000").r
 router.get("/billing/plans", async (req, res) => {
   try {
     const [packages] = await pool.query(
-      "SELECT * FROM packages WHERE is_active = 1 ORDER BY type ASC, price ASC"
+      // Private (is_public = 0) packages are assigned by the Super Admin, never listed.
+      "SELECT * FROM packages WHERE is_active = 1 AND is_public = 1 ORDER BY type ASC, price ASC"
     );
 
     const [modules] = await pool.query(`
@@ -156,7 +158,7 @@ router.post("/billing/guest-checkout", async (req, res) => {
       return res.status(400).json({ success: false, message: "An account with this email already exists. Please log in instead." });
     }
 
-    const [[pkg]] = await pool.query("SELECT * FROM packages WHERE id = ? AND is_active = 1 LIMIT 1", [packageId]);
+    const [[pkg]] = await pool.query("SELECT * FROM packages WHERE id = ? AND is_active = 1 AND is_public = 1 LIMIT 1", [packageId]);
     if (!pkg) return res.status(404).json({ success: false, message: "Package not found" });
 
     let amount = Number(pkg.price);
@@ -258,7 +260,7 @@ router.post("/billing/guest-checkout/:provider/ipn", async (req, res) => {
       console.warn(`[${provider} IPN] Payment not valid for transaction ${result.transactionId}`);
       return res.status(400).send("Payment not valid");
     }
-    await consumePendingSignup(result.transactionId, result.transactionId, result.amountPaid);
+    await consumePendingSignup(result.transactionId, result.transactionId, result.amountPaid, result.country);
     return res.status(200).send("OK");
   } catch (err) {
     console.error(`[${provider} IPN] error:`, err);
@@ -299,7 +301,7 @@ router.post("/billing/webhook", express.raw({ type: "application/json" }), async
         // here, from this trusted webhook, not from the browser redirect.
         if (metadata.referenceToken) {
           const amountPaid = (dataObject.amount_total || 0) / 100;
-          const result = await consumePendingSignup(metadata.referenceToken, dataObject.id, amountPaid);
+          const result = await consumePendingSignup(metadata.referenceToken, dataObject.id, amountPaid, dataObject.customer_details?.address?.country);
           if (result.success && !result.alreadyConsumed) {
             console.log(`✅ [STRIPE] Guest checkout created workspace (Agency: ${result.agencyId}, User: ${result.userId})`);
           }
@@ -325,11 +327,12 @@ router.post("/billing/webhook", express.raw({ type: "application/json" }), async
           // Record invoice
           const amountPaid = (dataObject.amount_total || 0) / 100;
           const invoiceCurrency = (dataObject.currency || "USD").toUpperCase();
+          const invoiceCountry = await resolveInvoiceCountry({ gatewayCountry: dataObject.customer_details?.address?.country, agencyId, userId });
           const [invoiceResult] = await pool.query(
             `INSERT INTO invoices (
-              agency_id, user_id, package_id, stripe_invoice_id, amount_paid, currency, status, paid_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 'PAID', NOW())`,
-            [agencyId, userId, packageId, dataObject.invoice || dataObject.id, amountPaid, invoiceCurrency]
+              agency_id, user_id, package_id, stripe_invoice_id, amount_paid, currency, country, status, paid_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PAID', NOW())`,
+            [agencyId, userId, packageId, dataObject.invoice || dataObject.id, amountPaid, invoiceCurrency, invoiceCountry]
           );
           if (agencyId) {
             await recordCommissionForInvoice({ agencyId, invoiceId: invoiceResult.insertId, amountPaid, currency: invoiceCurrency });
@@ -368,10 +371,11 @@ router.post("/billing/webhook", express.raw({ type: "application/json" }), async
         if (subRows.length) {
           const { agency_id, user_id, package_id } = subRows[0];
           const renewalCurrency = (dataObject.currency || "USD").toUpperCase();
+          const renewalCountry = await resolveInvoiceCountry({ gatewayCountry: dataObject.customer_address?.country, agencyId: agency_id, userId: user_id });
           await pool.query(
             `INSERT INTO invoices (
-              agency_id, user_id, package_id, stripe_invoice_id, amount_paid, currency, status, invoice_pdf_url, hosted_invoice_url, paid_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 'PAID', ?, ?, NOW())
+              agency_id, user_id, package_id, stripe_invoice_id, amount_paid, currency, country, status, invoice_pdf_url, hosted_invoice_url, paid_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PAID', ?, ?, NOW())
             ON DUPLICATE KEY UPDATE
               amount_paid = VALUES(amount_paid),
               invoice_pdf_url = VALUES(invoice_pdf_url),
@@ -383,6 +387,7 @@ router.post("/billing/webhook", express.raw({ type: "application/json" }), async
               invoiceId,
               amountPaid,
               renewalCurrency,
+              renewalCountry,
               invoicePdf,
               hostedInvoiceUrl,
             ]

@@ -4,16 +4,20 @@ import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { executeOutboundWebhook } from "../services/webhookExecutor.js";
 import { webhookQueue } from "../services/webhookQueue.js";
-import { requireModule } from "../utils/entitlements.js";
+import { requireModule, assertLimit } from "../utils/entitlements.js";
+import { inboundFlowKey, isValidInboundFlowKey } from "../utils/webhookAuth.js";
+import { toWhatsAppNumber } from "../utils/commerceEvents.js";
+import { findOrCreateConversationForBroadcast } from "../utils/broadcastRunner.js";
+import { processFlow } from "../utils/flowEngine.js";
 
 const router = express.Router();
 
 // These are workspace-configuration/diagnostic tools ("Webhooks & Zapier" —
 // an "app related" menu, owner-level), not day-to-day agent work — were
 // only gated by authMiddleware (any logged-in user, any role). /webhooks/inbound/:flowId
-// below stays public on purpose (it's the actual inbound receiver external
-// services call, and gating it would silently break third-party triggers).
-router.use(["/queue/stats", "/queue/enqueue-test", "/webhooks/test-dispatch", "/webhooks/logs"], authMiddleware, roleMiddleware("RESELLER", "ADMIN"), requireModule("feature_whatsapp_webhook_workflow"));
+// below needs no login (external services call it) but requires the flow's
+// key, which only the owner sees via /webhooks/inbound-urls.
+router.use(["/queue/stats", "/queue/enqueue-test", "/webhooks/test-dispatch", "/webhooks/logs", "/webhooks/inbound-urls"], authMiddleware, roleMiddleware("RESELLER", "ADMIN"), requireModule("feature_whatsapp_webhook_workflow"));
 
 // ─── GET WEBHOOK QUEUE & BACKGROUND WORKER STATS ────────────────────────────
 router.get("/queue/stats", authMiddleware, async (req, res) => {
@@ -113,44 +117,106 @@ router.get("/webhooks/logs", authMiddleware, async (req, res) => {
 });
 
 // ─── INBOUND WEBHOOK TRIGGER (ZAPIER / MAKE / SHOPIFY -> TRIGGER FLOW) ───────
-router.post("/webhooks/inbound/:flowId", async (req, res) => {
+// ─── INBOUND WEBHOOK URLS (owner-only; each carries its flow's key) ──────────
+router.get("/webhooks/inbound-urls", async (req, res) => {
   try {
-    const { flowId } = req.params;
-    const { phone, email, name, channel = "WHATSAPP", customVariables = {} } = req.body;
-
-    const [flows] = await pool.query("SELECT * FROM bots WHERE id = ? LIMIT 1", [flowId]);
-    if (!flows.length) {
-      return res.status(404).json({ success: false, message: "Bot Flow not found" });
-    }
-
-    const flow = flows[0];
-
-    // Find or create subscriber contact
-    let contactId = null;
-    if (phone || email) {
-      const [existing] = await pool.query(
-        "SELECT id FROM contacts WHERE agency_id = ? AND (phone = ? OR email = ?) LIMIT 1",
-        [flow.agency_id, phone || "nonexistent", email || "nonexistent"]
-      );
-
-      if (existing.length) {
-        contactId = existing[0].id;
-      } else {
-        const [ins] = await pool.query(
-          "INSERT INTO contacts (agency_id, name, phone, email, platform, created_at) VALUES (?, ?, ?, ?, ?, NOW())",
-          [flow.agency_id, name || "Web/Zapier Lead", phone || null, email || null, channel]
-        );
-        contactId = ins.insertId;
-      }
-    }
-
-    console.log(`[INBOUND WEBHOOK] Triggered Flow #${flowId} (${flow.name}) for contact #${contactId}`);
-
+    const agencyId = req.tenant?.agencyId ?? req.user.agencyId;
+    const [flows] = await pool.query("SELECT id FROM flows WHERE agency_id = ?", [agencyId]);
+    const base = (process.env.BACKEND_URL || "http://localhost:5000").replace(/\/+$/, "");
     return res.json({
       success: true,
-      message: `Flow "${flow.name}" triggered successfully for recipient!`,
-      flowId: Number(flowId),
-      contactId,
+      urls: Object.fromEntries(flows.map((f) => [f.id, `${base}/api/v1/webhooks/inbound/${f.id}?key=${inboundFlowKey(f.id)}`])),
+    });
+  } catch (err) {
+    console.error("Inbound webhook URLs error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── INBOUND WEBHOOK: START A FLOW FOR A LEAD (public, key-protected) ────────
+// Zapier / Make / a website form calls this to put someone into a flow. The
+// per-flow key (utils/webhookAuth.js) is required; the flow's own bot account
+// decides the channel. WhatsApp: pass `phone` (with country code, or add
+// `countryCode`); other channels: pass `externalId` (their chat/user id).
+// Note that WhatsApp only delivers free-form flow messages to someone who
+// messaged the business in the last 24 hours — for cold leads use a template.
+router.post("/webhooks/inbound/:flowId", async (req, res) => {
+  try {
+    const flowId = Number(req.params.flowId);
+    const key = req.query.key || req.get("X-Webhook-Key");
+    if (!flowId || !isValidInboundFlowKey(flowId, key)) {
+      return res.status(401).json({ success: false, message: "Missing or invalid webhook key" });
+    }
+
+    const [[flow]] = await pool.query("SELECT * FROM flows WHERE id = ? AND is_active = 1", [flowId]);
+    if (!flow) return res.status(404).json({ success: false, message: "Flow not found or inactive" });
+
+    const [[integration]] = await pool.query(
+      "SELECT * FROM integrations WHERE id = ? AND agency_id = ? AND is_active = 1",
+      [flow.integration_id, flow.agency_id]
+    );
+    if (!integration) return res.status(409).json({ success: false, message: "This flow has no active bot account" });
+
+    const { phone, email, name, externalId: rawExternalId, countryCode, customVariables = {} } = req.body || {};
+    const platform = integration.platform;
+    const externalId = platform === "WHATSAPP" ? toWhatsAppNumber(phone, countryCode) : (rawExternalId ? String(rawExternalId).slice(0, 200) : null);
+    if (!externalId) {
+      return res.status(400).json({
+        success: false,
+        message: platform === "WHATSAPP" ? "A valid phone number with country code is required" : `externalId (the ${platform} user/chat id) is required`,
+      });
+    }
+
+    const [[existing]] = await pool.query(
+      "SELECT * FROM contacts WHERE agency_id = ? AND platform = ? AND external_id = ?",
+      [flow.agency_id, platform, externalId]
+    );
+    let contact = existing;
+    if (!contact) {
+      try {
+        await assertLimit(flow.agency_id, "max_subscribers", 1, null);
+      } catch (limitErr) {
+        return res.status(403).json({ success: false, message: limitErr.message, code: limitErr.code });
+      }
+      await pool.query(
+        // source INTEGRATION: counts in subscriber gain (see migrate_subscriber_source_and_earnings.js)
+        `INSERT IGNORE INTO contacts (agency_id, platform, external_id, name, phone, email, source, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'INTEGRATION', NOW())`,
+        [flow.agency_id, platform, externalId, String(name || "").slice(0, 150) || externalId, platform === "WHATSAPP" ? externalId : (phone || null), email || null]
+      );
+      [[contact]] = await pool.query(
+        "SELECT * FROM contacts WHERE agency_id = ? AND platform = ? AND external_id = ?",
+        [flow.agency_id, platform, externalId]
+      );
+    }
+    if (contact.is_blocked) return res.status(409).json({ success: false, message: "This subscriber is blocked" });
+
+    const conversation = await findOrCreateConversationForBroadcast(flow.agency_id, contact.id, integration.id);
+
+    const nodes = JSON.parse(flow.nodes_json || "[]");
+    const startNode = nodes.find((n) => n.type === "start") || nodes[0];
+    if (!startNode) return res.status(400).json({ success: false, message: "Flow has no start node" });
+
+    // Same start sequence as POST /conversations/:id/trigger-flow.
+    const variables = Object.fromEntries(
+      Object.entries(customVariables && typeof customVariables === "object" ? customVariables : {})
+        .slice(0, 50)
+        .map(([k, v]) => [String(k).slice(0, 64), typeof v === "object" ? JSON.stringify(v).slice(0, 1000) : String(v).slice(0, 1000)])
+    );
+    await pool.query("UPDATE flow_sessions SET status = 'COMPLETED' WHERE conversation_id = ? AND status = 'ACTIVE'", [conversation.id]);
+    await pool.query(
+      "INSERT INTO flow_sessions (agency_id, conversation_id, flow_id, current_node_id, variables, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')",
+      [flow.agency_id, conversation.id, flow.id, startNode.id, JSON.stringify(variables)]
+    );
+    await processFlow(flow.agency_id, platform, conversation, contact, "", integration);
+
+    console.log(`[INBOUND WEBHOOK] Started flow #${flow.id} (${flow.name}) for contact #${contact.id}`);
+    return res.json({
+      success: true,
+      message: `Flow "${flow.name}" started`,
+      flowId: flow.id,
+      contactId: contact.id,
+      conversationId: conversation.id,
     });
   } catch (err) {
     console.error("Inbound webhook error:", err);

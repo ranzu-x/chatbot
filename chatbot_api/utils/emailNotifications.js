@@ -140,3 +140,55 @@ export async function sendVerificationEmail({ to, name, verifyUrl }) {
     console.error(`[Email] Failed to send verification email to ${to}:`, err.message);
   }
 }
+
+const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+/** Password reset link (utils/passwordReset.js). Never throws. */
+export async function sendPasswordResetEmail({ to, name, resetUrl }) {
+  if (!to) return;
+  const transporter = getTransporter();
+  const from = smtpFromAddress();
+  const subject = "Reset your password";
+  const html = wrapHtml(
+    "Reset your password",
+    `<p>Hi ${escapeHtml(name) || "there"},</p>
+     <p>We received a request to reset the password for your account. Click below to choose a new one.</p>
+     <p><a href="${resetUrl}" style="display:inline-block;padding:10px 18px;background:#0f172a;color:#ffffff;border-radius:8px;text-decoration:none;font-weight:700;">Choose a new password</a></p>
+     <p style="color:#64748b;font-size:0.82rem;">Or paste this link into your browser:<br/><span style="word-break:break-all;">${resetUrl}</span></p>
+     <p style="color:#64748b;">This link expires in 1 hour and works once. If you didn't ask for this, you can ignore this email — your password stays the same.</p>`,
+    "This is an automated message about your account."
+  );
+
+  if (!transporter) {
+    console.log(`[Email:not-sent] to=${to} subject="${subject}" — SMTP not configured`);
+    if (process.env.NODE_ENV !== "production") console.log(`[Email:dev] password reset link for ${to}: ${resetUrl}`);
+    return;
+  }
+  try {
+    await transporter.sendMail({ from, to, subject, html });
+  } catch (err) {
+    console.error(`[Email] Failed to send password reset email to ${to}:`, err.message);
+  }
+}
+
+/** A one-off email from the Super Admin to a user (User Manager → selected
+ * users → Send email, POST /admin/users/bulk-email). Unlike the helpers
+ * above it REPORTS the outcome instead of swallowing it, so the admin sees
+ * how many actually went out: "sent" | "failed" | "not_configured" (SMTP
+ * unset — the email is only logged). Still never throws. */
+export async function sendAdminEmail({ to, subject, bodyHtml }) {
+  if (!to) return "failed";
+  const transporter = getTransporter();
+  const html = wrapHtml(subject, bodyHtml, "You're receiving this because you have an account with us.");
+  if (!transporter) {
+    console.log(`[Email:not-sent] to=${to} subject="${subject}" — SMTP not configured`);
+    return "not_configured";
+  }
+  try {
+    await transporter.sendMail({ from: smtpFromAddress(), to, subject, html });
+    return "sent";
+  } catch (err) {
+    console.error(`[Email] Failed to send "${subject}" to ${to}:`, err.message);
+    return "failed";
+  }
+}

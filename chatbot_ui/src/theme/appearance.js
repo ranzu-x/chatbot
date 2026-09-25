@@ -60,8 +60,8 @@ export const FONTS = [
 ];
 
 export const ACCENTS = [
-  { id: 'graphite', label: 'Graphite', base: '#18181b', dark: '#000000', light: '#3f3f46' },
   { id: 'blue',    label: 'Blue',    base: '#2563eb', dark: '#1d4ed8', light: '#3b82f6' },
+  { id: 'graphite', label: 'Graphite', base: '#18181b', dark: '#000000', light: '#3f3f46' },
   { id: 'indigo',  label: 'Indigo',  base: '#4f46e5', dark: '#4338ca', light: '#6366f1' },
   { id: 'violet',  label: 'Violet',  base: '#7c3aed', dark: '#6d28d9', light: '#8b5cf6' },
   { id: 'teal',    label: 'Teal',    base: '#0d9488', dark: '#0f766e', light: '#14b8a6' },
@@ -76,8 +76,8 @@ export const DENSITIES = [
   { id: 'comfortable', label: 'Comfortable', note: 'Easier to read',  rootSize: '17px' },
 ];
 
-// Matches the ManyChat reference look's near-black primary buttons/text — see index.css's :root for why.
-export const DEFAULT_APPEARANCE = { font: 'inter', accent: 'graphite', density: 'default' };
+// Blue primary (the user's choice — the brief near-black "Graphite" default was reverted; Graphite stays pickable).
+export const DEFAULT_APPEARANCE = { font: 'inter', accent: 'blue', density: 'default' };
 
 function hexToRgba(hex, alpha) {
   const h = hex.replace('#', '');
@@ -101,7 +101,11 @@ export function getAppearance() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...DEFAULT_APPEARANCE };
-    return { ...DEFAULT_APPEARANCE, ...JSON.parse(raw) };
+    const saved = JSON.parse(raw);
+    // Graphite was briefly the default, and saving any setting stored the whole
+    // object — so a saved "graphite" only counts if the person picked it.
+    if (saved.accent === 'graphite' && !saved.accentChosen) delete saved.accent;
+    return { ...DEFAULT_APPEARANCE, ...saved };
   } catch {
     return { ...DEFAULT_APPEARANCE };
   }
@@ -132,7 +136,7 @@ export function applyAppearance(appearance = getAppearance()) {
 
 /** Merge + persist + apply. Returns the resulting appearance. */
 export function setAppearance(partial) {
-  const next = { ...getAppearance(), ...partial };
+  const next = { ...getAppearance(), ...partial, ...(partial.accent ? { accentChosen: true } : {}) };
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch { /* private mode */ }
   applyAppearance(next);
   window.dispatchEvent(new CustomEvent('appearance:change', { detail: next }));

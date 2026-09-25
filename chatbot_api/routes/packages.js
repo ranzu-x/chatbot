@@ -7,6 +7,73 @@ import { logAuditEvent, diffFields } from "../utils/auditLog.js";
 
 const router = express.Router();
 
+// Package options added by migrate_package_role_options.js. body key → column
+// + normaliser. Only keys present in the body are written (undefined = keep).
+// Discount and pay-per-use are stored and shown only — checkout does not
+// apply them yet.
+const toFlag = (v) => (v ? 1 : 0);
+const toNullableNumber = (v) => (v === "" || v === null ? null : Number(v));
+const toNullableText = (v) => (v === "" || v === null ? null : String(v).trim().slice(0, 255));
+const toNullableDate = (v) => (v === "" || v === null ? null : String(v).replace("T", " ").slice(0, 19));
+const PACKAGE_OPTION_FIELDS = {
+  isPublic: ["is_public", toFlag],
+  isHighlighted: ["is_highlighted", toFlag],
+  payPerUse: ["pay_per_use", toFlag],
+  isDefaultPayPerUse: ["is_default_pay_per_use", toFlag],
+  discountPercent: ["discount_percent", toNullableNumber],
+  discountTerms: ["discount_terms", toNullableText],
+  discountStartsAt: ["discount_starts_at", toNullableDate],
+  discountEndsAt: ["discount_ends_at", toNullableDate],
+  discountTimezone: ["discount_timezone", toNullableText],
+  discountIsActive: ["discount_is_active", toFlag],
+};
+const DISCOUNT_COLUMNS = ["discount_percent", "discount_terms", "discount_starts_at", "discount_ends_at", "discount_timezone", "discount_is_active"];
+
+function validatePackageOptions(body) {
+  const pct = body.discountPercent;
+  if (pct !== undefined && pct !== null && pct !== "" && !(Number(pct) >= 0 && Number(pct) <= 100)) {
+    return "Discount must be between 0 and 100%.";
+  }
+  if (body.discountStartsAt && body.discountEndsAt && String(body.discountEndsAt) < String(body.discountStartsAt)) {
+    return "Discount end must be after its start.";
+  }
+  return null;
+}
+
+async function writePackageOptions(packageId, body) {
+  const sets = [];
+  const params = [];
+  for (const [bodyKey, [column, normalise]] of Object.entries(PACKAGE_OPTION_FIELDS)) {
+    if (body[bodyKey] === undefined) continue;
+    sets.push(`${column} = ?`);
+    params.push(normalise(body[bodyKey]));
+  }
+  if (sets.length) await pool.query(`UPDATE packages SET ${sets.join(", ")} WHERE id = ?`, [...params, packageId]);
+  // Only one package can be the default pay-per-use package per type.
+  if (body.isDefaultPayPerUse) {
+    await pool.query(
+      "UPDATE packages SET is_default_pay_per_use = 0 WHERE id != ? AND type = (SELECT type FROM (SELECT type FROM packages WHERE id = ?) t)",
+      [packageId, packageId]
+    );
+  }
+}
+
+// "Apply to other packages": copies this package's discount settings onto
+// the given package ids, or onto every package when applyDiscountTo = "ALL".
+async function copyDiscountToPackages(sourceId, applyDiscountTo) {
+  if (!applyDiscountTo || (Array.isArray(applyDiscountTo) && !applyDiscountTo.length)) return 0;
+  const assignments = DISCOUNT_COLUMNS.map((c) => `t.${c} = s.${c}`).join(", ");
+  const target = applyDiscountTo === "ALL"
+    ? { clause: "t.id != s.id", params: [] }
+    : { clause: "t.id != s.id AND t.id IN (?)", params: [applyDiscountTo.map(Number).filter(Number.isFinite)] };
+  if (target.params.length && !target.params[0].length) return 0;
+  const [r] = await pool.query(
+    `UPDATE packages t JOIN packages s ON s.id = ? SET ${assignments} WHERE ${target.clause}`,
+    [sourceId, ...target.params]
+  );
+  return r.affectedRows;
+}
+
 // ─── GET CURRENT USER ENTITLEMENTS (Available to all logged-in roles) ─────────
 router.get("/packages/my-entitlements", authMiddleware, async (req, res) => {
   try {
@@ -79,7 +146,15 @@ router.get("/packages", authMiddleware, roleMiddleware("ADMIN", "RESELLER"), asy
 // ─── ADMIN: GET SINGLE PACKAGE MATRIX ────────────────────────────────────────
 router.get("/packages/:id", authMiddleware, roleMiddleware("ADMIN"), async (req, res) => {
   try {
-    const [rows] = await pool.query("SELECT * FROM packages WHERE id = ?", [req.params.id]);
+    // Discount dates go back as naive "YYYY-MM-DDTHH:mm" strings (what a
+    // datetime-local input takes) so they never shift by the server's zone.
+    const [rows] = await pool.query(
+      `SELECT *,
+              DATE_FORMAT(discount_starts_at, '%Y-%m-%dT%H:%i') AS discount_starts_local,
+              DATE_FORMAT(discount_ends_at, '%Y-%m-%dT%H:%i') AS discount_ends_local
+       FROM packages WHERE id = ?`,
+      [req.params.id]
+    );
     if (!rows.length) return res.status(404).json({ success: false, message: "Package not found" });
 
     const pkg = rows[0];
@@ -148,6 +223,8 @@ router.post("/packages", authMiddleware, roleMiddleware("ADMIN"), async (req, re
     } = req.body;
 
     if (!name) return res.status(400).json({ success: false, message: "Package name is required" });
+    const optionError = validatePackageOptions(req.body);
+    if (optionError) return res.status(400).json({ success: false, message: optionError });
 
     const packageSlug = (slug || name.toLowerCase().replace(/[^a-z0-9]+/g, "-")).trim();
 
@@ -184,6 +261,8 @@ router.post("/packages", authMiddleware, roleMiddleware("ADMIN"), async (req, re
     );
 
     const newPackageId = pkgResult.insertId;
+    await writePackageOptions(newPackageId, req.body);
+    await copyDiscountToPackages(newPackageId, req.body.applyDiscountTo);
 
     // Insert module configurations
     if (Array.isArray(modules) && modules.length > 0) {
@@ -249,6 +328,8 @@ router.put("/packages/:id", authMiddleware, roleMiddleware("ADMIN"), async (req,
     const [existing] = await pool.query("SELECT * FROM packages WHERE id = ?", [req.params.id]);
     if (!existing.length) return res.status(404).json({ success: false, message: "Package not found" });
     const before = existing[0];
+    const optionError = validatePackageOptions(req.body);
+    if (optionError) return res.status(400).json({ success: false, message: optionError });
 
     if (isDefault && type) {
       await pool.query("UPDATE packages SET is_default = 0 WHERE type = ? AND id != ?", [type, req.params.id]);
@@ -299,6 +380,8 @@ router.put("/packages/:id", authMiddleware, roleMiddleware("ADMIN"), async (req,
         req.params.id,
       ]
     );
+    await writePackageOptions(Number(req.params.id), req.body);
+    const discountCopies = await copyDiscountToPackages(Number(req.params.id), req.body.applyDiscountTo);
 
     // Upsert module configurations
     if (Array.isArray(modules) && modules.length > 0) {
@@ -327,7 +410,10 @@ router.put("/packages/:id", authMiddleware, roleMiddleware("ADMIN"), async (req,
       changes: diffFields(before, after, ["name", "price", "is_active", "billing_cycle"]),
     });
 
-    return res.json({ success: true, message: `Package updated successfully!` });
+    return res.json({
+      success: true,
+      message: discountCopies ? `Package updated — discount copied to ${discountCopies} other package(s).` : "Package updated successfully!",
+    });
   } catch (err) {
     console.error("Update package error:", err);
     return res.status(500).json({ success: false, message: err.message || "Failed to update package" });
@@ -365,6 +451,13 @@ router.post("/packages/:id/clone", authMiddleware, roleMiddleware("ADMIN"), asyn
     );
 
     const newId = cloneResult.insertId;
+    await pool.query(
+      `UPDATE packages t JOIN packages s ON s.id = ?
+       SET t.is_public = s.is_public, t.pay_per_use = s.pay_per_use,
+           ${DISCOUNT_COLUMNS.map((c) => `t.${c} = s.${c}`).join(", ")}
+       WHERE t.id = ?`,
+      [src.id, newId]
+    );
 
     // Clone all module configurations
     const [srcModules] = await pool.query("SELECT module_key, is_enabled, limits_json FROM package_modules WHERE package_id = ?", [src.id]);

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useParams, Link } from "react-router";
+import { useParams, useSearchParams, Link } from "react-router";
 import toast from "react-hot-toast";
 import {
   Calendar,
@@ -24,6 +24,8 @@ import {
 
 export default function PublicBookingPage() {
   const { agencyId } = useParams();
+  const [searchParams] = useSearchParams();
+  const bookingKey = searchParams.get("k"); // required by the public booking API
 
   const [step, setStep] = useState(1); // 1: Service, 2: Date & Slot, 3: Contact Info, 4: Confirmed
   const [loading, setLoading] = useState(true);
@@ -56,8 +58,8 @@ export default function PublicBookingPage() {
       setLoading(true);
       try {
         const [svcRes, datesRes] = await Promise.all([
-          fetchPublicServices(agencyId),
-          fetchAvailableDates(agencyId),
+          fetchPublicServices(agencyId, bookingKey),
+          fetchAvailableDates(agencyId, null, null, 30, bookingKey),
         ]);
         setServices(svcRes.services || []);
         setAvailableDates(datesRes.dates || []);
@@ -77,7 +79,7 @@ export default function PublicBookingPage() {
     setSelectedSlot(null);
     setSlotsLoading(true);
     try {
-      const res = await fetchAvailableSlots(agencyId, dateStr);
+      const res = await fetchAvailableSlots(agencyId, dateStr, null, bookingKey);
       setAvailableSlots(res.slots || []);
     } catch (err) {
       toast.error("Failed to load time slots for this date");
@@ -98,6 +100,7 @@ export default function PublicBookingPage() {
     try {
       const payload = {
         agency_id: parseInt(agencyId),
+        booking_key: bookingKey,
         service_id: selectedService?.id || null,
         service_name: selectedService?.name || "General Consultation",
         slot_id: selectedSlot?.id || null,

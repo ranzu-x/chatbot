@@ -12,7 +12,7 @@ import express from "express";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { resolveCapability } from "../utils/aiProviders/registry.js";
-import { assertLimit } from "../utils/entitlements.js";
+import { assertLimit, requireModule } from "../utils/entitlements.js";
 
 const router = express.Router();
 router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
@@ -26,7 +26,7 @@ const STYLE_INSTRUCTIONS = {
   simplify: "simpler and easier to understand, using plain everyday language",
 };
 
-router.post("/ai/rewrite-message", async (req, res) => {
+router.post("/ai/rewrite-message", requireModule("feature_ai_assistant"), async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
     const { text, style } = req.body;

@@ -30,5 +30,5 @@ SELECT 'Flow sessions table created!' AS result;
 try {
   await conn.query(sql);
   console.log('✅ Flow sessions table created!');
-} catch(e) { console.error('❌', e.message); }
+} catch(e) { console.error('❌', e.message); process.exitCode = 1; }
 finally { await conn.end(); }

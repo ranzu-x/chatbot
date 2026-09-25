@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import AppLayout from '../../Layout/AppLayout';
-import { socialPostAPI, integrationAPI } from '../../services/api';
+import { socialPostAPI, integrationAPI, uploadAPI } from '../../services/api';
+import { resolveMediaUrl } from '../Contacts/subscriberUtils';
 import {
   Send,
   Calendar,
@@ -26,13 +27,27 @@ import {
   Bookmark,
   Sparkles,
   Filter,
+  ChevronLeft,
+  ChevronRight,
+  Upload,
+  Info,
 } from 'lucide-react';
+
+const ACCOUNTS_PER_PAGE = 10;
+const HISTORY_PAGE_SIZE = 25;
+// Mirrors SOCIAL_POST_HISTORY_LIMIT in chatbot_api/utils/socialPostHistory.js
+const HISTORY_LIMIT = 50;
+// Must match the 20 MB limit and file types of POST /upload (routes/upload.js)
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+const IMAGE_ACCEPT = 'image/jpeg,image/png,image/gif,image/webp';
+const VIDEO_ACCEPT = 'video/mp4,video/webm';
 
 export default function SocialPostingPage() {
   const [activeTab, setActiveTab] = useState('create'); // 'create' | 'history'
   const [integrations, setIntegrations] = useState([]);
   const [selectedIntegrationIds, setSelectedIntegrationIds] = useState([]);
   const [loadingIntegrations, setLoadingIntegrations] = useState(true);
+  const [accountPage, setAccountPage] = useState(1);
 
   // Composer Form State
   const [postType, setPostType] = useState('IMAGE'); // 'TEXT' | 'IMAGE' | 'CAROUSEL' | 'VIDEO' | 'LINK'
@@ -50,6 +65,8 @@ export default function SocialPostingPage() {
   const [historyPosts, setHistoryPosts] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [historyFilter, setHistoryFilter] = useState('ALL');
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotal, setHistoryTotal] = useState(0);
   const [toast, setToast] = useState(null);
 
   const showToast = (msg, type = 'success') => {
@@ -81,11 +98,19 @@ export default function SocialPostingPage() {
     }
   };
 
-  const loadHistory = async () => {
+  const loadHistory = async (page = historyPage) => {
     setLoadingHistory(true);
     try {
-      const res = await socialPostAPI.getAll({ status: historyFilter });
-      setHistoryPosts(res.data?.posts || []);
+      const res = await socialPostAPI.getAll({ status: historyFilter, page, pageSize: HISTORY_PAGE_SIZE });
+      const posts = res.data?.posts || [];
+      const total = Number(res.data?.total ?? posts.length);
+      // Deleting the last row of the last page — step back a page.
+      if (!posts.length && page > 1 && total > 0) {
+        setHistoryPage(Math.ceil(total / HISTORY_PAGE_SIZE));
+        return;
+      }
+      setHistoryPosts(posts);
+      setHistoryTotal(total);
     } catch (err) {
       console.error(err);
     } finally {
@@ -95,9 +120,9 @@ export default function SocialPostingPage() {
 
   useEffect(() => {
     if (activeTab === 'history') {
-      loadHistory();
+      loadHistory(historyPage);
     }
-  }, [activeTab, historyFilter]);
+  }, [activeTab, historyFilter, historyPage]);
 
   const toggleAccountSelection = (id) => {
     setSelectedIntegrationIds((prev) =>
@@ -118,6 +143,64 @@ export default function SocialPostingPage() {
     const updated = [...mediaUrls];
     updated[index] = value;
     setMediaUrls(updated);
+  };
+
+  // ─── Media upload ───
+  // One hidden file input shared by every row; uploadTargetRef remembers
+  // which row's Upload button opened it. For a carousel several images can be
+  // picked at once — the first fills the row, the rest are added after it.
+  const fileInputRef = useRef(null);
+  const uploadTargetRef = useRef(0);
+  const [uploadingIdx, setUploadingIdx] = useState(null);
+
+  const openUploadPicker = (idx) => {
+    uploadTargetRef.current = idx;
+    fileInputRef.current?.click();
+  };
+
+  const handleFilesChosen = async (e) => {
+    const picked = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (!picked.length) return;
+
+    const wantVideo = postType === 'VIDEO';
+    const files = postType === 'CAROUSEL' ? picked : picked.slice(0, 1);
+    for (const file of files) {
+      const isRightType = wantVideo ? file.type.startsWith('video/') : file.type.startsWith('image/');
+      if (!isRightType) {
+        showToast(wantVideo ? `"${file.name}" is not a video file` : `"${file.name}" is not an image file`, 'error');
+        return;
+      }
+      if (file.size > MAX_UPLOAD_BYTES) {
+        showToast(`"${file.name}" is larger than 20 MB`, 'error');
+        return;
+      }
+    }
+
+    const target = uploadTargetRef.current;
+    setUploadingIdx(target);
+    try {
+      const urls = [];
+      for (const file of files) {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await uploadAPI.uploadFile(formData);
+        if (res.data?.url) urls.push(res.data.url);
+      }
+      if (!urls.length) throw new Error('Upload returned no file');
+      setMediaUrls((prev) => {
+        const next = [...prev];
+        next[target] = urls[0];
+        next.splice(target + 1, 0, ...urls.slice(1));
+        return next;
+      });
+      showToast(urls.length > 1 ? `${urls.length} files uploaded` : 'File uploaded');
+    } catch (err) {
+      console.error('Media upload failed', err);
+      showToast(err.response?.data?.message || 'Upload failed', 'error');
+    } finally {
+      setUploadingIdx(null);
+    }
   };
 
   const handlePublishOrSchedule = async (e) => {
@@ -185,7 +268,7 @@ export default function SocialPostingPage() {
       setLinkUrl('');
       setIsScheduling(false);
       setScheduledAt('');
-      loadHistory();
+      setHistoryPage(1);
       setActiveTab('history');
     } catch (err) {
       console.error(err);
@@ -201,10 +284,27 @@ export default function SocialPostingPage() {
     try {
       await socialPostAPI.delete(id);
       showToast('Post record deleted');
-      setHistoryPosts((prev) => prev.filter((p) => p.id !== id));
+      loadHistory(historyPage);
     } catch (err) {
       showToast(err.response?.data?.message || 'Failed to delete post', 'error');
     }
+  };
+
+  // Account column shows 10 accounts per page
+  const accountPageCount = Math.max(1, Math.ceil(integrations.length / ACCOUNTS_PER_PAGE));
+  const safeAccountPage = Math.min(accountPage, accountPageCount);
+  const pagedIntegrations = integrations.slice((safeAccountPage - 1) * ACCOUNTS_PER_PAGE, safeAccountPage * ACCOUNTS_PER_PAGE);
+  const visibleIds = pagedIntegrations.map((i) => i.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIntegrationIds.includes(id));
+
+  // "Select all" / "Clear" only touch the 10 accounts on the current page;
+  // picks on other pages are left alone. One account always stays selected.
+  const toggleSelectVisible = () => {
+    setSelectedIntegrationIds((prev) => {
+      if (!allVisibleSelected) return [...new Set([...prev, ...visibleIds])];
+      const remaining = prev.filter((id) => !visibleIds.includes(id));
+      return remaining.length ? remaining : [visibleIds[0]];
+    });
   };
 
   // Active target accounts for preview
@@ -212,7 +312,7 @@ export default function SocialPostingPage() {
 
   return (
     <AppLayout>
-      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 20px', fontFamily: 'inherit' }}>
+      <div style={{ maxWidth: 1360, margin: '0 auto', padding: '24px 20px', fontFamily: 'inherit' }}>
         {/* Toast Notification */}
         {toast && (
           <div
@@ -289,76 +389,131 @@ export default function SocialPostingPage() {
                 gap: 6,
               }}
             >
-              <Clock size={13} /> Post History & Logs ({historyPosts.length})
+              <Clock size={13} /> Post History & Logs ({historyTotal})
             </button>
           </div>
         </div>
 
         {/* ─── TAB 1: CREATE POST (COMPOSER + LIVE PREVIEW) ─── */}
         {activeTab === 'create' && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(340px, 1fr) minmax(320px, 420px)', gap: 24, alignItems: 'start' }}>
-            {/* Left Column: Post Composer */}
-            <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12, padding: 20, boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-              <form onSubmit={handlePublishOrSchedule}>
-                {/* 1. Target Account Selector */}
-                <div style={{ marginBottom: 20 }}>
-                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: '#334155', marginBottom: 8 }}>
-                    1. Select Publishing Accounts
-                  </label>
-                  {loadingIntegrations ? (
-                    <div style={{ fontSize: '0.78rem', color: '#94a3b8' }}>Loading accounts...</div>
-                  ) : integrations.length === 0 ? (
-                    <div style={{ padding: '12px 14px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: '0.78rem', color: '#64748b' }}>
-                      No Facebook Pages or Instagram accounts connected. Please go to <strong>Connect Account</strong> to link your accounts.
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                      {integrations.map((integ) => {
-                        const isSelected = selectedIntegrationIds.includes(integ.id);
-                        const isFb = integ.platform === 'FACEBOOK';
-                        return (
-                          <button
-                            key={integ.id}
-                            type="button"
-                            onClick={() => toggleAccountSelection(integ.id)}
-                            style={{
-                              padding: '7px 12px',
-                              borderRadius: 8,
-                              border: `1px solid ${isSelected ? (isFb ? '#bfdbfe' : '#fbcfe8') : '#e2e8f0'}`,
-                              background: isSelected ? (isFb ? '#eff6ff' : '#fdf2f8') : '#ffffff',
-                              color: isSelected ? (isFb ? '#1d4ed8' : '#be185d') : '#475569',
-                              fontSize: '0.78rem',
-                              fontWeight: 700,
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 6,
-                              transition: 'all 0.15s',
-                            }}
-                          >
-                            {isFb ? <Facebook size={14} color="#1877f2" /> : <Instagram size={14} color="#e1306c" />}
-                            <span>{integ.name || integ.fb_page_name || 'Account'}</span>
-                            <span style={{ fontSize: '0.68rem', opacity: 0.75, fontWeight: 500 }}>
-                              {isFb ? '(Page)' : integ.ig_username ? `(@${integ.ig_username})` : '(Instagram)'}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {selectedIntegrationIds.some(id => integrations.find(i => i.id === id)?.platform === 'INSTAGRAM') && ['TEXT', 'LINK'].includes(postType) && (
-                    <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: '#fdf2f8', border: '1px solid #fbcfe8', fontSize: '0.76rem', color: '#be185d', display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <AlertCircle size={14} style={{ flexShrink: 0 }} />
-                      <span><strong>Instagram Notice:</strong> Instagram requires an image or video for all posts. Please choose <strong>Photo</strong>, <strong>Carousel</strong>, or <strong>Video</strong> format.</span>
-                    </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(210px, 250px) minmax(340px, 1fr) minmax(300px, 400px)', gap: 20, alignItems: 'start' }}>
+            {/* Left Column: Publishing Accounts — the account tabs stacked
+                vertically so a long list scrolls here instead of pushing the
+                composer down. Still multi-select (at least one stays on). */}
+            <div style={{ position: 'sticky', top: 16, background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.02)', display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 110px)', minHeight: 0 }}>
+              <div style={{ padding: '14px 14px 10px 14px', borderBottom: '1px solid #f1f5f9' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#334155' }}>Publish to</span>
+                  {pagedIntegrations.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={toggleSelectVisible}
+                      title={allVisibleSelected ? 'Unselect the accounts on this page' : 'Select the accounts on this page'}
+                      style={{ border: 'none', background: 'transparent', padding: 0, fontSize: '0.72rem', fontWeight: 700, color: '#2563eb', cursor: 'pointer' }}
+                    >
+                      {allVisibleSelected ? 'Clear' : 'Select all'}
+                    </button>
                   )}
                 </div>
+                {integrations.length > 0 && (
+                  <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: 2 }}>
+                    {selectedIntegrationIds.length} of {integrations.length} selected
+                  </div>
+                )}
+              </div>
 
-                {/* 2. Post Format Selector */}
+              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {loadingIntegrations ? (
+                  <div style={{ fontSize: '0.78rem', color: '#94a3b8', padding: '6px 4px' }}>Loading accounts...</div>
+                ) : integrations.length === 0 ? (
+                  <div style={{ padding: '12px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: '0.76rem', color: '#64748b', lineHeight: 1.5 }}>
+                    No Facebook Pages or Instagram accounts connected. Please go to <strong>Connect Account</strong> to link your accounts.
+                  </div>
+                ) : (
+                  pagedIntegrations.map((integ) => {
+                    const isSelected = selectedIntegrationIds.includes(integ.id);
+                    const isFb = integ.platform === 'FACEBOOK';
+                    const name = integ.name || integ.fb_page_name || 'Account';
+                    const sub = isFb ? 'Facebook Page' : integ.ig_username ? `@${integ.ig_username}` : 'Instagram';
+                    return (
+                      <button
+                        key={integ.id}
+                        type="button"
+                        onClick={() => toggleAccountSelection(integ.id)}
+                        title={`${name} · ${sub}`}
+                        style={{
+                          width: '100%',
+                          padding: '8px 10px',
+                          borderRadius: 8,
+                          border: `1px solid ${isSelected ? (isFb ? '#bfdbfe' : '#fbcfe8') : '#e2e8f0'}`,
+                          background: isSelected ? (isFb ? '#eff6ff' : '#fdf2f8') : '#ffffff',
+                          color: isSelected ? (isFb ? '#1d4ed8' : '#be185d') : '#475569',
+                          fontSize: '0.78rem',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          textAlign: 'left',
+                          flexShrink: 0,
+                          transition: 'all 0.15s',
+                        }}
+                      >
+                        {isFb ? <Facebook size={15} color="#1877f2" style={{ flexShrink: 0 }} /> : <Instagram size={15} color="#e1306c" style={{ flexShrink: 0 }} />}
+                        <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
+                          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
+                          <span style={{ fontSize: '0.68rem', opacity: 0.75, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</span>
+                        </span>
+                        {isSelected && <CheckCircle2 size={14} style={{ flexShrink: 0 }} />}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+
+              {accountPageCount > 1 && (
+                <div style={{ padding: '8px 10px', borderTop: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                  <button
+                    type="button"
+                    onClick={() => setAccountPage(safeAccountPage - 1)}
+                    disabled={safeAccountPage <= 1}
+                    title="Previous 10"
+                    style={{ width: 28, height: 28, borderRadius: 6, border: '1px solid #e2e8f0', background: '#ffffff', color: safeAccountPage <= 1 ? '#cbd5e1' : '#475569', cursor: safeAccountPage <= 1 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
+                  <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 600, textAlign: 'center' }}>
+                    {(safeAccountPage - 1) * ACCOUNTS_PER_PAGE + 1}–{Math.min(safeAccountPage * ACCOUNTS_PER_PAGE, integrations.length)} of {integrations.length}
+                    <span style={{ display: 'block', fontSize: '0.66rem', color: '#94a3b8', fontWeight: 500 }}>Page {safeAccountPage} / {accountPageCount}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setAccountPage(safeAccountPage + 1)}
+                    disabled={safeAccountPage >= accountPageCount}
+                    title="Next 10"
+                    style={{ width: 28, height: 28, borderRadius: 6, border: '1px solid #e2e8f0', background: '#ffffff', color: safeAccountPage >= accountPageCount ? '#cbd5e1' : '#475569', cursor: safeAccountPage >= accountPageCount ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Middle Column: Post Composer */}
+            <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12, padding: 20, boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+              <form onSubmit={handlePublishOrSchedule}>
+                {/* Publishing accounts are picked in the left column */}
+                {selectedIntegrationIds.some(id => integrations.find(i => i.id === id)?.platform === 'INSTAGRAM') && ['TEXT', 'LINK'].includes(postType) && (
+                  <div style={{ marginBottom: 16, padding: '8px 12px', borderRadius: 8, background: '#fdf2f8', border: '1px solid #fbcfe8', fontSize: '0.76rem', color: '#be185d', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <AlertCircle size={14} style={{ flexShrink: 0 }} />
+                    <span><strong>Instagram Notice:</strong> Instagram requires an image or video for all posts. Please choose <strong>Photo</strong>, <strong>Carousel</strong>, or <strong>Video</strong> format.</span>
+                  </div>
+                )}
+
+                {/* 1. Post Format Selector */}
                 <div style={{ marginBottom: 20 }}>
                   <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: '#334155', marginBottom: 8 }}>
-                    2. Post Format
+                    1. Post Format
                   </label>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: 8 }}>
                     {[
@@ -399,11 +554,11 @@ export default function SocialPostingPage() {
                   </div>
                 </div>
 
-                {/* 3. Post Content / Caption */}
+                {/* 2. Post Content / Caption */}
                 <div style={{ marginBottom: 20 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                     <label style={{ fontSize: '0.78rem', fontWeight: 700, color: '#334155' }}>
-                      3. Post Caption / Message
+                      2. Post Caption / Message
                     </label>
                     <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
                       {message.length} characters
@@ -419,12 +574,12 @@ export default function SocialPostingPage() {
                   />
                 </div>
 
-                {/* 4. Media URLs Input (Photo / Carousel / Video) */}
+                {/* 3. Media URLs Input (Photo / Carousel / Video) */}
                 {(postType === 'IMAGE' || postType === 'CAROUSEL' || postType === 'VIDEO') && (
                   <div style={{ marginBottom: 20 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                       <label style={{ fontSize: '0.78rem', fontWeight: 700, color: '#334155' }}>
-                        4. {postType === 'VIDEO' ? 'Video URL' : postType === 'CAROUSEL' ? 'Carousel Image URLs' : 'Image URL'}
+                        3. {postType === 'VIDEO' ? 'Video URL' : postType === 'CAROUSEL' ? 'Carousel Image URLs' : 'Image URL'}
                       </label>
                       {postType === 'CAROUSEL' && (
                         <button
@@ -447,17 +602,63 @@ export default function SocialPostingPage() {
                       )}
                     </div>
 
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept={postType === 'VIDEO' ? VIDEO_ACCEPT : IMAGE_ACCEPT}
+                      multiple={postType === 'CAROUSEL'}
+                      onChange={handleFilesChosen}
+                      style={{ display: 'none' }}
+                    />
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {mediaUrls.map((url, idx) => (
                         <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          {url.trim() && (
+                            <div style={{ width: 34, height: 34, borderRadius: 6, overflow: 'hidden', flexShrink: 0, background: '#f1f5f9', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8' }}>
+                              {postType === 'VIDEO' ? (
+                                <Video size={15} />
+                              ) : (
+                                <img src={resolveMediaUrl(url.trim())} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; }} />
+                              )}
+                            </div>
+                          )}
                           <input
                             type="text"
                             className="form-input w-full"
-                            placeholder={postType === 'VIDEO' ? 'https://example.com/sample-video.mp4' : 'https://example.com/photo.jpg'}
+                            placeholder={postType === 'VIDEO' ? 'Upload a video or paste its URL' : 'Upload an image or paste its URL'}
                             value={url}
                             onChange={(e) => handleMediaUrlChange(idx, e.target.value)}
                             style={{ fontSize: '0.78rem' }}
                           />
+                          <button
+                            type="button"
+                            onClick={() => openUploadPicker(idx)}
+                            disabled={uploadingIdx !== null}
+                            title={postType === 'VIDEO' ? 'Upload a video (MP4 or WebM, up to 20 MB)' : postType === 'CAROUSEL' ? 'Upload images (you can pick several, up to 20 MB each)' : 'Upload an image (up to 20 MB)'}
+                            style={{
+                              height: 34,
+                              padding: '0 12px',
+                              borderRadius: 6,
+                              border: '1px solid #bfdbfe',
+                              background: '#eff6ff',
+                              color: '#1d4ed8',
+                              fontSize: '0.76rem',
+                              fontWeight: 700,
+                              cursor: uploadingIdx !== null ? 'default' : 'pointer',
+                              opacity: uploadingIdx !== null && uploadingIdx !== idx ? 0.5 : 1,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 5,
+                              flexShrink: 0,
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {uploadingIdx === idx ? (
+                              <><RefreshCw size={13} className="animate-spin" /> Uploading...</>
+                            ) : (
+                              <><Upload size={13} /> Upload</>
+                            )}
+                          </button>
                           {mediaUrls.length > 1 && (
                             <button
                               type="button"
@@ -485,11 +686,11 @@ export default function SocialPostingPage() {
                   </div>
                 )}
 
-                {/* 5. Link URL Input (for Link posts) */}
+                {/* 3. Link URL Input (for Link posts) */}
                 {postType === 'LINK' && (
                   <div style={{ marginBottom: 20 }}>
                     <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: '#334155', marginBottom: 6 }}>
-                      4. Web Link Destination
+                      3. Web Link Destination
                     </label>
                     <input
                       type="url"
@@ -502,7 +703,7 @@ export default function SocialPostingPage() {
                   </div>
                 )}
 
-                {/* 6. Scheduling Option Box */}
+                {/* 4. Scheduling Option Box */}
                 <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 12, marginBottom: 20 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -539,7 +740,7 @@ export default function SocialPostingPage() {
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
                   <button
                     type="submit"
-                    disabled={publishing}
+                    disabled={publishing || uploadingIdx !== null}
                     style={{
                       padding: '9px 24px',
                       borderRadius: 8,
@@ -648,9 +849,9 @@ export default function SocialPostingPage() {
                   {mediaUrls.filter((u) => u.trim()).length > 0 && postType !== 'TEXT' && (
                     <div style={{ width: '100%', maxHeight: 260, overflow: 'hidden', background: '#0f172a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {postType === 'VIDEO' ? (
-                        <video src={mediaUrls[0]} controls style={{ width: '100%', maxHeight: 260, objectFit: 'contain' }} />
+                        <video src={resolveMediaUrl(mediaUrls.find((u) => u.trim()) || '')} controls style={{ width: '100%', maxHeight: 260, objectFit: 'contain' }} />
                       ) : (
-                        <img src={mediaUrls[0]} alt="Preview" style={{ width: '100%', height: 260, objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; }} />
+                        <img src={resolveMediaUrl(mediaUrls.find((u) => u.trim()) || '')} alt="Preview" style={{ width: '100%', height: 260, objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; }} />
                       )}
                     </div>
                   )}
@@ -700,9 +901,9 @@ export default function SocialPostingPage() {
                   <div style={{ width: '100%', height: 280, background: '#0f172a', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     {mediaUrls.filter((u) => u.trim()).length > 0 ? (
                       postType === 'VIDEO' ? (
-                        <video src={mediaUrls[0]} controls style={{ width: '100%', height: 280, objectFit: 'contain' }} />
+                        <video src={resolveMediaUrl(mediaUrls.find((u) => u.trim()) || '')} controls style={{ width: '100%', height: 280, objectFit: 'contain' }} />
                       ) : (
-                        <img src={mediaUrls[0]} alt="IG Post" style={{ width: '100%', height: 280, objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; }} />
+                        <img src={resolveMediaUrl(mediaUrls.find((u) => u.trim()) || '')} alt="IG Post" style={{ width: '100%', height: 280, objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; }} />
                       )
                     ) : (
                       <span style={{ fontSize: '0.78rem', color: '#64748b' }}>No image attached</span>
@@ -743,7 +944,7 @@ export default function SocialPostingPage() {
                 <select
                   className="form-input"
                   value={historyFilter}
-                  onChange={(e) => setHistoryFilter(e.target.value)}
+                  onChange={(e) => { setHistoryFilter(e.target.value); setHistoryPage(1); }}
                   style={{ height: 32, fontSize: '0.78rem', padding: '0 8px' }}
                 >
                   <option value="ALL">All Posts</option>
@@ -755,7 +956,7 @@ export default function SocialPostingPage() {
 
               <button
                 type="button"
-                onClick={loadHistory}
+                onClick={() => loadHistory(historyPage)}
                 disabled={loadingHistory}
                 style={{
                   padding: '5px 12px',
@@ -926,6 +1127,45 @@ export default function SocialPostingPage() {
                 </tbody>
               </table>
             )}
+
+            {/* Footer: retention notice + page numbers */}
+            <div style={{ padding: '10px 16px', borderTop: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+              <span style={{ fontSize: '0.7rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 5 }}>
+                <Info size={12} /> Only the last {HISTORY_LIMIT} posts are kept — older ones are removed automatically.
+              </span>
+              {historyTotal > HISTORY_PAGE_SIZE && (() => {
+                const pageCount = Math.ceil(historyTotal / HISTORY_PAGE_SIZE);
+                const from = (historyPage - 1) * HISTORY_PAGE_SIZE + 1;
+                const to = Math.min(historyPage * HISTORY_PAGE_SIZE, historyTotal);
+                const pageBtn = (active, disabled) => ({
+                  minWidth: 28, height: 28, padding: '0 8px', borderRadius: 6,
+                  border: `1px solid ${active ? '#2563eb' : '#e2e8f0'}`,
+                  background: active ? '#2563eb' : '#ffffff',
+                  color: active ? '#ffffff' : disabled ? '#cbd5e1' : '#475569',
+                  fontSize: '0.74rem', fontWeight: 700,
+                  cursor: disabled || active ? 'default' : 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                });
+                return (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: '0.72rem', color: '#64748b', marginRight: 4 }}>
+                      {from}–{to} of {historyTotal}
+                    </span>
+                    <button type="button" title="Previous page" disabled={historyPage <= 1 || loadingHistory} onClick={() => setHistoryPage(historyPage - 1)} style={pageBtn(false, historyPage <= 1)}>
+                      <ChevronLeft size={14} />
+                    </button>
+                    {Array.from({ length: pageCount }, (_, i) => i + 1).map((n) => (
+                      <button key={n} type="button" disabled={loadingHistory} onClick={() => n !== historyPage && setHistoryPage(n)} style={pageBtn(n === historyPage, false)}>
+                        {n}
+                      </button>
+                    ))}
+                    <button type="button" title="Next page" disabled={historyPage >= pageCount || loadingHistory} onClick={() => setHistoryPage(historyPage + 1)} style={pageBtn(false, historyPage >= pageCount)}>
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
+                );
+              })()}
+            </div>
           </div>
         )}
       </div>

@@ -12,7 +12,9 @@ import crypto from "crypto";
 import pool from "../db.js";
 import { sendVerificationEmail as sendVerificationEmailRaw } from "./emailNotifications.js";
 
-const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+// Expiry is computed and compared in SQL (NOW() + INTERVAL) so the app
+// server's and MySQL's clocks can never disagree about it.
+const TOKEN_TTL_HOURS = 24;
 
 function frontendBase() {
   return (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/+$/, "");
@@ -24,10 +26,9 @@ function frontendBase() {
  * clicks an older email link after requesting a new one still works). */
 export async function createVerificationToken(userId) {
   const token = crypto.randomBytes(32).toString("hex");
-  const expiresAt = new Date(Date.now() + TOKEN_TTL_MS);
   await pool.query(
-    "INSERT INTO email_verification_tokens (user_id, token, expires_at) VALUES (?, ?, ?)",
-    [userId, token, expiresAt]
+    "INSERT INTO email_verification_tokens (user_id, token, expires_at) VALUES (?, ?, NOW() + INTERVAL ? HOUR)",
+    [userId, token, TOKEN_TTL_HOURS]
   );
   return token;
 }
@@ -54,12 +55,12 @@ export async function consumeVerificationToken(token) {
   if (!token) return { success: false, reason: "missing_token" };
 
   const [[row]] = await pool.query(
-    "SELECT * FROM email_verification_tokens WHERE token = ? LIMIT 1",
+    "SELECT id, user_id, consumed_at, (expires_at < NOW()) AS expired FROM email_verification_tokens WHERE token = ? LIMIT 1",
     [String(token).trim()]
   );
   if (!row) return { success: false, reason: "not_found" };
   if (row.consumed_at) return { success: true, alreadyConsumed: true };
-  if (new Date(row.expires_at) < new Date()) return { success: false, reason: "expired" };
+  if (row.expired) return { success: false, reason: "expired" };
 
   await pool.query("UPDATE email_verification_tokens SET consumed_at = NOW() WHERE id = ?", [row.id]);
   await pool.query("UPDATE users SET email_verified_at = COALESCE(email_verified_at, NOW()) WHERE id = ?", [row.user_id]);

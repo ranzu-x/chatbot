@@ -11,6 +11,8 @@ import UserInputFlowManagerList from '../../Components/UserInputFlows/UserInputF
 import HttpApiCampaignManagerList from '../../Components/HttpApi/HttpApiCampaignManagerList';
 import WhatsAppFlowManagerList from '../../Components/WhatsAppFlows/WhatsAppFlowManagerList';
 import StoreConnectionsManager from '../../Components/Commerce/StoreConnectionsManager';
+import CommerceCampaignsManager from '../../Components/Commerce/CommerceCampaignsManager';
+import CommerceActivity from '../../Components/Commerce/CommerceActivity';
 import { humanizeBotError, cleanRawMessage } from '../../utils/humanizeBotError';
 import AIAgentManagerList from '../../Components/AIAgents/AIAgentManagerList';
 import AIReplySettingsPanel from '../../Components/AIAgents/AIReplySettingsPanel';
@@ -127,11 +129,12 @@ const SUB_TABS = {
     { id: 'chatWidget',        label: 'Chat Widget' },
   ],
   commerce: [
-    { id: 'storeConnections', label: 'Store Connections' },
-    { id: 'catalogSync',      label: 'Product Catalog Sync' },
-    { id: 'productMessages',  label: 'Product Messages' },
-    { id: 'orderConfirm',     label: 'Order Confirmations' },
-    { id: 'paymentLinks',     label: 'Payment Links & Cart' },
+    { id: 'commerceCampaigns', label: 'Automation Campaigns' },
+    { id: 'commerceActivity',  label: 'Orders & Activity' },
+    { id: 'storeConnections',  label: 'Store Connections' },
+    { id: 'catalogSync',       label: 'Product Catalog Sync' },
+    { id: 'productMessages',   label: 'Product Messages' },
+    { id: 'paymentLinks',      label: 'Payment Links & Cart' },
   ],
   integrations: [
     { id: 'webhooksOutbound', label: 'Webhooks Outbound' },
@@ -154,7 +157,7 @@ const STARTER_TEMPLATES = [
         id: 'start_1',
         type: 'start',
         position: { x: 80, y: 120 },
-        data: { label: 'Start Trigger', trigger_type: 'keyword', keywords: ['hi', 'hello'], match_type: 'contains' },
+        data: { label: 'Start Trigger', trigger_type: 'keyword', keywords: [], match_type: 'contains' },
       },
       {
         id: 'text_1',
@@ -178,7 +181,7 @@ const STARTER_TEMPLATES = [
         id: 'start_1',
         type: 'start',
         position: { x: 80, y: 120 },
-        data: { label: 'Start Trigger', trigger_type: 'keyword', keywords: ['hi', 'hello', 'start', 'menu'], match_type: 'contains' },
+        data: { label: 'Start Trigger', trigger_type: 'keyword', keywords: ['start', 'menu'], match_type: 'contains' },
       },
       {
         id: 'btn_1',
@@ -739,7 +742,8 @@ export default function BotManagerPage() {
         name: newFlowName.trim(),
         platform: targetPlatform,
         integrationId: targetIntegId,
-        triggerKeyword: 'hi,hello',
+        // The template's own start keywords — blank for Blank Canvas (no default trigger).
+        triggerKeyword: (nodes.find((n) => n.type === 'start')?.data?.keywords || []).join(',') || null,
         triggerType: 'KEYWORD',
         nodes_json: JSON.stringify(nodes),
         edges_json: JSON.stringify(edges),
@@ -1984,19 +1988,41 @@ export default function BotManagerPage() {
 
           {/* Store Connections — moved here from the standalone /agency/commerce
               page, which now redirects to this tab. */}
+          {activeCategory === 'commerce' && activeSubTab === 'commerceCampaigns' && (
+            <div className="bm-content-card">
+              <div className="bm-card-header">
+                <h3 className="bm-card-title">Commerce Automation Campaigns</h3>
+                <p className="bm-card-sub">
+                  Order notifications, Cash-on-Delivery verification and abandoned-cart recovery on WhatsApp.
+                </p>
+              </div>
+              <CommerceCampaignsManager onOpenStores={() => setActiveSubTab('storeConnections')} />
+            </div>
+          )}
+
+          {activeCategory === 'commerce' && activeSubTab === 'commerceActivity' && (
+            <div className="bm-content-card">
+              <div className="bm-card-header">
+                <h3 className="bm-card-title">Orders & Activity</h3>
+                <p className="bm-card-sub">Messages the campaigns sent, COD answers and abandoned carts.</p>
+              </div>
+              <CommerceActivity />
+            </div>
+          )}
+
           {activeCategory === 'commerce' && activeSubTab === 'storeConnections' && (
             <div className="bm-content-card">
               <div className="bm-card-header">
                 <h3 className="bm-card-title">Store Connections</h3>
                 <p className="bm-card-sub">
-                  Connect a Shopify or WooCommerce store to look up products and send them over WhatsApp.
+                  Connect a Shopify or WooCommerce store to run order, COD and abandoned-cart automations on WhatsApp.
                 </p>
               </div>
               <StoreConnectionsManager />
             </div>
           )}
 
-          {!['keywordReplies', 'messageTemplates'].includes(activeSubTab) && !(activeCategory === 'dataCollection' && activeSubTab === 'userInputFlows') && !(activeCategory === 'automation' && activeSubTab === 'httpApiCampaigns') && !(activeCategory === 'engagement' && activeSubTab === 'followUpSequences') && !(activeCategory === 'dataCollection' && activeSubTab === 'whatsappFlows') && !(activeCategory === 'commerce' && activeSubTab === 'storeConnections') && !(activeCategory === 'engagement' && activeSubTab === 'chatWidget') && activeCategory !== 'ai' && (
+          {!['keywordReplies', 'messageTemplates'].includes(activeSubTab) && !(activeCategory === 'dataCollection' && activeSubTab === 'userInputFlows') && !(activeCategory === 'automation' && activeSubTab === 'httpApiCampaigns') && !(activeCategory === 'engagement' && activeSubTab === 'followUpSequences') && !(activeCategory === 'dataCollection' && activeSubTab === 'whatsappFlows') && !(activeCategory === 'commerce' && ['storeConnections', 'commerceCampaigns', 'commerceActivity'].includes(activeSubTab)) && !(activeCategory === 'engagement' && activeSubTab === 'chatWidget') && activeCategory !== 'ai' && (
             <div className="bm-content-card">
               <div className="bm-card-header">
                 <h3 className="bm-card-title">{activeSubTab.replace(/([A-Z])/g, ' $1').trim()}</h3>

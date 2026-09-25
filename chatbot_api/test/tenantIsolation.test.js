@@ -163,46 +163,64 @@ test("cross-tenant isolation", { skip: !enabled && "set TENANT_ISOLATION=1 (npm 
       for (const tn of tenants.all) assert.ok(!body.includes(markerFor(tn.agencyId)), `${tn.label}'s widget must not be listed`);
     });
 
-    await t.test("sign-up: an unrecognised address is refused, a verified reseller address still works", async () => {
+    await t.test("sign-up: any address gets its own new workspace; only a verified reseller address makes a reseller customer", async () => {
       const post = (domain, email) => fetch(`http://127.0.0.1:${port}/api/v1/auth/register`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: "Signup Probe", email, password: "secret12", domain }),
       }).then(async (r) => ({ status: r.status, json: await r.json().catch(() => ({})) }));
-      const emailA = `iso-test-signup-a-${Date.now()}@example.invalid`;
-      const emailB = `iso-test-signup-b-${Date.now()}@example.invalid`;
-      let createdUserId = null;
+      const stamp = Date.now();
+      const emailA = `iso-test-signup-a-${stamp}@example.invalid`;
+      const emailB = `iso-test-signup-b-${stamp}@example.invalid`;
+      const emailC = `iso-test-signup-c-${stamp}@example.invalid`;
+      const tenantIds = tenants.all.map((tn) => tn.agencyId);
+      const accountOf = async (email) => {
+        const [[row]] = await pool.query(
+          "SELECT u.id AS userId, a.id AS agencyId, a.account_type, a.parent_agency_id FROM users u JOIN agencies a ON a.owner_id = u.id WHERE u.email = ?", [email]);
+        return row;
+      };
       try {
-        const refused = await post("nobody-knows-this.example.test", emailA);
-        assert.equal(refused.status, 403);
-        assert.equal(refused.json.code, "SIGNUP_NOT_AVAILABLE");
-        const [[none]] = await pool.query("SELECT COUNT(*) n FROM users WHERE email = ?", [emailA]);
-        assert.equal(none.n, 0, "no account may be created");
+        // Registration is open on every address (decided): an unrecognised one
+        // creates a brand-new independent End User workspace — never a seat in
+        // (or a child of) any existing tenant.
         const tenantInfo = await (await fetch(`http://127.0.0.1:${port}/api/v1/auth/tenant?domain=nobody-knows-this.example.test`)).json();
-        assert.equal(tenantInfo.agency.signupUnavailable, true);
+        assert.equal(tenantInfo.agency.allowUserRegistration, true);
+        const open = await post("nobody-knows-this.example.test", emailA);
+        assert.equal(open.status, 201, `unrecognised address should allow sign-up (got ${open.status})`);
+        const a = await accountOf(emailA);
+        assert.equal(a.account_type, "DIRECT_CUSTOMER");
+        assert.equal(a.parent_agency_id, null);
+        assert.ok(!tenantIds.includes(a.agencyId), "must get a new workspace, not an existing tenant's");
+        const [[seats]] = await pool.query("SELECT COUNT(*) n FROM organization_members WHERE user_id = ? AND agency_id IN (?)", [a.userId, tenantIds]);
+        assert.equal(seats.n, 0, "must not become a member of any existing tenant");
 
-        // An unverified reseller domain is unrecognised too.
+        // An unverified reseller domain is unrecognised: own workspace, NOT that reseller's customer.
         await pool.query("UPDATE agencies SET custom_domain = 'iso-r1.example.test', domain_verified = 0 WHERE id = ?", [tenants.R1.agencyId]);
-        assert.equal((await post("iso-r1.example.test", emailA)).status, 403);
+        assert.equal((await post("iso-r1.example.test", emailC)).status, 201);
+        const c = await accountOf(emailC);
+        assert.equal(c.account_type, "DIRECT_CUSTOMER");
+        assert.equal(c.parent_agency_id, null, "an unverified reseller domain must not attach sign-ups to that reseller");
 
         // Verified: the person becomes a new customer of THAT reseller.
         await pool.query("UPDATE agencies SET domain_verified = 1 WHERE id = ?", [tenants.R1.agencyId]);
         const ok = await post("iso-r1.example.test", emailB);
         assert.ok([200, 201].includes(ok.status), `verified reseller domain should allow sign-up (got ${ok.status})`);
-        const [[created]] = await pool.query(
-          "SELECT u.id, a.account_type, a.parent_agency_id FROM users u JOIN agencies a ON a.owner_id = u.id WHERE u.email = ?", [emailB]);
-        createdUserId = created.id;
-        assert.equal(created.account_type, "RESELLER_CUSTOMER");
-        assert.equal(created.parent_agency_id, tenants.R1.agencyId);
+        const b = await accountOf(emailB);
+        assert.equal(b.account_type, "RESELLER_CUSTOMER");
+        assert.equal(b.parent_agency_id, tenants.R1.agencyId);
       } finally {
         await pool.query("UPDATE agencies SET custom_domain = NULL, domain_verified = 0 WHERE id = ?", [tenants.R1.agencyId]);
-        if (createdUserId) {
-          const [[ag]] = await pool.query("SELECT id FROM agencies WHERE owner_id = ?", [createdUserId]);
+        for (const email of [emailA, emailB, emailC]) {
+          const [[u]] = await pool.query("SELECT id FROM users WHERE email = ?", [email]);
+          if (!u) continue;
+          const [[ag]] = await pool.query("SELECT id FROM agencies WHERE owner_id = ?", [u.id]);
           if (ag) {
             await pool.query("DELETE FROM conversations WHERE agency_id = ?", [ag.id]);
+            await pool.query("DELETE FROM organization_members WHERE agency_id = ?", [ag.id]);
             await pool.query("DELETE FROM agencies WHERE id = ?", [ag.id]);
           }
-          await pool.query("DELETE FROM users WHERE id = ?", [createdUserId]);
+          await pool.query("DELETE FROM email_verification_tokens WHERE user_id = ?", [u.id]).catch(() => {});
+          await pool.query("DELETE FROM users WHERE id = ?", [u.id]);
         }
       }
     });

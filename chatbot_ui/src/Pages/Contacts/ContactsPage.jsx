@@ -86,6 +86,7 @@ export default function ContactsPage() {
   const [labelFilter, setLabelFilter] = useState('');
   const [listFilter, setListFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [sequenceFilter, setSequenceFilter] = useState(''); // '' | 'any' | 'none' | sequence id
   const searchTimeout = useRef(null);
 
   // Reference data
@@ -151,6 +152,7 @@ export default function ContactsPage() {
     };
     if (statusFilter === 'SUBSCRIBED' || statusFilter === 'UNSUBSCRIBED') params.status = statusFilter;
     if (statusFilter === 'RETAINED' || statusFilter === 'NOT_RETAINED') params.retained = statusFilter;
+    if (sequenceFilter) params.sequenceId = sequenceFilter; // filtered server-side (routes/contacts.js)
 
     contactAPI.getAll(params)
       .then((res) => {
@@ -159,7 +161,7 @@ export default function ContactsPage() {
       })
       .catch(() => showToast('Failed to load subscribers', 'error'))
       .finally(() => setLoading(false));
-  }, [search, platformFilter, labelFilter, listFilter, accountFilter, statusFilter, pagination.page, pagination.limit]);
+  }, [search, platformFilter, labelFilter, listFilter, accountFilter, statusFilter, sequenceFilter, pagination.page, pagination.limit]);
 
   useEffect(() => { loadContacts(); }, [loadContacts]);
 
@@ -413,6 +415,23 @@ export default function ContactsPage() {
             {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
 
+          <select
+            value={sequenceFilter}
+            onChange={(e) => { setSequenceFilter(e.target.value); resetPage(); }}
+            aria-label="Sequence assigned"
+            title="Filter by sequence assigned"
+            style={{ ...selectBase, minWidth: 160, fontWeight: sequenceFilter ? 600 : 400 }}
+          >
+            <option value="">All sequences</option>
+            <option value="any">In any sequence</option>
+            <option value="none">Not in a sequence</option>
+            {sequences.length > 0 && (
+              <optgroup label="In sequence">
+                {sequences.map((sq) => <option key={sq.id} value={String(sq.id)}>{sq.name}</option>)}
+              </optgroup>
+            )}
+          </select>
+
           <div style={{ position: 'relative', flex: 1, minWidth: 200 }}>
             <Search size={14} color="var(--text-muted)" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
             <input
@@ -421,9 +440,9 @@ export default function ContactsPage() {
             />
           </div>
 
-          {(platformFilter !== 'WHATSAPP' || accountFilter || labelFilter || listFilter || statusFilter || search) && (
+          {(platformFilter !== 'WHATSAPP' || accountFilter || labelFilter || listFilter || statusFilter || sequenceFilter || search) && (
             <button
-              onClick={() => { setPlatformFilter('WHATSAPP'); setAccountFilter(''); setLabelFilter(''); setListFilter(''); setStatusFilter(''); setSearch(''); resetPage(); }}
+              onClick={() => { setPlatformFilter('WHATSAPP'); setAccountFilter(''); setLabelFilter(''); setListFilter(''); setStatusFilter(''); setSequenceFilter(''); setSearch(''); resetPage(); }}
               className="btn btn-secondary btn-sm" style={{ fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 4, height: 32 }}
             >
               <X size={12} /> Reset

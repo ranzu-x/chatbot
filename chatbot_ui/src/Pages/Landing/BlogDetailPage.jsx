@@ -2,8 +2,24 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router';
 import { blogAPI } from '../../services/api';
 import { Clock, Eye, ArrowLeft, ArrowRight, Share2, Twitter, Linkedin, Link2, ChevronDown, ChevronUp } from 'lucide-react';
+import DOMPurify from 'dompurify';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
+// Post HTML is admin-authored but shown on the public site, so it is
+// sanitised: scripts/handlers are stripped; only video embeds keep an iframe.
+const EMBED_SRC = /^https:\/\/(www\.)?(youtube\.com|youtube-nocookie\.com|player\.vimeo\.com)\//i;
+DOMPurify.addHook('uponSanitizeElement', (node, data) => {
+  if (data.tagName === 'iframe' && !EMBED_SRC.test(node.getAttribute?.('src') || '')) {
+    node.parentNode?.removeChild(node);
+  }
+});
+function sanitizePostHtml(html) {
+  return DOMPurify.sanitize(html || '', {
+    ADD_TAGS: ['iframe'],
+    ADD_ATTR: ['allow', 'allowfullscreen', 'frameborder', 'target'],
+  });
+}
 
 function formatDate(str) {
   if (!str) return '';
@@ -281,7 +297,7 @@ export default function BlogDetailPage() {
                 <div
                   ref={contentRef}
                   className="blog-detail__content"
-                  dangerouslySetInnerHTML={{ __html: post.content || '' }}
+                  dangerouslySetInnerHTML={{ __html: sanitizePostHtml(post.content) }}
                 />
 
                 {/* Share bar (bottom) */}

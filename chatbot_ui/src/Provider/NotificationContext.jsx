@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { io } from 'socket.io-client';
-import api from '../services/api';
+import api, { myNotificationsAPI } from '../services/api';
 import { useAuth } from './AuthContext';
 import { socketAuth } from '../utils/socketAuth';
 import { playNotificationSound } from '../services/soundEffects';
@@ -31,6 +31,9 @@ export function NotificationProvider({ children }) {
   });
   const [activeAlert, setActiveAlert] = useState(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  // In-app notification inbox behind the top-bar bell (NotificationBell.jsx).
+  const [inbox, setInbox] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const navigate = useNavigate();
   const { user } = useAuth();
 
@@ -53,10 +56,44 @@ export function NotificationProvider({ children }) {
       handleIncomingAlert(data);
     });
 
+    refreshInbox();
+    // Sent by the Super Admin (User Manager → Send notification).
+    socket.on('user_notification', (data) => {
+      refreshInbox();
+      if (settings.soundEnabled) playNotificationSound('message');
+      if (settings.pushEnabled && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+        new Notification(data.title || 'New notification', { body: data.body || '', icon: '/favicon.ico' });
+      }
+    });
+
     return () => {
       socket.disconnect();
     };
   }, [user?.id]);
+
+  const refreshInbox = async () => {
+    try {
+      const res = await myNotificationsAPI.getAll();
+      setInbox(res.data?.notifications || []);
+      setUnreadCount(res.data?.unread || 0);
+    } catch {
+      // Ignore if unauthenticated
+    }
+  };
+
+  const markNotificationRead = async (id) => {
+    const target = inbox.find((n) => n.id === id);
+    if (!target || target.read_at) return;
+    setInbox((prev) => prev.map((n) => (n.id === id ? { ...n, read_at: new Date().toISOString() } : n)));
+    setUnreadCount((c) => Math.max(0, c - 1));
+    try { await myNotificationsAPI.markRead(id); } catch { refreshInbox(); }
+  };
+
+  const markAllNotificationsRead = async () => {
+    setInbox((prev) => prev.map((n) => (n.read_at ? n : { ...n, read_at: new Date().toISOString() })));
+    setUnreadCount(0);
+    try { await myNotificationsAPI.markAllRead(); } catch { refreshInbox(); }
+  };
 
   const loadSettings = async () => {
     try {
@@ -123,6 +160,11 @@ export function NotificationProvider({ children }) {
         saveSettings,
         openSettingsModal: () => setIsSettingsOpen(true),
         requestBrowserPermission,
+        inbox,
+        unreadCount,
+        refreshInbox,
+        markNotificationRead,
+        markAllNotificationsRead,
       }}
     >
       {children}

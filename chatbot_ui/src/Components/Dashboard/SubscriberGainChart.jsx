@@ -90,40 +90,6 @@ const CHANNEL_MAP = CHANNELS.reduce((acc, c) => {
   return acc;
 }, {});
 
-// ── Synthetic Fallback Sample Generator ──────────────────────────────────────
-function generateSampleDays(days = 14) {
-  const result = [];
-  const now = new Date();
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(now.getDate() - i);
-    const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    const fullDate = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-
-    // Smooth organic wave with variance
-    const progress = (days - 1 - i) / (days - 1 || 1);
-    const baseWave = 5 + Math.sin(progress * Math.PI * 2.2) * 2.5;
-    const wa = Math.max(1, Math.round(baseWave + Math.random() * 3 + 2));
-    const fb = Math.max(0, Math.round(baseWave * 0.6 + Math.random() * 2));
-    const ig = Math.max(1, Math.round(baseWave * 0.7 + Math.random() * 2));
-    const tg = Math.max(0, Math.round(baseWave * 0.3 + Math.random() * 2));
-    const web = Math.max(0, Math.round(baseWave * 0.4 + Math.random() * 2));
-
-    const total = wa + fb + ig + tg + web;
-    result.push({
-      date: dateStr,
-      fullDate,
-      new_subscribers: total,
-      whatsapp: wa,
-      facebook: fb,
-      instagram: ig,
-      telegram: tg,
-      webchat: web,
-    });
-  }
-  return result;
-}
-
 // ── Modern Floating Glass Tooltip ───────────────────────────────────────────
 function ElegantTooltip({ active, payload, label }) {
   if (!active || !payload || !payload.length) return null;
@@ -249,13 +215,11 @@ export default function SubscriberGainChart({
     const targetDays = Math.max(7, Number(timeRange) || 14);
     const now = new Date();
 
-    if (!rawData || rawData.length === 0) {
-      return generateSampleDays(targetDays);
-    }
-
+    // No data = real zero days. (This used to draw random "sample" numbers,
+    // which showed fake subscriber gain on empty workspaces.)
     // Map rawData by ISO date string & locale date string
     const rawMap = new Map();
-    rawData.forEach((item) => {
+    (rawData || []).forEach((item) => {
       if (!item || !item.date) return;
       const d = new Date(item.date);
       if (!isNaN(d.getTime())) {
@@ -323,12 +287,6 @@ export default function SubscriberGainChart({
         telegram: 0,
         webchat: 0,
       });
-    }
-
-    // If completely 0 throughout, provide realistic sample data so it never renders a blank flatline
-    const hasAnyData = result.some((r) => r.new_subscribers > 0);
-    if (!hasAnyData) {
-      return generateSampleDays(targetDays);
     }
 
     return result;

@@ -307,7 +307,8 @@ export function buildImport(prepared, mapping, platform) {
     if (isWA && digitsIn(id) < 7) { out.skipped.push({ row: rowNumber, reason: `"${id}" isn't a phone number` }); return; }
     if (!isWA && !looksLikeChatId(id)) { out.skipped.push({ row: rowNumber, reason: `"${id}" isn't a Telegram Chat ID (it must be a number)` }); return; }
 
-    const row = { name: nameCol === -1 ? '' : cell(nameCol), email: emailCol === -1 ? '' : cell(emailCol), [idKey]: id };
+    // row = the line in the user's file, so the server's messages point at it.
+    const row = { row: rowNumber, name: nameCol === -1 ? '' : cell(nameCol), email: emailCol === -1 ? '' : cell(emailCol), [idKey]: id };
     let custom = null;
     for (const def of out.customFields) {
       const v = cell(Number(def.col));

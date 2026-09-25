@@ -4,6 +4,8 @@ import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { assertLimit } from "../utils/entitlements.js";
+import { unavailableEarnings, getDailyGain, getAutomationStats } from "../utils/dashboardStats.js";
+import { countCustomers } from "../utils/resellerScope.js";
 
 const router = express.Router();
 
@@ -69,6 +71,38 @@ router.get("/agency/stats", async (req, res) => {
   }
 });
 
+// ─── WORKSPACE / RESELLER DASHBOARD ───────────────────────────────────────────
+// Scoped from req.tenant (never from the request): daily subscriber gain for
+// ?month=YYYY-MM and automation reports for this workspace. A Reseller also
+// gets its customer count and its earnings block — reported as unavailable
+// until resellers can take payments (decided with the user; no estimates).
+router.get("/agency/dashboard", async (req, res) => {
+  try {
+    const agencyId = req.tenant?.agencyId;
+    if (!agencyId) return res.status(404).json({ success: false, message: "Workspace not found" });
+    const scope = { kind: "workspace", agencyId };
+    const isReseller = req.tenant.accountType === "RESELLER";
+    const [dailyGain, automation, customers] = await Promise.all([
+      getDailyGain(scope, req.query.month),
+      getAutomationStats(scope),
+      isReseller ? countCustomers(agencyId) : null,
+    ]);
+    return res.json({
+      success: true,
+      dashboard: {
+        scope: isReseller ? "RESELLER" : "WORKSPACE",
+        users: customers,
+        earnings: isReseller ? unavailableEarnings("Your customers can't pay you through the platform yet, so there are no earnings to show.") : null,
+        dailyGain,
+        automation,
+      },
+    });
+  } catch (err) {
+    console.error("Agency dashboard error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // ─── GET AGENCY ANALYTICS ─────────────────────────────────────────────────────
 router.get("/agency/analytics", async (req, res) => {
   try {
@@ -127,6 +161,7 @@ router.get("/agency/analytics", async (req, res) => {
         SUM(CASE WHEN platform = 'WEBCHAT' THEN 1 ELSE 0 END) as webchat
       FROM contacts
       WHERE agency_id = ? AND created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+        AND source IN ('INCOMING', 'INTEGRATION') -- imports + manual adds aren't gain
       GROUP BY DATE(created_at)
       ORDER BY DATE(created_at) ASC
     `, [agencyId, days]);

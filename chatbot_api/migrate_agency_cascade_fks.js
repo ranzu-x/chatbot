@@ -32,8 +32,11 @@ async function run() {
       );
       console.log(`${table}: added ${constraint} (agency_id -> agencies.id, ON DELETE CASCADE)`);
     }
+  } catch (err) {
+    console.error("❌ Migration failed:", err);
+    process.exitCode = 1;
   } finally {
-    process.exit(0);
+    process.exit();
   }
 }
 run();

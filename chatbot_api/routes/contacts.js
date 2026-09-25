@@ -57,7 +57,7 @@ router.get("/contacts/stats", async (req, res) => {
 router.get("/contacts", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    const { search, platform, labelId, listId, integrationId, status, retained, limit = 50, page = 1 } = req.query;
+    const { search, platform, labelId, listId, integrationId, status, retained, sequenceId, limit = 50, page = 1 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
     // RETAINED = had any message activity in the last 30 days — the same
@@ -95,6 +95,24 @@ router.get("/contacts", async (req, res) => {
     if (status === "SUBSCRIBED" || status === "UNSUBSCRIBED") {
       where += " AND c.subscription_status = ?";
       params.push(status);
+    }
+    // Sequence assigned: "any" = in at least one of this workspace's
+    // sequences, "none" = in none, a number = in that sequence. "Assigned" =
+    // an enrolment that wasn't stopped (active, paused or completed).
+    // Always joined to sequences.agency_id so another workspace's sequence id matches nothing.
+    const inSequence = (extra) => `EXISTS (
+      SELECT 1 FROM sequence_subscribers ssq JOIN sequences sq ON sq.id = ssq.sequence_id
+      WHERE ssq.contact_id = c.id AND sq.agency_id = ? AND ssq.status <> 'STOPPED'${extra}
+    )`;
+    if (sequenceId === "any") {
+      where += ` AND ${inSequence("")}`;
+      params.push(agencyId);
+    } else if (sequenceId === "none") {
+      where += ` AND NOT ${inSequence("")}`;
+      params.push(agencyId);
+    } else if (/^\d+$/.test(String(sequenceId || ""))) {
+      where += ` AND ${inSequence(" AND ssq.sequence_id = ?")}`;
+      params.push(agencyId, Number(sequenceId));
     }
     if (retained === "RETAINED") {
       where += ` AND ${retainedExpr}`;
@@ -393,7 +411,10 @@ router.get("/contacts/:id/sequences", async (req, res) => {
 router.post("/contacts", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    const { name, platform = "WHATSAPP", externalId, phone, email } = req.body;
+    const { name, platform = "WHATSAPP", phone, email } = req.body;
+    // WhatsApp ids are stored digits-only (what the webhook and the importer
+    // use), so "+880 1999-123456" and "8801999123456" are the same subscriber.
+    const externalId = platform === "WHATSAPP" ? normalizeWhatsAppNumber(req.body.externalId) : req.body.externalId;
 
     if (!name || !externalId) {
       return res.status(400).json({ success: false, message: "Name and external ID (or phone) are required" });
@@ -420,9 +441,10 @@ router.post("/contacts", async (req, res) => {
       }
     }
 
+    // source MANUAL: not counted as subscriber gain.
     const [result] = await pool.query(
-      `INSERT INTO contacts (agency_id, platform, external_id, name, phone, email, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+      `INSERT INTO contacts (agency_id, platform, source, external_id, name, phone, email, created_at)
+       VALUES (?, ?, 'MANUAL', ?, ?, ?, ?, NOW())`,
       [agencyId, platform, externalId, name, phone || null, email || null]
     );
 
@@ -760,41 +782,57 @@ router.post("/contacts/import", async (req, res) => {
     }
     if (fieldsCreated) emitToAgency(agencyId, "custom_fields_updated", { reason: "created" });
 
-    let created = 0, updated = 0, skipped = 0, duplicatesMerged = 0;
+    // ── Outcome counters (shown as the import summary) ──
+    //   created          new subscribers
+    //   existing         already a subscriber on this channel → row skipped,
+    //                    the person is NOT changed (name/phone/email/label/bot
+    //                    untouched); only the file's custom-field values are
+    //                    written onto them (decided with the user)
+    //   existingFieldsUpdated  how many of those got custom-field values
+    //   duplicateInFile  the same number/id appeared again further down the file
+    //   invalid          no usable number/id
+    //   limitSkipped     not imported because the plan's subscriber limit was reached
+    let created = 0, existing = 0, existingFieldsUpdated = 0, duplicateInFile = 0, invalid = 0, limitSkipped = 0;
     const errors = [];
     const enforceLimit = req.user.role !== "ADMIN";
 
-    // ── Normalise every row. `row` is the spreadsheet line number (header = 1)
-    // so messages match what the user sees. Repeated ids in the file collapse
-    // into one contact — later non-empty values win. ──
+    // ── Normalise every row. `row` is the line number in the user's file
+    // (sent by the client; header = 1) so messages match what they see. The
+    // FIRST row for a number wins — later repeats are skipped, not merged. ──
     const byId = new Map();
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i] || {};
+      const lineNo = Number.isInteger(row.row) ? row.row : i + 2;
       let externalId;
       if (platform === "WHATSAPP") {
         externalId = normalizeWhatsAppNumber(row.phone);
         if (!externalId) {
-          skipped++;
-          errors.push({ row: i + 2, reason: "Missing phone number" });
+          invalid++;
+          errors.push({ row: lineNo, reason: "Missing phone number" });
           continue;
         }
         if (externalId.length < 7 || externalId.length > 15) {
-          skipped++;
-          errors.push({ row: i + 2, reason: `"${String(row.phone).slice(0, 30)}" isn't a valid phone number` });
+          invalid++;
+          errors.push({ row: lineNo, reason: `"${String(row.phone).slice(0, 30)}" isn't a valid phone number` });
           continue;
         }
       } else {
         externalId = String(row.chatId ?? row.externalId ?? "").trim();
         if (!externalId) {
-          skipped++;
-          errors.push({ row: i + 2, reason: "Missing Telegram Chat ID" });
+          invalid++;
+          errors.push({ row: lineNo, reason: "Missing Telegram Chat ID" });
           continue;
         }
         if (!/^-?[0-9]{1,20}$/.test(externalId)) {
-          skipped++;
-          errors.push({ row: i + 2, reason: `"${externalId.slice(0, 30)}" isn't a Telegram Chat ID (it must be a number)` });
+          invalid++;
+          errors.push({ row: lineNo, reason: `"${externalId.slice(0, 30)}" isn't a Telegram Chat ID (it must be a number)` });
           continue;
         }
+      }
+
+      if (byId.has(externalId)) {
+        duplicateInFile++;
+        continue;
       }
 
       const custom = new Map();
@@ -805,35 +843,48 @@ router.post("/contacts/import", async (req, res) => {
           if (fieldId && text) custom.set(fieldId, text.slice(0, 2000));
         }
       }
-      const item = {
-        row: i + 2,
+      byId.set(externalId, {
+        row: lineNo,
         externalId,
         name: String(row.name ?? "").trim().slice(0, 200) || null,
         phone: platform === "WHATSAPP" ? externalId : String(row.phone ?? "").trim().slice(0, 50) || null,
         email: String(row.email ?? "").trim().slice(0, 255) || null,
         custom,
-      };
-      const prev = byId.get(externalId);
-      if (prev) {
-        duplicatesMerged++;
-        prev.name = item.name || prev.name;
-        prev.phone = item.phone || prev.phone;
-        prev.email = item.email || prev.email;
-        for (const [fid, v] of item.custom) prev.custom.set(fid, v);
-      } else {
-        byId.set(externalId, item);
+      });
+    }
+
+    // Older WhatsApp subscribers may have been saved with "+", spaces or
+    // dashes in their id (manual adds before ids were normalised). Map those
+    // too, so "+880 1999-123456" already on file blocks "8801999123456".
+    const legacyByDigits = new Map();
+    if (platform === "WHATSAPP") {
+      const [legacy] = await pool.query(
+        "SELECT id, external_id FROM contacts WHERE agency_id = ? AND platform = 'WHATSAPP' AND external_id REGEXP '[^0-9]'",
+        [agencyId]
+      );
+      for (const l of legacy) {
+        const digits = normalizeWhatsAppNumber(l.external_id);
+        if (digits && !legacyByDigits.has(digits)) legacyByDigits.set(digits, l.id);
       }
     }
+
+    // Writes a set of items' custom-field values (create or update).
+    const writeCustomFields = async (pairs) => {
+      const valueRows = [];
+      for (const [contactId, item] of pairs) {
+        for (const [fid, v] of item.custom) valueRows.push([contactId, fid, v]);
+      }
+      if (valueRows.length) {
+        await pool.query(
+          "INSERT INTO contact_custom_field_values (contact_id, field_id, value) VALUES ? ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = NOW()",
+          [valueRows]
+        );
+      }
+    };
 
     // ── Work in chunks: one lookup + one multi-row INSERT per step instead of
     // several queries per row, which is what makes tens of thousands of rows practical. ──
     const items = [...byId.values()];
-    const insertOne = async (it) => {
-      await pool.query(
-        `INSERT INTO contacts (agency_id, platform, external_id, name, phone, email, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-        [agencyId, platform, it.externalId, it.name || it.externalId, it.phone, it.email]
-      );
-    };
     let limitHit = false;
 
     for (let start = 0; start < items.length && !limitHit; start += IMPORT_CHUNK) {
@@ -843,83 +894,73 @@ router.post("/contacts/import", async (req, res) => {
         [agencyId, platform, chunk.map((c) => c.externalId)]
       );
       const existingIds = new Map(found.map((f) => [String(f.external_id), f.id]));
+      for (const [digits, id] of legacyByDigits) if (!existingIds.has(digits)) existingIds.set(digits, id);
 
-      const touched = []; // items that were really created/updated in this chunk
+      // Already subscribers: skipped. Only their custom-field values are written.
+      const existingWithFields = [];
       const toInsert = [];
       for (const it of chunk) {
         const id = existingIds.get(it.externalId);
         if (id === undefined) { toInsert.push(it); continue; }
-        // Only overwrite what the file actually provides — a blank cell keeps the current value.
-        await pool.query(
-          "UPDATE contacts SET name = COALESCE(?, name), phone = COALESCE(?, phone), email = COALESCE(?, email) WHERE id = ?",
-          [it.name, it.phone, it.email, id]
-        );
-        updated++;
-        touched.push(it);
+        existing++;
+        if (it.custom.size) existingWithFields.push([id, it]);
+      }
+      if (existingWithFields.length) {
+        await writeCustomFields(existingWithFields);
+        existingFieldsUpdated += existingWithFields.length;
       }
 
-      if (toInsert.length > 0) {
-        let allowed = true;
-        if (enforceLimit) {
-          try {
-            await assertLimit(agencyId, "max_subscribers", toInsert.length, req.user.id);
-          } catch {
-            allowed = false;
-          }
-        }
+      if (toInsert.length === 0) continue;
 
-        if (allowed) {
-          const [ins] = await pool.query(
-            "INSERT IGNORE INTO contacts (agency_id, platform, external_id, name, phone, email, created_at) VALUES ?",
-            [toInsert.map((it) => [agencyId, platform, it.externalId, it.name || it.externalId, it.phone, it.email, new Date()])]
-          );
-          created += ins.affectedRows;
-          skipped += toInsert.length - ins.affectedRows;
-          touched.push(...toInsert);
-        } else {
-          // The whole chunk doesn't fit the plan — add rows one by one until the limit bites.
-          for (let k = 0; k < toInsert.length; k++) {
-            try {
-              await assertLimit(agencyId, "max_subscribers", 1, req.user.id);
-            } catch (limitErr) {
-              errors.push({ row: toInsert[k].row, reason: limitErr.message || "Subscriber limit reached for your current plan." });
-              // stop here — every remaining row would hit the same limit
-              skipped += (toInsert.length - k) + Math.max(0, items.length - (start + chunk.length));
-              limitHit = true;
+      // How many of this chunk's new subscribers fit the plan.
+      let allowedCount = toInsert.length;
+      if (enforceLimit) {
+        try {
+          await assertLimit(agencyId, "max_subscribers", toInsert.length, req.user.id);
+        } catch {
+          allowedCount = 0;
+          for (let k = 1; k <= toInsert.length; k++) {
+            try { await assertLimit(agencyId, "max_subscribers", k, req.user.id); allowedCount = k; } catch (limitErr) {
+              errors.push({ row: toInsert[k - 1].row, reason: limitErr.message || "Subscriber limit reached for your current plan." });
               break;
             }
-            await insertOne(toInsert[k]);
-            created++;
-            touched.push(toInsert[k]);
           }
         }
       }
-      if (touched.length === 0) continue;
+      const inserting = toInsert.slice(0, allowedCount);
+      if (allowedCount < toInsert.length) {
+        // Every remaining row would hit the same limit.
+        limitSkipped += (toInsert.length - allowedCount) + Math.max(0, items.length - (start + chunk.length));
+        limitHit = true;
+      }
+      if (inserting.length === 0) continue;
 
-      // Everything below applies to the contacts that actually made it in.
-      const [ids] = await pool.query(
-        "SELECT id, external_id FROM contacts WHERE agency_id = ? AND platform = ? AND external_id IN (?)",
-        [agencyId, platform, touched.map((t) => t.externalId)]
+      // INSERT IGNORE + the unique (agency_id, platform, external_id) key: a
+      // subscriber created by someone else a moment ago is left alone too.
+      const [ins] = await pool.query(
+        "INSERT IGNORE INTO contacts (agency_id, platform, source, external_id, name, phone, email, created_at) VALUES ?",
+        [inserting.map((it) => [agencyId, platform, "IMPORT", it.externalId, it.name || it.externalId, it.phone, it.email, new Date()])]
       );
-      const idByExternal = new Map(ids.map((r) => [String(r.external_id), r.id]));
+      created += ins.affectedRows;
+      existing += inserting.length - ins.affectedRows;
+      if (!ins.affectedRows) continue;
+
+      // Everything below applies ONLY to the subscribers this import created
+      // (ids from this INSERT onwards — never a pre-existing row).
+      const [ids] = await pool.query(
+        "SELECT id, external_id FROM contacts WHERE agency_id = ? AND platform = ? AND external_id IN (?) AND id >= ?",
+        [agencyId, platform, inserting.map((t) => t.externalId), ins.insertId]
+      );
+      const byExternal = new Map(inserting.map((t) => [t.externalId, t]));
       const contactIds = ids.map((r) => r.id);
 
       // Belong to the chosen bot: a conversation on that integration. Created
-      // RESOLVED with no messages so 50,000 imported people don't flood the
-      // Inbox's Open list — the moment one of them writes in, the bot opens a
-      // normal conversation as usual.
-      const [haveConv] = await pool.query(
-        "SELECT DISTINCT contact_id FROM conversations WHERE agency_id = ? AND integration_id = ? AND contact_id IN (?)",
-        [agencyId, bot.id, contactIds]
+      // RESOLVED with no messages so imported people stay out of the Inbox
+      // (it only lists conversations with messages) until someone writes in.
+      await pool.query(
+        "INSERT INTO conversations (agency_id, contact_id, integration_id, status, unread_count, created_at) VALUES ?",
+        [contactIds.map((cid) => [agencyId, cid, bot.id, "RESOLVED", 0, new Date()])]
       );
-      const hasConv = new Set(haveConv.map((r) => r.contact_id));
-      const newConvs = contactIds.filter((id) => !hasConv.has(id));
-      if (newConvs.length) {
-        await pool.query(
-          "INSERT INTO conversations (agency_id, contact_id, integration_id, status, unread_count, created_at) VALUES ?",
-          [newConvs.map((cid) => [agencyId, cid, bot.id, "RESOLVED", 0, new Date()])]
-        );
-      }
 
       // Label (and the denormalised contacts.tags the Inbox reads).
       await pool.query("INSERT IGNORE INTO contact_labels (contact_id, label_id) VALUES ?", [contactIds.map((cid) => [cid, label.id])]);
@@ -930,23 +971,20 @@ router.post("/contacts/import", async (req, res) => {
         [contactIds]
       );
 
-      // Custom-field values.
-      const valueRows = [];
-      for (const t of touched) {
-        const cid = idByExternal.get(t.externalId);
-        if (!cid) continue;
-        for (const [fid, v] of t.custom) valueRows.push([cid, fid, v]);
-      }
-      if (valueRows.length) {
-        await pool.query(
-          "INSERT INTO contact_custom_field_values (contact_id, field_id, value) VALUES ? ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = NOW()",
-          [valueRows]
-        );
-      }
+      await writeCustomFields(ids.map((r) => [r.id, byExternal.get(String(r.external_id))]).filter(([, it]) => it));
     }
 
     return res.json({
-      success: true, created, updated, skipped, duplicatesMerged,
+      success: true,
+      created,
+      existing,
+      existingFieldsUpdated,
+      duplicateInFile,
+      invalid,
+      limitSkipped,
+      // Kept for older clients: nothing is ever updated now; "skipped" is every row not created.
+      updated: 0,
+      skipped: existing + duplicateInFile + invalid + limitSkipped,
       errors: errors.slice(0, 20),
       label: { id: label.id, name: label.name, created: labelCreated },
       bot: { id: bot.id, name: bot.name },

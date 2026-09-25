@@ -27,7 +27,7 @@ import {
   Check,
   Filter,
 } from 'lucide-react';
-import { TEAM_RULES_CATEGORIES } from './teamRulesConfig';
+import { TEAM_RULES_CATEGORIES, BLOCKABLE_CHANNELS, grantableKeys } from './teamRulesConfig';
 
 // Map category icons
 const CATEGORY_ICONS = {
@@ -51,6 +51,7 @@ export default function RolesPage() {
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState(null);
   const [selectedKeys, setSelectedKeys] = useState(new Set());
+  const [disabledChannels, setDisabledChannels] = useState([]);
   const [saving, setSaving] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [newRoleName, setNewRoleName] = useState('');
@@ -83,7 +84,10 @@ export default function RolesPage() {
     if (!selectedId) return;
     roleAPI
       .getOne(selectedId)
-      .then((res) => setSelectedKeys(new Set(res.data?.role?.permissionKeys || [])))
+      .then((res) => {
+        setSelectedKeys(new Set(res.data?.role?.permissionKeys || []));
+        setDisabledChannels(res.data?.role?.disabledChannels || []);
+      })
       .catch(() => notify.error('Failed to load role permissions'));
   }, [selectedId]);
 
@@ -97,10 +101,17 @@ export default function RolesPage() {
     });
   };
 
-  // Toggle all actions for a specific feature
+  const toggleChannelBlock = (channelId) => {
+    if (selectedRole?.is_system) return;
+    setDisabledChannels((prev) =>
+      prev.includes(channelId) ? prev.filter((c) => c !== channelId) : [...prev, channelId]
+    );
+  };
+
+  // Toggle all actions for a specific feature (restriction rules excluded)
   const toggleFeatureAll = (feature) => {
     if (selectedRole?.is_system) return;
-    const keys = feature.actions.map((a) => a.key);
+    const keys = grantableKeys([feature]);
     const allChecked = keys.every((k) => selectedKeys.has(k));
     setSelectedKeys((prev) => {
       const next = new Set(prev);
@@ -116,7 +127,7 @@ export default function RolesPage() {
   // Toggle all actions in a category
   const toggleCategoryAll = (category) => {
     if (selectedRole?.is_system) return;
-    const keys = category.features.flatMap((f) => f.actions.map((a) => a.key));
+    const keys = grantableKeys(category.features);
     const allChecked = keys.every((k) => selectedKeys.has(k));
     setSelectedKeys((prev) => {
       const next = new Set(prev);
@@ -132,10 +143,8 @@ export default function RolesPage() {
   // Select all team rules across all categories
   const selectAllRules = () => {
     if (selectedRole?.is_system) return;
-    const allKeys = TEAM_RULES_CATEGORIES.flatMap((c) =>
-      c.features.flatMap((f) => f.actions.map((a) => a.key))
-    );
-    setSelectedKeys(new Set(allKeys));
+    const allKeys = TEAM_RULES_CATEGORIES.flatMap((c) => grantableKeys(c.features));
+    setSelectedKeys((prev) => new Set([...allKeys, ...[...prev].filter((k) => !allKeys.includes(k))]));
     notify.info('All team rules selected');
   };
 
@@ -151,7 +160,7 @@ export default function RolesPage() {
     if (!selectedRole || selectedRole.is_system) return;
     setSaving(true);
     roleAPI
-      .update(selectedRole.id, { permissionKeys: Array.from(selectedKeys) })
+      .update(selectedRole.id, { permissionKeys: Array.from(selectedKeys), disabledChannels })
       .then(() => notify.success('Team rules saved successfully'))
       .catch((err) => notify.error(err?.response?.data?.message || 'Failed to save'))
       .finally(() => setSaving(false));
@@ -579,13 +588,61 @@ export default function RolesPage() {
                     </div>
                   </div>
 
+                  {/* ── CHANNEL BLOCKS (roles.disabled_channels) ─────────── */}
+                  <div
+                    style={{
+                      border: '1px solid #e2e8f0',
+                      borderRadius: 10,
+                      padding: '12px 16px',
+                      marginBottom: 18,
+                      background: '#ffffff',
+                    }}
+                  >
+                    <div style={{ fontSize: '0.86rem', fontWeight: 800, color: '#0f172a' }}>Channel access</div>
+                    <p style={{ margin: '2px 0 10px', fontSize: '0.72rem', color: '#64748b' }}>
+                      Members with this role never see chats or subscribers of a disabled channel.
+                    </p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8 }}>
+                      {BLOCKABLE_CHANNELS.map((ch) => {
+                        const blocked = disabledChannels.includes(ch.id);
+                        return (
+                          <label
+                            key={ch.id}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              padding: '8px 10px',
+                              borderRadius: 8,
+                              border: `1px solid ${blocked ? '#fecaca' : '#e2e8f0'}`,
+                              background: blocked ? '#fef2f2' : '#f8fafc',
+                              fontSize: '0.78rem',
+                              fontWeight: 600,
+                              color: blocked ? '#b91c1c' : '#334155',
+                              cursor: selectedRole.is_system ? 'default' : 'pointer',
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={blocked}
+                              disabled={selectedRole.is_system}
+                              onChange={() => toggleChannelBlock(ch.id)}
+                            />
+                            {ch.label}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   {/* ── TEAM RULES MATRIX TABLE ───────────────────────────── */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
                     {filteredCategories.map((category) => {
                       const CatIcon = CATEGORY_ICONS[category.icon] || Zap;
                       const catKeys = category.features.flatMap((f) => f.actions.map((a) => a.key));
                       const catActiveCount = catKeys.filter((k) => selectedKeys.has(k)).length;
-                      const allCatChecked = catKeys.length > 0 && catKeys.every((k) => selectedKeys.has(k));
+                      const catGrantable = grantableKeys(category.features);
+                      const allCatChecked = catGrantable.length > 0 && catGrantable.every((k) => selectedKeys.has(k));
 
                       return (
                         <div
@@ -691,7 +748,7 @@ export default function RolesPage() {
                                   const specialAction = feat.actions.find((a) => a.type === 'special');
                                   const extraActions = feat.actions.filter((a) => a.type === 'extra');
 
-                                  const featKeys = feat.actions.map((a) => a.key);
+                                  const featKeys = grantableKeys([feat]);
                                   const allFeatChecked = featKeys.every((k) => selectedKeys.has(k));
 
                                   return (

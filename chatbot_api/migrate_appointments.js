@@ -67,8 +67,9 @@ async function run() {
     console.log('✅ Appointment & Slots tables created and module registered successfully!');
   } catch (err) {
     console.error('Migration error:', err.message);
+    process.exitCode = 1;
   } finally {
-    process.exit(0);
+    process.exit();
   }
 }
 

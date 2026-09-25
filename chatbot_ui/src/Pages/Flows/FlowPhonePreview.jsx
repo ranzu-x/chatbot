@@ -424,7 +424,7 @@ export default function FlowPhonePreview({
               id: `fallback-${Date.now()}`,
               sender: 'bot',
               type: 'text',
-              text: "I didn't quite catch that. Type one of your trigger keywords (e.g. 'hi' or 'hello') to start the flow!",
+              text: "I didn't quite catch that. Type one of your trigger keywords to start the flow!",
             },
           ]);
           scrollToBottom();

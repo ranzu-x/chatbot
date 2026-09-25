@@ -4,6 +4,11 @@ import AppLayout from '../../Layout/AppLayout';
 import { agencyAPI } from '../../services/api';
 import { useAuth } from '../../Provider/AuthContext';
 import SubscriberGainChart from '../../Components/Dashboard/SubscriberGainChart';
+import { SummaryCards, EarningsNotice, EarningsComparisonChart, TopCountries } from '../../Components/Dashboard/EarningsWidgets';
+import DailyGainChart from '../../Components/Dashboard/DailyGainChart';
+import AutomationReports from '../../Components/Dashboard/AutomationReports';
+import { EmptyState } from '../../Components/Dashboard/DashboardCard';
+import { currentMonthKey } from '../../utils/dashboardFormat';
 import {
   MessageSquare,
   Users,
@@ -36,6 +41,7 @@ import {
 } from 'recharts';
 
 function StatCard({ icon: Icon, label, value, color, bg }) {
+  const IconCmp = Icon;
   return (
     <div
       className="stat-card"
@@ -63,7 +69,7 @@ function StatCard({ icon: Icon, label, value, color, bg }) {
           flexShrink: 0,
         }}
       >
-        <Icon size={19} />
+        <IconCmp size={19} />
       </div>
       <div>
         <div style={{ fontSize: '1.35rem', fontWeight: 800, color: '#0f172a', lineHeight: 1.1 }}>
@@ -92,6 +98,22 @@ export default function AgencyDashboard() {
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState(14);
+  const [dashboard, setDashboard] = useState(null);
+  const [month, setMonth] = useState(currentMonthKey());
+  const [gainLoading, setGainLoading] = useState(false);
+  const isReseller = dashboard?.scope === 'RESELLER';
+
+  // Daily gain (chosen month), automation reports, and — for a Reseller —
+  // customer count + earnings. Scoped server-side to this workspace.
+  useEffect(() => {
+    let alive = true;
+    setGainLoading(true);
+    agencyAPI.getDashboard(month)
+      .then((res) => { if (alive) setDashboard(res.data.dashboard); })
+      .catch((err) => console.error('Failed to load dashboard reports', err))
+      .finally(() => { if (alive) setGainLoading(false); });
+    return () => { alive = false; };
+  }, [month]);
 
   useEffect(() => {
     setLoading(true);
@@ -177,6 +199,18 @@ export default function AgencyDashboard() {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {isReseller && (
+              <>
+                <SummaryCards
+                  users={dashboard.users}
+                  earnings={dashboard.earnings}
+                  usersLabel="Total Users"
+                  usersHint={`${dashboard.users.active} active · +${dashboard.users.thisMonth} this month`}
+                />
+                <EarningsNotice earnings={dashboard.earnings} />
+              </>
+            )}
+
             {/* Top Stat Cards */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
               <StatCard
@@ -233,8 +267,11 @@ export default function AgencyDashboard() {
                 </div>
 
                 <div style={{ height: 240 }}>
+                  {trendData.length === 0 ? (
+                    <EmptyState icon={MessageSquare} title="No messages in this period" text="Inbound and outbound message volume will appear here." height={240} />
+                  ) : (
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={trendData.length > 0 ? trendData : [{ date: 'Today', Inbound: 12, Outbound: 24 }]}>
+                    <AreaChart data={trendData}>
                       <defs>
                         <linearGradient id="inboundGrad" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#2563eb" stopOpacity={0.25} />
@@ -254,6 +291,7 @@ export default function AgencyDashboard() {
                       <Area type="monotone" dataKey="Outbound" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#outboundGrad)" />
                     </AreaChart>
                   </ResponsiveContainer>
+                  )}
                 </div>
               </div>
 
@@ -267,10 +305,13 @@ export default function AgencyDashboard() {
                 </p>
 
                 <div style={{ height: 240 }}>
+                  {platformData.length === 0 ? (
+                    <EmptyState icon={Users} title="No conversations yet" text="Your subscribers' channel mix will appear here." height={240} />
+                  ) : (
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
-                        data={platformData.length > 0 ? platformData : [{ name: 'WhatsApp', value: 65, color: '#25d366' }, { name: 'Facebook', value: 20, color: '#1877f2' }, { name: 'Instagram', value: 15, color: '#e1306c' }]}
+                        data={platformData}
                         cx="50%"
                         cy="50%"
                         innerRadius={50}
@@ -278,7 +319,7 @@ export default function AgencyDashboard() {
                         paddingAngle={4}
                         dataKey="value"
                       >
-                        {(platformData.length > 0 ? platformData : [{ name: 'WhatsApp', value: 65, color: '#25d366' }, { name: 'Facebook', value: 20, color: '#1877f2' }, { name: 'Instagram', value: 15, color: '#e1306c' }]).map((entry, index) => (
+                        {platformData.map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={entry.color} />
                         ))}
                       </Pie>
@@ -286,9 +327,25 @@ export default function AgencyDashboard() {
                       <Legend wrapperStyle={{ fontSize: '0.76rem' }} />
                     </PieChart>
                   </ResponsiveContainer>
+                  )}
                 </div>
               </div>
             </div>
+
+            {isReseller && <EarningsComparisonChart earnings={dashboard.earnings} />}
+
+            {/* ── Daily user gain (+ top countries for a Reseller) ── */}
+            {isReseller ? (
+              <div className="dash-split-row">
+                <DailyGainChart gain={dashboard?.dailyGain} month={month} onMonthChange={setMonth} loading={gainLoading} />
+                <TopCountries earnings={dashboard.earnings} />
+              </div>
+            ) : (
+              <DailyGainChart gain={dashboard?.dailyGain} month={month} onMonthChange={setMonth} loading={gainLoading} />
+            )}
+
+            {/* ── Broadcasting · Sequences · Workflows ── */}
+            <AutomationReports automation={dashboard?.automation} />
           </div>
         )}
       </div>

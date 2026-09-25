@@ -1,45 +1,13 @@
 import { useState, useEffect } from 'react';
 import AppLayout from '../../Layout/AppLayout';
-import { platformSettingsAPI, platformCommerceAPI } from '../../services/api';
+import { platformSettingsAPI } from '../../services/api';
 import { notify } from '../../utils/alerts';
-import { ShieldCheck, Loader2, Sparkles, ShoppingBag } from 'lucide-react';
+import { ShieldCheck, Loader2, Sparkles } from 'lucide-react';
 
 export default function PlatformSettingsPage() {
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-
-  const [shopifyConfigured, setShopifyConfigured] = useState(false);
-  const [shopifyClientId, setShopifyClientId] = useState('');
-  const [shopifyForm, setShopifyForm] = useState({ clientId: '', clientSecret: '' });
-  const [shopifySaving, setShopifySaving] = useState(false);
-
-  const loadShopifyApp = () => {
-    platformCommerceAPI.getShopifyApp()
-      .then((res) => {
-        setShopifyConfigured(Boolean(res.data?.configured));
-        setShopifyClientId(res.data?.clientId || '');
-      })
-      .catch(() => {});
-  };
-
-  const saveShopifyApp = async () => {
-    if (!shopifyForm.clientId.trim() || !shopifyForm.clientSecret.trim()) {
-      notify.error('Client ID and Client Secret are required');
-      return;
-    }
-    setShopifySaving(true);
-    try {
-      await platformCommerceAPI.saveShopifyApp(shopifyForm);
-      notify.success('Shopify app credentials saved');
-      setShopifyForm({ clientId: '', clientSecret: '' });
-      loadShopifyApp();
-    } catch (err) {
-      notify.error(err.response?.data?.message || 'Failed to save');
-    } finally {
-      setShopifySaving(false);
-    }
-  };
 
   const load = () => {
     setLoading(true);
@@ -49,7 +17,7 @@ export default function PlatformSettingsPage() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); loadShopifyApp(); }, []);
+  useEffect(() => { load(); }, []);
 
   const aiForResellers = Boolean(settings.custom_ai_api_for_resellers?.enabled);
 
@@ -125,53 +93,6 @@ export default function PlatformSettingsPage() {
           </div>
         )}
 
-        <div className="card" style={{ maxWidth: 640, marginTop: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
-            <div style={{
-              width: 40, height: 40, borderRadius: 10, flexShrink: 0,
-              background: 'rgba(99,102,241,0.1)', color: 'var(--primary)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <ShoppingBag size={19} />
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
-                Shopify Partner App
-              </div>
-              <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', margin: '4px 0 0' }}>
-                One app, shared across every agency's Shopify store connection (Settings → Shopify &amp; WooCommerce).
-                Register a Partner app at <code>partners.shopify.com</code> with redirect URI
-                <code style={{ marginLeft: 4 }}>{`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api/v1'}/commerce/shopify/callback`}</code>.
-              </p>
-              {shopifyConfigured && (
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
-                  Configured — Client ID: <code>{shopifyClientId}</code>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              className="form-input"
-              placeholder="Client ID"
-              value={shopifyForm.clientId}
-              onChange={(e) => setShopifyForm((f) => ({ ...f, clientId: e.target.value }))}
-              style={{ flex: 1, height: 34, fontSize: '0.82rem' }}
-            />
-            <input
-              className="form-input"
-              type="password"
-              placeholder="Client Secret"
-              value={shopifyForm.clientSecret}
-              onChange={(e) => setShopifyForm((f) => ({ ...f, clientSecret: e.target.value }))}
-              style={{ flex: 1, height: 34, fontSize: '0.82rem' }}
-            />
-            <button type="button" className="btn btn-primary btn-sm" onClick={saveShopifyApp} disabled={shopifySaving}>
-              {shopifySaving ? <Loader2 size={13} className="animate-spin" /> : 'Save'}
-            </button>
-          </div>
-        </div>
       </div>
     </AppLayout>
   );

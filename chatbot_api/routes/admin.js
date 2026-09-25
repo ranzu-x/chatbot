@@ -7,6 +7,10 @@ import { requirePermission } from "../middleware/permissionMiddleware.js";
 import { assignPackageLocally } from "../services/stripeService.js";
 import { logAuditEvent, diffFields } from "../utils/auditLog.js";
 import { invalidateTenantCache } from "../middleware/tenant.js";
+import { getMonthlyUsage } from "../utils/entitlements.js";
+import { sendAdminEmail } from "../utils/emailNotifications.js";
+import { emitToUser } from "../utils/socket.js";
+import { getPlatformEarnings, getPlatformUserTotals, getDailyGain, getAutomationStats } from "../utils/dashboardStats.js";
 
 const router = express.Router();
 
@@ -34,6 +38,26 @@ router.get("/admin/stats", requirePermission("admin.stats.view", "admin.dashboar
     });
   } catch (err) {
     console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── SUPER ADMIN DASHBOARD (all aggregates, platform-wide) ───────────────────
+// Users, earnings (+ year-over-year + top countries), daily subscriber gain
+// for ?month=YYYY-MM (imports/manual adds excluded) and automation reports.
+// See utils/dashboardStats.js.
+router.get("/admin/dashboard", requirePermission("admin.stats.view", "admin.dashboard.view"), async (req, res) => {
+  try {
+    const scope = { kind: "platform" };
+    const [users, earnings, dailyGain, automation] = await Promise.all([
+      getPlatformUserTotals(),
+      getPlatformEarnings(),
+      getDailyGain(scope, req.query.month),
+      getAutomationStats(scope),
+    ]);
+    return res.json({ success: true, dashboard: { scope: "PLATFORM", users, earnings, dailyGain, automation } });
+  } catch (err) {
+    console.error("Admin dashboard error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
@@ -481,39 +505,186 @@ router.post("/admin/users", requirePermission("admin.users.manage"), async (req,
   }
 });
 
+// ─── USER DETAIL — the Super Admin's full-page user editor ───────────────────
+// (chatbot_ui/src/Pages/SuperAdmin/UserEditPage.jsx). One call returns
+// everything the page shows: profile, subscription + expiry, the workspace
+// (domain for Resellers), email-verification state, forum permissions and
+// this month's usage.
+async function loadUserDetail(userId) {
+  const [[user]] = await pool.query(
+    `SELECT id, name, email, phone, address, role, package_id, is_active, email_verified_at,
+            special_coupon, discount_percent, can_forum_post, can_comment, home_agency_id, created_at, updated_at
+     FROM users WHERE id = ?`,
+    [userId]
+  );
+  if (!user) return null;
+
+  const workspace = await findUserWorkspace(user);
+  const subscription = await findActiveSubscription(user, workspace);
+  const usage = workspace ? await getMonthlyUsage(workspace.id) : null;
+
+  return {
+    ...user,
+    is_active: !!user.is_active,
+    can_forum_post: !!user.can_forum_post,
+    can_comment: !!user.can_comment,
+    discount_percent: user.discount_percent === null ? null : Number(user.discount_percent),
+    workspace,
+    subscription,
+    usage,
+  };
+}
+
+// The workspace a user owns (or, failing that, their home workspace).
+async function findUserWorkspace(user) {
+  const [[ws]] = await pool.query(
+    `SELECT id, name, account_type, custom_domain, subdomain, domain_verified, usage_reset_at, owner_id
+     FROM agencies
+     WHERE owner_id = ? OR id = ?
+     ORDER BY (owner_id = ?) DESC LIMIT 1`,
+    [user.id, user.home_agency_id || 0, user.id]
+  );
+  return ws || null;
+}
+
+// Same precedence as utils/entitlements.js: the workspace's active
+// subscription wins, then the user's own.
+async function findActiveSubscription(user, workspace) {
+  const [[sub]] = await pool.query(
+    `SELECT s.id, s.package_id, s.status, s.started_at, s.current_period_end, s.expires_at, p.name AS package_name
+     FROM subscriptions s
+     LEFT JOIN packages p ON p.id = s.package_id
+     WHERE s.status = 'ACTIVE' AND (s.agency_id = ? OR s.user_id = ?)
+     ORDER BY (s.agency_id = ?) DESC, s.id DESC
+     LIMIT 1`,
+    [workspace?.id || 0, user.id, workspace?.id || 0]
+  );
+  return sub || null;
+}
+
+router.get("/admin/users/:id", requirePermission("admin.users.view", "admin.users.manage"), async (req, res) => {
+  try {
+    const user = await loadUserDetail(req.params.id);
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    return res.json({ success: true, user });
+  } catch (err) {
+    console.error("Get user detail error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // ─── UPDATE USER — the Super Admin "User Edit" screen ────────────────────────
 // name/email/password/phone/address/package/status, per the approved plan
-// (§15). Package downgrade/over-limit NEVER deletes data — assertLimit
+// (§15), plus expiry, special coupon/discount (stored + shown only — not
+// applied at checkout yet), forum permissions, manual email verification and
+// a Reseller's domain/subdomain. Every field is optional; only what's sent
+// changes. Package downgrade/over-limit NEVER deletes data — assertLimit
 // (utils/entitlements.js) only blocks *new* creation once over a reduced
 // limit; existing rows are always left alone. Reuses
 // services/stripeService.js's assignPackageLocally for the reassignment
 // itself, same helper the Stripe checkout/webhook flow already uses.
 router.put("/admin/users/:id", requirePermission("admin.users.manage"), async (req, res) => {
   try {
-    const { name, email, role, phone, address, packageId, isActive, newPassword } = req.body;
+    const {
+      name, email, role, phone, address, packageId, isActive, newPassword,
+      expiryDate, specialCoupon, discountPercent, canForumPost, canComment, emailVerified,
+      customDomain, subdomain,
+    } = req.body;
     const [existingRows] = await pool.query("SELECT * FROM users WHERE id = ?", [req.params.id]);
     if (!existingRows.length) return res.status(404).json({ success: false, message: "User not found" });
     const existing = existingRows[0];
 
+    // ── Validation (before anything is written) ──
+    const cleanEmail = email !== undefined ? String(email).trim().toLowerCase() : undefined;
+    if (cleanEmail !== undefined) {
+      if (!cleanEmail) return res.status(400).json({ success: false, message: "Email is required" });
+      const [[taken]] = await pool.query("SELECT id FROM users WHERE email = ? AND id != ?", [cleanEmail, req.params.id]);
+      if (taken) return res.status(400).json({ success: false, message: "Email is already in use" });
+    }
+    if (name !== undefined && !String(name).trim()) {
+      return res.status(400).json({ success: false, message: "Full name is required" });
+    }
+    if (newPassword && String(newPassword).length < 6) {
+      return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
+    }
+    let cleanDiscount;
+    if (discountPercent !== undefined) {
+      if (discountPercent === null || discountPercent === "") {
+        cleanDiscount = null;
+      } else {
+        cleanDiscount = Number(discountPercent);
+        if (!Number.isFinite(cleanDiscount) || cleanDiscount < 0 || cleanDiscount > 100) {
+          return res.status(400).json({ success: false, message: "Discount must be between 0 and 100" });
+        }
+      }
+    }
+    let cleanExpiry;
+    if (expiryDate !== undefined) {
+      cleanExpiry = expiryDate ? new Date(expiryDate) : null;
+      if (cleanExpiry && Number.isNaN(cleanExpiry.getTime())) {
+        return res.status(400).json({ success: false, message: "Invalid expiry date" });
+      }
+    }
+
+    const workspace = await findUserWorkspace(existing);
+    let cleanCustomDomain;
+    let cleanSubdomain;
+    const domainSent = customDomain !== undefined || subdomain !== undefined;
+    if (domainSent) {
+      if (!workspace || workspace.account_type !== "RESELLER") {
+        return res.status(400).json({ success: false, message: "Only a Reseller's workspace has a domain" });
+      }
+      // Same cleaning + collision rules as PUT /agency/domain (routes/domains.js).
+      cleanCustomDomain = customDomain !== undefined
+        ? (customDomain ? String(customDomain).toLowerCase().trim().replace(/^https?:\/\//, "").replace(/\/+$/, "") : null)
+        : workspace.custom_domain;
+      cleanSubdomain = subdomain !== undefined
+        ? (subdomain ? String(subdomain).toLowerCase().trim().replace(/[^a-z0-9-]/g, "") : null)
+        : workspace.subdomain;
+      if (cleanCustomDomain) {
+        const [[clash]] = await pool.query("SELECT id FROM agencies WHERE custom_domain = ? AND id != ?", [cleanCustomDomain, workspace.id]);
+        if (clash) return res.status(400).json({ success: false, message: `Domain "${cleanCustomDomain}" is already connected to another workspace.` });
+      }
+      if (cleanSubdomain) {
+        const [[clash]] = await pool.query("SELECT id FROM agencies WHERE subdomain = ? AND id != ?", [cleanSubdomain, workspace.id]);
+        if (clash) return res.status(400).json({ success: false, message: `Subdomain "${cleanSubdomain}" is already in use.` });
+      }
+    }
+
+    let targetPkg = null;
+    if (packageId && existing.role !== "ADMIN" && Number(packageId) !== Number(existing.package_id)) {
+      [[targetPkg]] = await pool.query("SELECT * FROM packages WHERE id = ?", [packageId]);
+      if (!targetPkg) return res.status(400).json({ success: false, message: "Package not found" });
+    }
+
+    // ── Writes ──
     const fields = [];
     const values = [];
-    if (name !== undefined) { fields.push("name = ?"); values.push(name); }
-    if (email !== undefined) { fields.push("email = ?"); values.push(email); }
+    if (name !== undefined) { fields.push("name = ?"); values.push(String(name).trim()); }
+    if (cleanEmail !== undefined) { fields.push("email = ?"); values.push(cleanEmail); }
     if (role !== undefined) { fields.push("role = ?"); values.push(role); }
-    if (phone !== undefined) { fields.push("phone = ?"); values.push(phone); }
-    if (address !== undefined) { fields.push("address = ?"); values.push(address); }
+    if (phone !== undefined) { fields.push("phone = ?"); values.push(phone || null); }
+    if (address !== undefined) { fields.push("address = ?"); values.push(address || null); }
     if (typeof isActive === "boolean") { fields.push("is_active = ?"); values.push(isActive ? 1 : 0); }
     if (newPassword) { fields.push("password = ?"); values.push(await bcrypt.hash(newPassword, 10)); }
+    if (specialCoupon !== undefined) { fields.push("special_coupon = ?"); values.push(specialCoupon ? String(specialCoupon).trim().slice(0, 64) : null); }
+    if (cleanDiscount !== undefined) { fields.push("discount_percent = ?"); values.push(cleanDiscount); }
+    if (typeof canForumPost === "boolean") { fields.push("can_forum_post = ?"); values.push(canForumPost ? 1 : 0); }
+    if (typeof canComment === "boolean") { fields.push("can_comment = ?"); values.push(canComment ? 1 : 0); }
+    if (typeof emailVerified === "boolean" && emailVerified !== !!existing.email_verified_at) {
+      // Manual verification by the Super Admin (who vouches for the address),
+      // or un-verifying it so the user has to confirm again.
+      fields.push(emailVerified ? "email_verified_at = NOW()" : "email_verified_at = NULL");
+    }
 
     if (fields.length) {
       values.push(req.params.id);
       await pool.query(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`, values);
     }
+    if (typeof isActive === "boolean") invalidateTenantCache();
 
     let packageChange = null;
-    if (packageId && existing.role !== "ADMIN" && Number(packageId) !== Number(existing.package_id)) {
-      const [[targetPkg]] = await pool.query("SELECT * FROM packages WHERE id = ?", [packageId]);
-      if (!targetPkg) return res.status(400).json({ success: false, message: "Package not found" });
+    if (targetPkg) {
       await assignPackageLocally({ userId: req.params.id, packageId, notes: "Reassigned by Super Admin" });
       packageChange = {
         toPackage: targetPkg.name,
@@ -521,21 +692,178 @@ router.put("/admin/users/:id", requirePermission("admin.users.manage"), async (r
       };
     }
 
-    const [updated] = await pool.query(
-      "SELECT id, name, email, phone, address, role, package_id, is_active, created_at, updated_at FROM users WHERE id = ?",
-      [req.params.id]
-    );
+    if (cleanExpiry !== undefined) {
+      const [[fresh]] = await pool.query("SELECT * FROM users WHERE id = ?", [req.params.id]);
+      let sub = await findActiveSubscription(fresh, workspace);
+      if (!sub && fresh.package_id) {
+        await pool.query(
+          "INSERT INTO subscriptions (user_id, package_id, status, started_at, notes) VALUES (?, ?, 'ACTIVE', NOW(), 'Created by Super Admin to set an expiry date')",
+          [fresh.id, fresh.package_id]
+        );
+        sub = await findActiveSubscription(fresh, workspace);
+      }
+      if (!sub && cleanExpiry) {
+        return res.status(400).json({ success: false, message: "Pick a subscription package before setting an expiry date" });
+      }
+      if (sub) {
+        await pool.query("UPDATE subscriptions SET expires_at = ?, current_period_end = ? WHERE id = ?", [cleanExpiry, cleanExpiry, sub.id]);
+      }
+    }
+
+    if (domainSent) {
+      // A changed custom domain has to be verified again (routes/domains.js rule).
+      const verified = cleanCustomDomain === workspace.custom_domain ? workspace.domain_verified : 0;
+      await pool.query(
+        "UPDATE agencies SET custom_domain = ?, subdomain = ?, domain_verified = ? WHERE id = ?",
+        [cleanCustomDomain, cleanSubdomain, verified, workspace.id]
+      );
+    }
+
+    const updated = await loadUserDetail(req.params.id);
 
     logAuditEvent({
       agencyId: req.user.agencyId, actor: req.user, action: "user.update",
       entityType: "user", entityId: Number(req.params.id), entityLabel: name || existing.name,
       summary: `Updated user "${existing.name}"${packageChange ? ` — plan → ${packageChange.toPackage}` : ""}`,
-      changes: diffFields(existing, { name: name ?? existing.name, email: email ?? existing.email, role: role ?? existing.role, is_active: typeof isActive === "boolean" ? (isActive ? 1 : 0) : existing.is_active }, ["name", "email", "role", "is_active"]),
+      changes: diffFields(
+        existing,
+        {
+          name: name ?? existing.name,
+          email: cleanEmail ?? existing.email,
+          role: role ?? existing.role,
+          is_active: typeof isActive === "boolean" ? (isActive ? 1 : 0) : existing.is_active,
+          can_forum_post: typeof canForumPost === "boolean" ? (canForumPost ? 1 : 0) : existing.can_forum_post,
+          can_comment: typeof canComment === "boolean" ? (canComment ? 1 : 0) : existing.can_comment,
+          discount_percent: cleanDiscount !== undefined ? cleanDiscount : existing.discount_percent,
+        },
+        ["name", "email", "role", "is_active", "can_forum_post", "can_comment", "discount_percent"]
+      ),
     });
 
-    return res.json({ success: true, user: updated[0], packageChange });
+    return res.json({ success: true, user: updated, packageChange });
   } catch (err) {
     console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── BULK ACTIONS ON SELECTED USERS (User Manager → Options → Selected users)
+// Email and in-app notification to the users the Super Admin ticked in the
+// list. CSV download of the selection is done client-side.
+const BULK_MAX_USERS = 500;
+
+function parseUserIds(raw) {
+  if (!Array.isArray(raw)) return null;
+  const ids = [...new Set(raw.map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  return ids.length && ids.length <= BULK_MAX_USERS ? ids : null;
+}
+
+const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+router.post("/admin/users/bulk-email", requirePermission("admin.users.manage"), async (req, res) => {
+  try {
+    const userIds = parseUserIds(req.body?.userIds);
+    const subject = String(req.body?.subject || "").trim().slice(0, 200);
+    const message = String(req.body?.message || "").trim().slice(0, 20000);
+    if (!userIds) return res.status(400).json({ success: false, message: `Select between 1 and ${BULK_MAX_USERS} users` });
+    if (!subject) return res.status(400).json({ success: false, message: "Subject is required" });
+    if (!message) return res.status(400).json({ success: false, message: "Message is required" });
+
+    const [users] = await pool.query("SELECT id, name, email FROM users WHERE id IN (?)", [userIds]);
+
+    // Plain text in, safe HTML out. {{name}} becomes each recipient's name.
+    const bodyFor = (u) => escapeHtml(message)
+      .replace(/\{\{\s*name\s*\}\}/gi, escapeHtml(u.name || "there"))
+      .replace(/\r?\n/g, "<br>");
+
+    const results = { sent: 0, failed: 0, notConfigured: 0 };
+    // A few at a time — kind to the SMTP server, still quick for hundreds.
+    for (let i = 0; i < users.length; i += 5) {
+      const batch = users.slice(i, i + 5);
+      const outcomes = await Promise.all(batch.map((u) => sendAdminEmail({ to: u.email, subject, bodyHtml: `<p style="margin:0">${bodyFor(u)}</p>` })));
+      for (const o of outcomes) {
+        if (o === "sent") results.sent += 1;
+        else if (o === "not_configured") results.notConfigured += 1;
+        else results.failed += 1;
+      }
+    }
+
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "user.bulk_email",
+      entityType: "user", entityId: null, entityLabel: `${users.length} users`,
+      summary: `Emailed ${users.length} user(s): "${subject}" (sent ${results.sent}, failed ${results.failed}${results.notConfigured ? `, SMTP not configured for ${results.notConfigured}` : ""})`,
+    });
+
+    return res.json({ success: true, recipients: users.length, ...results, smtpConfigured: results.notConfigured === 0 });
+  } catch (err) {
+    console.error("Bulk email error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+router.post("/admin/users/bulk-notify", requirePermission("admin.users.manage"), async (req, res) => {
+  try {
+    const userIds = parseUserIds(req.body?.userIds);
+    const title = String(req.body?.title || "").trim().slice(0, 200);
+    const body = String(req.body?.message || "").trim().slice(0, 2000);
+    const rawLink = String(req.body?.link || "").trim();
+    if (!userIds) return res.status(400).json({ success: false, message: `Select between 1 and ${BULK_MAX_USERS} users` });
+    if (!title) return res.status(400).json({ success: false, message: "Title is required" });
+    // An in-app path ("/billing") or a full http(s) URL — nothing else (no javascript: etc.).
+    if (rawLink && !/^\/(?!\/)/.test(rawLink) && !/^https?:\/\//i.test(rawLink)) {
+      return res.status(400).json({ success: false, message: "Link must be a page path like /billing or a full http(s) URL" });
+    }
+    const link = rawLink ? rawLink.slice(0, 500) : null;
+
+    const [users] = await pool.query("SELECT id FROM users WHERE id IN (?)", [userIds]);
+    if (!users.length) return res.status(404).json({ success: false, message: "None of the selected users exist any more" });
+
+    await pool.query(
+      "INSERT INTO user_notifications (user_id, title, body, link, sender_user_id) VALUES ?",
+      [users.map((u) => [u.id, title, body || null, link, req.user.id])]
+    );
+    // Live delivery to any open tab; the bell refetches its list on this.
+    for (const u of users) emitToUser(u.id, "user_notification", { title, body, link });
+
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "user.bulk_notify",
+      entityType: "user", entityId: null, entityLabel: `${users.length} users`,
+      summary: `Sent notification "${title}" to ${users.length} user(s)`,
+    });
+
+    return res.json({ success: true, recipients: users.length });
+  } catch (err) {
+    console.error("Bulk notify error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── RESET MONTHLY USAGE ──────────────────────────────────────────────────────
+// Starts the user's workspace's monthly counters (outbound messages, AI
+// tokens, social posts) from zero for the rest of this month. Nothing is
+// deleted: utils/entitlements.js just counts from agencies.usage_reset_at.
+router.post("/admin/users/:id/reset-usage", requirePermission("admin.users.manage"), async (req, res) => {
+  try {
+    const [[user]] = await pool.query("SELECT id, name, home_agency_id FROM users WHERE id = ?", [req.params.id]);
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    const workspace = await findUserWorkspace(user);
+    if (!workspace) return res.status(400).json({ success: false, message: "This user has no workspace to reset" });
+
+    await pool.query("UPDATE agencies SET usage_reset_at = NOW() WHERE id = ?", [workspace.id]);
+    await pool.query(
+      "UPDATE social_post_usage SET post_count = 0 WHERE agency_id = ? AND month_start = DATE_FORMAT(NOW(), '%Y-%m-01')",
+      [workspace.id]
+    );
+
+    logAuditEvent({
+      agencyId: req.user.agencyId, actor: req.user, action: "user.reset_usage",
+      entityType: "user", entityId: user.id, entityLabel: user.name,
+      summary: `Reset this month's usage for "${user.name}" (workspace "${workspace.name}")`,
+    });
+
+    return res.json({ success: true, usage: await getMonthlyUsage(workspace.id) });
+  } catch (err) {
+    console.error("Reset usage error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
@@ -589,6 +917,7 @@ router.get("/admin/analytics", requirePermission("admin.analytics.view"), async 
         SUM(CASE WHEN platform = 'WEBCHAT' THEN 1 ELSE 0 END) as webchat
       FROM contacts
       WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+        AND source IN ('INCOMING', 'INTEGRATION') -- imports + manual adds aren't gain
       GROUP BY DATE(created_at)
       ORDER BY DATE(created_at) ASC
     `, [days]);

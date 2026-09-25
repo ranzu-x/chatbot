@@ -1,8 +1,8 @@
 /**
- * Account creation for flows that aren't the interactive /auth/register
- * endpoint — today just guest checkout (routes/billing.js's
- * consumePendingSignup), which always creates a brand-new DIRECT_CUSTOMER
- * agency owned by the buyer. Deliberately does NOT run /auth/register's
+ * Creates a brand-new DIRECT_CUSTOMER agency owned by the person signing up.
+ * Used by guest checkout (routes/billing.js's consumePendingSignup) and by
+ * /auth/register when the sign-up address isn't a recognised workspace or
+ * reseller domain (registration is open on every address). Deliberately does NOT run /auth/register's
  * domain-resolution/reseller-signup/join-existing-workspace branches (see
  * routes/auth.js lines ~111-280) — a public Pricing-page buyer isn't
  * landing on any particular tenant's domain, so those branches don't apply.
@@ -28,7 +28,7 @@ import { attributeReferral } from "./affiliateCommission.js";
  *
  * Returns { userId, agencyId, agencyName }.
  */
-export async function createAccount({ fullName, email, passwordHash, businessName, affiliateCode }) {
+export async function createAccount({ fullName, email, passwordHash, businessName, affiliateCode, source = "Guest Checkout" }) {
   const normalizedEmail = String(email).toLowerCase().trim();
 
   const [existing] = await pool.query("SELECT id FROM users WHERE email = ? LIMIT 1", [normalizedEmail]);
@@ -65,7 +65,7 @@ export async function createAccount({ fullName, email, passwordHash, businessNam
     await attributeReferral(agencyId, affiliateCode);
   }
 
-  console.log(`[Guest Checkout] User "${fullName}" (${normalizedEmail}) created new workspace "${agencyName}" (Agency ID ${agencyId})`);
+  console.log(`[${source}] User "${fullName}" (${normalizedEmail}) created new workspace "${agencyName}" (Agency ID ${agencyId})`);
 
   return { userId, agencyId, agencyName };
 }

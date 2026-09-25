@@ -28,12 +28,13 @@ export default function WebhooksManagerPage() {
   const [activeTab, setActiveTab] = useState('INBOUND'); // 'INBOUND' | 'LOGS'
   const [copiedId, setCopiedId] = useState(null);
   const [selectedFlowForTest, setSelectedFlowForTest] = useState(null);
+  // The test really starts the flow and messages this person — no default number.
   const [testPayload, setTestPayload] = useState({
-    name: 'Sarah Connor',
-    phone: '+14155552671',
-    email: 'sarah@example.com',
-    channel: 'WHATSAPP',
+    name: '',
+    phone: '',
+    email: '',
   });
+  const [inboundUrls, setInboundUrls] = useState({}); // flowId → URL with its key
   const [testingTrigger, setTestingTrigger] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [toast, setToast] = useState(null);
@@ -75,11 +76,13 @@ export default function WebhooksManagerPage() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [flowsRes, logsRes, qRes] = await Promise.all([
+      const [flowsRes, logsRes, qRes, urlsRes] = await Promise.all([
         flowAPI.getAll().catch(() => ({ data: { flows: [] } })),
         api.get('/webhooks/logs').catch(() => ({ data: { logs: [] } })),
         api.get('/queue/stats').catch(() => ({ data: { stats: {} } })),
+        api.get('/webhooks/inbound-urls').catch(() => ({ data: { urls: {} } })),
       ]);
+      setInboundUrls(urlsRes.data?.urls || {});
       const flowList = flowsRes.data?.flows || [];
       setFlows(flowList);
       setLogs(logsRes.data?.logs || []);
@@ -109,9 +112,12 @@ export default function WebhooksManagerPage() {
     setTestResult(null);
 
     try {
-      const res = await api.post(`/webhooks/inbound/${selectedFlowForTest.id}`, testPayload);
+      const url = inboundUrls[selectedFlowForTest.id];
+      if (!url) throw new Error('No webhook URL for this flow');
+      const { pathname, search } = new URL(url);
+      const res = await api.post(`${pathname.replace(/^\/api\/v1/, '')}${search}`, testPayload);
       setTestResult({ success: true, data: res.data });
-      showToast(`Flow "${selectedFlowForTest.name}" triggered successfully!`);
+      showToast(`Flow "${selectedFlowForTest.name}" started!`);
       loadData();
     } catch (err) {
       console.error(err);
@@ -122,10 +128,8 @@ export default function WebhooksManagerPage() {
     }
   };
 
-  const getBaseInboundUrl = (flowId) => {
-    const origin = window.location.origin.replace('5173', '5000'); // point to API server
-    return `${origin}/api/v1/webhooks/inbound/${flowId}`;
-  };
+  // Includes the flow's secret key — treat it like a password.
+  const getBaseInboundUrl = (flowId) => inboundUrls[flowId] || '';
 
   return (
     <AppLayout>
@@ -228,7 +232,7 @@ export default function WebhooksManagerPage() {
                   Flow Inbound Trigger Endpoints
                 </h3>
                 <p style={{ fontSize: '0.74rem', color: '#64748b', margin: '2px 0 0 0' }}>
-                  Send a `POST` request to any of these unique URLs from Zapier, Make.com, or Shopify to immediately launch that flow for a recipient.
+                  Send a `POST` with JSON {'{ name, phone, email, customVariables }'} (phone with country code) to a flow's URL from Zapier or Make.com to start that flow for the person. Each URL contains a secret key — keep it private. WhatsApp only delivers these flow messages to people who messaged you in the last 24 hours.
                 </p>
               </div>
 
@@ -299,7 +303,7 @@ export default function WebhooksManagerPage() {
                   <Play size={15} color="#0284c7" /> Test Inbound Webhook Trigger
                 </h3>
                 <p style={{ fontSize: '0.74rem', color: '#64748b', margin: '2px 0 0 0' }}>
-                  Simulate an external payload sent from Zapier/Shopify to trigger the selected flow.
+                  Sends a real request: the selected flow starts and messages this phone number. Use your own number.
                 </p>
               </div>
 
@@ -322,7 +326,7 @@ export default function WebhooksManagerPage() {
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 700, marginBottom: 3 }}>Phone Number</label>
+                      <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 700, marginBottom: 3 }}>Phone number (with country code, e.g. +8801...)</label>
                       <input
                         type="text"
                         className="form-input w-full"

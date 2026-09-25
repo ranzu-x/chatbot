@@ -45,3 +45,26 @@ export async function requireVerifiedEmail(req, res, next) {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 }
+
+// Per-user switches set by the Super Admin on the user edit page
+// (users.can_forum_post / users.can_comment — migrate_user_manager_fields.js).
+// can_comment also covers blog comments once that feature exists.
+export function requireUserPermission(column) {
+  const messages = {
+    can_forum_post: "Posting new forum threads has been turned off for your account.",
+    can_comment: "Commenting has been turned off for your account.",
+  };
+  return async (req, res, next) => {
+    if (req.user?.role === "ADMIN") return next();
+    try {
+      const [[row]] = await pool.query(`SELECT ${column} AS allowed FROM users WHERE id = ?`, [req.user.id]);
+      if (!row?.allowed) {
+        return res.status(403).json({ success: false, message: messages[column], code: "FORUM_PERMISSION_DISABLED" });
+      }
+      next();
+    } catch (err) {
+      console.error("requireUserPermission error:", err);
+      return res.status(500).json({ success: false, message: "Server error" });
+    }
+  };
+}

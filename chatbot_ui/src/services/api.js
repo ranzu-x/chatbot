@@ -22,7 +22,7 @@ api.interceptors.response.use(
     if (error.response && error.response.status === 401) {
       const url = error.config?.url || "";
       // Do not trigger global logout on public auth forms (so bad password messages display normally)
-      const isPublicAuth = url.includes("/auth/login") || url.includes("/auth/register") || url.includes("/auth/tenant");
+      const isPublicAuth = url.includes("/auth/login") || url.includes("/auth/register") || url.includes("/auth/tenant") || url.includes("/auth/reset-password");
       if (!isPublicAuth) {
         localStorage.removeItem("auth_token");
         window.dispatchEvent(new Event("auth:unauthorized"));
@@ -42,6 +42,9 @@ export const authAPI = {
   // resend needs a signed-in user and is rate-limited server-side (1/minute).
   verifyEmail: (token) => api.post("/auth/verify-email", { token }),
   resendVerification: () => api.post("/auth/resend-verification"),
+  // Password reset — both public (utils/passwordReset.js).
+  forgotPassword: (email) => api.post("/auth/forgot-password", { email }),
+  resetPassword: (token, password) => api.post("/auth/reset-password", { token, password }),
 };
 
 export const tenantAPI = {
@@ -64,18 +67,24 @@ export const apiKeyAPI = {
 
 // ─── WhatsApp Shopify/WooCommerce integration ──────────────────────
 export const commerceAPI = {
+  getMeta: () => api.get("/commerce/meta"),
   getConnections: () => api.get("/commerce/connections"),
-  getShopifyAuthUrl: (storeDomain) => api.get("/commerce/shopify/auth-url", { params: { storeDomain } }),
-  connectWooCommerce: (data) => api.post("/commerce/woocommerce/connect", data),
+  connect: (data) => api.post("/commerce/connections", data),
+  updateConnection: (id, data) => api.patch(`/commerce/connections/${id}`, data),
+  pollConnection: (id) => api.post(`/commerce/connections/${id}/poll`),
   syncConnection: (id) => api.post(`/commerce/connections/${id}/sync`),
   disconnect: (id) => api.delete(`/commerce/connections/${id}`),
   getProducts: (params) => api.get("/commerce/products", { params }),
-};
-
-// ─── Admin: platform Shopify Partner app credentials ───────────────
-export const platformCommerceAPI = {
-  getShopifyApp: () => api.get("/admin/commerce/shopify-app"),
-  saveShopifyApp: (data) => api.put("/admin/commerce/shopify-app", data),
+  getTemplates: (integrationId) => api.get("/commerce/templates", { params: { integrationId } }),
+  getCampaigns: () => api.get("/commerce/campaigns"),
+  getCampaign: (id) => api.get(`/commerce/campaigns/${id}`),
+  createCampaign: (data) => api.post("/commerce/campaigns", data),
+  updateCampaign: (id, data) => api.put(`/commerce/campaigns/${id}`, data),
+  toggleCampaign: (id, isActive) => api.patch(`/commerce/campaigns/${id}/toggle`, { isActive }),
+  deleteCampaign: (id) => api.delete(`/commerce/campaigns/${id}`),
+  getActivity: (params) => api.get("/commerce/activity", { params }),
+  getOrders: (params) => api.get("/commerce/orders", { params }),
+  getCarts: (params) => api.get("/commerce/carts", { params }),
 };
 
 // ─── Packages & Module Entitlements ──────────────────────────────
@@ -192,9 +201,14 @@ export const adminAPI = {
   getUsers: (params) => api.get("/admin/users", { params }),
   toggleUser: (id) => api.patch(`/admin/users/${id}/toggle`),
   createUser: (data) => api.post("/admin/users", data),
+  getUser: (id) => api.get(`/admin/users/${id}`),
   updateUser: (id, data) => api.put(`/admin/users/${id}`, data),
+  resetUserUsage: (id) => api.post(`/admin/users/${id}/reset-usage`),
+  bulkEmailUsers: (data) => api.post('/admin/users/bulk-email', data),
+  bulkNotifyUsers: (data) => api.post('/admin/users/bulk-notify', data),
   deleteUser: (id) => api.delete(`/admin/users/${id}`),
   getAnalytics: (days = 14) => api.get(`/admin/analytics?days=${days}`),
+  getDashboard: (month) => api.get('/admin/dashboard', { params: { month } }),
   // Super Admin's own internal team (Support/Sales/Finance/Technical Admin)
   getTeam: () => api.get("/admin/team"),
   createTeamMember: (data) => api.post("/admin/team", data),
@@ -257,6 +271,7 @@ export const agencyAPI = {
   getProfile: () => api.get("/agency/profile"),
   getStats: () => api.get("/agency/stats"),
   getAnalytics: (days = 14) => api.get(`/agency/analytics?days=${days}`),
+  getDashboard: (month) => api.get("/agency/dashboard", { params: { month } }),
   getAgents: () => api.get("/agency/agents"),
   createAgent: (data) => api.post("/agency/agents", data),
   deleteAgent: (userId) => api.delete(`/agency/agents/${userId}`),
@@ -577,6 +592,13 @@ export const customFieldAPI = {
   delete: (id) => api.delete(`/custom-fields/${id}`),
   getForContact: (contactId) => api.get(`/contacts/${contactId}/custom-fields`),
   setValue: (contactId, fieldId, value) => api.put(`/contacts/${contactId}/custom-fields/${fieldId}`, { value }),
+};
+
+// ─── My in-app notifications (top-bar bell) ─────────────────────────
+export const myNotificationsAPI = {
+  getAll: () => api.get('/me/notifications'),
+  markRead: (id) => api.post(`/me/notifications/${id}/read`),
+  markAllRead: () => api.post('/me/notifications/read-all'),
 };
 
 // ─── Upload ─────────────────────────────────────────────────────────

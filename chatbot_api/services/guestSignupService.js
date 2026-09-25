@@ -11,8 +11,11 @@ import { assignPackageLocally } from "./stripeService.js";
 import { sendWelcomeEmail } from "../utils/emailNotifications.js";
 import { sendVerificationEmail } from "../utils/emailVerification.js";
 import { recordCommissionForInvoice } from "../utils/affiliateCommission.js";
+import { resolveInvoiceCountry } from "../utils/country.js";
 
-export async function consumePendingSignup(referenceToken, gatewayTxnId, amountPaid) {
+// gatewayCountry: the billing / card country the gateway reported, if any
+// (stored on the invoice for the earnings-by-country report).
+export async function consumePendingSignup(referenceToken, gatewayTxnId, amountPaid, gatewayCountry = null) {
   const [[row]] = await pool.query("SELECT * FROM pending_signups WHERE reference_token = ? LIMIT 1", [referenceToken]);
   if (!row) return { success: false, reason: "not_found" };
 
@@ -50,10 +53,11 @@ export async function consumePendingSignup(referenceToken, gatewayTxnId, amountP
   await assignPackageLocally({ agencyId, packageId: row.package_id, notes: `Guest checkout via ${row.provider}` });
 
   const finalAmountPaid = amountPaid ?? row.amount;
+  const invoiceCountry = await resolveInvoiceCountry({ gatewayCountry, agencyId, userId });
   const [invoiceResult] = await pool.query(
-    `INSERT INTO invoices (agency_id, package_id, provider, gateway_txn_id, amount_paid, currency, status, paid_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'PAID', NOW())`,
-    [agencyId, row.package_id, row.provider, gatewayTxnId, finalAmountPaid, row.currency]
+    `INSERT INTO invoices (agency_id, package_id, provider, gateway_txn_id, amount_paid, currency, country, status, paid_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'PAID', NOW())`,
+    [agencyId, row.package_id, row.provider, gatewayTxnId, finalAmountPaid, row.currency, invoiceCountry]
   );
   await recordCommissionForInvoice({
     agencyId,

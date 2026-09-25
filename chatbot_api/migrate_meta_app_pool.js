@@ -76,8 +76,11 @@ async function run() {
       }
     }
     console.log('Done. meta_app_settings left untouched.');
+  } catch (err) {
+    console.error("❌ Migration failed:", err);
+    process.exitCode = 1;
   } finally {
-    process.exit(0);
+    process.exit();
   }
 }
 run();

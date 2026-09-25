@@ -1,5 +1,7 @@
 import pool from "../db.js";
 import axios from "axios";
+import { getPublicBackendUrl, resolvePublicImageUrl } from "./platformSender.js";
+import { pruneSocialPostHistory } from "./socialPostHistory.js";
 
 const META_API_VERSION = "v21.0";
 
@@ -178,9 +180,12 @@ export async function processScheduledSocialPosts() {
       // Another worker already grabbed this post — skip
       if (updated.affectedRows === 0) continue;
 
-      const mediaUrls = typeof post.media_urls === "string"
+      const storedMediaUrls = typeof post.media_urls === "string"
         ? JSON.parse(post.media_urls || "[]")
         : post.media_urls || [];
+      // Uploaded files are stored as /uploads/... — Meta needs a public URL.
+      const publicBase = await getPublicBackendUrl();
+      const mediaUrls = storedMediaUrls.map((u) => resolvePublicImageUrl(u, publicBase)).filter(Boolean);
 
       try {
         let publishResult;
@@ -227,6 +232,16 @@ export async function processScheduledSocialPosts() {
           "UPDATE social_posts SET status = 'FAILED', error_message = ? WHERE id = ?",
           [errorMsg, post.id]
         );
+      }
+    }
+
+    // Posts that just finished now count toward the 50-post history cap.
+    // (Usage was already counted when they were scheduled.)
+    for (const agencyId of new Set(posts.map((p) => p.agency_id))) {
+      try {
+        await pruneSocialPostHistory(agencyId);
+      } catch (pruneErr) {
+        console.error(`[SocialScheduler] History prune failed for agency ${agencyId}:`, pruneErr.message);
       }
     }
   } catch (err) {

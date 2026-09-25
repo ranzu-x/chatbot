@@ -2,8 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router';
 import { useAuth } from '../Provider/AuthContext';
 import { useLayout } from '../Provider/LayoutContext';
-import { useNotification } from '../Provider/NotificationContext';
-import { Menu, PanelLeft, PanelLeftClose, Sun, Moon, Plug, LogOut, Bell, UserCircle, Palette, LifeBuoy, ShieldCheck, Building2, KeyRound, Gift, MessagesSquare } from 'lucide-react';
+import NotificationBell from './NotificationBell';
+import { Menu, PanelLeft, PanelLeftClose, Sun, Moon, Plug, LogOut, UserCircle, Palette, LifeBuoy, ShieldCheck, Building2, KeyRound, Gift, MessagesSquare } from 'lucide-react';
 
 // Internal role identifiers (ADMIN/RESELLER/USER) now match the human-facing
 // label, consistent with Sidebar.jsx's ROLE_SUBTITLES.
@@ -66,7 +66,6 @@ export default function TopBar() {
     }
   };
 
-  const { openSettingsModal } = useNotification();
 
   return (
     <header className="top-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', height: 56, borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
@@ -95,27 +94,8 @@ export default function TopBar() {
       </div>
 
       <div className="top-bar-right" ref={menuRef} style={{ display: 'flex', alignItems: 'center', gap: 10, position: 'relative' }}>
-        {/* Notification Preferences Trigger */}
-        <button
-          type="button"
-          onClick={openSettingsModal}
-          title="Notification Preferences & Sound Settings"
-          style={{
-            width: 34,
-            height: 34,
-            borderRadius: 8,
-            border: '1px solid var(--border)',
-            background: 'var(--bg-card)',
-            color: 'var(--text-secondary)',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            transition: 'all 0.15s',
-          }}
-        >
-          <Bell size={16} />
-        </button>
+        {/* In-app notifications (the settings modal is the dropdown's footer link) */}
+        <NotificationBell />
 
         <div 
           className="top-bar-user-trigger"

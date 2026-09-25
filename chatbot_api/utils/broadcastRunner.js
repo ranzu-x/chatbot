@@ -49,16 +49,27 @@ import { expandMessageBlocks } from "./flowGraph.js";
  * sendMsg() already updates last_message_at itself, so nothing else here
  * needs to touch the conversation on the existing-row path.
  */
-async function findOrCreateConversationForBroadcast(agencyId, contactId, integrationId) {
+//
+// Reuses the subscriber's existing conversation on this bot — an active one
+// first, otherwise the most recent RESOLVED one (e.g. the empty placeholder a
+// subscriber import creates) — instead of opening a second conversation.
+// Its status is left alone: a broadcast needs no action from the team, so it
+// never makes a chat OPEN. A brand-new one is created RESOLVED for the same
+// reason. It shows in the Inbox (it now has a message) under "No reply yet",
+// sorted below people who actually wrote in; the moment the subscriber
+// replies, messageProcessor.findOrCreateConversation re-opens it.
+export async function findOrCreateConversationForBroadcast(agencyId, contactId, integrationId) {
   const [existing] = await pool.query(
-    `SELECT * FROM conversations WHERE agency_id = ? AND contact_id = ? AND integration_id = ? AND status != 'RESOLVED' LIMIT 1`,
+    `SELECT * FROM conversations WHERE agency_id = ? AND contact_id = ? AND integration_id = ?
+     ORDER BY (status != 'RESOLVED') DESC, COALESCE(last_message_at, created_at) DESC, id DESC
+     LIMIT 1`,
     [agencyId, contactId, integrationId]
   );
   if (existing.length) return existing[0];
 
   const [ins] = await pool.query(
     `INSERT INTO conversations (agency_id, contact_id, integration_id, status, unread_count, last_message_at, created_at)
-     VALUES (?, ?, ?, 'OPEN', 0, NOW(), NOW())`,
+     VALUES (?, ?, ?, 'RESOLVED', 0, NOW(), NOW())`,
     [agencyId, contactId, integrationId]
   );
   const [[created]] = await pool.query("SELECT * FROM conversations WHERE id = ?", [ins.insertId]);
@@ -282,7 +293,15 @@ export async function executeBroadcast(campaignId) {
   const [[campaign]] = await pool.query("SELECT * FROM broadcast_campaigns WHERE id = ?", [campaignId]);
   if (!campaign) return;
 
-  await pool.query("UPDATE broadcast_campaigns SET status = 'PROCESSING' WHERE id = ?", [campaignId]);
+  // Atomic claim: only one caller (the scheduler on any instance, or a
+  // "Send now" click) may move the campaign into PROCESSING — a second one
+  // arriving at the same moment gets 0 rows and stops, instead of sending
+  // every message twice.
+  const [claim] = await pool.query(
+    "UPDATE broadcast_campaigns SET status = 'PROCESSING' WHERE id = ? AND status IN ('DRAFT', 'SCHEDULED', 'FAILED')",
+    [campaignId]
+  );
+  if (claim.affectedRows !== 1) return;
 
   try {
     // The campaign's OWN chosen account (set at creation/configure time via

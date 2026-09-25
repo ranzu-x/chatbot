@@ -155,3 +155,66 @@ export async function logBotError({
     return null;
   }
 }
+
+const PAUSED_PREFIX = "Bot is paused";
+const PAUSED_LOG_THROTTLE_MINUTES = 30;
+
+/**
+ * Records in the Bot Error Log that an inbound message got no bot reply
+ * because the bot is paused for this chat/subscriber — flows, keyword rules
+ * and AI replies all skip a paused conversation silently, so without this the
+ * owner can't tell "paused" from "broken". Says why (manual pause, a team
+ * member's takeover, subscriber limit) and when it resumes. Logged at most
+ * once per subscriber per bot every 30 minutes, so a long human-handled chat
+ * doesn't flood the log. Never throws.
+ */
+export async function logBotPausedSkip({ agencyId, platform, conversation, contact, integration, contactIdentifier }) {
+  if (!agencyId || !(conversation?.bot_paused || contact?.bot_paused)) return null;
+  try {
+    const integrationId = integration?.id || conversation?.integration_id || null;
+    const [[recent]] = await pool.query(
+      `SELECT id FROM bot_error_logs
+       WHERE agency_id = ? AND contact_id <=> ? AND integration_id <=> ? AND error_message LIKE ?
+         AND created_at > NOW() - INTERVAL ? MINUTE
+       LIMIT 1`,
+      [agencyId, contact?.id || null, integrationId, `${PAUSED_PREFIX}%`, PAUSED_LOG_THROTTLE_MINUTES]
+    );
+    if (recent) return null;
+
+    let reason;
+    let fix = "Resume the bot from the Inbox to let it reply again.";
+    if (conversation?.bot_paused) {
+      if (conversation.pause_reason === "OVER_LIMIT") {
+        reason = "the workspace is over its plan's subscriber limit, so this new subscriber gets no bot replies";
+        fix = "Upgrade the plan (or free up subscribers) to let the bot reply.";
+      } else {
+        let who = "";
+        if (conversation.paused_by_user_id) {
+          const [[u]] = await pool.query("SELECT name FROM users WHERE id = ?", [conversation.paused_by_user_id]);
+          if (u?.name) who = ` by ${u.name}`;
+        }
+        reason = conversation.pause_reason === "HUMAN_TAKEOVER"
+          ? `a team member took over this chat${who}`
+          : `it was paused for this conversation${who}`;
+        if (conversation.auto_resume_at) {
+          const [[r]] = await pool.query("SELECT DATE_FORMAT(?, '%Y-%m-%d %H:%i') AS at", [conversation.auto_resume_at]);
+          reason += `; it resumes automatically at ${r.at}`;
+        }
+      }
+    } else {
+      reason = "it was paused for this subscriber (all of their conversations)";
+    }
+
+    return await logBotError({
+      agencyId,
+      integrationId,
+      platform,
+      contactId: contact?.id || null,
+      contactIdentifier: contactIdentifier || contact?.external_id || contact?.phone || null,
+      customMessage: `${PAUSED_PREFIX} — the subscriber's message got no bot reply because ${reason}. ${fix}`,
+    });
+  } catch (err) {
+    console.error("[botLogger] paused-skip log failed:", err.message);
+    return null;
+  }
+}

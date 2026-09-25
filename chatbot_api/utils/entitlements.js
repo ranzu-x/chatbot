@@ -1,4 +1,5 @@
 import pool from "../db.js";
+import { getSocialPostUsageThisMonth } from "./socialPostHistory.js";
 
 // ─── USAGE HELPERS (shared by every entitlement-resolution path) ────────────
 async function getUsageForAgency(agencyId) {
@@ -38,12 +39,19 @@ async function getUsageForAgency(agencyId) {
 // getUsageForAgency's all-time counters since they're queried on demand only
 // when the corresponding limitType is actually checked, not on every
 // entitlements resolution.
+//
+// "This month" starts at the later of the 1st of the month and
+// agencies.usage_reset_at — the Super Admin's "Reset monthly usage" button
+// (POST /admin/users/:id/reset-usage) just stamps that column.
+const USAGE_PERIOD_START = `GREATEST(DATE_FORMAT(NOW(), '%Y-%m-01'),
+  COALESCE((SELECT usage_reset_at FROM agencies WHERE id = ?), '1970-01-01'))`;
+
 async function getOutboundMessageCountThisMonth(agencyId) {
   const [[{ c }]] = await pool.query(
     `SELECT COUNT(*) as c FROM messages m
      JOIN conversations conv ON conv.id = m.conversation_id
-     WHERE conv.agency_id = ? AND m.direction = 'OUTBOUND' AND m.created_at >= DATE_FORMAT(NOW(), '%Y-%m-01')`,
-    [agencyId]
+     WHERE conv.agency_id = ? AND m.direction = 'OUTBOUND' AND m.created_at >= ${USAGE_PERIOD_START}`,
+    [agencyId, agencyId]
   );
   return Number(c || 0);
 }
@@ -51,20 +59,54 @@ async function getOutboundMessageCountThisMonth(agencyId) {
 async function getAiTokensUsedThisMonth(agencyId) {
   const [[{ s }]] = await pool.query(
     `SELECT COALESCE(SUM(tokens_used), 0) as s FROM ai_message_logs
-     WHERE agency_id = ? AND created_at >= DATE_FORMAT(NOW(), '%Y-%m-01')`,
-    [agencyId]
+     WHERE agency_id = ? AND created_at >= ${USAGE_PERIOD_START}`,
+    [agencyId, agencyId]
   );
   return Number(s || 0);
 }
 
+// Counted in social_post_usage, not social_posts: post history is capped at
+// 50 rows and old ones are deleted (see utils/socialPostHistory.js).
 async function getSocialPostCountThisMonth(agencyId) {
-  const [[{ c }]] = await pool.query(
-    `SELECT COUNT(*) as c FROM social_posts
-     WHERE agency_id = ? AND status != 'DRAFT' AND created_at >= DATE_FORMAT(NOW(), '%Y-%m-01')`,
-    [agencyId]
-  );
-  return Number(c || 0);
+  return getSocialPostUsageThisMonth(agencyId);
 }
+
+// This month's usage for one workspace — shown on the Super Admin's user
+// edit page next to the "Reset monthly usage" button.
+export async function getMonthlyUsage(agencyId) {
+  if (!agencyId) return { outboundMessages: 0, aiTokens: 0, socialPosts: 0 };
+  const [outboundMessages, aiTokens, socialPosts] = await Promise.all([
+    getOutboundMessageCountThisMonth(agencyId),
+    getAiTokensUsedThisMonth(agencyId),
+    getSocialPostCountThisMonth(agencyId),
+  ]);
+  return { outboundMessages, aiTokens, socialPosts };
+}
+
+async function getCallMinutesUsedThisMonth(agencyId) {
+  const [[{ s }]] = await pool.query(
+    `SELECT COALESCE(SUM(duration_seconds), 0) as s FROM whatsapp_calls
+     WHERE agency_id = ? AND created_at >= ${USAGE_PERIOD_START}`,
+    [agencyId, agencyId]
+  );
+  return Math.ceil(Number(s || 0) / 60);
+}
+
+// "Fixed" package limits that are a plain count of the workspace's rows.
+// limitType → the module whose limits_json holds the ceiling + how to count.
+const COUNT_LIMITS = {
+  max_sequences: { module: "feature_sequences", field: "maxSequences", label: "sequence campaigns", table: "sequences" },
+  max_comment_rules: { module: "feature_comment_automation", field: "maxCommentRules", label: "comment automation campaigns", table: "comment_automation_rules" },
+  max_appointment_services: { module: "feature_appointments", field: "maxAppointmentServices", label: "appointment services", table: "appointment_services" },
+  max_whatsapp_flows: { module: "feature_whatsapp_flows", field: "maxWhatsappFlows", label: "WhatsApp flows", table: "whatsapp_flow_refs" },
+};
+
+// A limit whose whole feature can be switched off in the package: when the
+// module is explicitly disabled the limit is effectively 0.
+const LIMIT_TOGGLE_MODULES = {
+  max_bot_accounts: "feature_connect_account",
+  max_team_members: "feature_team_members",
+};
 
 async function getUserInputFlowCount(agencyId) {
   const [[{ c }]] = await pool.query(`SELECT COUNT(*) as c FROM user_input_flows WHERE agency_id = ?`, [agencyId]);
@@ -352,7 +394,13 @@ function getFallbackUnlimitedEntitlements() {
       "feature_appointments", "feature_message_credits", "feature_ai_tokens", "feature_user_input_flows",
       "feature_live_chat_translator", "feature_social_posting", "feature_whatsapp_flows",
       "feature_whatsapp_calling", "feature_whatsapp_webhook_workflow", "feature_whatsapp_commerce",
-      "feature_google_sheets", "feature_api_developer"
+      "feature_google_sheets", "feature_api_developer", "feature_http_api",
+      "feature_connect_account", "feature_bot_typing", "feature_bot_message_insight", "feature_bot_conditional_reply",
+      "feature_incoming_webhook", "feature_live_chat_widget", "feature_live_chat_advanced", "feature_live_chat_restriction",
+      "feature_whatsapp_embedded_signup", "feature_whatsapp_carousel", "feature_whatsapp_click_ads", "feature_whatsapp_catalog",
+      "feature_whatsapp_about_brand", "feature_telegram_group_manager", "feature_google_contacts",
+      "feature_google_connect_account", "feature_google_calendar", "feature_team_members", "feature_data_retention",
+      "feature_ai_assistant"
     ],
     modulesMap: {},
   };
@@ -472,6 +520,48 @@ export async function assertLimit(agencyId, limitType, increment = 1, userId = n
   // table.
   const entitlements = await getAgencyEntitlements(agencyId, userId);
   const { limits, usage, package: pkg } = entitlements;
+
+  const toggleModule = LIMIT_TOGGLE_MODULES[limitType];
+  if (toggleModule && entitlements.modulesMap?.[toggleModule]?.isEnabled === false && increment > 0) {
+    const err = new Error(
+      `Access denied: "${entitlements.modulesMap[toggleModule].displayName}" is not included in your current ${pkg.name} plan. Please upgrade your package.`
+    );
+    err.status = 403;
+    err.code = "MODULE_DISABLED";
+    err.moduleKey = toggleModule;
+    throw err;
+  }
+
+  const countLimit = COUNT_LIMITS[limitType];
+  if (countLimit) {
+    const max = entitlements.modulesMap?.[countLimit.module]?.limits?.[countLimit.field];
+    if (max !== undefined && max !== null) {
+      const [[{ c }]] = await pool.query(`SELECT COUNT(*) as c FROM ${countLimit.table} WHERE agency_id = ?`, [agencyId]);
+      if (Number(c) + increment > Number(max)) {
+        const err = new Error(
+          `Limit reached: Your current plan (${pkg.name}) allows up to ${max} ${countLimit.label}. Currently at ${c}. Please upgrade your package.`
+        );
+        err.status = 403;
+        err.code = "LIMIT_EXCEEDED";
+        throw err;
+      }
+    }
+  }
+
+  if (limitType === "max_call_minutes_per_month") {
+    const maxMinutes = entitlements.modulesMap?.feature_whatsapp_calling?.limits?.maxCallMinutesPerMonth;
+    if (maxMinutes !== undefined && maxMinutes !== null) {
+      const used = await getCallMinutesUsedThisMonth(agencyId);
+      if (used + increment >= Number(maxMinutes)) {
+        const err = new Error(
+          `WhatsApp calling limit reached: Your current plan (${pkg.name}) allows ${maxMinutes} call minutes per month. Used ${used} so far this month. Please upgrade your package.`
+        );
+        err.status = 403;
+        err.code = "LIMIT_EXCEEDED";
+        throw err;
+      }
+    }
+  }
 
   if (limitType === "max_bot_accounts" && limits.maxBotAccounts !== null) {
     if (usage.usedBotAccounts + increment > limits.maxBotAccounts) {

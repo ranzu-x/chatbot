@@ -43,6 +43,7 @@ import {
   createAppointment,
   fetchAvailableSlots,
   fetchAppointmentServices,
+  fetchBookingLink,
 } from "../../services/appointmentService";
 import api from "../../services/api";
 import { getSocketUrl, socketAuth } from "../../utils/socketAuth";
@@ -636,7 +637,13 @@ export default function AppointmentList() {
       .sort((a, b) => (a.appointment_time || "").localeCompare(b.appointment_time || ""));
   }, [appointments, agendaDate]);
 
-  const bookingPortalUrl = `${window.location.origin}/book/${agencyId}`;
+  // The portal link carries the workspace's booking key (utils/publicBooking.js);
+  // without it the public booking API refuses the request.
+  const [bookingKey, setBookingKey] = useState("");
+  useEffect(() => {
+    fetchBookingLink().then((d) => setBookingKey(d?.key || "")).catch(() => setBookingKey(""));
+  }, []);
+  const bookingPortalUrl = bookingKey ? `${window.location.origin}/book/${agencyId}?k=${bookingKey}` : "";
 
   return (
     <AppLayout>

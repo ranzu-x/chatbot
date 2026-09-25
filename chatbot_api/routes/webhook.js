@@ -1,7 +1,7 @@
 import express from "express";
 import axios from "axios";
 import pool from "../db.js";
-import { resolveMetaAppSettings } from "../utils/appCredentials.js";
+import { resolveMetaAppSettings, resolveTikTokAppSettings } from "../utils/appCredentials.js";
 import { isValidMetaSignature } from "../utils/metaSignature.js";
 import { processFlow } from "../utils/flowEngine.js";
 import { runAIReply } from "../utils/aiReplyEngine.js";
@@ -15,11 +15,18 @@ import {
 } from "../utils/messageProcessor.js";
 import { emitToAgency, emitToConversation } from "../utils/socket.js";
 import { fetchTelegramUserProfilePhoto, fetchMetaUserProfile } from "../utils/avatarFetcher.js";
-import { logBotError, extractErrorMessage } from "../utils/botLogger.js";
+import { logBotError, extractErrorMessage, logBotPausedSkip } from "../utils/botLogger.js";
 import { runPrivateReplyFlow, generateCommentReply } from "../utils/commentPrivateReplyFlow.js";
 import { handleAppointmentBooking } from "../utils/appointmentBookingEngine.js";
+import { isCommerceButton, handleCommerceButton } from "../utils/commerceEvents.js";
+import { isValidTelegramSecret, isValidTikTokSignature } from "../utils/webhookAuth.js";
 
 const router = express.Router();
+
+// Workspace ids are numeric. The generic Meta routes (/webhook/:agencyId/:integrationId)
+// are declared before the platform-specific ones, so without this /webhook/tiktok/5
+// was swallowed by the Meta handler (agencyId = "tiktok") and never reached TikTok's.
+router.param("agencyId", (req, res, next, value) => (/^\d+$/.test(value) ? next() : next("route")));
 
 /**
  * Verifies Meta's X-Hub-Signature-256 header — an HMAC-SHA256 of the raw
@@ -571,7 +578,10 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
           if (msg.type === "text") {
             msgBody = msg.text?.body || "";
           } else if (msg.type === "button") {
+            // A tap on a template's quick-reply button; the payload is ours
+            // (e.g. a COD Confirm/Cancel, utils/commerceEvents.js).
             msgBody = msg.button?.text || "";
+            buttonRoute = msg.button?.payload || null;
           } else if (msg.type === "interactive") {
             const type = msg.interactive?.type;
             if (type === "call_permission_reply") {
@@ -1219,9 +1229,21 @@ export async function processTelegramUpdate(agencyId, integrationId, update) {
 
 // ─── RECEIVE TELEGRAM INCOMING MESSAGES (POST) ──────────────────────────────
 router.post("/webhook/telegram/:agencyId/:integrationId", async (req, res) => {
-  const { agencyId, integrationId } = req.params;
+  const agencyId = Number(req.params.agencyId);
+  const integrationId = Number(req.params.integrationId);
+  // Only Telegram knows the bot's webhook secret (utils/webhookAuth.js); anything
+  // else is a forged update. The bot must also belong to the workspace in the URL.
+  const [[bot]] = await pool.query(
+    `SELECT tb.bot_token FROM telegram_bots tb JOIN integrations i ON i.id = tb.integration_id
+     WHERE tb.integration_id = ? AND i.agency_id = ? AND tb.is_active = 1`,
+    [integrationId, agencyId]
+  );
+  if (!bot || !isValidTelegramSecret(req.get("X-Telegram-Bot-Api-Secret-Token"), integrationId, bot.bot_token)) {
+    console.warn(`[Webhook Signature] Rejected Telegram update without a valid secret for /webhook/telegram/${agencyId}/${integrationId}`);
+    return res.status(401).send("Invalid secret");
+  }
   res.sendStatus(200);
-  await processTelegramUpdate(Number(agencyId), Number(integrationId), req.body);
+  await processTelegramUpdate(agencyId, integrationId, req.body);
 });
 
 // ─── TIKTOK WEBHOOK VERIFICATION (GET) ───────────────────────────
@@ -1238,16 +1260,22 @@ router.get(["/webhook/tiktok/:agencyId", "/webhook/tiktok/:agencyId/:integration
 
 // ─── RECEIVE TIKTOK INCOMING EVENTS (POST) ───────────────────────
 router.post(["/webhook/tiktok/:agencyId", "/webhook/tiktok/:agencyId/:integrationId"], async (req, res) => {
-  // Always respond 200 immediately to TikTok
+  const agencyId = Number(req.params.agencyId);
+  // TikTok signs every event with the app's client secret — the workspace's
+  // own TikTok app, or the reseller's / platform's it falls back to.
+  const app = await resolveTikTokAppSettings(agencyId).catch(() => null);
+  if (!app?.client_secret || !isValidTikTokSignature(req.rawBody, req.get("Tiktok-Signature"), app.client_secret)) {
+    console.warn(`[Webhook Signature] Rejected TikTok event without a valid signature for /webhook/tiktok/${agencyId}`);
+    return res.status(401).json({ status: "invalid signature" });
+  }
   res.status(200).json({ status: "ok" });
 
   try {
-    const agencyId = Number(req.params.agencyId);
     let integrationId = req.params.integrationId ? Number(req.params.integrationId) : null;
 
     let [integs] = [];
     if (integrationId) {
-      [integs] = await pool.query("SELECT * FROM integrations WHERE id = ? AND platform = 'TIKTOK'", [integrationId]);
+      [integs] = await pool.query("SELECT * FROM integrations WHERE id = ? AND agency_id = ? AND platform = 'TIKTOK'", [integrationId, agencyId]);
     }
     if (!integs || !integs.length) {
       [integs] = await pool.query("SELECT * FROM integrations WHERE agency_id = ? AND platform = 'TIKTOK' AND is_active = 1 LIMIT 1", [agencyId]);
@@ -1352,6 +1380,13 @@ async function handleIncomingPayload({
       });
     }
 
+    // 4a. Store automation: COD Confirm / Cancel tap (utils/commerceEvents.js).
+    // Handled whatever the business hours — the customer is answering us.
+    if (platform === "WHATSAPP" && isCommerceButton(buttonRoute)) {
+      const handled = await handleCommerceButton({ agencyId, buttonRoute, contact, conversation, integration });
+      if (handled) return;
+    }
+
     // 4b. Business Hours (Bot Manager → Bot Settings → Business Hours) — a no-op
     // (bh.enabled === false) unless the bot's own schedule says so. An already
     // in-progress flow session is never affected by any of this; see the note
@@ -1360,6 +1395,9 @@ async function handleIncomingPayload({
     const offHours = bh.enabled && !bh.withinHours;
     const allowBotNow = !offHours || bh.allowBotReplies;
     const allowAiNow = !offHours || bh.allowAiReplies;
+
+    // Paused bot: flows, rules and AI all stay silent — record why in the Bot Error Log.
+    await logBotPausedSkip({ agencyId, platform, conversation, contact, integration, contactIdentifier: externalId });
 
     // 4c. Interactive Appointment Booking Engine (WhatsApp & Omnichannel)
     const aptRan = allowBotNow && await handleAppointmentBooking(agencyId, platform, conversation, contact, msgBody, integration, msgType, buttonRoute);

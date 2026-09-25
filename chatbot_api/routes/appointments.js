@@ -4,6 +4,7 @@ import { buildSearch } from "../utils/searchQuery.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { requireModule } from "../utils/entitlements.js";
 import { emitToAgency } from "../utils/socket.js";
+import { canUsePublicBooking } from "../utils/publicBooking.js";
 
 const router = express.Router();
 
@@ -30,6 +31,9 @@ router.post("/appointments/book-public", async (req, res) => {
 
   if (!agency_id) {
     return res.status(400).json({ success: false, message: "agency_id is required" });
+  }
+  if (!canUsePublicBooking(req, agency_id)) {
+    return res.status(404).json({ success: false, message: "Booking page not found" });
   }
 
   if (!customer_name || !customer_phone) {

@@ -107,6 +107,9 @@ export async function verifyCallback(payload) {
     transactionId: data?.tran_id || payload?.tran_id,
     amountPaid: Number(data?.amount || payload?.amount || 0),
     currency: data?.currency || "BDT",
+    // The paying card's issuing country — the only real country SSLCommerz
+    // reports (cus_country is just what we sent at checkout).
+    country: data?.card_issuer_country_code || null,
     raw: data,
   };
 }

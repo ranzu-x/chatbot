@@ -279,6 +279,8 @@ const PARAM_OVERRIDES = [
   [/^\/contacts\/:id\/custom-fields\/:fieldId/, { id: "contacts", fieldId: "custom_field_definitions" }],
   [/^\/contacts\/:id\/notes\/:noteId/, { id: "contacts", noteId: "contact_notes" }],
   [/^\/broadcasts\/:id/, { id: "broadcast_campaigns" }],
+  [/^\/commerce\/connections\/:id/, { id: "commerce_connections" }],
+  [/^\/commerce\/campaigns\/:id/, { id: "commerce_campaigns" }],
   [/^\/calls\/:id/, { id: "whatsapp_calls" }],
   [/^\/support-desk\/departments\/:id/, { id: "support_departments" }],
   [/^\/support-desk\/canned-responses\/:id/, { id: "support_canned_responses" }],
@@ -390,7 +392,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * "was a row modified" check. Response-content leaks are still checked for them.
  * Returns the set of table names that change on their own.
  */
-export async function findBackgroundNoise(info, tenants, { settleMs = 65000, probeMs = 35000 } = {}) {
+export async function findBackgroundNoise(info, tenants, { settleMs = 65000, probeMs = 70000 } = {}) {
   await sleep(settleMs);
   const tables = [...info.seedable, "users", "agencies"];
   const snap = async () => {

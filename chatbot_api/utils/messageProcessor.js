@@ -120,6 +120,34 @@ export async function findOrCreateConversation(agencyId, contactId, integrationI
     return { conversation, isNew: false };
   }
 
+  // A RESOLVED conversation this subscriber has never written in — an
+  // imported subscriber's placeholder, or a broadcast-only chat
+  // (broadcastRunner.js keeps those RESOLVED). Their first reply re-opens it
+  // so the broadcast they're answering stays in the same thread. A resolved
+  // chat with real history still starts a fresh conversation, as before.
+  const [neverReplied] = await pool.query(
+    `SELECT * FROM conversations
+     WHERE agency_id = ? AND contact_id = ? AND integration_id = ? AND status = 'RESOLVED' AND last_inbound_at IS NULL
+     ORDER BY COALESCE(last_message_at, created_at) DESC, id DESC
+     LIMIT 1`,
+    [agencyId, contactId, integrationId]
+  );
+  if (neverReplied.length) {
+    const conversation = neverReplied[0];
+    await pool.query(
+      "UPDATE conversations SET status = 'OPEN', unread_count = unread_count + 1, last_message_at = NOW(), last_inbound_at = NOW() WHERE id = ?",
+      [conversation.id]
+    );
+    conversation.status = "OPEN";
+    conversation.unread_count += 1;
+    conversation.last_message_at = new Date();
+    conversation.last_inbound_at = new Date();
+    // isNew: to the Inbox this is a chat it has never listed as active, so
+    // callers treat it like a brand-new conversation (new_conversation event,
+    // welcome/auto-assign rules).
+    return { conversation, isNew: true };
+  }
+
   const [newConv] = await pool.query(
     `INSERT INTO conversations (agency_id, contact_id, integration_id, status, unread_count, last_message_at, last_inbound_at, bot_paused, pause_reason, created_at)
      VALUES (?, ?, ?, 'OPEN', 1, NOW(), NOW(), ?, ?, NOW())`,

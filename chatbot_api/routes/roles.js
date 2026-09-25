@@ -14,6 +14,21 @@ import { requirePermission, invalidateRoleCache } from "../middleware/permission
 const router = express.Router();
 router.use(authMiddleware);
 
+// Channels a team role can be blocked from ("Disable WhatsApp" etc.) —
+// enforced in utils/teamAccess.js integrationAccessClause.
+const BLOCKABLE_CHANNELS = ["WHATSAPP", "TELEGRAM", "FACEBOOK", "INSTAGRAM"];
+function cleanDisabledChannels(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((v) => String(v).toUpperCase()))].filter((v) => BLOCKABLE_CHANNELS.includes(v));
+}
+function parseDisabledChannels(raw) {
+  try {
+    return cleanDisabledChannels(typeof raw === "string" ? JSON.parse(raw) : raw);
+  } catch {
+    return [];
+  }
+}
+
 const MANAGE_PERMISSION_BY_SCOPE = {
   PLATFORM: "admin.roles.manage",
   AGENCY: "roles.manage",
@@ -70,12 +85,15 @@ router.get("/roles/:id", async (req, res) => {
   try {
     const scope = await resolveCallerScope(req);
     const [rows] = await pool.query(
-      "SELECT id, agency_id, scope_type, slug, name, is_system FROM roles WHERE id = ? AND scope_type = ? AND (agency_id IS NULL OR agency_id = ?)",
+      "SELECT id, agency_id, scope_type, slug, name, is_system, disabled_channels FROM roles WHERE id = ? AND scope_type = ? AND (agency_id IS NULL OR agency_id = ?)",
       [req.params.id, scope, req.user.agencyId]
     );
     if (!rows.length) return res.status(404).json({ success: false, message: "Role not found" });
     const [perms] = await pool.query("SELECT permission_key FROM role_permissions WHERE role_id = ?", [req.params.id]);
-    return res.json({ success: true, role: { ...rows[0], permissionKeys: perms.map((p) => p.permission_key) } });
+    return res.json({
+      success: true,
+      role: { ...rows[0], disabledChannels: parseDisabledChannels(rows[0].disabled_channels), permissionKeys: perms.map((p) => p.permission_key) },
+    });
   } catch (err) {
     console.error("GET /roles/:id error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -92,12 +110,19 @@ router.post("/roles", requireRoleManage, async (req, res) => {
     if (!name) return res.status(400).json({ success: false, message: "Role name is required" });
 
     let finalKeys = Array.isArray(permissionKeys) ? permissionKeys : [];
+    let disabledChannels = cleanDisabledChannels(req.body.disabledChannels);
     if (cloneFromRoleId) {
+      const [[source]] = await pool.query(
+        "SELECT id, disabled_channels FROM roles WHERE id = ? AND scope_type = ? AND (agency_id IS NULL OR agency_id = ?)",
+        [cloneFromRoleId, scope, req.user.agencyId]
+      );
+      if (!source) return res.status(404).json({ success: false, message: "Role to copy not found" });
       const [cloneRows] = await pool.query(
         "SELECT permission_key FROM role_permissions WHERE role_id = ?",
-        [cloneFromRoleId]
+        [source.id]
       );
       finalKeys = cloneRows.map((r) => r.permission_key);
+      disabledChannels = parseDisabledChannels(source.disabled_channels);
     }
     // Only allow granting keys that exist for this scope (no cross-scope escalation)
     const allowedScopes = scope === "PLATFORM"
@@ -109,8 +134,8 @@ router.post("/roles", requireRoleManage, async (req, res) => {
 
     const slug = `custom_${name.toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 40)}_${Date.now().toString(36)}`;
     const [ins] = await pool.query(
-      "INSERT INTO roles (agency_id, scope_type, slug, name, is_system) VALUES (?, ?, ?, ?, 0)",
-      [req.user.agencyId, scope, slug, name]
+      "INSERT INTO roles (agency_id, scope_type, slug, name, is_system, disabled_channels) VALUES (?, ?, ?, ?, 0, ?)",
+      [req.user.agencyId, scope, slug, name, JSON.stringify(disabledChannels)]
     );
     for (const key of finalKeys) {
       await pool.query("INSERT IGNORE INTO role_permissions (role_id, permission_key) VALUES (?, ?)", [ins.insertId, key]);
@@ -136,8 +161,11 @@ router.put("/roles/:id", requireRoleManage, async (req, res) => {
     if (!roleRows.length) return res.status(404).json({ success: false, message: "Custom role not found" });
     if (roleRows[0].is_system) return res.status(400).json({ success: false, message: "System roles cannot be edited" });
 
-    const { name, permissionKeys } = req.body;
+    const { name, permissionKeys, disabledChannels } = req.body;
     if (name) await pool.query("UPDATE roles SET name = ? WHERE id = ?", [name, req.params.id]);
+    if (Array.isArray(disabledChannels)) {
+      await pool.query("UPDATE roles SET disabled_channels = ? WHERE id = ?", [JSON.stringify(cleanDisabledChannels(disabledChannels)), req.params.id]);
+    }
     if (Array.isArray(permissionKeys)) {
       const allowedScopes = scope === "PLATFORM"
         ? ["PLATFORM", "AGENCY", "RESELLER"]

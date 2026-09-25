@@ -50,6 +50,19 @@ export async function loadOrgMember(req) {
 }
 
 /**
+ * The permission keys of the role `userId` holds in `agencyId` (active
+ * membership only). Null when there is no active membership.
+ */
+export async function getMemberPermissionKeys(userId, agencyId) {
+  const [[member]] = await pool.query(
+    "SELECT role_id FROM organization_members WHERE user_id = ? AND agency_id = ? AND is_active = 1 LIMIT 1",
+    [userId, agencyId]
+  );
+  if (!member) return null;
+  return getRolePermissionKeys(member.role_id);
+}
+
+/**
  * requirePermission('a.b', 'a.c') passes if the caller's role has ANY of
  * the listed keys (OR semantics, matching roleMiddleware's multi-role OR
  * pattern). Sets req.orgMember for downstream handlers that need it (e.g.

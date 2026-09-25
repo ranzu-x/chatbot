@@ -1,13 +1,30 @@
 /**
  * Team Rules Matrix Configuration.
  *
- * Defines the 22 verified features and their granular actions:
+ * Defines every team-rule feature and its granular actions:
  *   - Create
  *   - Update
  *   - Delete
  *   - Special
- *   (plus Advanced & Widget sub-rules for Inbox)
+ *   - extra: a single on/off sub-rule shown under the feature name
+ *     (Inbox Advanced / Widget / Translator, AI Token).
+ * An action with `restriction: true` TAKES something away when checked
+ * (e.g. Number Mask hides phone numbers), so bulk "select all" skips it.
+ * Keys are seeded by migrate_team_rules_matrix.js and
+ * migrate_package_role_options.js — add new ones there too.
  */
+
+// Channels a role can be blocked from entirely (roles.disabled_channels).
+export const BLOCKABLE_CHANNELS = [
+  { id: 'WHATSAPP', label: 'Disable WhatsApp' },
+  { id: 'TELEGRAM', label: 'Disable Telegram' },
+  { id: 'FACEBOOK', label: 'Disable Facebook' },
+  { id: 'INSTAGRAM', label: 'Disable Instagram' },
+];
+
+// Every key the bulk toggles may grant (restriction rules excluded).
+export const grantableKeys = (features) =>
+  features.flatMap((f) => f.actions.filter((a) => !a.restriction).map((a) => a.key));
 
 export const TEAM_RULES_CATEGORIES = [
   {
@@ -75,6 +92,8 @@ export const TEAM_RULES_CATEGORIES = [
           { key: 'live_chat.special', type: 'special', label: 'Special (Takeover & Assign)' },
           { key: 'live_chat.advanced', type: 'extra', label: 'Inbox - Advanced (Canned Replies)' },
           { key: 'live_chat.widget', type: 'extra', label: 'Inbox - Widget (Preview & Embed)' },
+          { key: 'live_chat.translator', type: 'extra', label: 'Inbox - Translator' },
+          { key: 'live_chat.number_mask', type: 'extra', label: 'Number Mask (hide phone numbers)', restriction: true },
         ],
       },
     ],
@@ -264,6 +283,61 @@ export const TEAM_RULES_CATEGORIES = [
         ],
       },
       {
+        id: 'incoming_webhook',
+        name: 'Incoming Message to Webhook URL',
+        description: 'Forward every incoming message to an external webhook URL.',
+        actions: [
+          { key: 'incoming_webhook.create', type: 'create', label: 'Add Webhook' },
+          { key: 'incoming_webhook.update', type: 'update', label: 'Edit Webhook' },
+          { key: 'incoming_webhook.delete', type: 'delete', label: 'Remove Webhook' },
+          { key: 'incoming_webhook.special', type: 'special', label: 'Special (Test & Logs)' },
+        ],
+      },
+      {
+        id: 'google_calendar',
+        name: 'Google - Google Calendar',
+        description: 'Sync appointments and bookings with Google Calendar.',
+        actions: [
+          { key: 'google_calendar.create', type: 'create', label: 'Link Calendar' },
+          { key: 'google_calendar.update', type: 'update', label: 'Edit Sync' },
+          { key: 'google_calendar.delete', type: 'delete', label: 'Unlink Calendar' },
+          { key: 'google_calendar.special', type: 'special', label: 'Special (Force Sync)' },
+        ],
+      },
+      {
+        id: 'google_contacts',
+        name: 'Google - Google Contacts',
+        description: 'Sync subscribers with Google Contacts.',
+        actions: [
+          { key: 'google_contacts.create', type: 'create', label: 'Link Contacts' },
+          { key: 'google_contacts.update', type: 'update', label: 'Edit Mapping' },
+          { key: 'google_contacts.delete', type: 'delete', label: 'Unlink Contacts' },
+          { key: 'google_contacts.special', type: 'special', label: 'Special (Force Sync)' },
+        ],
+      },
+      {
+        id: 'telegram_group_manager',
+        name: 'Telegram - Group Manager',
+        description: 'Moderate Telegram groups: welcome messages, filters, and member actions.',
+        actions: [
+          { key: 'telegram_group_manager.create', type: 'create', label: 'Add Group' },
+          { key: 'telegram_group_manager.update', type: 'update', label: 'Edit Rules' },
+          { key: 'telegram_group_manager.delete', type: 'delete', label: 'Remove Group' },
+          { key: 'telegram_group_manager.special', type: 'special', label: 'Special (Ban & Mute)' },
+        ],
+      },
+      {
+        id: 'api_developer',
+        name: 'API Developer',
+        description: 'Create and manage API keys for the public developer API.',
+        actions: [
+          { key: 'api_developer.create', type: 'create', label: 'Create Key' },
+          { key: 'api_developer.update', type: 'update', label: 'Edit Key' },
+          { key: 'api_developer.delete', type: 'delete', label: 'Revoke Key' },
+          { key: 'api_developer.special', type: 'special', label: 'Special (View Secret)' },
+        ],
+      },
+      {
         id: 'google_connect_account',
         name: 'Google - Connect Account',
         description: 'Connect and authenticate Google OAuth account for Sheets and Workspace integrations.',
@@ -281,6 +355,12 @@ export const TEAM_RULES_CATEGORIES = [
     icon: 'Sparkles',
     description: 'AI Agents, document knowledge bases, prompt rules, and live composer assistant.',
     features: [
+      {
+        id: 'ai_token',
+        name: 'AI Token',
+        description: 'Allow this role to spend the workspace AI token balance.',
+        actions: [{ key: 'ai_token.use', type: 'extra', label: 'Allow AI token usage' }],
+      },
       {
         id: 'ai_agent',
         name: 'AI Agent',
@@ -342,6 +422,17 @@ export const TEAM_RULES_CATEGORIES = [
           { key: 'control_panel_transactions.update', type: 'update', label: 'Change Subscription' },
           { key: 'control_panel_transactions.delete', type: 'delete', label: 'Cancel Plan' },
           { key: 'control_panel_transactions.special', type: 'special', label: 'Special (Download Invoices)' },
+        ],
+      },
+      {
+        id: 'control_panel_addon',
+        name: 'Control Panel - Addon',
+        description: 'Install, configure, and remove workspace add-ons.',
+        actions: [
+          { key: 'control_panel_addon.create', type: 'create', label: 'Install Addon' },
+          { key: 'control_panel_addon.update', type: 'update', label: 'Configure Addon' },
+          { key: 'control_panel_addon.delete', type: 'delete', label: 'Remove Addon' },
+          { key: 'control_panel_addon.special', type: 'special', label: 'Special (Addon Billing)' },
         ],
       },
       {

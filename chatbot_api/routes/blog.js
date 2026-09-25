@@ -47,7 +47,7 @@ export async function initBlogTable() {
         author_name     VARCHAR(100)  DEFAULT 'Admin',
         author_avatar   VARCHAR(512),
         category        VARCHAR(100)  DEFAULT 'General',
-        tags            TEXT          DEFAULT '[]',
+        tags            TEXT          DEFAULT ('[]'),
         status          ENUM('DRAFT','PUBLISHED','SCHEDULED') DEFAULT 'DRAFT',
         is_featured     TINYINT(1)    DEFAULT 0,
         scheduled_at    DATETIME,
@@ -58,7 +58,7 @@ export async function initBlogTable() {
         meta_description TEXT,
         og_image        VARCHAR(512),
         canonical_url   VARCHAR(512),
-        faqs            TEXT          DEFAULT '[]',
+        faqs            TEXT          DEFAULT ('[]'),
         created_by      INT,
         created_at      DATETIME      DEFAULT CURRENT_TIMESTAMP,
         updated_at      DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP

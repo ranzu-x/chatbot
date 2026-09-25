@@ -3,6 +3,8 @@ import pool from "../db.js";
 import axios from "axios";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { requireModule, assertLimit } from "../utils/entitlements.js";
+import { getPublicBackendUrl, resolvePublicImageUrl } from "../utils/platformSender.js";
+import { recordSocialPostUsage, pruneSocialPostHistory, SOCIAL_POST_HISTORY_LIMIT } from "../utils/socialPostHistory.js";
 
 const router = express.Router();
 const META_API_VERSION = "v21.0";
@@ -199,42 +201,54 @@ async function publishToInstagram({ igAccountId, token, userToken, postType, mes
 router.get("/social-posts", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
-    const { status, platform, integrationId, limit = 50 } = req.query;
+    const { status, platform, integrationId } = req.query;
+    // 25 per page; the history itself is capped at SOCIAL_POST_HISTORY_LIMIT
+    // finished posts per workspace (utils/socialPostHistory.js).
+    const pageSize = Math.min(Math.max(parseInt(req.query.pageSize, 10) || 25, 1), 100);
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
 
-    let query = `
-      SELECT p.*, i.name as account_name, i.fb_page_id, i.ig_account_id
-      FROM social_posts p
-      LEFT JOIN integrations i ON p.integration_id = i.id
-      WHERE p.agency_id = ?
-    `;
+    let where = " WHERE p.agency_id = ?";
     const params = [agencyId];
 
     if (status && status !== "ALL") {
-      query += " AND p.status = ?";
+      where += " AND p.status = ?";
       params.push(status.toUpperCase());
     }
 
     if (platform && platform !== "ALL") {
-      query += " AND p.platform = ?";
+      where += " AND p.platform = ?";
       params.push(platform.toUpperCase());
     }
 
     if (integrationId && integrationId !== "all") {
-      query += " AND p.integration_id = ?";
+      where += " AND p.integration_id = ?";
       params.push(integrationId);
     }
 
-    query += " ORDER BY p.created_at DESC LIMIT ?";
-    params.push(parseInt(limit));
+    const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total FROM social_posts p${where}`, params);
 
-    const [rows] = await pool.query(query, params);
+    const [rows] = await pool.query(
+      `SELECT p.*, i.name as account_name, i.fb_page_id, i.ig_account_id
+       FROM social_posts p
+       LEFT JOIN integrations i ON p.integration_id = i.id${where}
+       ORDER BY p.created_at DESC, p.id DESC LIMIT ? OFFSET ?`,
+      [...params, pageSize, (page - 1) * pageSize]
+    );
 
     const posts = rows.map((r) => ({
       ...r,
       media_urls: typeof r.media_urls === "string" ? JSON.parse(r.media_urls || "[]") : r.media_urls || [],
     }));
 
-    return res.json({ success: true, posts, count: posts.length });
+    return res.json({
+      success: true,
+      posts,
+      count: posts.length,
+      total: Number(total || 0),
+      page,
+      pageSize,
+      historyLimit: SOCIAL_POST_HISTORY_LIMIT,
+    });
   } catch (err) {
     console.error("Get social posts error:", err);
     return res.status(500).json({ success: false, message: err.message || "Failed to fetch posts" });
@@ -275,6 +289,11 @@ router.post("/social-posts/publish", async (req, res) => {
     const results = [];
     const errors = [];
 
+    // Uploaded files come in as /uploads/... — Meta has to fetch them, so
+    // send it the public URL (the stored record keeps the original).
+    const publicBase = await getPublicBackendUrl();
+    const publicMediaUrls = (mediaUrls || []).map((u) => resolvePublicImageUrl(u, publicBase)).filter(Boolean);
+
     for (const integ of integrations) {
       const isFb = integ.platform === "FACEBOOK";
       const isIg = integ.platform === "INSTAGRAM";
@@ -288,7 +307,7 @@ router.post("/social-posts/publish", async (req, res) => {
             userToken: integ.user_access_token,
             postType,
             message,
-            mediaUrls,
+            mediaUrls: publicMediaUrls,
             linkUrl,
           });
         } else if (isIg) {
@@ -298,7 +317,7 @@ router.post("/social-posts/publish", async (req, res) => {
             userToken: integ.user_access_token,
             postType,
             message,
-            mediaUrls,
+            mediaUrls: publicMediaUrls,
           });
         }
 
@@ -350,6 +369,15 @@ router.post("/social-posts/publish", async (req, res) => {
           ]
         );
       }
+    }
+
+    // One social_posts row was written per account (published or failed).
+    // The posts are already live, so bookkeeping errors are only logged.
+    try {
+      await recordSocialPostUsage(agencyId, integrations.length);
+      await pruneSocialPostHistory(agencyId);
+    } catch (bookErr) {
+      console.error("Social post usage/prune error:", bookErr);
     }
 
     if (results.length === 0) {
@@ -420,6 +448,7 @@ router.post("/social-posts/schedule", async (req, res) => {
           scheduledDate,
         ]
       );
+      await recordSocialPostUsage(agencyId, 1);
     }
 
     return res.status(201).json({

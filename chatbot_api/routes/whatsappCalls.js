@@ -16,7 +16,7 @@ import axios from "axios";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
-import { requireModule } from "../utils/entitlements.js";
+import { requireModule, requireLimit } from "../utils/entitlements.js";
 
 const router = express.Router();
 router.use("/calls", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_whatsapp_calling"));
@@ -131,7 +131,7 @@ router.post("/calls/permission/:contactId/request", async (req, res) => {
 });
 
 // ─── INITIATE A CALL (agent's browser has already built a complete SDP offer) ──
-router.post("/calls/initiate", async (req, res) => {
+router.post("/calls/initiate", requireLimit("max_call_minutes_per_month", 0), async (req, res) => {
   const { contactId, sdpOffer, conversationId, integrationId } = req.body;
   if (!contactId || !sdpOffer) return res.status(400).json({ success: false, message: "contactId and sdpOffer are required" });
 

@@ -49,6 +49,19 @@ export async function listCustomers(resellerId) {
   return rows;
 }
 
+/** Customer counts for the reseller's dashboard (Total Users card). */
+export async function countCustomers(resellerId) {
+  const [[row]] = await pool.query(
+    `SELECT COUNT(*) AS total,
+            SUM(is_active = 1) AS active,
+            SUM(created_at >= DATE_FORMAT(NOW(), '%Y-%m-01')) AS thisMonth
+     FROM agencies
+     WHERE parent_agency_id = ? AND account_type = 'RESELLER_CUSTOMER'`,
+    [resellerId]
+  );
+  return { total: Number(row.total || 0), active: Number(row.active || 0), thisMonth: Number(row.thisMonth || 0) };
+}
+
 export async function listCustomerUsers(resellerId) {
   const [rows] = await pool.query(
     `SELECT u.id, u.name, u.email, u.phone, u.address, u.avatar, u.role, u.created_at, u.updated_at,

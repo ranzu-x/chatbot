@@ -619,6 +619,27 @@ const TYPING_ELIGIBLE_NODE_TYPES = new Set([
   'buttons', 'quickReplies', 'listMenu', 'carousel', 'card', 'messageBlock',
 ]);
 
+// Small on/off switch for settings rows (clearer than a bare tick box).
+function FbSwitch({ checked, onChange, label }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={!!checked}
+      aria-label={label}
+      onClick={() => onChange(!checked)}
+      style={{
+        width: 34, height: 20, borderRadius: 999, border: 'none', padding: 2, flexShrink: 0,
+        background: checked ? 'var(--primary)' : '#cbd5e1', cursor: 'pointer',
+        transition: 'background .15s ease', display: 'flex', alignItems: 'center',
+        justifyContent: checked ? 'flex-end' : 'flex-start',
+      }}
+    >
+      <span style={{ width: 16, height: 16, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,.25)' }} />
+    </button>
+  );
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    STYLES
    ═══════════════════════════════════════════════════════════════════ */
@@ -925,6 +946,15 @@ const builderStyles = `
     width: 100%;
     max-width: 100%;
     box-sizing: border-box;
+  }
+  /* Tick boxes / radios keep their natural size (the rule above would stretch them full-width). */
+  .fb-field input[type="checkbox"],
+  .fb-field input[type="radio"] {
+    width: auto;
+    padding: 0;
+    margin: 0;
+    flex-shrink: 0;
+    cursor: pointer;
   }
   .fb-field input:focus,
   .fb-field textarea:focus,
@@ -3125,7 +3155,7 @@ function StartNode({ id, data = {}, selected }) {
           match_type: data.match_type || 'contains',
           keywords: Array.isArray(data.keywords)
             ? data.keywords
-            : (data.trigger_keyword ? data.trigger_keyword.split(',').map((s) => s.trim()).filter(Boolean) : ['hi', 'hello']),
+            : (data.trigger_keyword ? data.trigger_keyword.split(',').map((s) => s.trim()).filter(Boolean) : []),
         },
       ];
 
@@ -6457,7 +6487,7 @@ function StartNodeProperties({ data = {}, onUpdateNode, sequences = [], onSequen
           match_type: data.match_type || 'contains',
           keywords: Array.isArray(data.keywords)
             ? data.keywords
-            : (data.trigger_keyword ? data.trigger_keyword.split(',').map((s) => s.trim()).filter(Boolean) : ['hi', 'hello']),
+            : (data.trigger_keyword ? data.trigger_keyword.split(',').map((s) => s.trim()).filter(Boolean) : []),
         },
       ];
 
@@ -6481,7 +6511,7 @@ function StartNodeProperties({ data = {}, onUpdateNode, sequences = [], onSequen
         id: `trig-${Date.now().toString(36)}`,
         type: 'keyword',
         match_type: 'contains',
-        keywords: ['hello'],
+        keywords: [],
       };
       const currentList = (data.triggers && Array.isArray(data.triggers) && data.triggers.length > 0)
         ? data.triggers
@@ -6517,7 +6547,7 @@ function StartNodeProperties({ data = {}, onUpdateNode, sequences = [], onSequen
       id: `trig-${Date.now().toString(36)}`,
       type: 'keyword',
       match_type: 'contains',
-      keywords: ['hello'],
+      keywords: [],
     };
     syncTriggers([...triggers, newTrig]);
   };
@@ -10114,17 +10144,13 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
 
             {/* Optional typing indicator while waiting */}
             <div className="fb-field" style={{ margin: 0, borderTop: '1px dashed #e2e8f0', paddingTop: 10 }}>
-              <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: '#334155' }}>
                   <span className="fb-node-typing-badge"><span className="dot" /><span className="dot" /><span className="dot" /></span>
                   Show "typing…" during delay
                 </span>
-                <input
-                  type="checkbox"
-                  checked={!!data.showTyping}
-                  onChange={(e) => updateField('showTyping', e.target.checked)}
-                />
-              </label>
+                <FbSwitch checked={!!data.showTyping} onChange={(v) => updateField('showTyping', v)} label='Show "typing…" during delay' />
+              </div>
               <span className="fb-hint" style={{ marginTop: 4 }}>
                 Displays native typing bubbles to the subscriber while waiting.
               </span>
@@ -10526,14 +10552,13 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
         )}
         {TYPING_ELIGIBLE_NODE_TYPES.has(type) && (
           <div className="fb-field">
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span className="fb-node-typing-badge"><span className="dot" /><span className="dot" /><span className="dot" /></span>
-              Show "typing…" before sending
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-              <input type="checkbox" checked={!!data.showTyping} onChange={(e) => updateField('showTyping', e.target.checked)} />
-              <span style={{ fontSize: 12, color: '#475569' }}>{data.showTyping ? 'On' : 'Off'}</span>
-            </label>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, margin: 0 }}>
+                <span className="fb-node-typing-badge"><span className="dot" /><span className="dot" /><span className="dot" /></span>
+                Show "typing…" before sending
+              </label>
+              <FbSwitch checked={!!data.showTyping} onChange={(v) => updateField('showTyping', v)} label='Show "typing…" before sending' />
+            </div>
             <span className="fb-hint">Briefly shows the channel's native typing indicator right before this message sends.</span>
           </div>
         )}
@@ -11610,7 +11635,7 @@ function FlowBuilderInner() {
             if (!nodeData.triggers || !Array.isArray(nodeData.triggers) || nodeData.triggers.length === 0) {
               const kws = nodeData.keywords !== undefined
                 ? (Array.isArray(nodeData.keywords) ? nodeData.keywords : [nodeData.keywords])
-                : (flow.trigger_keyword ? flow.trigger_keyword.split(',').map((k) => k.trim()).filter(Boolean) : ['ranzu', 'hi', 'hello']);
+                : (flow.trigger_keyword ? flow.trigger_keyword.split(',').map((k) => k.trim()).filter(Boolean) : []);
               nodeData.triggers = [
                 {
                   id: 'trig-1',
@@ -11622,7 +11647,7 @@ function FlowBuilderInner() {
               ];
             }
             if (nodeData.keywords === undefined) {
-              nodeData.keywords = nodeData.triggers[0]?.keywords || ['hi', 'hello'];
+              nodeData.keywords = nodeData.triggers[0]?.keywords || [];
             }
           }
 

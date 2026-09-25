@@ -8,7 +8,7 @@ import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
-import { requireModule } from "../utils/entitlements.js";
+import { requireModule, requireLimit } from "../utils/entitlements.js";
 
 const router = express.Router();
 router.use("/whatsapp-flow-refs", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_whatsapp_flows"));
@@ -32,7 +32,7 @@ router.get("/whatsapp-flow-refs", async (req, res) => {
   }
 });
 
-router.post("/whatsapp-flow-refs", roleMiddleware("RESELLER", "ADMIN"), async (req, res) => {
+router.post("/whatsapp-flow-refs", roleMiddleware("RESELLER", "ADMIN"), requireLimit("max_whatsapp_flows"), async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
     const { name, flowId, integrationId } = req.body;

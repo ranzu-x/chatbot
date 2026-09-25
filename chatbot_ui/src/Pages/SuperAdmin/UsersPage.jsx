@@ -1,7 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
 import { adminAPI, packageAPI, resellerUserAPI, agencyPackageAPI } from '../../services/api';
+import { BulkEmailModal, BulkNotifyModal } from './BulkUserActions';
+import { downloadCsv } from '../../utils/csv';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -90,6 +92,16 @@ export default function UsersPage({ scope = 'admin' }) {
   const [viewingUser, setViewingUser] = useState(null);
   const [showRatingsModal, setShowRatingsModal] = useState(false);
   const [showOptionsDropdown, setShowOptionsDropdown] = useState(false);
+  const [showSelectedSubmenu, setShowSelectedSubmenu] = useState(false);
+  const [bulkModal, setBulkModal] = useState(null); // 'email' | 'notify' | null
+  const optionsRef = useRef(null);
+  useEffect(() => {
+    if (!showOptionsDropdown) return undefined;
+    const onClick = (e) => { if (optionsRef.current && !optionsRef.current.contains(e.target)) setShowOptionsDropdown(false); };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [showOptionsDropdown]);
+  useEffect(() => { if (!showOptionsDropdown) setShowSelectedSubmenu(false); }, [showOptionsDropdown]);
   const [saving, setSaving] = useState(false);
 
   // Form State
@@ -280,6 +292,49 @@ export default function UsersPage({ scope = 'admin' }) {
     });
   };
 
+  // ── Selected users: bulk actions (Options → Selected users) ──
+  const selectedUsers = useMemo(() => users.filter((u) => selectedIds.has(u.id)), [users, selectedIds]);
+
+  const handleDownloadSelectedCsv = () => {
+    const pkgName = (u) => (isReseller ? pkgLabel(u) : (packages.find((p) => String(p.id) === String(u.package_id))?.name || ''));
+    const rows = [
+      ['User ID', 'Name', 'Email', 'Phone', 'Role', 'Account Type', 'Workspace', 'Package', 'Status', 'Created At'],
+      ...selectedUsers.map((u) => [
+        formatUserId(u.id),
+        u.name || '',
+        u.email || '',
+        u.phone || '',
+        isReseller ? 'User' : (u.role || ''),
+        u.accountType || '',
+        u.agencyName || '',
+        pkgName(u),
+        u.is_active ? 'Active' : 'Inactive',
+        u.created_at ? new Date(u.created_at).toISOString().replace('T', ' ').slice(0, 19) : '',
+      ]),
+    ];
+    downloadCsv(`selected_users_${new Date().toISOString().slice(0, 10)}.csv`, rows);
+    showToast(`Downloaded ${selectedUsers.length} user${selectedUsers.length === 1 ? '' : 's'} as CSV`);
+    setShowOptionsDropdown(false);
+  };
+
+  const openBulkModal = (kind) => {
+    setShowOptionsDropdown(false);
+    setBulkModal(kind);
+  };
+
+  const handleBulkDone = (kind, result) => {
+    setBulkModal(null);
+    if (kind === 'notify') {
+      showToast(`Notification sent to ${result.recipients} user${result.recipients === 1 ? '' : 's'}`);
+    } else if (!result.smtpConfigured) {
+      showToast(`Email isn't set up on the server (SMTP) — ${result.notConfigured} email(s) were only logged, not sent`, 'error');
+    } else if (result.failed) {
+      showToast(`Sent ${result.sent} email(s), ${result.failed} failed`, 'error');
+    } else {
+      showToast(`Email sent to ${result.sent} user${result.sent === 1 ? '' : 's'}`);
+    }
+  };
+
   // CSV Export
   const handleExportCSV = () => {
     const headers = ['User ID', 'Name', 'Email', 'Role', 'Package', 'Status', 'Created At'];
@@ -406,6 +461,8 @@ export default function UsersPage({ scope = 'admin' }) {
           {/* Create Button */}
           <button
             onClick={() => {
+              // Super Admin: full-page editor (UserEditPage.jsx). Resellers keep the modal.
+              if (!isReseller) { navigate('/admin/users/new'); return; }
               setEditingUser(null);
               setForm({ name: '', email: '', password: '', role: 'USER', phone: '', address: '', packageId: '', isActive: true, newPassword: '' });
               setPackageChangeNote('');
@@ -598,7 +655,7 @@ export default function UsersPage({ scope = 'admin' }) {
         </div>
 
         {/* Options Button */}
-        <div style={{ position: 'relative' }}>
+        <div ref={optionsRef} style={{ position: 'relative' }}>
           <button
             onClick={() => setShowOptionsDropdown((prev) => !prev)}
             style={{
@@ -615,7 +672,13 @@ export default function UsersPage({ scope = 'admin' }) {
               gap: 6,
             }}
           >
-            Options ▾
+            Options
+            {selectedIds.size > 0 && (
+              <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '1px 7px', borderRadius: 999, background: 'var(--primary)', color: '#fff' }}>
+                {selectedIds.size}
+              </span>
+            )}
+            ▾
           </button>
 
           {showOptionsDropdown && (
@@ -629,24 +692,87 @@ export default function UsersPage({ scope = 'admin' }) {
                 borderRadius: 8,
                 boxShadow: 'var(--shadow-md)',
                 zIndex: 100,
-                width: 160,
-                overflow: 'hidden',
+                width: 200,
               }}
             >
+              {/* Selected users ▸ submenu (opens to the left — the menu is right-aligned) */}
+              <div
+                style={{ position: 'relative', borderBottom: '1px solid var(--border)' }}
+                onMouseEnter={() => setShowSelectedSubmenu(true)}
+                onMouseLeave={() => setShowSelectedSubmenu(false)}
+              >
+                <div
+                  onClick={() => setShowSelectedSubmenu((v) => !v)}
+                  style={{
+                    padding: '10px 14px', fontSize: '0.82rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+                    background: showSelectedSubmenu ? 'var(--bg-hover)' : 'transparent', borderRadius: '8px 8px 0 0',
+                  }}
+                >
+                  <span style={{ flex: 1 }}>☑ Selected users</span>
+                  <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-tertiary)' }}>{selectedIds.size}</span>
+                  <span style={{ color: 'var(--text-tertiary)' }}>▸</span>
+                </div>
+                {showSelectedSubmenu && (
+                  <div
+                    style={{
+                      position: 'absolute', top: 0, right: '100%', marginRight: 4, width: 230,
+                      background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8,
+                      boxShadow: 'var(--shadow-md)', overflow: 'hidden',
+                    }}
+                  >
+                    {selectedIds.size === 0 ? (
+                      <div style={{ padding: '12px 14px', fontSize: '0.78rem', color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+                        Tick users in the list first (the switch at the start of each row).
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ padding: '8px 14px 6px', fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                          {selectedIds.size} selected
+                        </div>
+                        {[
+                          ...(isReseller ? [] : [
+                            { key: 'email', label: '✉️ Send email', onClick: () => openBulkModal('email') },
+                            { key: 'notify', label: '🔔 Send notification', onClick: () => openBulkModal('notify') },
+                          ]),
+                          { key: 'csv', label: '📥 Download as CSV', onClick: handleDownloadSelectedCsv },
+                        ].map((item) => (
+                          <div
+                            key={item.key}
+                            onClick={item.onClick}
+                            style={{ padding: '10px 14px', fontSize: '0.82rem', cursor: 'pointer' }}
+                            onMouseOver={(e) => (e.currentTarget.style.background = 'var(--bg-hover)')}
+                            onMouseOut={(e) => (e.currentTarget.style.background = 'var(--bg-card)')}
+                          >
+                            {item.label}
+                          </div>
+                        ))}
+                        <div
+                          onClick={() => { setSelectedIds(new Set()); setShowOptionsDropdown(false); }}
+                          style={{ padding: '9px 14px', fontSize: '0.76rem', cursor: 'pointer', color: 'var(--text-tertiary)', borderTop: '1px solid var(--border)' }}
+                          onMouseOver={(e) => (e.currentTarget.style.background = 'var(--bg-hover)')}
+                          onMouseOut={(e) => (e.currentTarget.style.background = 'var(--bg-card)')}
+                        >
+                          Clear selection
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
               <div
                 onClick={handleExportCSV}
                 style={{ padding: '10px 14px', fontSize: '0.82rem', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}
                 onMouseOver={(e) => (e.currentTarget.style.background = 'var(--bg-hover)')}
                 onMouseOut={(e) => (e.currentTarget.style.background = 'var(--bg-card)')}
               >
-                📥 Export CSV
+                📥 Export all (CSV)
               </div>
               <div
                 onClick={() => {
                   fetchUsers();
                   setShowOptionsDropdown(false);
                 }}
-                style={{ padding: '10px 14px', fontSize: '0.82rem', cursor: 'pointer' }}
+                style={{ padding: '10px 14px', fontSize: '0.82rem', cursor: 'pointer', borderRadius: '0 0 8px 8px' }}
                 onMouseOver={(e) => (e.currentTarget.style.background = 'var(--bg-hover)')}
                 onMouseOut={(e) => (e.currentTarget.style.background = 'var(--bg-card)')}
               >
@@ -866,6 +992,7 @@ export default function UsersPage({ scope = 'admin' }) {
                             className="action-icon-btn"
                             title="Edit User"
                             onClick={() => {
+                              if (!isReseller) { navigate(`/admin/users/${u.id}/edit`); return; }
                               setEditingUser(u);
                               setForm({
                                 name: u.name || '', email: u.email || '', password: '', role: u.role || 'USER',
@@ -1016,6 +1143,13 @@ export default function UsersPage({ scope = 'admin' }) {
           </div>
         </div>
       </div>
+
+      {bulkModal === 'email' && (
+        <BulkEmailModal users={selectedUsers} onClose={() => setBulkModal(null)} onDone={(r) => handleBulkDone('email', r)} />
+      )}
+      {bulkModal === 'notify' && (
+        <BulkNotifyModal users={selectedUsers} onClose={() => setBulkModal(null)} onDone={(r) => handleBulkDone('notify', r)} />
+      )}
 
       {/* ── Create / Edit User Modal ── */}
       {showCreateModal && (
@@ -1351,6 +1485,7 @@ export default function UsersPage({ scope = 'admin' }) {
             <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
               <button
                 onClick={() => {
+                  if (!isReseller) { navigate(`/admin/users/${viewingUser.id}/edit`); return; }
                   setEditingUser(viewingUser);
                   setForm({
                     name: viewingUser.name || '',

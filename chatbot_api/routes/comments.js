@@ -3,7 +3,7 @@ import axios from "axios";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
-import { requireModule } from "../utils/entitlements.js";
+import { requireModule, requireLimit } from "../utils/entitlements.js";
 
 const router = express.Router();
 router.use("/comments", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_comment_automation"));
@@ -169,7 +169,7 @@ router.get("/comments/campaigns", async (req, res) => {
 });
 
 // ─── CREATE COMMENT AUTOMATION CAMPAIGN ───────────────────────────────────────
-router.post("/comments/campaigns", async (req, res) => {
+router.post("/comments/campaigns", requireLimit("max_comment_rules"), async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
     const {

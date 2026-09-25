@@ -51,10 +51,18 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
+/* The top bar gets a little more room than page content (1200px): the full
+   menu with spacing needs ~1180px of content width, more than the 1152px a
+   1200px container leaves after padding. */
+.lp-navbar > .lp-container {
+  max-width: 1280px;
+}
+
 .lp-nav-inner {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 24px; /* minimum breathing room between logo / links / buttons */
   height: 72px;
 }
 
@@ -62,6 +70,8 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-shrink: 0;
+  white-space: nowrap;
   text-decoration: none;
   font-weight: 700;
   font-size: 1.25rem;
@@ -80,10 +90,17 @@
   box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
 }
 
+/* The logo, links and buttons must each stay on ONE line. Without nowrap +
+   flex-shrink:0, a menu that no longer fits doesn't overflow — the browser
+   squeezes every item and wraps its label ("How It / Works", "Sign / In"),
+   which is how the bar broke when the 8th link (Forum) was added. When the
+   full menu can't fit, the hamburger takes over instead (see
+   LP_NAV_COLLAPSE below). */
 .lp-nav-links {
   display: flex;
   align-items: center;
-  gap: 32px;
+  gap: 24px;
+  white-space: nowrap;
 }
 
 .lp-nav-link {
@@ -102,6 +119,8 @@
   display: flex;
   align-items: center;
   gap: 16px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .lp-btn-login {
@@ -191,6 +210,25 @@
   padding: 20px 24px;
   background: #ffffff;
   border-bottom: 1px solid #e2e8f0;
+}
+
+/* LP_NAV_COLLAPSE — switch to the hamburger while the full menu can't fit.
+   The logo + 8 links + buttons + the gaps between them need ~1180px of
+   content width (measured), plus the container's 48px padding. Adding or
+   removing a top-nav link changes this number: re-check that the bar stays
+   on one line, with space around the links, just above it. */
+@media (max-width: 1240px) {
+  .lp-nav-links, .lp-nav-actions {
+    display: none;
+  }
+  .lp-mobile-toggle {
+    display: block;
+  }
+}
+@media (min-width: 1241px) {
+  .lp-mobile-menu {
+    display: none;
+  }
 }
 
 /* ─── Hero Section ───────────────────────────────────────────────── */

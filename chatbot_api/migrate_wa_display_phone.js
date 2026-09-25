@@ -15,4 +15,4 @@ async function main() {
   }
   await conn.end();
 }
-main().catch(console.error);
+main().catch((e) => { console.error(e); process.exitCode = 1; });

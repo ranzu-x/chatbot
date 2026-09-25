@@ -4,8 +4,12 @@ import jwt from "jsonwebtoken";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { sendVerificationEmail, consumeVerificationToken } from "../utils/emailVerification.js";
+import { createAccount } from "../utils/accountProvisioning.js";
+import { requestPasswordReset, resetPassword } from "../utils/passwordReset.js";
 
 const router = express.Router();
+// The login cookie only travels over HTTPS in production (it carries the session).
+const SECURE_COOKIES = process.env.NODE_ENV === "production";
 
 // Helper to resolve agency from domain/hostname. Deliberately never resolves
 // the reserved PLATFORM row — it isn't a customer-facing tenant, and (per
@@ -49,7 +53,6 @@ async function isFreshInstall() {
   return row.n === 0;
 }
 
-const SIGNUP_UNAVAILABLE_MESSAGE = "Registration isn't available on this address. Please use the sign-up link your provider gave you.";
 
 // ─── RESOLVE TENANT & WHITE-LABEL INFO (Public) ──────────────────────────────
 router.get("/auth/tenant", async (req, res) => {
@@ -59,9 +62,11 @@ router.get("/auth/tenant", async (req, res) => {
 
     let agency = matchedAgency;
     let isCustomTenant = Boolean(matchedAgency);
-    // Login/branding still fall back to the default workspace for an unrecognised
-    // address, but sign-up does not: see POST /auth/register.
-    const signupUnavailable = !matchedAgency && !(await isFreshInstall());
+    // Sign-up is open on every address (decided by the user): an
+    // unrecognised one creates a brand-new End User workspace — see POST
+    // /auth/register. Only a recognised workspace can turn it off, with its
+    // own allow_user_registration switch.
+    const allowUserRegistration = matchedAgency ? matchedAgency.allow_user_registration !== 0 : true;
 
     // Fallback to default/main agency — never the reserved PLATFORM row,
     // which isn't a customer-facing tenant (see resolveAgencyFromDomain).
@@ -112,8 +117,8 @@ router.get("/auth/tenant", async (req, res) => {
         faviconUrl: branding.faviconUrl || "",
         primaryColor: branding.primaryColor || "#2563eb",
         supportEmail: branding.supportEmail || "",
-        allowUserRegistration: !signupUnavailable && agency.allow_user_registration !== 0,
-        signupUnavailable,
+        allowUserRegistration,
+        signupUnavailable: false,
       },
     });
   } catch (err) {
@@ -123,7 +128,7 @@ router.get("/auth/tenant", async (req, res) => {
 });
 
 // ─── USER REGISTRATION UNDER TENANT DOMAIN ────────────────────────────────────
-router.post(["/auth/register", "/hospital-admin/signup"], async (req, res) => {
+router.post("/auth/register", async (req, res) => {
   try {
     const {
       name,
@@ -157,20 +162,20 @@ router.post(["/auth/register", "/hospital-admin/signup"], async (req, res) => {
     // mints a brand-new RESELLER_CUSTOMER account instead (step below).
     const signingUpUnderReseller = targetAgency?.account_type === "RESELLER" ? targetAgency : null;
 
-    if (!targetAgency && !(await isFreshInstall())) {
-      // Not a recognised domain or subdomain. This used to drop the person into
-      // the lowest-id DIRECT_CUSTOMER workspace as a team member, i.e. somebody
-      // else's workspace (for example a reseller's user who visited an
-      // unverified or mistyped domain). Refused instead: no account is created.
-      return res.status(403).json({ success: false, code: "SIGNUP_NOT_AVAILABLE", message: SIGNUP_UNAVAILABLE_MESSAGE });
-    }
-
     // Literally no agency exists yet anywhere (fresh install) — the
     // signing-up user becomes the OWNER of a brand-new Main Workspace
     // rather than an ownerless placeholder (agencies.owner_id is NOT NULL),
     // handled as its own branch below since it needs the user row created
     // first.
-    const bootstrapNoAgency = !targetAgency;
+    const bootstrapNoAgency = !targetAgency && (await isFreshInstall());
+
+    // Not a recognised domain or subdomain (e.g. the platform's own domain):
+    // registration is open on every address, and the person gets a
+    // brand-new End User (DIRECT_CUSTOMER) workspace of their own — the same
+    // account shape guest checkout creates (utils/accountProvisioning.js).
+    // Never a seat in somebody else's workspace: this path used to drop them
+    // into the lowest-id DIRECT_CUSTOMER workspace as a team member.
+    const newDirectCustomer = !targetAgency && !bootstrapNoAgency;
 
     // Check registration allowed
     if (targetAgency && targetAgency.allow_user_registration === 0) {
@@ -204,6 +209,18 @@ router.post(["/auth/register", "/hospital-admin/signup"], async (req, res) => {
         );
       }
       console.log(`✅ [Bootstrap Registration] User "${fullName}" (${email}) created the first workspace (Agency ID ${finalAgencyId}) as its owner`);
+    } else if (newDirectCustomer) {
+      const created = await createAccount({
+        fullName,
+        email,
+        passwordHash: hashedPassword,
+        affiliateCode: req.body.affiliateCode || req.body.ref || null,
+        source: `Self-signup via "${targetHost}"`,
+      });
+      userId = created.userId;
+      finalAgencyId = created.agencyId;
+      finalAgencyName = created.agencyName;
+      jwtRole = "RESELLER"; // workspace owners carry role RESELLER (see accountProvisioning.js)
     } else if (signingUpUnderReseller) {
       // ─── Reseller-domain signup: creates a NEW RESELLER_CUSTOMER account,
       // owned by the signing-up user — never a team member of the
@@ -271,13 +288,14 @@ router.post(["/auth/register", "/hospital-admin/signup"], async (req, res) => {
       agencyId: finalAgencyId,
       accountType: registeredAccountType?.account_type || "DIRECT_CUSTOMER",
       emailVerified: false,
+      tv: 0, // users.token_version — see middleware/tenant.js isTokenRevoked
     };
 
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
 
     res.cookie("token", token, {
       httpOnly: true,
-      secure: false,
+      secure: SECURE_COOKIES,
       sameSite: "lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
@@ -354,13 +372,14 @@ router.post("/auth/login", async (req, res) => {
       agencyId: resolvedAgencyId,
       accountType: accountTypeRow?.account_type || "DIRECT_CUSTOMER",
       emailVerified: Boolean(user.email_verified_at),
+      tv: Number(user.token_version || 0), // a password reset bumps it, killing older sessions
     };
 
     const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "7d" });
 
     res.cookie("token", token, {
       httpOnly: true,
-      secure: false,          // keep false so HTTP ngrok tunnels work
+      secure: SECURE_COOKIES, // HTTPS-only in production; plain HTTP (ngrok, localhost) works in dev
       sameSite: "lax",        // was "strict" — strict blocks cookie on cross-domain nav
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
@@ -381,7 +400,7 @@ router.post("/auth/login", async (req, res) => {
 router.post("/auth/logout", (req, res) => {
   res.clearCookie("token", {
     httpOnly: true,
-    secure: false,
+    secure: SECURE_COOKIES,
     sameSite: "lax",
     path: "/",
   });
@@ -400,11 +419,13 @@ router.get("/auth/me", async (req, res) => {
 
     // Verify user exists and is active in database
     const [userRows] = await pool.query(
-      "SELECT id, name, email, role, is_active, email_verified_at FROM users WHERE id = ? LIMIT 1",
+      "SELECT id, name, email, role, is_active, email_verified_at, token_version FROM users WHERE id = ? LIMIT 1",
       [decoded.id]
     );
-    if (!userRows.length || !userRows[0].is_active) {
-      res.clearCookie("token", { httpOnly: true, secure: false, sameSite: "lax", path: "/" });
+    // A token from before the last password reset is dead (see middleware/tenant.js isTokenRevoked).
+    const revoked = userRows.length && Number(decoded.tv || 0) !== Number(userRows[0].token_version || 0);
+    if (!userRows.length || !userRows[0].is_active || revoked) {
+      res.clearCookie("token", { httpOnly: true, secure: SECURE_COOKIES, sameSite: "lax", path: "/" });
       res.clearCookie("token", { path: "/" });
       res.clearCookie("token");
       return res.status(401).json({ success: false, message: "Account is inactive or not found" });
@@ -433,7 +454,7 @@ router.get("/auth/me", async (req, res) => {
     }
     return res.json({ success: true, user: decoded });
   } catch {
-    res.clearCookie("token", { httpOnly: true, secure: false, sameSite: "lax", path: "/" });
+    res.clearCookie("token", { httpOnly: true, secure: SECURE_COOKIES, sameSite: "lax", path: "/" });
     res.clearCookie("token", { path: "/" });
     res.clearCookie("token");
     return res.status(401).json({ success: false, message: "Invalid or expired token" });
@@ -444,6 +465,30 @@ router.get("/auth/me", async (req, res) => {
 // Public — the link in the verification email carries the token itself; no
 // login is needed to click it (a brand-new registrant may check their inbox
 // from a different device/browser than the one they signed up on).
+// ─── PASSWORD RESET (utils/passwordReset.js) ─────────────────────────────────
+// Public. Always the same answer, whether or not the email has an account.
+router.post("/auth/forgot-password", async (req, res) => {
+  try {
+    await requestPasswordReset(req.body?.email, req.ip);
+  } catch (err) {
+    console.error("Forgot password error:", err);
+  }
+  return res.json({ success: true, message: "If an account exists for that email, we've sent a link to reset the password." });
+});
+
+router.post("/auth/reset-password", async (req, res) => {
+  try {
+    const result = await resetPassword(req.body?.token, req.body?.password);
+    if (!result.ok) return res.status(400).json({ success: false, message: result.message });
+    // This browser's old session (if any) is no longer valid either.
+    res.clearCookie("token", { httpOnly: true, secure: SECURE_COOKIES, sameSite: "lax", path: "/" });
+    return res.json({ success: true, message: "Your password has been changed. Sign in with the new password." });
+  } catch (err) {
+    console.error("Reset password error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 router.post("/auth/verify-email", async (req, res) => {
   try {
     const result = await consumeVerificationToken(req.body?.token);

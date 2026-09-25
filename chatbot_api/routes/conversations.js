@@ -49,7 +49,12 @@ router.param("id", async (req, res, next, id) => {
 // ─── GET ALL CONVERSATIONS (for inbox) ───────────────────────────────────────
 router.get("/conversations", async (req, res) => {
   try {
-    const { status, platform, search, labelId, assignedToId, unread, important, archived, blocked } = req.query;
+    const { status, platform, search, labelId, assignedToId, unread, important, archived, blocked, noReply } = req.query;
+    // received (default) = people who wrote in most recently first; anyone
+    //   who only ever got broadcasts/outbound (no last_inbound_at) sinks to
+    //   the bottom. activity = any message either way, newest first.
+    //   waiting = last message is from the subscriber, longest-waiting first.
+    const sort = ["received", "activity", "waiting"].includes(req.query.sort) ? req.query.sort : "received";
     const agencyId = req.user.agencyId;
     const role = req.user.role;
     // Pagination — required at scale (see the approved Live Inbox
@@ -97,8 +102,12 @@ router.get("/conversations", async (req, res) => {
       LEFT JOIN messages m ON m.id = (
         SELECT id FROM messages WHERE conversation_id = cv.id ORDER BY created_at DESC, id DESC LIMIT 1
       )
-      WHERE cv.agency_id = ? AND COALESCE(cv.last_message_at, cv.created_at) BETWEEN ? AND ?
+      WHERE cv.agency_id = ? AND cv.last_message_at IS NOT NULL AND cv.last_message_at BETWEEN ? AND ?
     `;
+    // last_message_at IS NOT NULL: the Inbox only lists conversations that
+    // have at least one message. Importing subscribers (contacts.js) creates
+    // empty placeholder conversations to tie them to a bot — those stay out
+    // of the Inbox until someone writes in or a message is sent to them.
     const params = [agencyId, dateFrom, dateTo];
 
     // Chat Access: "Assigned Chats Only" vs "All Chats" — generalized from
@@ -180,6 +189,14 @@ router.get("/conversations", async (req, res) => {
     if (blocked === "true" || blocked === "1") {
       query += " AND c.is_blocked = 1";
     }
+    // "No reply yet": messaged (broadcast, sequence, agent) but the subscriber
+    // has never written in on this conversation.
+    if (noReply === "true" || noReply === "1") {
+      query += " AND cv.last_inbound_at IS NULL";
+    }
+    if (sort === "waiting") {
+      query += " AND m.direction = 'INBOUND'";
+    }
 
     // Count first (same WHERE clause, no ORDER BY/LIMIT needed) so the
     // client knows whether there's a next page without ever fetching more
@@ -187,7 +204,12 @@ router.get("/conversations", async (req, res) => {
     const countQuery = `SELECT COUNT(*) AS total FROM (${query.replace(/^\s*SELECT[\s\S]*?FROM/i, "SELECT cv.id FROM")}) AS filtered`;
     const [[{ total }]] = await pool.query(countQuery, params);
 
-    query += " ORDER BY COALESCE(cv.last_message_at, cv.created_at) DESC LIMIT ? OFFSET ?";
+    query += sort === "activity"
+      ? " ORDER BY cv.last_message_at DESC, cv.id DESC"
+      : sort === "waiting"
+        ? " ORDER BY cv.last_inbound_at ASC, cv.id ASC"
+        : " ORDER BY cv.last_inbound_at IS NULL, cv.last_inbound_at DESC, cv.last_message_at DESC, cv.id DESC";
+    query += " LIMIT ? OFFSET ?";
     const [conversations] = await pool.query(query, [...params, limit, offset]);
 
     // Batch-fetch structured labels for every contact in this page of results

@@ -21,7 +21,12 @@ async function runOnce() {
       [AUTO_CLOSE_AFTER_DAYS]
     );
     for (const t of tickets) {
-      await pool.query("UPDATE support_tickets SET status='CLOSED', closed_at=NOW(), last_activity_at=NOW() WHERE id=?", [t.id]);
+      // Claim: skip if another instance (or a person) already changed it.
+      const [claim] = await pool.query(
+        "UPDATE support_tickets SET status='CLOSED', closed_at=NOW(), last_activity_at=NOW() WHERE id=? AND status='SOLVED'",
+        [t.id]
+      );
+      if (claim.affectedRows !== 1) continue;
       await pool.query(
         "INSERT INTO support_ticket_activity (ticket_id, actor_user_id, event_type, from_value, to_value) VALUES (?, NULL, 'STATUS_CHANGED', 'SOLVED', 'CLOSED')",
         [t.id]

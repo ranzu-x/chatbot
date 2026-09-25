@@ -2,7 +2,7 @@ import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
-import { requireModule } from "../utils/entitlements.js";
+import { requireModule, requireLimit } from "../utils/entitlements.js";
 
 const router = express.Router();
 router.use("/sequences", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_sequences"));
@@ -236,7 +236,7 @@ router.get("/sequences/:id/log", async (req, res) => {
 });
 
 // ─── CREATE SEQUENCE ──────────────────────────────────────────────────────────
-router.post("/sequences", async (req, res) => {
+router.post("/sequences", requireLimit("max_sequences"), async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
     const { name, platform = "WHATSAPP" } = req.body;

@@ -19,7 +19,7 @@ import jwt from "jsonwebtoken";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
-import { requireForumEligible, requireVerifiedEmail } from "../middleware/forumAccess.js";
+import { requireForumEligible, requireVerifiedEmail, requireUserPermission } from "../middleware/forumAccess.js";
 import { isEligibleAccountType } from "../utils/tenantEligibility.js";
 import { isValidCategory, isValidStatusForCategory, STATUS_OPTIONS_BY_CATEGORY, CATEGORIES } from "../utils/forumStatus.js";
 import { emitToAgency, emitToUser } from "../utils/socket.js";
@@ -194,7 +194,7 @@ router.use("/forum", authMiddleware);
 // category and it publishes immediately (no moderation queue for the
 // moderator). Announcements are ADMIN-only. Everyone else is checked
 // inline here rather than via the shared middleware the routes below use.
-router.post("/forum/threads", async (req, res) => {
+router.post("/forum/threads", requireUserPermission("can_forum_post"), async (req, res) => {
   try {
     const category = String(req.body?.category || "").toUpperCase();
     if (!isValidCategory(category)) {
@@ -249,7 +249,7 @@ router.post("/forum/threads", async (req, res) => {
   }
 });
 
-router.post("/forum/threads/:id/replies", requireForumEligible, requireVerifiedEmail, async (req, res) => {
+router.post("/forum/threads/:id/replies", requireForumEligible, requireVerifiedEmail, requireUserPermission("can_comment"), async (req, res) => {
   try {
     const body = cleanText(req.body?.body, MAX_BODY);
     if (!body) return res.status(400).json({ success: false, message: "Reply body is required" });

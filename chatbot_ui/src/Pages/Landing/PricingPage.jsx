@@ -67,9 +67,11 @@ function PlanColumnCard({
 }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  // Reset or adjust index when package array changes
+  // When the column's packages change, open on the Super Admin's highlighted
+  // package (packages.is_highlighted), else keep the current tier if valid.
   useEffect(() => {
-    setSelectedIndex((prev) => (prev < packages.length ? prev : 0));
+    const highlighted = packages.findIndex((p) => Number(p.is_highlighted) === 1);
+    setSelectedIndex((prev) => (highlighted >= 0 ? highlighted : prev < packages.length ? prev : 0));
   }, [packages]);
 
   if (!packages || packages.length === 0) {
@@ -122,7 +124,12 @@ function PlanColumnCard({
         <div className="pp-col-header-row">
           <div>
             <div className="pp-col-title">{columnTitle}</div>
-            <div className="pp-active-tier-name">{currentPkg.name}</div>
+            <div className="pp-active-tier-name">
+              {currentPkg.name}
+              {Number(currentPkg.is_highlighted) === 1 && (
+                <span className="pp-discount-pill" style={{ marginLeft: 8, verticalAlign: 'middle' }}>Recommended</span>
+              )}
+            </div>
           </div>
           {categoryKey === 'RESELLER' && <Building2 size={24} color="#6366f1" />}
           {categoryKey === 'PREMIUM' && <Sparkles size={24} color="#4f46e5" />}

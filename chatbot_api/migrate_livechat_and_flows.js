@@ -53,9 +53,10 @@ async function runMigration() {
     console.log("🎉 Migration completed successfully!");
   } catch (err) {
     console.error("❌ Migration failed:", err);
+    process.exitCode = 1;
   } finally {
     conn.release();
-    process.exit(0);
+    process.exit();
   }
 }
 

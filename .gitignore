@@ -1,0 +1,6 @@
+
+# Local debug/ops output (may contain secrets such as widget keys)
+*.log
+.cursor/
+chatbot_api/_check*.mjs
+chatbot_api/inspect_*.js

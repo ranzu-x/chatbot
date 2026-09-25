@@ -1,0 +1,13 @@
+/* Responsive grid rows for the dashboard widgets (Components/Dashboard/*). */
+.dash-split-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: 12px;
+  align-items: stretch;
+}
+@media (max-width: 1100px) {
+  .dash-split-row { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 1000px) {
+  .dash-automation-row { grid-template-columns: minmax(0, 1fr) !important; }
+}

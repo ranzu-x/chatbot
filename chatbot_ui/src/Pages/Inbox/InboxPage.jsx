@@ -32,6 +32,8 @@ import {
   Globe,
   Search,
   SlidersHorizontal,
+  ArrowUpDown,
+  Megaphone,
   Bot,
   User,
   Tag,
@@ -768,6 +770,13 @@ const SYSTEM_FIELD_LABELS = {
 // "Labels — pinned bottom section" block below the tabbed content).
 const DRAWER_TABS = ['Overview', 'Sequences', 'Follow-ups', 'Custom Fields', 'Notes'];
 
+// Conversation-list order — values match routes/conversations.js ?sort=.
+const SORT_OPTIONS = [
+  { value: 'received', label: 'Last message received', hint: 'People who wrote in most recently first. Broadcast-only chats go to the bottom.' },
+  { value: 'activity', label: 'Last communicated', hint: 'Any message, sent or received — newest first.' },
+  { value: 'waiting', label: 'Waiting for reply', hint: 'Their message is the last one — longest waiting first.' },
+];
+
 // Small active-filter chip shown next to the Filter trigger in the
 // conversation-list header (see below) — one per currently-applied filter.
 function FilterChip({ label, onRemove }) {
@@ -883,7 +892,33 @@ export default function InboxPage() {
   const [sendError, setSendError] = useState('');
   const [uploading, setUploading] = useState(false);
 
-  const [viewFilter, setViewFilter] = useState('all'); // 'all' | 'unread' | 'important' | 'resolved' | 'archived' | 'blocked'
+  const [viewFilter, setViewFilter] = useState('all'); // 'all' | 'unread' | 'important' | 'resolved' | 'archived' | 'blocked' | 'noreply'
+  const viewFilterRef = useRef(viewFilter);
+  useEffect(() => { viewFilterRef.current = viewFilter; }, [viewFilter]);
+  // List order (routes/conversations.js ?sort=). 'received' = latest message
+  // FROM the subscriber first, so broadcast-only chats sink to the bottom.
+  const [sortBy, setSortBy] = useState(() => {
+    try {
+      const saved = localStorage.getItem('inbox.sortBy');
+      return SORT_OPTIONS.some((o) => o.value === saved) ? saved : 'received';
+    } catch { return 'received'; }
+  });
+  const changeSortBy = (value) => {
+    setSortBy(value);
+    try { localStorage.setItem('inbox.sortBy', value); } catch { /* storage blocked */ }
+  };
+  const sortByRef = useRef(sortBy);
+  useEffect(() => { sortByRef.current = sortBy; }, [sortBy]);
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  const sortMenuRef = useRef(null);
+  useEffect(() => {
+    if (!sortMenuOpen) return;
+    const handleClickOutside = (e) => {
+      if (sortMenuRef.current && !sortMenuRef.current.contains(e.target)) setSortMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [sortMenuOpen]);
   const [statusFilter, setStatusFilter] = useState('All');
   const [platformFilter, setPlatformFilter] = useState('');
   const [agentFilter, setAgentFilter] = useState(''); // '' = any, 'unassigned', or an agent_profile id
@@ -1180,6 +1215,8 @@ export default function InboxPage() {
         params.archived = true;
       } else if (viewFilter === 'blocked') {
         params.blocked = true;
+      } else if (viewFilter === 'noreply') {
+        params.noReply = true;
       } else if (viewFilter === 'resolved') {
         params.status = 'RESOLVED';
       } else if (statusFilter !== 'All') {
@@ -1188,6 +1225,7 @@ export default function InboxPage() {
       if (platformFilter) params.platform = platformFilter;
       if (labelFilterId) params.labelId = labelFilterId;
       if (agentFilter) params.assignedToId = agentFilter;
+      params.sort = sortBy;
       const res = await conversationAPI.getAll(params);
       if (seq !== convsLoadSeq.current) return; // a newer load superseded this one
       setConversations(res.data.conversations || res.data || []);
@@ -1199,7 +1237,7 @@ export default function InboxPage() {
     } finally {
       if (seq === convsLoadSeq.current) setConvLoading(false);
     }
-  }, [viewFilter, statusFilter, platformFilter, labelFilterId, agentFilter, buildDateRangeParams]);
+  }, [viewFilter, statusFilter, platformFilter, labelFilterId, agentFilter, sortBy, buildDateRangeParams]);
 
   const loadConversationsRef = useRef(loadConversations);
   useEffect(() => { loadConversationsRef.current = loadConversations; }, [loadConversations]);
@@ -1221,6 +1259,8 @@ export default function InboxPage() {
         params.archived = true;
       } else if (viewFilter === 'blocked') {
         params.blocked = true;
+      } else if (viewFilter === 'noreply') {
+        params.noReply = true;
       } else if (viewFilter === 'resolved') {
         params.status = 'RESOLVED';
       } else if (statusFilter !== 'All') {
@@ -1229,6 +1269,7 @@ export default function InboxPage() {
       if (platformFilter) params.platform = platformFilter;
       if (labelFilterId) params.labelId = labelFilterId;
       if (agentFilter) params.assignedToId = agentFilter;
+      params.sort = sortBy;
       const res = await conversationAPI.getAll(params);
       if (moreSeq !== convsLoadSeq.current) return;
       const newRows = res.data.conversations || [];
@@ -1244,7 +1285,7 @@ export default function InboxPage() {
     } finally {
       setLoadingMoreConvs(false);
     }
-  }, [convPage, convHasMore, loadingMoreConvs, viewFilter, statusFilter, platformFilter, labelFilterId, agentFilter, buildDateRangeParams]);
+  }, [convPage, convHasMore, loadingMoreConvs, viewFilter, statusFilter, platformFilter, labelFilterId, agentFilter, sortBy, buildDateRangeParams]);
 
   useEffect(() => {
     setConvLoading(true);
@@ -1454,8 +1495,25 @@ export default function InboxPage() {
           unread_count: (isOpenConv && !document.hidden) ? 0 : (Number(prev[idx].unread_count) || 0) + (incoming.direction === 'INBOUND' ? 1 : 0),
         };
         const next = [...prev];
-        next.splice(idx, 1);
-        next.unshift(patched); // most-recently-active conversation floats to the top, matching the list's sort order
+        const inbound = incoming.direction === 'INBOUND';
+        const sort = sortByRef.current;
+        // Keep the live list consistent with the server's sort order:
+        //  - "No reply yet" view: a reply means they don't belong here any more.
+        //  - "Waiting for reply": our reply takes them off the list; a new
+        //    message from them keeps their place (still waiting since earlier).
+        //  - "Last message received": only THEIR messages move a chat up —
+        //    our replies / broadcasts update the preview in place.
+        //  - "Last communicated": anything moves it to the top.
+        if (viewFilterRef.current === 'noreply' && inbound) {
+          next.splice(idx, 1);
+        } else if (sort === 'waiting') {
+          if (inbound) next[idx] = patched; else next.splice(idx, 1);
+        } else if (sort === 'activity' || inbound) {
+          next.splice(idx, 1);
+          next.unshift(patched);
+        } else {
+          next[idx] = patched;
+        }
         return next;
       });
     });
@@ -2581,6 +2639,8 @@ export default function InboxPage() {
       matchesView = Boolean(c.contactIsBlocked);
     } else if (viewFilter === 'resolved') {
       matchesView = ['RESOLVED', 'CLOSED'].includes((c.status || '').toUpperCase());
+    } else if (viewFilter === 'noreply') {
+      matchesView = !c.lastInboundAt && !c.last_inbound_at && !c.is_archived;
     } else {
       // By default ('all', etc.), hide archived conversations from active inbox
       matchesView = !Boolean(c.is_archived);
@@ -2588,7 +2648,7 @@ export default function InboxPage() {
 
     // Match Status
     let matchesStatus = true;
-    if (statusFilter && statusFilter !== 'All' && !['unread', 'important', 'archived', 'blocked', 'resolved'].includes(viewFilter)) {
+    if (statusFilter && statusFilter !== 'All' && !['unread', 'important', 'archived', 'blocked', 'resolved', 'noreply'].includes(viewFilter)) {
       const convStatus = (c.status || 'OPEN').toUpperCase();
       if (statusFilter.toUpperCase() === 'OPEN') {
         matchesStatus = ['OPEN', 'ASSIGNED'].includes(convStatus);
@@ -2645,6 +2705,7 @@ export default function InboxPage() {
             { key: 'unread', label: 'Unreads', icon: <Mail size={16} />, active: viewFilter === 'unread', onClick: () => { setViewFilter('unread'); setStatusFilter('All'); setAgentFilter(''); } },
             { key: 'important', label: 'Importants', icon: <Star size={16} />, active: viewFilter === 'important', onClick: () => { setViewFilter('important'); setStatusFilter('All'); setAgentFilter(''); } },
             { key: 'resolved', label: 'Resolved', icon: <CheckCircle2 size={16} />, active: viewFilter === 'resolved' || statusFilter === 'RESOLVED', onClick: () => { setViewFilter('resolved'); setStatusFilter('RESOLVED'); setAgentFilter(''); } },
+            { key: 'noreply', label: 'No reply yet — messaged (e.g. by a broadcast) but never wrote back', icon: <Megaphone size={16} />, active: viewFilter === 'noreply', onClick: () => { setViewFilter('noreply'); setStatusFilter('All'); setAgentFilter(''); } },
             { key: 'archived', label: 'Archived', icon: <Archive size={16} />, active: viewFilter === 'archived', onClick: () => { setViewFilter('archived'); setStatusFilter('All'); setAgentFilter(''); } },
             { key: 'blocked', label: 'Blocked', icon: <Ban size={16} />, active: viewFilter === 'blocked', onClick: () => { setViewFilter('blocked'); setStatusFilter('All'); setAgentFilter(''); } },
           ].map(({ key, label, icon, active, disabled, onClick }) => (
@@ -2742,6 +2803,8 @@ export default function InboxPage() {
                   <><Archive size={16} color="#64748b" /> Archived Chats</>
                 ) : viewFilter === 'blocked' ? (
                   <><Ban size={16} color="#ef4444" /> Blocked Subscribers</>
+                ) : viewFilter === 'noreply' ? (
+                  <><Megaphone size={16} color="var(--primary)" /> No Reply Yet</>
                 ) : agentFilter === myProfileId ? (
                   <><User size={16} color="var(--primary)" /> Assigned to Me</>
                 ) : agentFilter === 'unassigned' ? (
@@ -2802,6 +2865,56 @@ export default function InboxPage() {
                         {!r.conversationId && <span style={{ fontSize: '0.68rem', color: '#cbd5e1' }}>No chat yet</span>}
                       </button>
                     ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Sort — how the list is ordered (server-side, ?sort=). */}
+              <div ref={sortMenuRef} style={{ position: 'relative', flexShrink: 0 }}>
+                <button
+                  type="button"
+                  onClick={() => setSortMenuOpen((o) => !o)}
+                  title={`Sort: ${SORT_OPTIONS.find((o) => o.value === sortBy)?.label}`}
+                  style={{
+                    position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 8,
+                    border: '1px solid #e2e8f0', background: sortMenuOpen ? '#f1f5f9' : '#fff', color: '#475569', cursor: 'pointer',
+                  }}
+                >
+                  <ArrowUpDown size={14} />
+                  {sortBy !== 'received' && (
+                    <span style={{ position: 'absolute', top: 4, right: 4, width: 6, height: 6, borderRadius: 99, background: 'var(--primary)' }} />
+                  )}
+                </button>
+                {sortMenuOpen && (
+                  <div style={{
+                    position: 'absolute', top: 36, right: 0, zIndex: 30, width: 250,
+                    background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12,
+                    boxShadow: '0 12px 32px rgba(0,0,0,0.14)', padding: 6,
+                  }}>
+                    <div style={{ padding: '6px 10px 4px', fontSize: '0.68rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.4 }}>Sort by</div>
+                    {SORT_OPTIONS.map((opt) => {
+                      const active = sortBy === opt.value;
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => { changeSortBy(opt.value); setSortMenuOpen(false); }}
+                          style={{
+                            display: 'flex', alignItems: 'flex-start', gap: 8, width: '100%', textAlign: 'left', padding: '8px 10px',
+                            border: 'none', borderRadius: 8, cursor: 'pointer',
+                            background: active ? 'rgba(79, 70, 229, 0.08)' : 'transparent',
+                          }}
+                          onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = '#f8fafc'; }}
+                          onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent'; }}
+                        >
+                          <span style={{ width: 14, flexShrink: 0, paddingTop: 1, color: 'var(--primary)' }}>{active && <Check size={14} />}</span>
+                          <span>
+                            <span style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: active ? 'var(--primary)' : '#0f172a' }}>{opt.label}</span>
+                            <span style={{ display: 'block', fontSize: '0.7rem', color: '#64748b', marginTop: 1 }}>{opt.hint}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -2910,8 +3023,11 @@ export default function InboxPage() {
 
             {/* Active filter chips — only takes a row when something is
                 actually set, so the default state stays one thin line. */}
-            {(agentFilterLabel || labelFilterLabel || isDateFilterActive) && (
+            {(agentFilterLabel || labelFilterLabel || isDateFilterActive || sortBy !== 'received') && (
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
+                {sortBy !== 'received' && (
+                  <FilterChip label={`Sort: ${SORT_OPTIONS.find((o) => o.value === sortBy)?.label}`} onRemove={() => changeSortBy('received')} />
+                )}
                 {agentFilterLabel && <FilterChip label={agentFilterLabel} onRemove={() => setAgentFilter('')} />}
                 {labelFilterLabel && <FilterChip label={labelFilterLabel} onRemove={() => setLabelFilterId('')} />}
                 {isDateFilterActive && (

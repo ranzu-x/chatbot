@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
 import MetaAppPage from './MetaAppPage';
 import TikTokAppPage from './TikTokAppPage';
+import StoreConnectionsManager from '../../Components/Commerce/StoreConnectionsManager';
 import { metaAppAPI, tiktokAppAPI } from '../../services/api';
 import { notify } from '../../utils/alerts';
 import {
@@ -16,7 +17,6 @@ import {
   Check,
   CheckCircle2,
   AlertCircle,
-  ExternalLink,
   Sliders,
   Shield,
   Save,
@@ -70,9 +70,9 @@ const APP_NAV_GROUPS = [
         border: 'rgba(2, 132, 199, 0.18)',
       },
       {
-        id: 'shopify',
-        label: 'Shopify App',
-        subtitle: 'Store Catalog & Orders',
+        id: 'store_api',
+        label: 'Store API',
+        subtitle: 'Shopify & WooCommerce',
         IconComponent: ShoppingBag,
         color: '#16a34a',
         bg: 'rgba(22, 163, 74, 0.08)',
@@ -90,6 +90,7 @@ export default function AppSettingsHubPage() {
   const resolveTab = (t) => {
     if (t === 'meta' || t === 'whatsapp') return 'meta_whatsapp';
     if (t === 'messenger' || t === 'facebook') return 'meta_messenger';
+    if (t === 'shopify' || t === 'woocommerce' || t === 'store') return 'store_api';
     return APP_NAV_ITEMS.some(item => item.id === t) ? t : 'meta_whatsapp';
   };
   const activeTab = resolveTab(rawTab);
@@ -107,16 +108,6 @@ export default function AppSettingsHubPage() {
     enableGmailAlerts: false,
   });
   const [googleSaving, setGoogleSaving] = useState(false);
-
-  // Shopify Settings State
-  const [shopifyForm, setShopifyForm] = useState({
-    shopDomain: '',
-    accessToken: '',
-    webhookSecret: '',
-    enableOrderTracking: true,
-    enableCatalogSync: true,
-  });
-  const [shopifySaving, setShopifySaving] = useState(false);
 
   const [copiedKey, setCopiedKey] = useState('');
 
@@ -161,15 +152,6 @@ export default function AppSettingsHubPage() {
     setTimeout(() => {
       setGoogleSaving(false);
       notify.success('Google Cloud App credentials saved!');
-    }, 600);
-  };
-
-  const handleSaveShopify = (e) => {
-    e.preventDefault();
-    setShopifySaving(true);
-    setTimeout(() => {
-      setShopifySaving(false);
-      notify.success('Shopify Store connection settings saved!');
     }, 600);
   };
 
@@ -466,102 +448,21 @@ export default function AppSettingsHubPage() {
               </div>
             )}
 
-            {/* 5. Shopify App Configuration */}
-            {activeTab === 'shopify' && (
+            {/* 5. Store API — Shopify & WooCommerce (utils/commerceService.js) */}
+            {activeTab === 'store_api' && (
               <div className="card" style={{ padding: 22, borderRadius: 12, border: '1px solid #e2e8f0', background: '#ffffff' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div style={{ width: 38, height: 38, borderRadius: 10, background: 'rgba(22, 163, 74, 0.08)', border: '1px solid rgba(22, 163, 74, 0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#16a34a' }}>
-                      <ShoppingBag size={20} />
-                    </div>
-                    <div>
-                      <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700, color: '#0f172a' }}>Shopify Store & Custom App</h2>
-                      <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>Connect your Shopify store to sync product catalog and in-chat orders</p>
-                    </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                  <div style={{ width: 38, height: 38, borderRadius: 10, background: 'rgba(22, 163, 74, 0.08)', border: '1px solid rgba(22, 163, 74, 0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#16a34a' }}>
+                    <ShoppingBag size={20} />
+                  </div>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700, color: '#0f172a' }}>Store API Settings</h2>
+                    <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>
+                      Connect Shopify or WooCommerce stores, then set up order, COD and abandoned-cart messages in Automation → Commerce.
+                    </p>
                   </div>
                 </div>
-
-                <form onSubmit={handleSaveShopify} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  <div>
-                    <label className="form-label" style={{ fontWeight: 600, fontSize: '0.8rem' }}>Shopify Store Domain *</label>
-                    <input
-                      type="text"
-                      required
-                      className="form-input w-full font-mono text-sm"
-                      placeholder="e.g. your-store.myshopify.com"
-                      value={shopifyForm.shopDomain}
-                      onChange={(e) => setShopifyForm({ ...shopifyForm, shopDomain: e.target.value })}
-                      autoComplete="off"
-                      autoCorrect="off"
-                      spellCheck="false"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="form-label" style={{ fontWeight: 600, fontSize: '0.8rem' }}>Admin API Access Token *</label>
-                    <input
-                      type="password"
-                      required
-                      className="form-input w-full font-mono text-sm"
-                      placeholder="shpat_xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                      value={shopifyForm.accessToken}
-                      onChange={(e) => setShopifyForm({ ...shopifyForm, accessToken: e.target.value })}
-                      autoComplete="new-password"
-                      autoCorrect="off"
-                      spellCheck="false"
-                      data-lpignore="true"
-                      data-1p-ignore="true"
-                    />
-                    <span style={{ fontSize: '0.72rem', color: '#64748b' }}>Created via Shopify Admin → Settings → Apps and sales channels → Develop apps.</span>
-                  </div>
-
-                  <div>
-                    <label className="form-label" style={{ fontWeight: 600, fontSize: '0.8rem' }}>Webhook Secret Key (Optional)</label>
-                    <input
-                      type="password"
-                      className="form-input w-full font-mono text-sm"
-                      placeholder="shpss_xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                      value={shopifyForm.webhookSecret}
-                      onChange={(e) => setShopifyForm({ ...shopifyForm, webhookSecret: e.target.value })}
-                      autoComplete="new-password"
-                      autoCorrect="off"
-                      spellCheck="false"
-                      data-lpignore="true"
-                      data-1p-ignore="true"
-                    />
-                  </div>
-
-                  <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: 12, marginTop: 4 }}>
-                    <div style={{ fontWeight: 600, fontSize: '0.82rem', marginBottom: 8 }}>Enabled Store Features</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8rem', cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={shopifyForm.enableCatalogSync}
-                          onChange={(e) => setShopifyForm({ ...shopifyForm, enableCatalogSync: e.target.checked })}
-                        />
-                        <span>Enable Real-time Product Catalog Sync to Chatbot</span>
-                      </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8rem', cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={shopifyForm.enableOrderTracking}
-                          onChange={(e) => setShopifyForm({ ...shopifyForm, enableOrderTracking: e.target.checked })}
-                        />
-                        <span>Enable Automated In-Chat Order Lookup & Tracking</span>
-                      </label>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
-                    <button type="submit" disabled={shopifySaving} className="btn btn-primary" style={{ fontWeight: 600 }}>
-                      {shopifySaving ? 'Saving...' : 'Save Shopify Settings'}
-                    </button>
-                    <a href="/orders" className="btn btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.8rem', fontWeight: 600 }}>
-                      <ExternalLink size={13} /> View Orders
-                    </a>
-                  </div>
-                </form>
+                <StoreConnectionsManager />
               </div>
             )}
           </div>

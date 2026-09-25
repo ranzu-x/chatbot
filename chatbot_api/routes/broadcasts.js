@@ -4,6 +4,7 @@ import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { requireModule } from "../utils/entitlements.js";
 import { executeBroadcast, computeAudience } from "../utils/broadcastRunner.js";
+import { findOutOfScopeRefs, describeOutOfScope, violationsForClient } from "../utils/botScope.js";
 
 const router = express.Router();
 router.use("/broadcasts", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_broadcasts"));
@@ -215,10 +216,12 @@ router.post("/broadcasts/start-with-flow", async (req, res) => {
     const nodesJson = JSON.stringify([
       { id: "start_1", type: "start", position: { x: 0, y: 0 }, data: { label: "Broadcast", trigger_type: "broadcast" } },
     ]);
+    // The flow lives on the campaign's own bot account — without it the Flow
+    // Builder has no account for the flow and shows the platform's first one.
     const [flowResult] = await conn.query(
-      `INSERT INTO flows (agency_id, name, platform, trigger_type, nodes_json, edges_json, is_active)
-       VALUES (?, ?, ?, 'BROADCAST', ?, '[]', 1)`,
-      [agencyId, name, platform, nodesJson]
+      `INSERT INTO flows (agency_id, integration_id, name, platform, trigger_type, nodes_json, edges_json, is_active)
+       VALUES (?, ?, ?, ?, 'BROADCAST', ?, '[]', 1)`,
+      [agencyId, integrationId, name, platform, nodesJson]
     );
     const flowId = flowResult.insertId;
 
@@ -294,6 +297,21 @@ router.put("/broadcasts/:id", async (req, res) => {
       resolvedIntegrationId = validated;
     }
 
+    // A flow-driven campaign's flow belongs to the campaign's bot account, so
+    // moving the campaign moves its flow too — but only if everything the flow
+    // uses (Sequences, forms, other flows) belongs to the new account as well.
+    if (existing.flow_id && String(resolvedIntegrationId) !== String(existing.integration_id)) {
+      const [[flow]] = await pool.query("SELECT nodes_json FROM flows WHERE id = ? AND agency_id = ?", [existing.flow_id, agencyId]);
+      if (flow) {
+        let nodes = [];
+        try { nodes = JSON.parse(flow.nodes_json || "[]"); } catch { nodes = []; }
+        const badRefs = await findOutOfScopeRefs({ agencyId, integrationId: resolvedIntegrationId, nodes });
+        if (badRefs.length) {
+          return res.status(403).json({ success: false, code: "BOT_SCOPE_VIOLATION", message: describeOutOfScope(badRefs, resolvedIntegrationId), violations: violationsForClient(badRefs) });
+        }
+      }
+    }
+
     // A/B testing is TEMPLATE-mode only — a WINDOW-mode (flow-driven)
     // campaign's content is a whole flow canvas, not a single swappable
     // message, so there's no equivalent "variant B" to pick there.
@@ -329,6 +347,9 @@ router.put("/broadcasts/:id", async (req, res) => {
         req.params.id, agencyId,
       ]
     );
+    if (existing.flow_id && resolvedIntegrationId) {
+      await pool.query("UPDATE flows SET integration_id = ? WHERE id = ? AND agency_id = ?", [resolvedIntegrationId, existing.flow_id, agencyId]);
+    }
     return res.json({ success: true, message: "Campaign updated" });
   } catch (err) {
     console.error("Update broadcast error:", err);

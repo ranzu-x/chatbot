@@ -3,6 +3,7 @@ import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { requireModule } from "../utils/entitlements.js";
 import { generateTimeSlots } from "../utils/slotGenerator.js";
+import { canUsePublicBooking } from "../utils/publicBooking.js";
 
 const router = express.Router();
 
@@ -17,6 +18,10 @@ router.get("/slots/availability/dates", async (req, res) => {
 
     if (!agencyId) {
       return res.status(400).json({ success: false, message: "agencyId is required" });
+    }
+
+    if (!canUsePublicBooking(req, agencyId)) {
+      return res.status(404).json({ success: false, message: "Booking page not found" });
     }
 
     let query = `
@@ -58,6 +63,10 @@ router.get("/slots/availability", async (req, res) => {
 
     if (!agencyId) {
       return res.status(400).json({ success: false, message: "agencyId is required" });
+    }
+
+    if (!canUsePublicBooking(req, agencyId)) {
+      return res.status(404).json({ success: false, message: "Booking page not found" });
     }
 
     let query = `

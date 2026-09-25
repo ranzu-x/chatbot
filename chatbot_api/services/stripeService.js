@@ -78,7 +78,7 @@ export async function ensureStripePrice(pkg) {
 
 // ─── CREATE STRIPE CHECKOUT SESSION ──────────────────────────────────────────
 export async function createCheckoutSession({ agencyId, userId, packageId, userEmail, userName, successUrl, cancelUrl }) {
-  const [pkgRows] = await pool.query("SELECT * FROM packages WHERE id = ?", [packageId]);
+  const [pkgRows] = await pool.query("SELECT * FROM packages WHERE id = ? AND is_public = 1", [packageId]);
   if (!pkgRows.length) throw new Error("Package not found");
 
   const pkg = pkgRows[0];

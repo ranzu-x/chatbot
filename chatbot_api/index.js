@@ -10,6 +10,7 @@ import pool from "./db.js";
 import authRoutes from "./routes/auth.js";
 import { authLimiter, apiLimiter } from "./middleware/rateLimiter.js";
 import { tenantContext } from "./middleware/tenant.js";
+import { teamPermissions } from "./middleware/teamPermissions.js";
 import { startFollowUpScheduler } from "./utils/followUpScheduler.js";
 import adminRoutes from "./routes/admin.js";
 import agencyRoutes from "./routes/agency.js";
@@ -41,6 +42,7 @@ import billingRoutes from "./routes/billing.js";
 import flowWebhookRoutes from "./routes/flowWebhooks.js";
 import chatPaymentRoutes from "./routes/chatPayments.js";
 import notificationRoutes from "./routes/notifications.js";
+import userNotificationRoutes from "./routes/userNotifications.js";
 import socialPostRoutes from "./routes/socialPosts.js";
 import teamRoutes from "./routes/team.js";
 import appointmentRoutes from "./routes/appointments.js";
@@ -80,6 +82,7 @@ import http from "http";
 import { initSocket } from "./utils/socket.js";
 import { startSequenceScheduler } from "./utils/sequenceRunner.js";
 import { startTelegramPoller } from "./utils/telegramPoller.js";
+import { ensureTelegramWebhookSecrets } from "./utils/webhookAuth.js";
 import { initBotErrorLogsTable } from "./utils/botLogger.js";
 import { startSocialPostScheduler } from "./utils/socialPostScheduler.js";
 import { startFlowDelayScheduler } from "./utils/flowDelayScheduler.js";
@@ -87,6 +90,7 @@ import { startBotResumeScheduler } from "./utils/botResumeScheduler.js";
 import { startBroadcastScheduler } from "./utils/broadcastScheduler.js";
 import { startSupportDeskScheduler } from "./utils/supportDeskScheduler.js";
 import { startCommerceSyncScheduler } from "./utils/commerceSyncScheduler.js";
+import { startCommerceEventScheduler } from "./utils/commerceEvents.js";
 import { startMetaAppHealthScheduler } from "./utils/metaAppHealthScheduler.js";
 import { startBotErrorLogRetentionScheduler } from "./utils/botErrorLogRetentionScheduler.js";
 
@@ -105,12 +109,14 @@ const server = http.createServer(app);
 initSocket(server, process.env.FRONTEND_URL || "http://localhost:5173");
 startSequenceScheduler();
 startTelegramPoller();
+ensureTelegramWebhookSecrets();
 startSocialPostScheduler();
 startFlowDelayScheduler();
 startBotResumeScheduler();
 startBroadcastScheduler();
 startSupportDeskScheduler();
 startCommerceSyncScheduler();
+startCommerceEventScheduler();
 startMetaAppHealthScheduler();
 startBotErrorLogRetentionScheduler();
 startFollowUpScheduler();
@@ -218,13 +224,15 @@ app.use("/api/v1", webhookRoutes);
 // reason, protected by the encryption itself instead.
 app.use("/api/v1", whatsappFlowEndpointRoutes);
 
-app.use("/api/v1/auth/login", authLimiter);
-app.use(["/api/v1/auth/register", "/api/v1/hospital-admin/signup"], authLimiter);
+app.use(["/api/v1/auth/login", "/api/v1/auth/forgot-password", "/api/v1/auth/reset-password"], authLimiter);
+app.use("/api/v1/auth/register", authLimiter);
 app.use("/api/v1", apiLimiter);
 // Server-side workspace check + req.tenant for every authenticated request
 // (deactivated workspace, or a token pointing at a workspace the user does not
 // belong to, is refused here once instead of in each route). See middleware/tenant.js.
 app.use("/api/v1", tenantContext);
+// Team Rules matrix (Create/Update/Delete/Special per feature) for team members — see middleware/teamPermissions.js.
+app.use("/api/v1", teamPermissions);
 
 app.use("/api/v1", webchatRoutes);
 app.use("/api/v1", authRoutes);
@@ -250,6 +258,17 @@ app.use("/api/v1", commerceRoutes);
 // router.use("/admin/forum", ...) below its public routes), so nothing loses
 // protection by being mounted early.
 app.use("/api/v1", forumRoutes);
+// Same reason again: each of these has endpoints called WITHOUT a dashboard
+// login — the inbound flow webhook (per-flow key), the public booking portal
+// (booking key, utils/publicBooking.js) and the developer API (API key). Mounted
+// after admin.js's bare router.use(authMiddleware) they all answered 401 to
+// every anonymous caller. Each scopes its own auth by path, so nothing loses
+// protection by moving up here.
+app.use("/api/v1", flowWebhookRoutes);
+app.use("/api/v1", appointmentRoutes);
+app.use("/api/v1", appointmentServicesRoutes);
+app.use("/api/v1", slotRoutes);
+app.use("/api/v1", publicApiRoutes);
 
 // ─── Protected Application Routes ─────────────────────────────────────────────
 app.use("/api/v1", adminRoutes);
@@ -274,20 +293,16 @@ app.use("/api/v1", sequenceRoutes);
 app.use("/api/v1", domainRoutes);
 app.use("/api/v1", commentRoutes);
 app.use("/api/v1", packageRoutes);
-app.use("/api/v1", flowWebhookRoutes);
 app.use("/api/v1", chatPaymentRoutes);
+app.use("/api/v1", userNotificationRoutes); // in-app inbox (top-bar bell) — before notificationRoutes, whose bare router.use(authMiddleware) catches everything
 app.use("/api/v1", notificationRoutes);
 app.use("/api/v1", socialPostRoutes);
 app.use("/api/v1", teamRoutes);
-app.use("/api/v1", appointmentRoutes);
-app.use("/api/v1", appointmentServicesRoutes);
 app.use("/api/v1", appointmentCampaignRoutes);
-app.use("/api/v1", slotRoutes);
 app.use("/api/v1", labelsRoutes);
 app.use("/api/v1", agencyPaymentGatewayRoutes);
 app.use("/api/v1", platformPaymentGatewayRoutes);
 app.use("/api/v1", apiKeyRoutes);
-app.use("/api/v1", publicApiRoutes);
 app.use("/api/v1", httpApiCampaignRoutes);
 app.use("/api/v1", aiProviderRoutes);
 app.use("/api/v1", aiAgentRoutes);
@@ -329,3 +344,32 @@ server.listen(port, () => {
   console.log(`🚀 Chatbot SaaS API running on port ${port}`);
 });
 
+
+// ─── Process safety ───────────────────────────────────────────────────────────
+// Node 15+ exits on an unhandled promise rejection. With a dozen background
+// schedulers in this process, one failed promise in any of them would take the
+// whole API (webhooks, Inbox, logins) down — log it instead.
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason);
+});
+
+// A synchronous crash leaves the process in an unknown state: log, shut down
+// cleanly, and let the process manager (pm2 / systemd) start a fresh one.
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException]", err);
+  shutdown("uncaughtException", 1);
+});
+
+let shuttingDown = false;
+function shutdown(signal, exitCode = 0) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shutdown] ${signal} — no new connections, finishing in-flight requests…`);
+  // Hard stop if something hangs (open sockets, a long query).
+  setTimeout(() => process.exit(exitCode), 10000).unref();
+  server.close(() => {
+    pool.end().catch(() => {}).finally(() => process.exit(exitCode));
+  });
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

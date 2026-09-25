@@ -16,7 +16,7 @@
 import jwt from 'jsonwebtoken';
 import { Server } from 'socket.io';
 import pool from '../db.js';
-import { checkTenantAccess } from '../middleware/tenant.js';
+import { checkTenantAccess, isTokenRevoked } from '../middleware/tenant.js';
 
 let io = null;
 
@@ -47,7 +47,7 @@ export async function authenticateSocket(handshake) {
   }
   if (!decoded?.id || !decoded?.agencyId) return null;
   const access = await checkTenantAccess(decoded.id, decoded.agencyId);
-  if (!access?.ok) return null;
+  if (!access?.ok || isTokenRevoked(decoded, access)) return null;
   return { userId: decoded.id, agencyId: access.tenant.agencyId, role: access.role };
 }
 

@@ -34,11 +34,11 @@ export function invalidateTenantCache() {
 
 // Paths that must keep working for a deactivated/mismatched session so the
 // client can log out cleanly and show the right message.
-const EXEMPT_PREFIXES = ["/auth/", "/hospital-admin/"];
+const EXEMPT_PREFIXES = ["/auth/"];
 
 async function evaluate(userId, agencyId) {
   // Role and active flag come from the database, not the token.
-  const [[dbUser]] = await pool.query("SELECT role, is_active FROM users WHERE id = ?", [userId]);
+  const [[dbUser]] = await pool.query("SELECT role, is_active, token_version FROM users WHERE id = ?", [userId]);
   // A deactivated (or deleted) user's still-valid token stops working right away, on every route.
   // Before this, only login and /auth/me looked at is_active, so a token issued before the
   // account was switched off kept full API access until it expired (up to 7 days).
@@ -75,6 +75,7 @@ async function evaluate(userId, agencyId) {
   return {
     ok: true,
     role,
+    tokenVersion: Number(dbUser.token_version || 0),
     tenant: {
       agencyId: agency.id,
       accountType,
@@ -94,6 +95,17 @@ async function evaluateCached(userId, agencyId) {
   const value = await evaluate(userId, agencyId);
   cache.set(key, { value, ts: Date.now() });
   return value;
+}
+
+/**
+ * Every login token carries the user's token_version (`tv`, missing = 0); a
+ * password reset bumps users.token_version, so every older session dies. A
+ * counter rather than "issued before password_changed_at": the app server's
+ * and the database's clocks may disagree.
+ */
+export function isTokenRevoked(decoded, result) {
+  if (!result?.ok) return false;
+  return Number(decoded?.tv || 0) !== Number(result.tokenVersion || 0);
 }
 
 /** Same decision the HTTP middleware makes, for callers outside a request (the socket layer). */
@@ -120,7 +132,12 @@ export const tenantContext = async (req, res, next) => {
     if (!result.ok) {
       return res.status(result.status).json({ success: false, message: result.message, code: "TENANT_ACCESS_DENIED" });
     }
-    req.tenant = result.tenant;
+    if (isTokenRevoked(decoded, result)) {
+      return res.status(401).json({ success: false, message: "Your password was changed. Please sign in again.", code: "SESSION_REVOKED" });
+    }
+    // userId/role come from the verified token + the database (the role is
+    // re-read from users, not trusted from the token) — used by teamPermissions.
+    req.tenant = { ...result.tenant, userId: decoded.id, role: result.role };
     return next();
   } catch (err) {
     console.error("tenantContext error:", err);
