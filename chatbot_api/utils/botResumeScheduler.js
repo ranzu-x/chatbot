@@ -1,5 +1,6 @@
 import pool from "../db.js";
 import { emitToAgency, emitToConversation } from "./socket.js";
+import { lockedJob } from "./jobLock.js";
 
 /**
  * Auto-resume-after-human-takeover poller. Mirrors utils/flowDelayScheduler.js's
@@ -39,5 +40,5 @@ export async function processDueBotResumes() {
 
 export function startBotResumeScheduler() {
   console.log("🤖 Bot auto-resume scheduler started (runs every 60 seconds)");
-  setInterval(processDueBotResumes, 60000);
+  setInterval(lockedJob("bot-resume", processDueBotResumes), 60000);
 }

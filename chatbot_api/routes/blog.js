@@ -3,6 +3,8 @@ import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { buildSearch } from "../utils/searchQuery.js";
+import { requirePermission } from "../middleware/permissionMiddleware.js";
+import { isMainDomainRequest } from "../utils/siteContext.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -90,10 +92,23 @@ function safeJson(str, fallback = []) {
   try { return JSON.parse(str || "[]"); } catch { return fallback; }
 }
 
+// A post is live when published, or scheduled and its publish date has come (computed by MySQL).
+const LIVE = "(status = 'PUBLISHED' OR (status = 'SCHEDULED' AND published_at <= NOW()))";
+
 // ─── PUBLIC ROUTES (no auth) ───────────────────────────────────────────────────
+// The blog is the platform's own — shown on the main domain only, never on a
+// reseller's white-label address (utils/siteContext.js).
+async function mainDomainOnly(req, res, next) {
+  try {
+    if (await isMainDomainRequest(req)) return next();
+    return res.status(404).json({ success: false, code: "BLOG_NOT_ON_THIS_SITE", message: "Not found" });
+  } catch (err) {
+    return next(err);
+  }
+}
 
 // GET /blog — paginated list of published posts
-router.get("/blog", async (req, res) => {
+router.get("/blog", mainDomainOnly, async (req, res) => {
   try {
     const page     = Math.max(1, parseInt(req.query.page)  || 1);
     const limit    = Math.min(50, parseInt(req.query.limit) || 9);
@@ -102,7 +117,7 @@ router.get("/blog", async (req, res) => {
     const search   = req.query.search   || null;
     const featured = req.query.featured === "true" ? 1 : null;
 
-    let where = "WHERE status = 'PUBLISHED'";
+    let where = `WHERE ${LIVE}`;
     const params = [];
 
     if (category) { where += " AND category = ?"; params.push(category); }
@@ -155,10 +170,10 @@ router.get("/blog", async (req, res) => {
 });
 
 // GET /blog/categories — distinct categories for published posts
-router.get("/blog/categories", async (req, res) => {
+router.get("/blog/categories", mainDomainOnly, async (req, res) => {
   try {
     const [rows] = await pool.query(
-      "SELECT DISTINCT category FROM blog_posts WHERE status = 'PUBLISHED' AND category IS NOT NULL ORDER BY category"
+      `SELECT DISTINCT category FROM blog_posts WHERE ${LIVE} AND category IS NOT NULL ORDER BY category`
     );
     return res.json({ success: true, categories: rows.map((r) => r.category) });
   } catch (err) {
@@ -167,10 +182,10 @@ router.get("/blog/categories", async (req, res) => {
 });
 
 // GET /blog/:slug — single post + related posts + view increment
-router.get("/blog/:slug", async (req, res) => {
+router.get("/blog/:slug", mainDomainOnly, async (req, res) => {
   try {
     const [rows] = await pool.query(
-      "SELECT * FROM blog_posts WHERE slug = ? AND status = 'PUBLISHED' LIMIT 1",
+      `SELECT * FROM blog_posts WHERE slug = ? AND ${LIVE} LIMIT 1`,
       [req.params.slug]
     );
     if (!rows.length) return res.status(404).json({ success: false, message: "Post not found" });
@@ -181,7 +196,7 @@ router.get("/blog/:slug", async (req, res) => {
     const [related] = await pool.query(
       `SELECT id, title, slug, excerpt, cover_image, author_name, published_at, read_time, category
        FROM blog_posts
-       WHERE status = 'PUBLISHED' AND category = ? AND id != ?
+       WHERE ${LIVE} AND category = ? AND id != ?
        ORDER BY published_at DESC LIMIT 3`,
       [post.category, post.id]
     );
@@ -193,8 +208,8 @@ router.get("/blog/:slug", async (req, res) => {
   }
 });
 
-// ─── ADMIN ROUTES (ADMIN role only) ───────────────────────────────────────────
-const adminOnly = [authMiddleware, roleMiddleware("ADMIN")];
+// ─── ADMIN ROUTES (Super Admin + platform team with admin.blog.manage) ────────
+const adminOnly = [authMiddleware, roleMiddleware("ADMIN"), requirePermission("admin.blog.manage")];
 
 // GET /admin/blog/posts — all posts for management table
 router.get("/admin/blog/posts", ...adminOnly, async (req, res) => {

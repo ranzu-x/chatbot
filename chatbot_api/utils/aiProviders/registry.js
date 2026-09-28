@@ -33,7 +33,7 @@ export const PROVIDERS = {
     label: "Anthropic",
     capabilities: ["text_generation", "vision", "tool_calling"],
     defaultModel: "claude-sonnet-5",
-    models: ["claude-sonnet-5", "claude-haiku-4-5-20251001"],
+    models: ["claude-sonnet-5", "claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-haiku-4-5-20251001"],
     embeddingModel: null,
     transcriptionModel: null,
     adapter: anthropicAdapter,

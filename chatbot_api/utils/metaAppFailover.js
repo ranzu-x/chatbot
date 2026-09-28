@@ -1,5 +1,7 @@
 import pool from "../db.js";
+import { openAppRow } from "./appSecrets.js";
 import { promoteSlot } from "../routes/metaapppool.js";
+import { META_API_VERSION } from "./metaApi.js";
 
 const FB_SUBSCRIBED_FIELDS = "messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,feed,messaging_customer_information,message_template_status_update";
 const IG_SUBSCRIBED_FIELDS = "messages,messaging_postbacks,messaging_optins,message_reactions,message_reads,standby,comments,feed";
@@ -44,7 +46,7 @@ export async function resubscribeIntegrationsToPool(agencyId, platformGroup, poo
         continue;
       }
       try {
-        const subRes = await fetch(`https://graph.facebook.com/v21.0/${row.wa_business_acc_id}/subscribed_apps`, {
+        const subRes = await fetch(`https://graph.facebook.com/${META_API_VERSION}/${row.wa_business_acc_id}/subscribed_apps`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ access_token: newAppToken }),
@@ -74,7 +76,7 @@ export async function resubscribeIntegrationsToPool(agencyId, platformGroup, poo
       try {
         const fields = row.platform === "INSTAGRAM" ? IG_SUBSCRIBED_FIELDS : FB_SUBSCRIBED_FIELDS;
         const subRes = await fetch(
-          `https://graph.facebook.com/v21.0/${row.fb_page_id}/subscribed_apps?subscribed_fields=${fields}&access_token=${newAppToken}`,
+          `https://graph.facebook.com/${META_API_VERSION}/${row.fb_page_id}/subscribed_apps?subscribed_fields=${fields}&access_token=${newAppToken}`,
           { method: "POST" }
         );
         const subData = await subRes.json();
@@ -131,7 +133,8 @@ export async function failoverAgencyPlatformGroup(agencyId, platformGroup, { rea
     conn.release();
   }
 
-  const resubscribeResult = await resubscribeIntegrationsToPool(agencyId, platformGroup, standby);
+  // The pool stores secrets encrypted (utils/appSecrets.js); re-subscribing needs the plain token.
+  const resubscribeResult = await resubscribeIntegrationsToPool(agencyId, platformGroup, openAppRow(standby));
   console.log(
     `[MetaAppFailover] agency ${agencyId} / ${platformGroup}: promoted standby pool id=${standby.id} ` +
     `(reason: ${reason || "unknown"}). Re-subscribed ${resubscribeResult.succeeded}/${resubscribeResult.attempted} integrations.` +

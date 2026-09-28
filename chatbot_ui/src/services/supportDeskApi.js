@@ -50,6 +50,7 @@ export function clearSupportToken() {
 
 export const supportAuthAPI = {
   login: (data) => supportApi.post("/auth/login", data),
+  loginTwoFactor: (data) => supportApi.post("/auth/login/2fa", data),
   me: () => supportApi.get("/auth/me"),
 };
 

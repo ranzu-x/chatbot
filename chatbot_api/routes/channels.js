@@ -1,4 +1,5 @@
 import express from "express";
+import { sealAppSecret } from "../utils/appSecrets.js";
 import crypto from "crypto";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
@@ -10,6 +11,9 @@ import { looksLikeTechProviderSuspension } from "../utils/metaAppHealth.js";
 import { deleteIntegrationCascade } from "../utils/integrationCascade.js";
 import { countNewAccounts, assertRoomForNewAccounts } from "../utils/botAccountLimit.js";
 import { registerTelegramWebhook } from "../utils/webhookAuth.js";
+import { META_API_VERSION } from "../utils/metaApi.js";
+import { encryptSecret } from "../utils/cryptoVault.js";
+import { requestCoexistenceSync } from "../utils/whatsappCoexistence.js";
 
 const router = express.Router();
 // Scoped to "/channels" — an unscoped router.use(mw) here runs for EVERY
@@ -113,7 +117,7 @@ router.get("/channels/whatsapp", async (req, res) => {
       Promise.allSettled(
         needsBackfill.map(async (acc) => {
           try {
-            const url = `https://graph.facebook.com/v21.0/${acc.wa_phone_number_id}?fields=display_phone_number,verified_name,quality_rating,messaging_limit_tier,status&access_token=${acc.access_token}`;
+            const url = `https://graph.facebook.com/${META_API_VERSION}/${acc.wa_phone_number_id}?fields=display_phone_number,verified_name,quality_rating,messaging_limit_tier,status&access_token=${acc.access_token}`;
             const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
             const d = await r.json();
             const updates = [];
@@ -170,7 +174,7 @@ router.post("/channels/whatsapp/:id/sync", async (req, res) => {
 
     if (acc.wa_phone_number_id && accessToken && accessToken.startsWith("EAA")) {
       try {
-        const url = `https://graph.facebook.com/v21.0/${acc.wa_phone_number_id}?fields=display_phone_number,verified_name,code_verification_status,quality_rating,messaging_limit_tier,status&access_token=${accessToken}`;
+        const url = `https://graph.facebook.com/${META_API_VERSION}/${acc.wa_phone_number_id}?fields=display_phone_number,verified_name,code_verification_status,quality_rating,messaging_limit_tier,status&access_token=${accessToken}`;
         const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
         const d = await r.json();
         if (d.quality_rating) qualityRating = d.quality_rating.toUpperCase();
@@ -233,7 +237,7 @@ router.post("/channels/whatsapp", async (req, res) => {
     // succeeds and returns a real number, so a bad ID/token never produces
     // a half-connected/dummy integration row.
     const phoneRes = await fetch(
-      `https://graph.facebook.com/v21.0/${waBusinessAccId}/phone_numbers?fields=id,display_phone_number,verified_name&access_token=${accessToken}`
+      `https://graph.facebook.com/${META_API_VERSION}/${waBusinessAccId}/phone_numbers?fields=id,display_phone_number,verified_name&access_token=${accessToken}`
     );
     const phoneData = await phoneRes.json();
     if (phoneData?.error) {
@@ -258,7 +262,7 @@ router.post("/channels/whatsapp", async (req, res) => {
     // token without `whatsapp_business_management` permission can't
     // subscribe, but the connection itself is still otherwise valid.
     try {
-      const subRes = await fetch(`https://graph.facebook.com/v21.0/${waBusinessAccId}/subscribed_apps`, {
+      const subRes = await fetch(`https://graph.facebook.com/${META_API_VERSION}/${waBusinessAccId}/subscribed_apps`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ access_token: accessToken }),
@@ -401,7 +405,7 @@ async function verifyWhatsAppNumber({ accessToken, wabaId, phoneNumberId }) {
   let data;
   try {
     const r = await fetch(
-      `https://graph.facebook.com/v21.0/${encodeURIComponent(wabaId)}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating&access_token=${encodeURIComponent(accessToken)}`
+      `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(wabaId)}/phone_numbers?fields=id,display_phone_number,verified_name,quality_rating&access_token=${encodeURIComponent(accessToken)}`
     );
     data = await r.json();
   } catch {
@@ -469,12 +473,12 @@ router.post("/channels/whatsapp/:id/register", async (req, res) => {
       );
       await pool.query(
         "UPDATE meta_app_pool SET system_user_token = ? WHERE agency_id = ? AND platform_group = 'WHATSAPP' AND slot_role = 'ACTIVE' AND is_configured = 1",
-        [bodyToken.trim(), agencyId]
+        [sealAppSecret(bodyToken.trim()), agencyId]
       );
       console.log(`[WA Register] Updated and saved access_token for integration ${integration.id}`);
     }
 
-    const regUrl = `https://graph.facebook.com/v21.0/${phoneNumberId}/register`;
+    const regUrl = `https://graph.facebook.com/${META_API_VERSION}/${phoneNumberId}/register`;
     const regRes = await fetch(regUrl, {
       method: "POST",
       headers: {
@@ -513,6 +517,11 @@ router.post("/channels/whatsapp/:id/register", async (req, res) => {
 // ─── WHATSAPP EMBEDDED SIGNUP (AUTOMATED OAUTH & TOKEN EXCHANGE) ─────────────
 router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
   const { code, wabaId, phoneNumberId, botId, name, accessToken: clientAccessToken, phoneNumber, withCatalog } = req.body;
+  // Coexistence (the number stays on the WhatsApp Business app): no registration — it is
+  // already registered — and the app's contacts + history are requested afterwards.
+  const coexistence = req.body.coexistence === true;
+  // Two-step verification PIN for a fresh registration: random per number (was "123456").
+  const twoStepPin = String(crypto.randomInt(0, 1000000)).padStart(6, "0");
   const agencyId = req.agencyId || await resolveAgencyId(req);
   const catalogFlag = withCatalog ? 1 : 0;
 
@@ -546,7 +555,7 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
     // 2. Exchange authorization code for permanent/long-lived access token if code provided
     if (code && appId && appSecret) {
       try {
-        const exchangeUrl = `https://graph.facebook.com/v21.0/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&code=${code}`;
+        const exchangeUrl = `https://graph.facebook.com/${META_API_VERSION}/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&code=${code}`;
         const exRes = await fetch(exchangeUrl);
         const exData = await exRes.json();
         if (isValidMetaToken(exData.access_token)) {
@@ -580,7 +589,7 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
       try {
         await pool.query(
           "UPDATE meta_app_pool SET system_user_token = ? WHERE agency_id = ? AND platform_group = 'WHATSAPP' AND slot_role = 'ACTIVE' AND is_configured = 1",
-          [accessToken, agencyId]
+          [sealAppSecret(accessToken), agencyId]
         );
       } catch (setErr) {
         console.warn("Could not save system_user_token:", setErr.message);
@@ -595,11 +604,11 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
     // Auto-discover WABA and Phone Number ID from Meta if not supplied
     if ((!effectivePhoneNumberId || !effectiveWabaId) && isValidMetaToken(accessToken)) {
       try {
-        const bRes = await fetch(`https://graph.facebook.com/v21.0/me/businesses?fields=id,name&access_token=${accessToken}`);
+        const bRes = await fetch(`https://graph.facebook.com/${META_API_VERSION}/me/businesses?fields=id,name&access_token=${accessToken}`);
         const bData = await bRes.json();
         if (Array.isArray(bData.data)) {
           for (const biz of bData.data) {
-            const wRes = await fetch(`https://graph.facebook.com/v21.0/${biz.id}/client_whatsapp_business_accounts?fields=id,name,phone_numbers{id,display_phone_number,verified_name}&access_token=${accessToken}`);
+            const wRes = await fetch(`https://graph.facebook.com/${META_API_VERSION}/${biz.id}/client_whatsapp_business_accounts?fields=id,name,phone_numbers{id,display_phone_number,verified_name}&access_token=${accessToken}`);
             const wData = await wRes.json();
             if (Array.isArray(wData.data) && wData.data.length > 0) {
               const firstWaba = wData.data[0];
@@ -634,7 +643,7 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
     // 3. Fetch phone number details from Meta Graph API if valid token available
     if (effectivePhoneNumberId && isValidMetaToken(accessToken)) {
       try {
-        const phoneUrl = `https://graph.facebook.com/v21.0/${effectivePhoneNumberId}?fields=display_phone_number,verified_name,code_verification_status,quality_rating&access_token=${accessToken}`;
+        const phoneUrl = `https://graph.facebook.com/${META_API_VERSION}/${effectivePhoneNumberId}?fields=display_phone_number,verified_name,code_verification_status,quality_rating&access_token=${accessToken}`;
         const pRes = await fetch(phoneUrl);
         const pData = await pRes.json();
         if (pData.display_phone_number) phoneDisplay = pData.display_phone_number;
@@ -647,7 +656,7 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
     // 4. Auto-subscribe WABA to Meta App webhooks
     if (effectiveWabaId && isValidMetaToken(accessToken)) {
       try {
-        const subUrl = `https://graph.facebook.com/v21.0/${effectiveWabaId}/subscribed_apps`;
+        const subUrl = `https://graph.facebook.com/${META_API_VERSION}/${effectiveWabaId}/subscribed_apps`;
         await fetch(subUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -659,10 +668,10 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
       }
     }
 
-    // 5. Auto-register phone number with Meta Cloud API to activate it
-    if (effectivePhoneNumberId && isValidMetaToken(accessToken)) {
+    // 5. Auto-register phone number with Meta Cloud API to activate it (not for coexistence)
+    if (!coexistence && effectivePhoneNumberId && isValidMetaToken(accessToken)) {
       try {
-        const regUrl = `https://graph.facebook.com/v21.0/${effectivePhoneNumberId}/register`;
+        const regUrl = `https://graph.facebook.com/${META_API_VERSION}/${effectivePhoneNumberId}/register`;
         const regRes = await fetch(regUrl, {
           method: "POST",
           headers: {
@@ -671,7 +680,7 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
           },
           body: JSON.stringify({
             messaging_product: "whatsapp",
-            pin: "123456"
+            pin: twoStepPin
           })
         });
         const regData = await regRes.json();
@@ -703,10 +712,11 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
         `UPDATE integrations
            SET name = ?, access_token = ?, verify_token = ?, wa_phone_number_id = ?,
                wa_display_phone = ?, wa_business_acc_id = ?, is_active = 1, with_catalog = ?,
-               connection_method = 'EMBEDDED', updated_at = NOW()
+               connection_method = 'EMBEDDED', wa_coexistence = ?, wa_two_step_pin = COALESCE(?, wa_two_step_pin), updated_at = NOW()
          WHERE id = ?`,
         [accountName, accessToken,
-         verifyToken, pId, phoneDisplay || null, effectiveWabaId || null, catalogFlag, integrationId]
+         verifyToken, pId, phoneDisplay || null, effectiveWabaId || null, catalogFlag, coexistence ? 1 : 0,
+         coexistence ? null : encryptSecret(twoStepPin), integrationId]
       );
     } else {
       // A new number: this is where it would become a new bot account.
@@ -714,17 +724,27 @@ router.post("/channels/whatsapp/embedded-signup", async (req, res) => {
       const [ins] = await pool.query(
         `INSERT INTO integrations
            (agency_id, platform, name, access_token, verify_token,
-            wa_phone_number_id, wa_display_phone, wa_business_acc_id, is_active, with_catalog, connection_method)
-         VALUES (?, 'WHATSAPP', ?, ?, ?, ?, ?, ?, 1, ?, 'EMBEDDED')`,
+            wa_phone_number_id, wa_display_phone, wa_business_acc_id, is_active, with_catalog, connection_method, wa_coexistence, wa_two_step_pin)
+         VALUES (?, 'WHATSAPP', ?, ?, ?, ?, ?, ?, 1, ?, 'EMBEDDED', ?, ?)`,
         [agencyId, accountName, accessToken,
-         verifyToken, pId, phoneDisplay || null, effectiveWabaId || null, catalogFlag]
+         verifyToken, pId, phoneDisplay || null, effectiveWabaId || null, catalogFlag, coexistence ? 1 : 0,
+         coexistence ? null : encryptSecret(twoStepPin)]
       );
       integrationId = ins.insertId;
     }
 
+    // Coexistence: ask Meta for the phone app's contacts + chat history (must be within 24 h).
+    let syncResult = null;
+    if (coexistence && isValidMetaToken(accessToken)) {
+      syncResult = await requestCoexistenceSync({ id: integrationId, wa_phone_number_id: pId, access_token: accessToken }).catch(() => null);
+    }
+
     return res.status(201).json({
       success: true,
-      message: "WhatsApp Business Account connected and activated successfully!",
+      coexistenceSync: syncResult,
+      message: coexistence
+        ? "WhatsApp connected — it keeps working in the WhatsApp Business app too. Past chats and contacts are being imported."
+        : "WhatsApp Business Account connected and activated successfully!",
       integration: {
         id: integrationId,
         name: accountName,
@@ -749,13 +769,13 @@ router.post("/channels/whatsapp/discover-accounts", async (req, res) => {
     const discovered = [];
 
     // 1. Fetch user's businesses
-    const bRes = await fetch(`https://graph.facebook.com/v21.0/me/businesses?fields=id,name&access_token=${userAccessToken}`);
+    const bRes = await fetch(`https://graph.facebook.com/${META_API_VERSION}/me/businesses?fields=id,name&access_token=${userAccessToken}`);
     const bData = await bRes.json();
 
     if (Array.isArray(bData.data)) {
       for (const biz of bData.data) {
         try {
-          const wRes = await fetch(`https://graph.facebook.com/v21.0/${biz.id}/client_whatsapp_business_accounts?fields=id,name,phone_numbers{id,display_phone_number,verified_name,quality_rating}&access_token=${userAccessToken}`);
+          const wRes = await fetch(`https://graph.facebook.com/${META_API_VERSION}/${biz.id}/client_whatsapp_business_accounts?fields=id,name,phone_numbers{id,display_phone_number,verified_name,quality_rating}&access_token=${userAccessToken}`);
           const wData = await wRes.json();
           if (Array.isArray(wData.data)) {
             for (const waba of wData.data) {
@@ -808,7 +828,7 @@ router.get("/channels/facebook", async (req, res) => {
     );
     const pages = rows.map(r => ({
       ...r,
-      profile_picture_url: r.profile_picture_url || (r.fb_page_id ? `https://graph.facebook.com/v21.0/${r.fb_page_id}/picture?type=large` : null)
+      profile_picture_url: r.profile_picture_url || (r.fb_page_id ? `https://graph.facebook.com/${META_API_VERSION}/${r.fb_page_id}/picture?type=large` : null)
     }));
     return res.json({ success: true, pages: stripSecrets(pages, req) });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
@@ -841,7 +861,7 @@ router.post("/channels/facebook", async (req, res) => {
   if (!name || !accessToken || !fbPageId)
     return res.status(400).json({ success: false, message: "Name, access token and page ID are required" });
 
-  const effectivePictureUrl = profilePictureUrl || profile_picture_url || (fbPageId ? `https://graph.facebook.com/v21.0/${fbPageId}/picture?type=large` : null);
+  const effectivePictureUrl = profilePictureUrl || profile_picture_url || (fbPageId ? `https://graph.facebook.com/${META_API_VERSION}/${fbPageId}/picture?type=large` : null);
 
   try {
     await assertModuleAccess(req.agencyId, "channel_facebook", req.user?.id);
@@ -857,7 +877,7 @@ router.post("/channels/facebook", async (req, res) => {
         const { app_id, app_secret } = appSettings;
 
         // 1. Exchange token for long-lived user token
-        const exchangeUrl = `https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${app_id}&client_secret=${app_secret}&fb_exchange_token=${userAccessToken || accessToken}`;
+        const exchangeUrl = `https://graph.facebook.com/${META_API_VERSION}/oauth/access_token?grant_type=fb_exchange_token&client_id=${app_id}&client_secret=${app_secret}&fb_exchange_token=${userAccessToken || accessToken}`;
         const exRes = await fetch(exchangeUrl);
         const exData = await exRes.json();
         
@@ -865,7 +885,7 @@ router.post("/channels/facebook", async (req, res) => {
         finalUserToken = longLivedUserToken;
         
         // 2. Fetch page accounts with long-lived user token to get the NEVER-EXPIRING page token
-        const accountsUrl = `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token&access_token=${longLivedUserToken}`;
+        const accountsUrl = `https://graph.facebook.com/${META_API_VERSION}/me/accounts?fields=id,name,access_token&access_token=${longLivedUserToken}`;
         const accRes = await fetch(accountsUrl);
         const accData = await accRes.json();
         
@@ -885,7 +905,7 @@ router.post("/channels/facebook", async (req, res) => {
     let webhookSubscribed = false;
     try {
       const subRes = await fetch(
-        `https://graph.facebook.com/v21.0/${fbPageId}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,feed,messaging_customer_information,message_template_status_update&access_token=${finalAccessToken}`,
+        `https://graph.facebook.com/${META_API_VERSION}/${fbPageId}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,feed,messaging_customer_information,message_template_status_update&access_token=${finalAccessToken}`,
         { method: "POST" }
       );
       const subData = await subRes.json();
@@ -945,7 +965,7 @@ router.post("/channels/facebook/quick-connect", async (req, res) => {
     if (appSettings?.app_id && appSettings?.app_secret) {
       const { app_id, app_secret } = appSettings;
       try {
-        const exchangeUrl = `https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${app_id}&client_secret=${app_secret}&fb_exchange_token=${effectiveToken}`;
+        const exchangeUrl = `https://graph.facebook.com/${META_API_VERSION}/oauth/access_token?grant_type=fb_exchange_token&client_id=${app_id}&client_secret=${app_secret}&fb_exchange_token=${effectiveToken}`;
         const exRes = await fetch(exchangeUrl);
         const exData = await exRes.json();
         if (exData.access_token) {
@@ -959,7 +979,7 @@ router.post("/channels/facebook/quick-connect", async (req, res) => {
 
     // Fetch accounts
     const accRes = await fetch(
-      `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token,category&access_token=${effectiveToken}`
+      `https://graph.facebook.com/${META_API_VERSION}/me/accounts?fields=id,name,access_token,category&access_token=${effectiveToken}`
     );
     const accData = await accRes.json();
 
@@ -968,7 +988,7 @@ router.post("/channels/facebook/quick-connect", async (req, res) => {
     if (!pageList || !Array.isArray(pageList) || pageList.length === 0) {
       // If /me/accounts is empty, check if the token is already a direct Page Access Token
       const pageTestRes = await fetch(
-        `https://graph.facebook.com/v21.0/me?fields=id,name&access_token=${effectiveToken}`
+        `https://graph.facebook.com/${META_API_VERSION}/me?fields=id,name&access_token=${effectiveToken}`
       );
       const pageTestData = await pageTestRes.json();
       if (pageTestData.id && pageTestData.name) {
@@ -997,7 +1017,7 @@ router.post("/channels/facebook/quick-connect", async (req, res) => {
       // Subscribe to webhooks
       try {
         await fetch(
-          `https://graph.facebook.com/v21.0/${page.id}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,feed,messaging_customer_information,message_template_status_update&access_token=${page.access_token}`,
+          `https://graph.facebook.com/${META_API_VERSION}/${page.id}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,feed,messaging_customer_information,message_template_status_update&access_token=${page.access_token}`,
           { method: "POST" }
         );
       } catch (subErr) {}
@@ -1008,7 +1028,7 @@ router.post("/channels/facebook/quick-connect", async (req, res) => {
         [agencyId, page.id]
       );
 
-      const pagePic = `https://graph.facebook.com/v21.0/${page.id}/picture?type=large`;
+      const pagePic = `https://graph.facebook.com/${META_API_VERSION}/${page.id}/picture?type=large`;
       if (existing.length) {
         await pool.query(
           "UPDATE integrations SET name = ?, access_token = ?, user_access_token = ?, fb_page_name = ?, profile_picture_url = COALESCE(profile_picture_url, ?), is_active = 1 WHERE id = ?",
@@ -1046,7 +1066,7 @@ router.post("/channels/facebook/sync-subscriptions", async (req, res) => {
     for (const page of pages) {
       try {
         const subRes = await fetch(
-          `https://graph.facebook.com/v21.0/${page.fb_page_id}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,feed,messaging_customer_information,message_template_status_update&access_token=${page.access_token}`,
+          `https://graph.facebook.com/${META_API_VERSION}/${page.fb_page_id}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,feed,messaging_customer_information,message_template_status_update&access_token=${page.access_token}`,
           { method: "POST" }
         );
         const subData = await subRes.json();
@@ -1059,177 +1079,6 @@ router.post("/channels/facebook/sync-subscriptions", async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
-// ─── Utility Messaging: List Page Utility Templates ───────────────
-router.get("/channels/facebook/:integrationId/utility-templates", async (req, res) => {
-  const { integrationId } = req.params;
-  const agencyId = req.agencyId;
-
-  try {
-    // 1. Resolve the page access token for this integration
-    const [rows] = await pool.query(
-      "SELECT * FROM integrations WHERE id = ? AND platform = 'FACEBOOK' AND agency_id = ? LIMIT 1",
-      [integrationId, agencyId]
-    );
-
-    if (!rows.length) {
-      return res.status(404).json({ success: false, message: "Facebook page integration not found" });
-    }
-
-    const page = rows[0];
-    const pageToken = page.access_token;
-    const pageId = page.fb_page_id;
-
-    if (!pageToken || !pageId) {
-      return res.status(400).json({ success: false, message: "Page has no access token or page ID stored" });
-    }
-
-    // 2. Fetch utility message templates from Graph API
-    // Message templates require the Page Access Token and the pages_utility_messaging permission
-    const graphUrl = `https://graph.facebook.com/v21.0/${pageId}/message_templates?category=UTILITY&fields=name,status,language,components&access_token=${pageToken}`;
-    const graphRes = await fetch(graphUrl);
-    const graphData = await graphRes.json();
-
-    if (graphData.error) {
-      console.warn("[FB Utility Templates] Graph API error:", graphData.error);
-      // Return graceful empty list with the error message for the UI to display
-      return res.json({
-        success: true,
-        templates: [],
-        graphError: graphData.error.message || "Could not fetch templates from Meta",
-        note: "Ensure the connected page has pages_utility_messaging permission approved in your Meta App.",
-      });
-    }
-
-    return res.json({
-      success: true,
-      templates: graphData.data || [],
-      paging: graphData.paging || null,
-      pageId,
-      pageName: page.name,
-    });
-  } catch (err) {
-    console.error("[FB Utility Templates Error]", err);
-    return res.status(500).json({ success: false, message: "Server error fetching utility templates" });
-  }
-});
-
-// ─── Utility Messaging: Send a Utility Message to a PSID ──────────
-router.post("/channels/facebook/:integrationId/send-utility", async (req, res) => {
-  const { integrationId } = req.params;
-  const { recipientId, templateName, languageCode = "en_US", components = [] } = req.body;
-  const agencyId = req.agencyId;
-
-  if (!recipientId || !templateName) {
-    return res.status(400).json({
-      success: false,
-      message: "recipientId (Facebook PSID) and templateName are required",
-    });
-  }
-
-  try {
-    // 1. Resolve integration
-    const [rows] = await pool.query(
-      "SELECT * FROM integrations WHERE id = ? AND platform = 'FACEBOOK' AND agency_id = ? LIMIT 1",
-      [integrationId, agencyId]
-    );
-
-    if (!rows.length) {
-      return res.status(404).json({ success: false, message: "Facebook page integration not found" });
-    }
-
-    const page = rows[0];
-    const pageToken = page.access_token;
-    const pageId = page.fb_page_id;
-
-    if (!pageToken || !pageId) {
-      return res.status(400).json({ success: false, message: "Page has no access token or page ID stored" });
-    }
-
-    // 2. Send the utility template message via Messenger Send API
-    // Utility messages use message_type: "UTILITY" with template payload
-    const sendPayload = {
-      recipient: { id: recipientId },
-      message: {
-        attachment: {
-          type: "template",
-          payload: {
-            template_type: "one_time_notif_req",  // or generic template depending on setup
-            // For utility messaging the correct approach is using the text message with messaging_type UTILITY
-          },
-        },
-      },
-      messaging_type: "UTILITY",
-    };
-
-    // Utility messages are sent as structured template_type "generic" or as plain text UTILITY type
-    // Most utility messages are plain structured text outside the 24h window
-    const utilityPayload = {
-      recipient: { id: recipientId },
-      messaging_type: "UTILITY",
-      message: {
-        text: components.length > 0
-          ? components.map(c => c.text || '').join('\n')
-          : `Utility notification from ${page.name || page.fb_page_name}`,
-      },
-    };
-
-    // If template components were provided, use template attachment format
-    const finalPayload = templateName && components.length > 0 ? {
-      recipient: { id: recipientId },
-      messaging_type: "UTILITY",
-      message: {
-        attachment: {
-          type: "template",
-          payload: {
-            template_type: "generic",
-            elements: [
-              {
-                title: components.find(c => c.type === "HEADER")?.text || templateName,
-                subtitle: components.find(c => c.type === "BODY")?.text || "",
-                buttons: (components.find(c => c.type === "BUTTONS")?.buttons || []).map(b => ({
-                  type: "web_url",
-                  url: b.url || "#",
-                  title: b.text || "View",
-                })),
-              },
-            ],
-          },
-        },
-      },
-    } : utilityPayload;
-
-    const sendRes = await fetch(
-      `https://graph.facebook.com/v21.0/me/messages?access_token=${pageToken}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(finalPayload),
-      }
-    );
-    const sendData = await sendRes.json();
-
-    if (sendData.error) {
-      console.error("[FB Send Utility] Graph error:", sendData.error);
-      return res.status(400).json({
-        success: false,
-        message: sendData.error.message || "Failed to send utility message",
-        code: sendData.error.code,
-        fbError: sendData.error,
-      });
-    }
-
-    return res.json({
-      success: true,
-      message: "Utility message sent successfully",
-      messageId: sendData.message_id,
-      recipientId: sendData.recipient_id,
-    });
-  } catch (err) {
-    console.error("[FB Send Utility Error]", err);
-    return res.status(500).json({ success: false, message: "Server error sending utility message" });
   }
 });
 
@@ -1260,7 +1109,7 @@ router.post("/channels/facebook/import-pages", async (req, res) => {
     let effectiveUserToken = userAccessToken;
     if (appId && appSecret) {
       try {
-        const exchangeUrl = `https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${userAccessToken}`;
+        const exchangeUrl = `https://graph.facebook.com/${META_API_VERSION}/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${userAccessToken}`;
         const exRes = await fetch(exchangeUrl);
         const exData = await exRes.json();
         if (exData.access_token) {
@@ -1276,7 +1125,7 @@ router.post("/channels/facebook/import-pages", async (req, res) => {
     let accError = null;
     try {
       const response = await fetch(
-        `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token,category,picture{url}&access_token=${effectiveUserToken}`,
+        `https://graph.facebook.com/${META_API_VERSION}/me/accounts?fields=id,name,access_token,category,picture{url}&access_token=${effectiveUserToken}`,
         { signal: AbortSignal.timeout(7000) }
       );
       const data = await response.json();
@@ -1288,14 +1137,14 @@ router.post("/channels/facebook/import-pages", async (req, res) => {
         if (effectiveUserToken !== userAccessToken) {
           try {
             const rawRes = await fetch(
-              `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token,category,picture{url}&access_token=${userAccessToken}`,
+              `https://graph.facebook.com/${META_API_VERSION}/me/accounts?fields=id,name,access_token,category,picture{url}&access_token=${userAccessToken}`,
               { signal: AbortSignal.timeout(7000) }
             );
             const rawData = await rawRes.json();
             if (Array.isArray(rawData.data)) {
               for (const p of rawData.data) {
                 if (p.id) {
-                  p.profile_picture_url = p.picture?.data?.url || `https://graph.facebook.com/v21.0/${p.id}/picture?type=large`;
+                  p.profile_picture_url = p.picture?.data?.url || `https://graph.facebook.com/${META_API_VERSION}/${p.id}/picture?type=large`;
                   pageMap.set(p.id, p);
                 }
               }
@@ -1305,7 +1154,7 @@ router.post("/channels/facebook/import-pages", async (req, res) => {
       } else if (Array.isArray(data.data)) {
         for (const p of data.data) {
           if (p.id) {
-            p.profile_picture_url = p.picture?.data?.url || `https://graph.facebook.com/v21.0/${p.id}/picture?type=large`;
+            p.profile_picture_url = p.picture?.data?.url || `https://graph.facebook.com/${META_API_VERSION}/${p.id}/picture?type=large`;
             pageMap.set(p.id, p);
           }
         }
@@ -1339,14 +1188,14 @@ router.post("/channels/facebook/import-pages", async (req, res) => {
         if (!pageMap.has(targetId)) {
           try {
             const pRes = await fetch(
-              `https://graph.facebook.com/v21.0/${targetId}?fields=id,name,access_token,category,tasks,picture{url}&access_token=${userAccessToken}`,
+              `https://graph.facebook.com/${META_API_VERSION}/${targetId}?fields=id,name,access_token,category,tasks,picture{url}&access_token=${userAccessToken}`,
               { signal: AbortSignal.timeout(5000) }
             );
             const pData = await pRes.json();
             console.log(`[FB import-pages] fetched target_id ${targetId}:`, pData);
             // Must have category or access_token confirming it is a genuine Facebook Page
             if (pData.id && !pData.error && (pData.category || pData.access_token)) {
-              pData.profile_picture_url = pData.picture?.data?.url || `https://graph.facebook.com/v21.0/${pData.id}/picture?type=large`;
+              pData.profile_picture_url = pData.picture?.data?.url || `https://graph.facebook.com/${META_API_VERSION}/${pData.id}/picture?type=large`;
               pageMap.set(pData.id, pData);
             }
           } catch (pe) {
@@ -1361,7 +1210,7 @@ router.post("/channels/facebook/import-pages", async (req, res) => {
     // 3. Check /me/businesses for pages owned or managed via Business Manager
     try {
       const bizRes = await fetch(
-        `https://graph.facebook.com/v21.0/me/businesses?fields=id,name,owned_pages{id,name,access_token,category,picture{url}},client_pages{id,name,access_token,category,picture{url}}&access_token=${userAccessToken}`,
+        `https://graph.facebook.com/${META_API_VERSION}/me/businesses?fields=id,name,owned_pages{id,name,access_token,category,picture{url}},client_pages{id,name,access_token,category,picture{url}}&access_token=${userAccessToken}`,
         { signal: AbortSignal.timeout(7000) }
       );
       const bizData = await bizRes.json();
@@ -1372,7 +1221,7 @@ router.post("/channels/facebook/import-pages", async (req, res) => {
           const client = biz.client_pages?.data || [];
           [...owned, ...client].forEach(p => {
             if (p.id && !pageMap.has(p.id)) {
-              p.profile_picture_url = p.picture?.data?.url || `https://graph.facebook.com/v21.0/${p.id}/picture?type=large`;
+              p.profile_picture_url = p.picture?.data?.url || `https://graph.facebook.com/${META_API_VERSION}/${p.id}/picture?type=large`;
               pageMap.set(p.id, p);
             }
           });
@@ -1394,7 +1243,7 @@ router.post("/channels/facebook/import-pages", async (req, res) => {
       })
       .map(p => ({
         ...p,
-        profile_picture_url: p.profile_picture_url || (p.id ? `https://graph.facebook.com/v21.0/${p.id}/picture?type=large` : null),
+        profile_picture_url: p.profile_picture_url || (p.id ? `https://graph.facebook.com/${META_API_VERSION}/${p.id}/picture?type=large` : null),
       }));
 
     let warning = null;
@@ -1455,7 +1304,7 @@ router.get("/channels/instagram", async (req, res) => {
       if (acc.ig_account_id && acc.access_token) {
         try {
           const picRes = await fetch(
-            `https://graph.facebook.com/v21.0/${acc.ig_account_id}?fields=profile_picture_url&access_token=${acc.access_token}`,
+            `https://graph.facebook.com/${META_API_VERSION}/${acc.ig_account_id}?fields=profile_picture_url&access_token=${acc.access_token}`,
             { signal: AbortSignal.timeout(3000) }
           );
           const picData = await picRes.json();
@@ -1481,7 +1330,7 @@ router.post("/channels/instagram", async (req, res) => {
   if (!effectivePictureUrl && igAccountId && (pageAccessToken || accessToken)) {
     try {
       const picRes = await fetch(
-        `https://graph.facebook.com/v21.0/${igAccountId}?fields=profile_picture_url&access_token=${pageAccessToken || accessToken}`,
+        `https://graph.facebook.com/${META_API_VERSION}/${igAccountId}?fields=profile_picture_url&access_token=${pageAccessToken || accessToken}`,
         { signal: AbortSignal.timeout(3500) }
       );
       const picData = await picRes.json();
@@ -1519,7 +1368,7 @@ router.post("/channels/instagram", async (req, res) => {
     const tokenToUse = pageAccessToken || accessToken;
     if (pageId && tokenToUse) {
       try {
-        await fetch(`https://graph.facebook.com/v21.0/${pageId}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_reactions,message_reads,standby,comments,feed&access_token=${tokenToUse}`, {
+        await fetch(`https://graph.facebook.com/${META_API_VERSION}/${pageId}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_reactions,message_reads,standby,comments,feed&access_token=${tokenToUse}`, {
           method: 'POST',
         });
       } catch (subErr) {
@@ -1563,7 +1412,7 @@ router.post("/channels/instagram/quick-connect", async (req, res) => {
     if (appId && appSecret) {
       try {
         const exchangeRes = await fetch(
-          `https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${rawToken}`
+          `https://graph.facebook.com/${META_API_VERSION}/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${rawToken}`
         );
         const exchangeData = await exchangeRes.json();
         if (exchangeData.access_token) {
@@ -1578,7 +1427,7 @@ router.post("/channels/instagram/quick-connect", async (req, res) => {
     // 2. Direct /me check (if token is a Page Token with linked IG account)
     try {
       const meRes = await fetch(
-        `https://graph.facebook.com/v21.0/me?fields=id,name,access_token,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${effectiveToken}`
+        `https://graph.facebook.com/${META_API_VERSION}/me?fields=id,name,access_token,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${effectiveToken}`
       );
       const meData = await meRes.json();
       const ig = meData.instagram_business_account || meData.connected_instagram_account;
@@ -1596,7 +1445,7 @@ router.post("/channels/instagram/quick-connect", async (req, res) => {
     // 3. /me/accounts check (if token is a User Token managing multiple pages)
     try {
       const accRes = await fetch(
-        `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${effectiveToken}`
+        `https://graph.facebook.com/${META_API_VERSION}/me/accounts?fields=id,name,access_token,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${effectiveToken}`
       );
       const accData = await accRes.json();
       if (Array.isArray(accData.data)) {
@@ -1637,7 +1486,7 @@ router.post("/channels/instagram/quick-connect", async (req, res) => {
       if (acc.pageId && tokenToSave) {
         try {
           await fetch(
-            `https://graph.facebook.com/v21.0/${acc.pageId}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_reactions,message_reads,standby,comments,feed&access_token=${tokenToSave}`,
+            `https://graph.facebook.com/${META_API_VERSION}/${acc.pageId}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_reactions,message_reads,standby,comments,feed&access_token=${tokenToSave}`,
             { method: "POST" }
           );
         } catch (_) {}
@@ -1696,7 +1545,7 @@ router.post("/channels/instagram/sync-from-facebook", async (req, res) => {
       if (!pageToken) continue;
       try {
         const checkRes = await fetch(
-          `https://graph.facebook.com/v21.0/me?fields=id,name,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${pageToken}`
+          `https://graph.facebook.com/${META_API_VERSION}/me?fields=id,name,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${pageToken}`
         );
         const checkData = await checkRes.json();
         const ig = checkData.instagram_business_account || checkData.connected_instagram_account;
@@ -1720,7 +1569,7 @@ router.post("/channels/instagram/sync-from-facebook", async (req, res) => {
           // Subscribe Page to Instagram webhooks
           try {
             await fetch(
-              `https://graph.facebook.com/v21.0/${fb.fb_page_id || checkData.id}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_reactions,message_reads,standby,comments,feed&access_token=${pageToken}`,
+              `https://graph.facebook.com/${META_API_VERSION}/${fb.fb_page_id || checkData.id}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,messaging_optins,message_reactions,message_reads,standby,comments,feed&access_token=${pageToken}`,
               { method: "POST" }
             );
           } catch (_) {}
@@ -2203,8 +2052,9 @@ router.post("/channels/webchat", async (req, res) => {
         logo_url, display_name, header_bg_color, header_text_color,
         greeting_message, placeholder_text, prefill_message, allowed_domains,
         position, open_on_startup, offset_x, offset_y,
-        button_text, button_bg_color, button_text_color, button_size
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        button_text, button_bg_color, button_text_color, button_size,
+        home_title, home_subtitle, reply_time_text, start_conversation_text, chatbot_cards
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         req.agencyId, isDeepLink ? "DEEPLINK" : "WEBCHAT", targetPlatform, targetIntegrationId,
         flowId || null, name, widgetKey,
@@ -2214,6 +2064,10 @@ router.post("/channels/webchat", async (req, res) => {
         placeholderText || "Type a message…", prefillMessage || null, allowedDomains || null,
         position || "BOTTOM_RIGHT", openOnStartup ? 1 : 0, offsetX ?? 20, offsetY ?? 20,
         buttonText || (isDeepLink ? "Chat with us" : "Chat with us"), buttonBgColor || primaryColor || "#6366f1", buttonTextColor || "#ffffff", buttonSize || "MEDIUM",
+        req.body.homeTitle || "Welcome!", req.body.homeSubtitle || "How can we help?",
+        req.body.replyTimeText || "We typically reply within a few minutes",
+        req.body.startConversationText || "Start a conversation",
+        req.body.chatbotCards ? JSON.stringify(req.body.chatbotCards) : null,
       ]
     );
     return res.status(201).json({ success: true, message: "Widget created", widgetKey, id: result.insertId, integrationId: targetIntegrationId });
@@ -2226,6 +2080,7 @@ router.put("/channels/webchat/:id", async (req, res) => {
     flowId, logoUrl, displayName, headerBgColor, headerTextColor, prefillMessage,
     position, openOnStartup, offsetX, offsetY, buttonText, buttonBgColor, buttonTextColor, buttonSize,
     integrationId, // re-target which connected account this widget links to
+    homeTitle, homeSubtitle, replyTimeText, startConversationText, chatbotCards,
   } = req.body;
   try {
     let newIntegrationId = integrationId || null;
@@ -2244,6 +2099,7 @@ router.put("/channels/webchat/:id", async (req, res) => {
     // call (e.g. the Flow Builder panel saving only appearance fields, or
     // the list page's Rename saving only `name`) never blanks out the rest —
     // same convention as routes/comments.js's campaign UPDATE.
+    const cardsJson = chatbotCards !== undefined ? (chatbotCards ? JSON.stringify(chatbotCards) : null) : undefined;
     await pool.query(
       `UPDATE webchat_widgets SET
         name = COALESCE(?, name),
@@ -2266,7 +2122,12 @@ router.put("/channels/webchat/:id", async (req, res) => {
         button_bg_color = COALESCE(?, button_bg_color),
         button_text_color = COALESCE(?, button_text_color),
         button_size = COALESCE(?, button_size),
-        integration_id = COALESCE(?, integration_id)
+        integration_id = COALESCE(?, integration_id),
+        home_title = COALESCE(?, home_title),
+        home_subtitle = COALESCE(?, home_subtitle),
+        reply_time_text = COALESCE(?, reply_time_text),
+        start_conversation_text = COALESCE(?, start_conversation_text),
+        chatbot_cards = COALESCE(?, chatbot_cards)
        WHERE id=? AND agency_id=?`,
       [
         name, primaryColor, greetingMessage, placeholderText, allowedDomains,
@@ -2274,6 +2135,7 @@ router.put("/channels/webchat/:id", async (req, res) => {
         flowId, logoUrl, displayName, headerBgColor, headerTextColor, prefillMessage,
         position, openOnStartup === undefined ? null : (openOnStartup ? 1 : 0), offsetX, offsetY,
         buttonText, buttonBgColor, buttonTextColor, buttonSize, newIntegrationId,
+        homeTitle, homeSubtitle, replyTimeText, startConversationText, cardsJson,
         req.params.id, req.agencyId,
       ]
     );

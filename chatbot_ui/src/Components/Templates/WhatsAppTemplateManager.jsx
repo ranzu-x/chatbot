@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import Swal from 'sweetalert2';
+import { alert } from '../../lib/alerts';
 import { templateAPI } from '../../services/api';
+import StoreTemplatePresets from './StoreTemplatePresets';
 import {
   Sparkles,
   RefreshCw,
@@ -134,6 +135,7 @@ export default function WhatsAppTemplateManager({ selectedAccount, showToast }) 
 
   // Modals & Selector
   const [showTypeMenu, setShowTypeMenu] = useState(false);
+  const [showStorePresets, setShowStorePresets] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showCarouselModal, setShowCarouselModal] = useState(false);
   const [previewTemplate, setPreviewTemplate] = useState(null);
@@ -226,7 +228,7 @@ export default function WhatsAppTemplateManager({ selectedAccount, showToast }) 
 
   /* ─── Delete Template ─── */
   const handleDelete = async (tpl) => {
-    if (!window.confirm(`Are you sure you want to delete template "${tpl.template_name}"? This will delete it from Meta as well.`)) return;
+    if (!(await alert.ask(`Are you sure you want to delete template "${tpl.template_name}"? This will delete it from Meta as well.`))) return;
     try {
       await templateAPI.deleteWATemplate(tpl.id);
       if (showToast) showToast(`Template "${tpl.template_name}" deleted`);
@@ -340,6 +342,7 @@ export default function WhatsAppTemplateManager({ selectedAccount, showToast }) 
     switch (type) {
       case 'URL':          return countByType('URL') < 2;
       case 'PHONE_NUMBER': return countByType('PHONE_NUMBER') < 1;
+      case 'VOICE_CALL':   return countByType('VOICE_CALL') < 1;
       case 'COPY_CODE':    return countByType('COPY_CODE') < 1;
       case 'QUICK_REPLY':  return countByType('QUICK_REPLY') < 10;
       default:             return true;
@@ -351,6 +354,7 @@ export default function WhatsAppTemplateManager({ selectedAccount, showToast }) 
     switch (type) {
       case 'URL':          return 'Maximum 2 Website URL buttons per template';
       case 'PHONE_NUMBER': return 'Maximum 1 Phone Call button per template';
+      case 'VOICE_CALL':   return 'Maximum 1 WhatsApp Call button per template';
       case 'COPY_CODE':    return 'Maximum 1 Copy Code button per template';
       default:             return null;
     }
@@ -368,6 +372,7 @@ export default function WhatsAppTemplateManager({ selectedAccount, showToast }) 
       type,
       text: type === 'QUICK_REPLY' ? 'Quick Reply'
           : type === 'PHONE_NUMBER' ? 'Call Us'
+          : type === 'VOICE_CALL'   ? 'Call on WhatsApp'
           : type === 'URL'          ? 'Visit Website'
           : type === 'COPY_CODE'    ? 'Copy Code'
           : 'Button',
@@ -494,12 +499,10 @@ export default function WhatsAppTemplateManager({ selectedAccount, showToast }) 
     // Client-side validation: Duplicate button labels check (Meta rule)
     const buttonTexts = buttons.map((b) => (b.text || '').trim().toLowerCase()).filter(Boolean);
     if (new Set(buttonTexts).size !== buttonTexts.length) {
-      Swal.fire({
-        icon: 'error',
+      alert.error({
         title: "Duplicate Button Text",
         text: "You can't enter the same text for multiple buttons. Each button in your template must have a unique label.",
-        confirmButtonColor: '#ef4444',
-        confirmButtonText: 'OK, I will change it',
+        confirm: 'OK, I will change it',
       });
       return;
     }
@@ -560,12 +563,10 @@ export default function WhatsAppTemplateManager({ selectedAccount, showToast }) 
       const title = metaErr?.error_user_title || 'Template Submission Failed';
       const msg = metaErr?.error_user_msg || metaErr?.message || errData?.message || err.message || 'Failed to create WhatsApp template';
 
-      Swal.fire({
-        icon: 'error',
+      alert.error({
         title: title,
         text: msg,
-        confirmButtonColor: '#ef4444',
-        confirmButtonText: 'OK, I will fix it',
+        confirm: 'OK, I will fix it',
       });
     } finally {
       setSaving(false);
@@ -593,12 +594,10 @@ export default function WhatsAppTemplateManager({ selectedAccount, showToast }) 
       const card = carouselCards[i];
       const cardBtnTexts = (card.buttons || []).map((b) => (b.text || '').trim().toLowerCase()).filter(Boolean);
       if (new Set(cardBtnTexts).size !== cardBtnTexts.length) {
-        Swal.fire({
-          icon: 'error',
+        alert.error({
           title: "Duplicate Button Text",
           text: `Card ${i + 1} has duplicate button text. You can't enter the same text for multiple buttons on the same card.`,
-          confirmButtonColor: '#ef4444',
-          confirmButtonText: 'OK, I will fix it',
+          confirm: 'OK, I will fix it',
         });
         return;
       }
@@ -645,12 +644,10 @@ export default function WhatsAppTemplateManager({ selectedAccount, showToast }) 
       const title = metaErr?.error_user_title || 'Carousel Template Submission Failed';
       const msg = metaErr?.error_user_msg || metaErr?.message || errData?.message || err.message || 'Failed to create carousel template';
 
-      Swal.fire({
-        icon: 'error',
+      alert.error({
         title: title,
         text: msg,
-        confirmButtonColor: '#ef4444',
-        confirmButtonText: 'OK, I will fix it',
+        confirm: 'OK, I will fix it',
       });
     } finally {
       setSaving(false);
@@ -714,7 +711,29 @@ export default function WhatsAppTemplateManager({ selectedAccount, showToast }) 
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, position: 'relative' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, position: 'relative', flexWrap: 'wrap' }}>
+          {/* Ready-made store-automation templates, one click each (StoreTemplatePresets.jsx) */}
+          <button
+            type="button"
+            onClick={() => setShowStorePresets(true)}
+            disabled={!selectedAccount?.id || selectedAccount.id === 'all'}
+            title={(!selectedAccount?.id || selectedAccount.id === 'all') ? 'Select a WhatsApp account first' : 'Order, COD, abandoned-cart and shipping templates in one click'}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '8px 14px',
+              borderRadius: 8,
+              border: '1px solid #cbd5e1',
+              background: '#ffffff',
+              color: '#334155',
+              fontWeight: 700,
+              fontSize: '0.82rem',
+              cursor: (!selectedAccount?.id || selectedAccount.id === 'all') ? 'not-allowed' : 'pointer',
+            }}
+          >
+            <ShoppingBag size={14} /> Store templates
+          </button>
           <button
             onClick={handleSyncFromMeta}
             disabled={syncing}
@@ -1524,6 +1543,27 @@ export default function WhatsAppTemplateManager({ selectedAccount, showToast }) 
                         );
                       })()}
 
+                      {form.category !== 'AUTHENTICATION' && (() => {
+                        const disabled = !canAddButton('VOICE_CALL');
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => addButton('VOICE_CALL')}
+                            disabled={disabled}
+                            title="Starts a WhatsApp voice call to this number (WhatsApp Calling must be on — Bot Manager → WhatsApp Calling)"
+                            style={{
+                              padding: '3px 8px', borderRadius: 6, fontSize: '0.72rem', fontWeight: 700, cursor: disabled ? 'not-allowed' : 'pointer',
+                              background: disabled ? '#f1f5f9' : '#fff',
+                              border: `1px solid ${disabled ? '#e2e8f0' : '#cbd5e1'}`,
+                              color: disabled ? '#94a3b8' : '#334155',
+                              opacity: disabled ? 0.7 : 1,
+                            }}
+                          >
+                            + WhatsApp Call {countByType('VOICE_CALL') > 0 ? '✓' : '(max 1)'}
+                          </button>
+                        );
+                      })()}
+
                       {form.category === 'AUTHENTICATION' && (() => {
                         const disabled = !canAddButton('COPY_CODE');
                         return (
@@ -1576,12 +1616,13 @@ export default function WhatsAppTemplateManager({ selectedAccount, showToast }) 
                         const isURL = b.type === 'URL';
                         const isPhone = b.type === 'PHONE_NUMBER';
                         const isCode = b.type === 'COPY_CODE';
+                        const isVoice = b.type === 'VOICE_CALL';
 
                         const badgeStyle = isQR
                           ? { background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0' }
                           : isURL
                           ? { background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe' }
-                          : isPhone
+                          : isPhone || isVoice
                           ? { background: '#f5f3ff', color: '#7c3aed', border: '1px solid #ddd6fe' }
                           : { background: '#fffbeb', color: '#d97706', border: '1px solid #fde68a' };
 
@@ -1589,7 +1630,7 @@ export default function WhatsAppTemplateManager({ selectedAccount, showToast }) 
                           <div key={b.id} style={{ background: '#fff', padding: '8px 10px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
                             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                               <span style={{ fontSize: '0.68rem', fontWeight: 800, padding: '2px 7px', borderRadius: 4, flexShrink: 0, ...badgeStyle }}>
-                                {isQR ? '↩ Quick Reply' : isURL ? '🌐 URL' : isPhone ? '📞 Phone' : '🔐 Copy Code'}
+                                {isQR ? '↩ Quick Reply' : isURL ? '🌐 URL' : isPhone ? '📞 Phone' : isVoice ? '📞 WhatsApp Call' : isCode ? '🔐 Copy Code' : b.type}
                               </span>
 
                               <input
@@ -1751,7 +1792,7 @@ export default function WhatsAppTemplateManager({ selectedAccount, showToast }) 
                 }}
               >
                 <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Eye size={14} color="#0284c7" /> Live iPhone 17 Preview
+                  <Eye size={14} color="#0284c7" /> Live Preview
                 </div>
 
                 {/* iPhone 17 Body with Metallic Side Buttons */}
@@ -2923,6 +2964,10 @@ export default function WhatsAppTemplateManager({ selectedAccount, showToast }) 
             </div>
           </div>
         </div>
+      )}
+
+      {showStorePresets && selectedAccount?.id && selectedAccount.id !== 'all' && (
+        <StoreTemplatePresets integrationId={selectedAccount.id} onClose={() => setShowStorePresets(false)} onCreated={loadTemplates} />
       )}
     </div>
   );

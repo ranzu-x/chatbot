@@ -2,8 +2,10 @@ import pool from "../db.js";
 import axios from "axios";
 import { getPublicBackendUrl, resolvePublicImageUrl } from "./platformSender.js";
 import { pruneSocialPostHistory } from "./socialPostHistory.js";
+import { META_API_VERSION } from "./metaApi.js";
+import { isWorkspaceExpired } from "./subscriptionStatus.js";
+import { lockedJob } from "./jobLock.js";
 
-const META_API_VERSION = "v21.0";
 
 // ─── HELPER: PUBLISH TO FACEBOOK PAGE ──────────────────────────────────────────
 async function publishToFacebook({ pageId, pageToken, userToken, postType, message, mediaUrls = [], linkUrl }) {
@@ -170,6 +172,11 @@ export async function processScheduledSocialPosts() {
     console.log(`[SocialScheduler] Processing ${posts.length} scheduled post(s)...`);
 
     for (const post of posts) {
+      // Expired plan → the post waits (checked again in 15 min) until the plan is renewed.
+      if (await isWorkspaceExpired(post.agency_id)) {
+        await pool.query("UPDATE social_posts SET scheduled_at = NOW() + INTERVAL 15 MINUTE WHERE id = ? AND status = 'SCHEDULED'", [post.id]);
+        continue;
+      }
       // Atomic optimistic lock: set scheduled_at = NULL so concurrent runs skip this post.
       // Only proceeds if the row still has status='SCHEDULED' (no other worker grabbed it).
       const [updated] = await pool.query(
@@ -253,7 +260,7 @@ export async function processScheduledSocialPosts() {
 export function startSocialPostScheduler() {
   console.log("📅 Social Post Scheduler started (runs every 60 seconds)");
   // Run once immediately on startup to catch posts due while server was offline
-  processScheduledSocialPosts();
+  lockedJob("social-posts", processScheduledSocialPosts)();
   // Then run every minute
-  setInterval(processScheduledSocialPosts, 60 * 1000);
+  setInterval(lockedJob("social-posts", processScheduledSocialPosts), 60 * 1000);
 }

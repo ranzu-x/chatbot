@@ -111,8 +111,17 @@ function safeJsonParse(str) {
 export function createOpenAICompatibleAdapter({ baseUrl, providerId, capabilities }) {
   const supports = (cap) => capabilities.includes(cap);
 
-  async function generate({ apiKey, model, messages, tools, maxTokens }) {
+  async function generate({ apiKey, model, messages, tools, maxTokens, onDelta }) {
     const { url, headers, body } = buildGenerateRequest({ baseUrl, apiKey, model, messages, tools, maxTokens });
+    // Streaming only for plain-text turns (tool calls stay on the proven non-streamed path).
+    if (typeof onDelta === "function" && !body.tools) {
+      try {
+        return await streamChatCompletion(url, body, headers, providerId, onDelta);
+      } catch (err) {
+        if (err instanceof ProviderCallError) throw err;
+        console.warn(`[${providerId}] streaming failed, retrying without it:`, err.message);
+      }
+    }
     const res = await callWithTimeout(url, body, headers, providerId);
     return parseGenerateResponse(res.data);
   }
@@ -156,6 +165,66 @@ export function createOpenAICompatibleAdapter({ baseUrl, providerId, capabilitie
   }
 
   return { generate, embed, transcribe, uploadAndWaitForFile };
+}
+
+/**
+ * Chat Completions with `stream: true` (server-sent events). Calls
+ * onDelta(textSoFar) as text arrives and resolves to the same shape as
+ * parseGenerateResponse. Provider HTTP errors surface as ProviderCallError.
+ */
+async function streamChatCompletion(url, body, headers, providerId, onDelta) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS * 3);
+  try {
+    let res;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ ...body, stream: true, stream_options: { include_usage: true } }),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      throw new ProviderCallError(providerId, err.name === "AbortError" ? "Request timed out" : err.message, { cause: err });
+    }
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try {
+        const data = await res.json();
+        msg = data?.error?.message || data?.message || msg;
+      } catch { /* not JSON */ }
+      throw new ProviderCallError(providerId, msg, { status: res.status });
+    }
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let text = "";
+    let usage = null;
+    for await (const chunk of res.body) {
+      buffer += decoder.decode(chunk, { stream: true });
+      let nl;
+      while ((nl = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (payload === "[DONE]") continue;
+        const evt = safeJsonParse(payload);
+        const piece = evt?.choices?.[0]?.delta?.content;
+        if (piece) {
+          text += piece;
+          try { onDelta(text); } catch { /* a draft preview never breaks the reply */ }
+        }
+        if (evt?.usage) usage = evt.usage;
+      }
+    }
+    return {
+      text,
+      toolCalls: [],
+      usage: { inputTokens: usage?.prompt_tokens ?? null, outputTokens: usage?.completion_tokens ?? null },
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function callWithTimeout(url, body, headers, providerId) {

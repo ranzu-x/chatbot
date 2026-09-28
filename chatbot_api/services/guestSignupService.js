@@ -6,6 +6,7 @@
  * routes/billing.js's guest-checkout success/fail/cancel endpoints).
  */
 import pool from "../db.js";
+import { recordCouponRedemption } from "../utils/checkoutPricing.js";
 import { createAccount } from "../utils/accountProvisioning.js";
 import { assignPackageLocally } from "./stripeService.js";
 import { sendWelcomeEmail } from "../utils/emailNotifications.js";
@@ -55,10 +56,13 @@ export async function consumePendingSignup(referenceToken, gatewayTxnId, amountP
   const finalAmountPaid = amountPaid ?? row.amount;
   const invoiceCountry = await resolveInvoiceCountry({ gatewayCountry, agencyId, userId });
   const [invoiceResult] = await pool.query(
-    `INSERT INTO invoices (agency_id, package_id, provider, gateway_txn_id, amount_paid, currency, country, status, paid_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'PAID', NOW())`,
-    [agencyId, row.package_id, row.provider, gatewayTxnId, finalAmountPaid, row.currency, invoiceCountry]
+    `INSERT INTO invoices (agency_id, package_id, provider, gateway_txn_id, amount_paid, currency, country, status, discount_amount, coupon_id, paid_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'PAID', ?, ?, NOW())`,
+    [agencyId, row.package_id, row.provider, gatewayTxnId, finalAmountPaid, row.currency, invoiceCountry, row.discount_amount || 0, row.coupon_id || null]
   );
+  await recordCouponRedemption({
+    couponId: row.coupon_id, agencyId, email: row.email, invoiceId: invoiceResult.insertId, discountAmount: row.discount_amount,
+  });
   await recordCommissionForInvoice({
     agencyId,
     invoiceId: invoiceResult.insertId,

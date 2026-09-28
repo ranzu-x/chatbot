@@ -1,4 +1,5 @@
 import pool from "../db.js";
+import { defaultPackageForAccountType } from "./signupPackage.js";
 import { getSocialPostUsageThisMonth } from "./socialPostHistory.js";
 
 // ─── USAGE HELPERS (shared by every entitlement-resolution path) ────────────
@@ -300,10 +301,15 @@ export async function getAgencyEntitlements(agencyId, userId = null) {
     }
 
     if (!pkg) {
-      const [defaultPkgRows] = await pool.query(
-        "SELECT * FROM packages WHERE is_active = 1 ORDER BY is_default DESC, id ASC LIMIT 1"
-      );
-      if (defaultPkgRows.length) pkg = defaultPkgRows[0];
+      // Nothing assigned: the default package of this workspace's type (End
+      // User → the basic plan, Reseller → the default agency plan). This used
+      // to be "the first active package" — Agency Enterprise (Unlimited).
+      let accountType = null;
+      if (agencyId) {
+        const [[a]] = await pool.query("SELECT account_type FROM agencies WHERE id = ?", [agencyId]);
+        accountType = a?.account_type || null;
+      }
+      pkg = await defaultPackageForAccountType(accountType);
     }
 
     if (!pkg) {
@@ -400,7 +406,7 @@ function getFallbackUnlimitedEntitlements() {
       "feature_whatsapp_embedded_signup", "feature_whatsapp_carousel", "feature_whatsapp_click_ads", "feature_whatsapp_catalog",
       "feature_whatsapp_about_brand", "feature_telegram_group_manager", "feature_google_contacts",
       "feature_google_connect_account", "feature_google_calendar", "feature_team_members", "feature_data_retention",
-      "feature_ai_assistant"
+      "feature_ai_assistant", "feature_messenger_utility"
     ],
     modulesMap: {},
   };

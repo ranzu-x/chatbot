@@ -21,15 +21,17 @@ const REF_KEYS = {
   sequenceId: "sequences",
   userInputFlowId: "user_input_flows",
   flowId: "flows",
+  // Messenger Utility Template element — a template belongs to one Page.
+  messengerTemplateId: "messenger_utility_templates",
 };
 // Display-name snapshots stored next to those ids
-const REF_NAME_KEYS = ["sequenceName", "userInputFlowName", "flowName"];
+const REF_NAME_KEYS = ["sequenceName", "userInputFlowName", "flowName", "messengerTemplateName"];
 
 const asId = (v) => (v !== null && v !== undefined && /^\d+$/.test(String(v)) ? Number(v) : null);
 
 /** Every {table -> Set(ids)} a flow's nodes point at (deep: buttons, list items, actions, Message Block elements...). */
 export function collectComponentRefs(nodes) {
-  const refs = { sequences: new Set(), user_input_flows: new Set(), flows: new Set() };
+  const refs = Object.fromEntries(Object.values(REF_KEYS).map((t) => [t, new Set()]));
   const walk = (v) => {
     if (Array.isArray(v)) { v.forEach(walk); return; }
     if (!v || typeof v !== "object") return;
@@ -113,7 +115,7 @@ export async function findOutOfScopeRefs({ agencyId, integrationId, nodes }) {
   return bad;
 }
 
-const TABLE_LABEL = { sequences: "Sequence", user_input_flows: "User Input Flow", flows: "Flow" };
+const TABLE_LABEL = { sequences: "Sequence", user_input_flows: "User Input Flow", flows: "Flow", messenger_utility_templates: "Utility Template" };
 const REASON_TEXT = {
   other_bot: (v) => `belongs to a different bot account${v.botName ? ` ("${v.botName}")` : ""}`,
   no_bot: () => "isn't linked to any bot account",

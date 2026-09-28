@@ -17,7 +17,8 @@ import TextAlign from '@tiptap/extension-text-align';
 import Placeholder from '@tiptap/extension-placeholder';
 import CharacterCount from '@tiptap/extension-character-count';
 import { useCallback, useRef } from 'react';
-import { blogAPI } from '../../services/api';
+import { blogAPI, assetUrl } from '../../services/api';
+import { alert, toast } from '../../lib/alerts';
 
 // ─── Toolbar Button ────────────────────────────────────────────────────────────
 function TBtn({ onClick, active, title, children, disabled }) {
@@ -57,7 +58,8 @@ function TDivider() {
 }
 
 // ─── Main Editor ───────────────────────────────────────────────────────────────
-export default function TipTapEditor({ content, onChange, placeholder = 'Start writing your blog post…' }) {
+// `uploadImage(formData)` → { data: { url } }; defaults to the blog's upload endpoint (Documentation passes its own).
+export default function TipTapEditor({ content, onChange, placeholder = 'Start writing your blog post…', uploadImage = blogAPI.uploadImage }) {
   const imageInputRef = useRef(null);
 
   const editor = useEditor({
@@ -79,18 +81,18 @@ export default function TipTapEditor({ content, onChange, placeholder = 'Start w
     onUpdate: ({ editor }) => onChange?.(editor.getHTML()),
   });
 
-  const setLink = useCallback(() => {
+  const setLink = useCallback(async () => {
     if (!editor) return;
     const prev = editor.getAttributes('link').href;
-    const url = window.prompt('Enter URL:', prev || 'https://');
+    const url = await alert.prompt({ title: 'Link', label: 'URL', value: prev || 'https://', placeholder: 'https://', confirm: 'Apply', text: 'Leave it empty to remove the link.' });
     if (url === null) return;
     if (url === '') { editor.chain().focus().extendMarkToUrl().unsetLink().run(); return; }
     editor.chain().focus().setLink({ href: url, target: '_blank' }).run();
   }, [editor]);
 
-  const addYoutube = useCallback(() => {
+  const addYoutube = useCallback(async () => {
     if (!editor) return;
-    const url = window.prompt('Enter YouTube URL:');
+    const url = await alert.prompt({ title: 'Embed a YouTube video', label: 'YouTube URL', placeholder: 'https://www.youtube.com/watch?v=…', required: true, confirm: 'Embed' });
     if (url) editor.chain().focus().setYoutubeVideo({ src: url }).run();
   }, [editor]);
 
@@ -99,14 +101,15 @@ export default function TipTapEditor({ content, onChange, placeholder = 'Start w
     const formData = new FormData();
     formData.append('image', file);
     try {
-      const res = await blogAPI.uploadImage(formData);
-      const url = `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}${res.data.url}`;
+      const res = await uploadImage(formData);
+      // /uploads/... is served by the API host itself, not under /api/v1.
+      const url = assetUrl(res.data.url);
       editor.chain().focus().setImage({ src: url }).run();
     } catch (err) {
-      alert('Image upload failed. Please try again.');
+      toast.error('Image upload failed. Please try again.');
       console.error('Blog image upload error:', err);
     }
-  }, [editor]);
+  }, [editor, uploadImage]);
 
   if (!editor) return null;
 

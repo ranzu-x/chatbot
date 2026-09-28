@@ -3,8 +3,10 @@ import { useNavigate, useLocation, Link, Navigate } from "react-router";
 import { MessagesSquare, Loader2, Bug, Lightbulb, Megaphone } from "lucide-react";
 import { useForumAuth } from "../context/ForumAuthContext";
 
+const factorOf = (v) => (/[a-z-]/i.test(v) ? { backupCode: v.trim() } : { code: v.replace(/\s+/g, "") });
+
 export default function ForumLoginPage() {
-  const { user, login } = useForumAuth();
+  const { user, login, completeTwoFactor } = useForumAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const from = location.state?.from || "/forum";
@@ -12,6 +14,8 @@ export default function ForumLoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [challenge, setChallenge] = useState(null); // two-factor login on
+  const [code, setCode] = useState("");
 
   if (user) return <Navigate to={from} replace />;
 
@@ -20,10 +24,16 @@ export default function ForumLoginPage() {
     setError("");
     setBusy(true);
     try {
-      await login(email, password);
+      if (challenge) {
+        await completeTwoFactor(challenge, factorOf(code));
+      } else {
+        const result = await login(email, password);
+        if (result?.twoFactorRequired) { setChallenge(result.challengeToken); return; }
+      }
       navigate(from, { replace: true });
     } catch (err) {
-      setError(err?.response?.data?.message || "Invalid email or password.");
+      if (err?.response?.data?.code === "CHALLENGE_EXPIRED") { setChallenge(null); setCode(""); }
+      setError(err?.response?.data?.message || (challenge ? "That code is not right." : "Invalid email or password."));
     } finally {
       setBusy(false);
     }
@@ -56,6 +66,12 @@ export default function ForumLoginPage() {
           {error && <div className="fm-banner fm-banner-danger">{error}</div>}
 
           <form onSubmit={submit}>
+            {challenge ? (
+              <div className="fm-field">
+                <label className="fm-label" htmlFor="fm-code">Two-factor code</label>
+                <input id="fm-code" className="fm-input" value={code} onChange={(e) => setCode(e.target.value)} placeholder="6-digit code, or a backup code" autoComplete="one-time-code" required autoFocus />
+              </div>
+            ) : (<>
             <div className="fm-field">
               <label className="fm-label" htmlFor="fm-email">Email</label>
               <input id="fm-email" className="fm-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
@@ -64,8 +80,9 @@ export default function ForumLoginPage() {
               <label className="fm-label" htmlFor="fm-password">Password</label>
               <input id="fm-password" className="fm-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
             </div>
+            </>)}
             <button type="submit" className="fm-btn fm-btn-primary fm-btn-block" style={{ padding: 12 }} disabled={busy}>
-              {busy ? <Loader2 size={16} style={{ animation: "fm-spin 0.7s linear infinite" }} /> : "Sign in"}
+              {busy ? <Loader2 size={16} style={{ animation: "fm-spin 0.7s linear infinite" }} /> : challenge ? "Verify" : "Sign in"}
             </button>
           </form>
 

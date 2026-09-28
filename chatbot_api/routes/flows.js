@@ -4,6 +4,7 @@ import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { requireModule } from "../utils/entitlements.js";
 import { findOutOfScopeRefs, describeOutOfScope, violationsForClient, stripComponentRefs, getOwnedIntegration } from "../utils/botScope.js";
+import { findDeadEndOptions } from "../utils/flowDeadEnds.js";
 
 const router = express.Router();
 router.use("/flows", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_bot_manager"));
@@ -11,7 +12,7 @@ router.use("/flows", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER")
 // ── LIST ──────────────────────────────────────────────────────────
 router.get("/flows", async (req, res) => {
   try {
-    const { integrationId } = req.query;
+    const { integrationId, includeQuickActions } = req.query;
     let sql = `
       SELECT f.*, b.name AS botName,
              i.name AS integration_name, i.fb_page_name, i.wa_phone_number_id, i.ig_username,
@@ -28,6 +29,9 @@ router.get("/flows", async (req, res) => {
       sql += " AND f.integration_id = ?";
       params.push(integrationId);
     }
+    // Quick Action reply flows (utils/quickActions.js) live on the Quick Actions tab,
+    // not in flow lists or "go to flow" pickers.
+    if (includeQuickActions !== "1") sql += " AND f.trigger_type <> 'QUICK_ACTION'";
     sql += " ORDER BY f.updated_at DESC";
     const [rows] = await pool.query(sql, params);
     return res.json({ success: true, flows: rows });
@@ -124,8 +128,13 @@ router.put("/flows/:id", async (req, res) => {
   const edgesStr = typeof edges === "string" ? edges : JSON.stringify(edges || []);
 
   try {
-    const [[existing]] = await pool.query("SELECT id, integration_id FROM flows WHERE id=? AND agency_id=?", [req.params.id, req.user.agencyId]);
+    const [[existing]] = await pool.query("SELECT id, integration_id, trigger_type, trigger_keyword FROM flows WHERE id=? AND agency_id=?", [req.params.id, req.user.agencyId]);
     if (!existing) return res.status(404).json({ success: false, message: "Flow not found" });
+    // A Quick Action's reply flow stays one: its trigger and bot account never change.
+    const isQuickAction = existing.trigger_type === "QUICK_ACTION";
+    if (isQuickAction && integrationId && String(integrationId) !== String(existing.integration_id)) {
+      return res.status(400).json({ success: false, code: "QUICK_ACTION_FLOW", message: "A Quick Action reply stays on its own bot account." });
+    }
 
     // A save that doesn't mention the bot account keeps the current one (it used to
     // silently null it). A bot account can only be one of this workspace's.
@@ -137,10 +146,22 @@ router.put("/flows/:id", async (req, res) => {
     if (badRefs.length) {
       return res.status(403).json({ success: false, code: "BOT_SCOPE_VIOLATION", message: describeOutOfScope(badRefs, effectiveIntegrationId || null), violations: violationsForClient(badRefs) });
     }
+    // A button / quick reply / list item that leads nowhere can't be saved (utils/flowDeadEnds.js).
+    const deadEnds = findDeadEndOptions(safeParse(nodesStr), safeParse(edgesStr));
+    if (deadEnds.length) {
+      return res.status(400).json({
+        success: false,
+        code: "DEAD_END_BUTTONS",
+        message: `${deadEnds[0].message} — connect it to a next step, or choose what it should do.${deadEnds.length > 1 ? ` (${deadEnds.length - 1} more)` : ""}`,
+        violations: deadEnds.map((d) => ({ nodeId: d.nodeId, itemId: d.itemId, message: d.message })),
+      });
+    }
     await pool.query(
       `UPDATE flows SET name=?, platform=COALESCE(?, platform), integration_id=?, trigger_keyword=?, trigger_type=COALESCE(?, trigger_type), bot_id=?,
        nodes_json=?, edges_json=?, is_active=COALESCE(?, is_active) WHERE id=? AND agency_id=?`,
-      [name, platform || null, effectiveIntegrationId || null, triggerKeyword, triggerType, botId,
+      [name, platform || null, effectiveIntegrationId || null,
+        isQuickAction ? existing.trigger_keyword : triggerKeyword,
+        isQuickAction ? "QUICK_ACTION" : triggerType, botId,
         nodesStr, edgesStr,
         isActive, req.params.id, req.user.agencyId]
     );
@@ -203,7 +224,8 @@ router.post("/flows/:id/clone", async (req, res) => {
         newName,
         targetPlatform,
         source.trigger_keyword,
-        source.trigger_type,
+        // A copy of a Quick Action reply is an ordinary flow.
+        source.trigger_type === "QUICK_ACTION" ? "KEYWORD" : source.trigger_type,
         cloneNodesJson,
         source.edges_json,
         1,
@@ -220,7 +242,7 @@ router.post("/flows/:id/clone", async (req, res) => {
         platform: targetPlatform,
         integration_id: targetIntegrationId,
         trigger_keyword: source.trigger_keyword,
-        trigger_type: source.trigger_type,
+        trigger_type: source.trigger_type === "QUICK_ACTION" ? "KEYWORD" : source.trigger_type,
         is_active: 1,
       },
     });
@@ -233,6 +255,10 @@ router.post("/flows/:id/clone", async (req, res) => {
 // ── DELETE ────────────────────────────────────────────────────────
 router.delete("/flows/:id", async (req, res) => {
   try {
+    const [[target]] = await pool.query("SELECT trigger_type FROM flows WHERE id=? AND agency_id=?", [req.params.id, req.user.agencyId]);
+    if (target?.trigger_type === "QUICK_ACTION") {
+      return res.status(409).json({ success: false, code: "QUICK_ACTION_FLOW", message: "This is a Quick Action's reply — switch its reply off or reset it on the Quick Actions tab instead." });
+    }
     await pool.query("DELETE FROM flows WHERE id=? AND agency_id=?", [req.params.id, req.user.agencyId]);
     return res.json({ success: true, message: "Flow deleted" });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }

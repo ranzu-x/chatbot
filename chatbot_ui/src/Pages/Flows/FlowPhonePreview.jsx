@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   X, RotateCcw, Send, MessageSquare, Image as ImageIcon, Video,
-  Clock, Sparkles, User, ExternalLink, Music, FileText
+  Clock, Sparkles, User, ExternalLink, Music, FileText,
+  Calendar, Play, BookOpen, HelpCircle, ShoppingBag, Bot, ArrowLeft, ChevronRight
 } from 'lucide-react';
 import PlatformIcon from '../../Components/Common/PlatformIcon';
 import { expandMessageBlocks } from '../../utils/expandMessageBlocks';
@@ -9,6 +10,12 @@ import { expandMessageBlocks } from '../../utils/expandMessageBlocks';
 const backendUrl = import.meta.env.VITE_API_URL
   ? import.meta.env.VITE_API_URL.replace('/api/v1', '')
   : 'http://localhost:5000';
+
+const DEFAULT_CHATBOT_CARDS = [
+  { id: 'chatbot-1', title: 'Book a demo', subtitle: 'Schedule a personalized demo', icon: 'calendar', trigger: 'Book a demo' },
+  { id: 'chatbot-2', title: 'Product tour', subtitle: 'See how it works', icon: 'play', trigger: 'Product tour' },
+  { id: 'chatbot-3', title: 'Documentation', subtitle: 'Browse our guides', icon: 'book', trigger: 'Documentation' },
+];
 
 function resolveMediaUrl(url) {
   if (!url) return '';
@@ -30,6 +37,18 @@ export default function FlowPhonePreview({
   // expansion the server runs before sending (see utils/expandMessageBlocks.js).
   const { nodes, edges } = expandMessageBlocks(rawNodes, rawEdges);
 
+  // Find start node
+  const startNode = nodes.find((n) => n.type === 'start');
+
+  const isWebchat = (platform || '').toUpperCase() === 'WEBCHAT' || Boolean(startNode?.data?.chatWidgetStart && (startNode?.data?.targetPlatform || 'WEBCHAT').toUpperCase() === 'WEBCHAT');
+  const widgetPrimary = startNode?.data?.buttonBgColor || '#4f46e5';
+
+  const rawCards = startNode?.data?.chatbotCards;
+  const cardsList = Array.isArray(rawCards) && rawCards.length > 0
+    ? rawCards
+    : (typeof rawCards === 'string' ? (() => { try { return JSON.parse(rawCards); } catch { return DEFAULT_CHATBOT_CARDS; } })() : DEFAULT_CHATBOT_CARDS);
+
+  const [viewMode, setViewMode] = useState(isWebchat ? 'home' : 'chat');
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
   const [waitingForInput, setWaitingForInput] = useState(null); // node that needs user input
@@ -43,14 +62,16 @@ export default function FlowPhonePreview({
     }, 100);
   };
 
-  // Find start node
-  const startNode = nodes.find((n) => n.type === 'start');
-
   // Initialize or restart conversation
   const restartPreview = () => {
     setMessages([]);
     setWaitingForInput(null);
     setIsTyping(false);
+
+    if (isWebchat) {
+      setViewMode('home');
+      return;
+    }
 
     if (!startNode) return;
 
@@ -73,6 +94,71 @@ export default function FlowPhonePreview({
           sender: 'bot',
           type: 'text',
           text: '👋 Connect steps to the Start Trigger to preview your flow here!',
+        },
+      ]);
+    }
+  };
+
+  const handleCardClick = (card, idx) => {
+    setViewMode('chat');
+    const title = card.title || `Chatbot ${idx + 1}`;
+    const handleId = card.id || `chatbot-${idx + 1}`;
+    const userMsg = {
+      id: `user-${Date.now()}`,
+      sender: 'user',
+      type: 'text',
+      text: title,
+    };
+    const updated = [userMsg];
+    setMessages(updated);
+    scrollToBottom();
+
+    if (!startNode) return;
+
+    const matchedEdge =
+      edges.find((e) => e.source === startNode.id && e.sourceHandle === handleId) ||
+      edges.find((e) => e.source === startNode.id && e.sourceHandle === `chatbot-${idx + 1}`) ||
+      edges.find((e) => e.source === startNode.id && e.sourceHandle === 'next-step') ||
+      edges.find((e) => e.source === startNode.id);
+
+    if (matchedEdge) {
+      const nextNode = nodes.find((n) => n.id === matchedEdge.target);
+      if (nextNode) {
+        setIsTyping(true);
+        setTimeout(() => {
+          setIsTyping(false);
+          renderNodeMessages(nextNode, updated);
+        }, 500);
+      }
+    }
+  };
+
+  const handleStartConversation = () => {
+    setViewMode('chat');
+    setMessages([]);
+
+    if (!startNode) return;
+
+    const matchedEdge =
+      edges.find((e) => e.source === startNode.id && e.sourceHandle === 'next-step') ||
+      edges.find((e) => e.source === startNode.id);
+
+    if (matchedEdge) {
+      const nextNode = nodes.find((n) => n.id === matchedEdge.target);
+      if (nextNode) {
+        setIsTyping(true);
+        setTimeout(() => {
+          setIsTyping(false);
+          renderNodeMessages(nextNode, []);
+        }, 500);
+      }
+    } else if (startNode.data?.greetingMessage) {
+      setMessages([
+        {
+          id: `greet-${Date.now()}`,
+          sender: 'bot',
+          type: 'text',
+          text: startNode.data.greetingMessage,
         },
       ]);
     }
@@ -129,6 +215,22 @@ export default function FlowPhonePreview({
         text: data.message || '',
         footerText: data.footerText || '',
         buttons: btns,
+        nodeId: node.id,
+      });
+    }
+
+    // 2c. WhatsApp CTA URL Button — shown like an interactive message with one link button
+    else if (node.type === 'whatsappCtaUrl') {
+      newItems.push({
+        id: `msg-${Date.now()}-cta`,
+        sender: 'bot',
+        type: 'interactive',
+        headerType: data.headerType || 'none',
+        headerText: data.headerText || '',
+        headerMediaUrl: data.headerMediaUrl || '',
+        text: data.body || '',
+        footerText: data.footerText || '',
+        buttons: [{ title: data.buttonText || 'Open link', type: 'URL', action: 'url', url: data.url || '' }],
         nodeId: node.id,
       });
     }
@@ -203,15 +305,18 @@ export default function FlowPhonePreview({
     }
 
     // 6a. Message Template — shown as its body text (parameters as typed)
-    else if (node.type === 'whatsappTemplate') {
+    else if (node.type === 'whatsappTemplate' || node.type === 'messengerTemplate') {
       const meta = data.templateMeta || {};
       const params = data.params || {};
       const fill = (text, section) => String(text || '').replace(/{{\s*([A-Za-z0-9_]+)\s*}}/g, (m, ph) => params[section]?.[ph] || m);
+      const isMessenger = node.type === 'messengerTemplate';
+      const chosen = isMessenger ? data.messengerTemplateId : data.templateId;
+      const name = isMessenger ? data.messengerTemplateName : data.templateName;
       newItems.push({
         id: `msg-${Date.now()}-template`,
         sender: 'bot',
         type: 'text',
-        text: data.templateId ? [meta.headerText ? fill(meta.headerText, 'header') : '', fill(meta.bodyText, 'body') || `[Template: ${data.templateName}]`].filter(Boolean).join('\n\n') : '[Message Template — none selected]',
+        text: chosen ? [meta.headerText ? fill(meta.headerText, 'header') : '', fill(meta.bodyText, 'body') || `[Template: ${name}]`].filter(Boolean).join('\n\n') : (isMessenger ? '[Utility Template — none selected]' : '[Message Template — none selected]'),
         buttons: (meta.buttons || []).map((b) => ({ title: b.text })),
         nodeId: node.id,
       });
@@ -431,6 +536,22 @@ export default function FlowPhonePreview({
           }
         }
       } else {
+        // If it's a webchat / chat widget flow and text was typed, route down next-step
+        if (isWebchat || startNode.data?.chatWidgetStart) {
+          const nextStepEdge = edges.find((e) => e.source === startNode.id && (e.sourceHandle === 'next-step' || !e.sourceHandle));
+          if (nextStepEdge) {
+            const nextNode = nodes.find((n) => n.id === nextStepEdge.target);
+            if (nextNode) {
+              setIsTyping(true);
+              setTimeout(() => {
+                setIsTyping(false);
+                renderNodeMessages(nextNode, updated);
+              }, 600);
+              return;
+            }
+          }
+        }
+
         // Unmatched response
         setTimeout(() => {
           setMessages((prev) => [
@@ -462,37 +583,189 @@ export default function FlowPhonePreview({
 
         {/* ── In-App Phone Screen ─────────────────────────────── */}
         <div className="flow-phone-screen">
-          {/* Top App Header */}
-          <div className="flow-phone-header">
-            <div className="flow-phone-header-left">
-              <div className="flow-phone-avatar">
-                <PlatformIcon platform={platform} size={22} />
+          {isWebchat && viewMode === 'home' ? (
+            /* ── Webchat Widget Home View ─────────────────────── */
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: '#ffffff' }}>
+              {/* Header with gradient */}
+              <div style={{
+                padding: '30px 16px 16px',
+                background: `linear-gradient(135deg, ${widgetPrimary} 0%, #1e1b4b 100%)`,
+                color: '#ffffff', flexShrink: 0,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{
+                      width: 28, height: 28, borderRadius: '50%', background: 'rgba(255,255,255,0.2)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      <PlatformIcon platform="WEBCHAT" size={16} />
+                    </div>
+                    <span style={{ fontSize: 13, fontWeight: 700 }}>
+                      {startNode?.data?.displayName || businessName || 'Live Chat'}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <button
+                      type="button"
+                      className="flow-phone-header-btn"
+                      onClick={restartPreview}
+                      title="Restart"
+                      style={{ background: 'rgba(255,255,255,0.18)', color: '#ffffff', width: 24, height: 24 }}
+                    >
+                      <RotateCcw size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      className="flow-phone-header-btn"
+                      onClick={onClose}
+                      title="Close"
+                      style={{ background: 'rgba(255,255,255,0.18)', color: '#ffffff', width: 24, height: 24 }}
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                </div>
+                <h2 style={{ fontSize: 19, fontWeight: 800, margin: '0 0 4px 0', lineHeight: 1.2 }}>
+                  {startNode?.data?.homeTitle || 'Hi there 👋'}
+                </h2>
+                <p style={{ fontSize: 11.5, opacity: 0.9, margin: 0 }}>
+                  {startNode?.data?.homeSubtitle || 'How can we help you today?'}
+                </p>
               </div>
-              <div className="flow-phone-header-info">
-                <div className="flow-phone-header-name">{businessName || 'CareSphere'}</div>
-                <div className="flow-phone-header-status">Business chat</div>
-              </div>
-            </div>
 
-            <div className="flow-phone-header-actions">
-              <button
-                type="button"
-                className="flow-phone-header-btn"
-                onClick={restartPreview}
-                title="Restart conversation"
-              >
-                <RotateCcw size={14} />
-              </button>
-              <button
-                type="button"
-                className="flow-phone-header-btn"
-                onClick={onClose}
-                title="Close device preview"
-              >
-                <X size={15} />
-              </button>
+              {/* Body */}
+              <div style={{
+                flex: 1, overflowY: 'auto', padding: '16px 14px', display: 'flex',
+                flexDirection: 'column', gap: 11, background: '#f8fafc',
+              }}>
+                <div style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11,
+                  color: '#64748b', fontWeight: 600, background: '#ffffff',
+                  padding: '4px 10px', borderRadius: 999, border: '1px solid #e2e8f0', alignSelf: 'flex-start',
+                }}>
+                  <Clock size={12} color={widgetPrimary} />
+                  <span>{startNode?.data?.replyTimeText || 'We typically reply within a few minutes'}</span>
+                </div>
+
+                {/* 3 Chatbot Cards */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {cardsList.map((card, idx) => {
+                    const CardIcon = card.icon === 'calendar' ? Calendar
+                      : card.icon === 'play' ? Play
+                      : card.icon === 'book' ? BookOpen
+                      : card.icon === 'sparkles' ? Sparkles
+                      : card.icon === 'shopping' ? ShoppingBag
+                      : card.icon === 'help' ? HelpCircle
+                      : MessageSquare;
+
+                    return (
+                      <div
+                        key={card.id || idx}
+                        onClick={() => handleCardClick(card, idx)}
+                        style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          padding: '11px 13px', borderRadius: 12, background: '#ffffff',
+                          border: '1px solid #e2e8f0', boxShadow: '0 2px 6px rgba(0,0,0,0.03)',
+                          cursor: 'pointer', transition: 'all 0.15s ease',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
+                          <div style={{
+                            width: 32, height: 32, borderRadius: 9, background: '#ede9fe', color: widgetPrimary,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                          }}>
+                            <CardIcon size={16} />
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 12.5, fontWeight: 700, color: '#0f172a' }}>
+                              {card.title || `Chatbot ${idx + 1}`}
+                            </div>
+                            {card.subtitle && (
+                              <div style={{ fontSize: 10.5, color: '#64748b', marginTop: 1 }}>
+                                {card.subtitle}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <ChevronRight size={16} color="#94a3b8" />
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Start a conversation button */}
+                <button
+                  type="button"
+                  onClick={handleStartConversation}
+                  style={{
+                    marginTop: 4, width: '100%', padding: '11px 14px', borderRadius: 12,
+                    background: widgetPrimary, color: '#ffffff', border: 'none',
+                    fontSize: 12.5, fontWeight: 700, display: 'flex', alignItems: 'center',
+                    justifyContent: 'center', gap: 8, cursor: 'pointer',
+                    boxShadow: '0 4px 12px rgba(99,102,241,0.25)',
+                  }}
+                >
+                  <MessageSquare size={15} />
+                  <span>{startNode?.data?.startConversationText || 'Start a conversation'}</span>
+                </button>
+              </div>
+
+              {/* Footer */}
+              <div style={{
+                padding: '9px 14px', textAlign: 'center', fontSize: 10.5,
+                color: '#94a3b8', background: '#ffffff', borderTop: '1px solid #f1f5f9',
+              }}>
+                Powered by <strong style={{ color: '#64748b' }}>Nexa AI</strong>
+              </div>
             </div>
-          </div>
+          ) : (
+            <>
+              {/* Top App Header */}
+              <div className="flow-phone-header">
+                <div className="flow-phone-header-left">
+                  {isWebchat && (
+                    <button
+                      type="button"
+                      className="flow-phone-header-btn"
+                      onClick={() => setViewMode('home')}
+                      title="Back to widget home"
+                      style={{ marginRight: 2 }}
+                    >
+                      <ArrowLeft size={14} />
+                    </button>
+                  )}
+                  <div className="flow-phone-avatar">
+                    <PlatformIcon platform={platform} size={22} />
+                  </div>
+                  <div className="flow-phone-header-info">
+                    <div className="flow-phone-header-name">
+                      {startNode?.data?.displayName || businessName || 'CareSphere'}
+                    </div>
+                    <div className="flow-phone-header-status">
+                      {isWebchat ? 'Live Webchat' : 'Business chat'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flow-phone-header-actions">
+                  <button
+                    type="button"
+                    className="flow-phone-header-btn"
+                    onClick={restartPreview}
+                    title="Restart conversation"
+                  >
+                    <RotateCcw size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className="flow-phone-header-btn"
+                    onClick={onClose}
+                    title="Close device preview"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+              </div>
 
           {/* ── Chat Messages Body ─────────────────────────────── */}
           <div className="flow-phone-chat-body">
@@ -713,7 +986,9 @@ export default function FlowPhonePreview({
               <Send size={14} />
             </button>
           </form>
-        </div>
+        </>
+      )}
+    </div>
       </div>
     </div>
   );

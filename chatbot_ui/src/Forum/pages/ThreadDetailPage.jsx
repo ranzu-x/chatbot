@@ -152,7 +152,7 @@ export default function ThreadDetailPage() {
             </div>
             <h1 className="fm-detail-title">{thread.title}</h1>
             <div className="fm-byline">
-              <Avatar name={thread.authorName} size={28} />
+              <Avatar name={thread.authorName} src={thread.authorAvatar} size={28} />
               <span><b>{thread.authorName}</b>{thread.authorAgencyName ? ` · ${thread.authorAgencyName}` : ""}</span>
               <span>· {formatRelativeTime(thread.created_at)}</span>
             </div>
@@ -174,7 +174,7 @@ export default function ThreadDetailPage() {
             <div className="fm-card">
               {replies.map((r) => (
                 <div key={r.id} className="fm-reply">
-                  <Avatar name={r.authorName} size={36} />
+                  <Avatar name={r.authorName} src={r.authorAvatar} size={36} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="fm-reply-head">
                       <b>{r.authorName}</b>

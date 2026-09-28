@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router';
 import './landing.css';
-import { MessageSquare, ArrowLeft, Lock, CreditCard, CheckCircle2, Loader2 } from 'lucide-react';
+import { MessageSquare, ArrowLeft, Lock, CreditCard, CheckCircle2, Loader2, Tag } from 'lucide-react';
 import { billingAPI } from '../../services/api';
 import { getStoredAffiliateCode } from '../../utils/affiliateTracking';
 
@@ -23,6 +23,31 @@ export default function GuestCheckoutPage() {
   const [provider, setProvider] = useState('STRIPE');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  // Only the gateways the Super Admin switched on; price after package discount + coupon.
+  const [enabledGateways, setEnabledGateways] = useState(['STRIPE']);
+  const [coupon, setCoupon] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState('');
+  const [quote, setQuote] = useState(null);
+  const [couponMsg, setCouponMsg] = useState('');
+
+  useEffect(() => {
+    billingAPI.getGateways().then((res) => setEnabledGateways(res.data?.gateways || ['STRIPE'])).catch(() => {});
+  }, []);
+
+  const loadQuote = async (code) => {
+    if (!packageId) return;
+    try {
+      const res = await billingAPI.quote({ packageId, couponCode: code || undefined, email: form.email.trim() || undefined });
+      const q = res.data.quote;
+      setQuote(q);
+      if (code) {
+        setCouponMsg(q.couponError || `Coupon ${code.toUpperCase()} applied`);
+        setAppliedCoupon(q.couponError ? '' : code);
+      }
+    } catch { /* the plain price still shows */ }
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadQuote(''); }, [packageId]);
 
   useEffect(() => {
     billingAPI.getPlans().then((res) => {
@@ -54,6 +79,7 @@ export default function GuestCheckoutPage() {
         packageId: pkg.id,
         provider,
         affiliateCode: getStoredAffiliateCode() || undefined,
+        couponCode: appliedCoupon || undefined,
       });
       if (res.data?.redirectUrl) {
         window.location.href = res.data.redirectUrl;
@@ -65,10 +91,11 @@ export default function GuestCheckoutPage() {
   };
 
   const activeProvider = PROVIDERS.find((p) => p.id === provider);
+  const finalUsd = quote ? quote.finalPrice : Number(pkg?.price || 0);
   const displayPrice = pkg
     ? (activeProvider?.currency === 'BDT'
-        ? null // exact converted amount is computed server-side at submit time
-        : `$${Number(pkg.price).toFixed(2)}`)
+        ? (quote ? `৳${Number(quote.bdtAmount).toLocaleString()}` : null)
+        : `$${finalUsd.toFixed(2)}`)
     : null;
 
   return (
@@ -137,7 +164,7 @@ export default function GuestCheckoutPage() {
               </div>
 
               <label className="gc-label" style={{ marginTop: 20 }}>Payment Method</label>
-              {PROVIDERS.map((p) => (
+              {PROVIDERS.filter((p) => enabledGateways.includes(p.id)).map((p) => (
                 <div key={p.id} className={`gc-provider ${provider === p.id ? 'active' : ''}`} onClick={() => setProvider(p.id)}>
                   <input type="radio" name="provider" checked={provider === p.id} onChange={() => setProvider(p.id)} />
                   <CreditCard size={16} color="#64748b" />
@@ -147,6 +174,16 @@ export default function GuestCheckoutPage() {
                   </div>
                 </div>
               ))}
+
+              <label className="gc-label" style={{ marginTop: 16 }}>Coupon code</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ position: 'relative', flex: 1 }}>
+                  <Tag size={14} style={{ position: 'absolute', left: 12, top: 14, color: '#94a3b8' }} />
+                  <input className="gc-input" style={{ paddingLeft: 34, textTransform: 'uppercase' }} value={coupon} onChange={(e) => setCoupon(e.target.value)} placeholder="Optional" />
+                </div>
+                <button type="button" className="lp-btn-secondary" disabled={!coupon.trim()} onClick={() => loadQuote(coupon.trim())}>Apply</button>
+              </div>
+              {couponMsg && <p style={{ fontSize: '0.78rem', margin: '6px 0 0', color: appliedCoupon ? '#16a34a' : '#b91c1c' }}>{couponMsg}</p>}
 
               {error && (
                 <div style={{ marginTop: 14, padding: '10px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, color: '#b91c1c', fontSize: '0.82rem' }}>
@@ -172,9 +209,17 @@ export default function GuestCheckoutPage() {
               <div style={{ fontSize: '1rem', fontWeight: 700, color: '#0f172a' }}>{pkg.name}</div>
               <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '4px 0 14px' }}>{pkg.description}</p>
               <div className="gc-summary-row"><span>Billing cycle</span><span style={{ textTransform: 'capitalize' }}>{pkg.billing_cycle}</span></div>
+              {quote?.lines?.length > 0 && (
+                <>
+                  <div className="gc-summary-row"><span>Price</span><span>${Number(quote.basePrice).toFixed(2)}</span></div>
+                  {quote.lines.map((l) => (
+                    <div key={l.label} className="gc-summary-row" style={{ color: '#16a34a' }}><span>{l.label}</span><span>−${Math.abs(l.amount).toFixed(2)}</span></div>
+                  ))}
+                </>
+              )}
               <div className="gc-summary-total">
                 <span>Total</span>
-                <span>{displayPrice || `${Number(pkg.price).toFixed(2)} USD equiv.`}</span>
+                <span>{displayPrice || `${finalUsd.toFixed(2)} USD equiv.`}</span>
               </div>
               {activeProvider?.currency === 'BDT' && (
                 <p style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: 6 }}>

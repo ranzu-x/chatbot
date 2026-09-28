@@ -40,12 +40,23 @@ export function SupportAuthProvider({ children }) {
     return () => window.removeEventListener("support_auth:unauthorized", handleUnauthorized);
   }, []);
 
+  const startSession = (data) => {
+    const { user: signedIn, token } = data;
+    if (token) setSupportToken(token);
+    setUser(signedIn);
+    return signedIn;
+  };
+
+  // Two-factor login on → { twoFactorRequired, challengeToken }; the page then calls completeTwoFactor.
   const login = async (email, password) => {
     const res = await supportAuthAPI.login({ email, password });
-    const { user, token } = res.data;
-    if (token) setSupportToken(token);
-    setUser(user);
-    return user;
+    if (res.data?.twoFactorRequired) return { twoFactorRequired: true, challengeToken: res.data.challengeToken };
+    return startSession(res.data);
+  };
+
+  const completeTwoFactor = async (challengeToken, factor) => {
+    const res = await supportAuthAPI.loginTwoFactor({ challengeToken, ...factor });
+    return startSession(res.data);
   };
 
   const logout = () => {
@@ -54,7 +65,7 @@ export function SupportAuthProvider({ children }) {
   };
 
   return (
-    <SupportAuthContext.Provider value={{ user, loading, login, logout }}>
+    <SupportAuthContext.Provider value={{ user, loading, login, completeTwoFactor, logout }}>
       {children}
     </SupportAuthContext.Provider>
   );

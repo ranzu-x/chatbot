@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
+import useUrlState from '../../hooks/useUrlState';
 import { aiAgentAPI } from '../../services/api';
 import PlatformIcon from '../Common/PlatformIcon';
 import AIAgentEditor from './AIAgentEditor';
 import { RefreshCw, Plus, Search, Sparkles, Star, Trash2 } from 'lucide-react';
-import Swal from 'sweetalert2';
+import { alert } from '../../lib/alerts';
 
 const AVATAR_COLORS = ['#2563eb', '#0891b2', '#7c3aed', '#c2410c', '#be185d', '#16a34a'];
 function colorFor(name) {
@@ -33,7 +34,7 @@ export default function AIAgentManagerList() {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
-  const [openAgentId, setOpenAgentId] = useState(null);
+  const [openAgentId, setOpenAgentId] = useUrlState('agent', null, { type: 'number' });
 
   const load = useCallback(() => {
     setLoading(true);
@@ -56,24 +57,24 @@ export default function AIAgentManagerList() {
       load();
       if (id) setOpenAgentId(id);
     } catch (err) {
-      Swal.fire({ icon: 'error', title: 'Could not create Agent', text: err?.response?.data?.message || 'Please try again.' });
+      alert.error('Could not create Agent', err?.response?.data?.message || 'Please try again.');
     } finally {
       setCreating(false);
     }
   };
 
   const handleDelete = async (agent) => {
-    const ok = await Swal.fire({
+    const ok = await alert.confirm({
       title: `Delete "${agent.name}"?`,
       text: agent.channels?.length ? `This Agent is active on ${agent.channels.length} bot(s) — it will stop replying there too.` : 'This cannot be undone.',
-      icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete',
+      confirm: 'Delete',
     });
-    if (!ok.isConfirmed) return;
+    if (!ok) return;
     try {
       await aiAgentAPI.delete(agent.id);
       setAgents((prev) => prev.filter((a) => a.id !== agent.id));
     } catch (err) {
-      Swal.fire({ icon: 'error', title: 'Could not delete', text: err?.response?.data?.message || 'Please try again.' });
+      alert.error('Could not delete', err?.response?.data?.message || 'Please try again.');
     }
   };
 

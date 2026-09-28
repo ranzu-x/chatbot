@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router';
-import { blogAPI } from '../../services/api';
+import { blogAPI, assetUrl } from '../../services/api';
 import { Clock, Eye, ArrowLeft, ArrowRight, Share2, Twitter, Linkedin, Link2, ChevronDown, ChevronUp } from 'lucide-react';
 import DOMPurify from 'dompurify';
 
@@ -121,7 +121,7 @@ function RelatedPosts({ posts }) {
       <div className="blog-related__grid">
         {posts.map((p) => (
           <Link key={p.id} to={`/blog/${p.slug}`} className="blog-related__card">
-            {p.cover_image && <img src={p.cover_image} alt={p.title} className="blog-related__img" />}
+            {p.cover_image && <img src={assetUrl(p.cover_image)} alt={p.title} className="blog-related__img" />}
             <div className="blog-related__body">
               <span className="blog-card__category" style={{ marginBottom: 6, display: 'inline-block' }}>{p.category}</span>
               <h4 className="blog-related__card-title">{p.title}</h4>
@@ -244,7 +244,7 @@ export default function BlogDetailPage() {
           {/* ── Cover ─────────────────────────────────────── */}
           {post.cover_image && (
             <div className="blog-detail__cover">
-              <img src={post.cover_image} alt={post.title} />
+              <img src={assetUrl(post.cover_image)} alt={post.title} />
               <div className="blog-detail__cover-overlay" />
             </div>
           )}
@@ -269,7 +269,7 @@ export default function BlogDetailPage() {
                 <div className="blog-detail__meta">
                   <div className="blog-detail__author">
                     {post.author_avatar
-                      ? <img src={post.author_avatar} alt={post.author_name} className="blog-detail__avatar" />
+                      ? <img src={assetUrl(post.author_avatar)} alt={post.author_name} className="blog-detail__avatar" />
                       : <div className="blog-detail__avatar-placeholder">{(post.author_name || 'A')[0]}</div>
                     }
                     <div>
@@ -324,7 +324,7 @@ export default function BlogDetailPage() {
                 {/* Author card */}
                 <div className="blog-detail__author-card">
                   {post.author_avatar
-                    ? <img src={post.author_avatar} alt={post.author_name} className="blog-detail__author-card-avatar" />
+                    ? <img src={assetUrl(post.author_avatar)} alt={post.author_name} className="blog-detail__author-card-avatar" />
                     : <div className="blog-detail__avatar-placeholder" style={{ width: 64, height: 64, fontSize: '1.5rem', margin: '0 auto 10px' }}>{(post.author_name || 'A')[0]}</div>
                   }
                   <div className="blog-detail__author-card-name">{post.author_name}</div>

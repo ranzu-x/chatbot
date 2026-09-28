@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
+import useUrlState from '../../hooks/useUrlState';
 import { useParams, useNavigate } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
 import TipTapEditor from '../../Components/Blog/TipTapEditor';
-import { blogAPI } from '../../services/api';
-import { notify, showAlert } from '../../utils/alerts';
+import { blogAPI, assetUrl } from '../../services/api';
+import { notify } from '../../utils/alerts';
 import { Save, Eye, Upload, Plus, Trash2, ChevronDown, ChevronUp, ArrowLeft } from 'lucide-react';
 
 const CATEGORIES = ['General', 'News', 'Tutorial', 'Product Update', 'Case Study', 'Guide', 'Tips & Tricks', 'Industry Insights', 'Announcements'];
@@ -65,7 +66,7 @@ export default function BlogEditorPage() {
   const [saving, setSaving]     = useState(false);
   const [tagInput, setTagInput] = useState('');
   const [coverUploading, setCoverUploading] = useState(false);
-  const [activeTab, setActiveTab] = useState('settings'); // settings | seo | faq
+  const [activeTab, setActiveTab] = useUrlState('tab', 'settings', { allowed: ['settings', 'seo', 'faq'] });
   const coverInputRef = useRef(null);
 
   const set = (key, val) => setForm((f) => ({ ...f, [key]: val }));
@@ -119,7 +120,8 @@ export default function BlogEditorPage() {
       const fd = new FormData();
       fd.append('image', file);
       const res = await blogAPI.uploadImage(fd);
-      const url = `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}${res.data.url}`;
+      // /uploads/... is served by the API host itself, not under /api/v1.
+      const url = assetUrl(res.data.url);
       set('coverImage', url);
       notify.success('Cover image uploaded');
     } catch {
@@ -295,7 +297,8 @@ export default function BlogEditorPage() {
               <SideSection title="Category & Tags">
                 <FormField label="Category">
                   <select className="form-input" value={form.category} onChange={(e) => set('category', e.target.value)}>
-                    {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+                    {/* keep a post's own category (older / imported posts) instead of silently switching it on save */}
+                    {(CATEGORIES.includes(form.category) ? CATEGORIES : [...CATEGORIES, form.category]).map((c) => <option key={c}>{c}</option>)}
                   </select>
                 </FormField>
                 <FormField label="Tags">

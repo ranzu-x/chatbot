@@ -34,6 +34,20 @@ export const EMAIL_UNAVAILABLE = "This email address can't be used. Please try a
 
 // ── Reads ────────────────────────────────────────────────────────────────
 
+/** A new self-signup customer of this reseller starts on the reseller's default plan (if it marked one). */
+export async function assignDefaultCustomerPackage(resellerId, customerAgencyId) {
+  const [[pkg]] = await pool.query(
+    "SELECT id FROM agency_packages WHERE agency_id = ? AND is_default = 1 AND is_active = 1 ORDER BY id LIMIT 1",
+    [resellerId]
+  );
+  if (!pkg) return null;
+  await pool.query(
+    "INSERT INTO agency_client_subscriptions (agency_id, client_agency_id, package_id, provider, status, started_at, notes) VALUES (?, ?, ?, 'STRIPE', 'ACTIVE', NOW(), 'Default plan at sign-up')",
+    [resellerId, customerAgencyId, pkg.id]
+  );
+  return pkg.id;
+}
+
 export async function listCustomers(resellerId) {
   const [rows] = await pool.query(
     `SELECT a.id, a.name, a.slug, a.is_active, a.owner_id, u.name AS ownerName, u.email AS ownerEmail, a.created_at,

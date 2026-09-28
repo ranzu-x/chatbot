@@ -768,7 +768,53 @@
       }
     }
 
-    // ─── RENDER HOME VIEW (Matches Screenshot with 3 Pre-built Bot Cards) ──────
+    function getCardIconSvg(iconName) {
+      switch ((iconName || "").toLowerCase()) {
+        case "calendar":
+          return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="16" y1="2" x2="16" y2="6"></line>
+            <line x1="8" y1="2" x2="8" y2="6"></line>
+            <line x1="3" y1="10" x2="21" y2="10"></line>
+          </svg>`;
+        case "play":
+        case "tour":
+          return `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <polygon points="6 4 19 12 6 20 6 4"></polygon>
+          </svg>`;
+        case "book":
+        case "docs":
+        case "documentation":
+          return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+          </svg>`;
+        case "sparkles":
+        case "ai":
+          return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v3m0 12v3m9-9h-3M6 12H3m15.364-6.364l-2.121 2.121M8.757 15.243l-2.121 2.121m12.728 0l-2.121-2.121M8.757 8.757L6.636 6.636"></path>
+          </svg>`;
+        case "help":
+          return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>`;
+        case "shopping":
+        case "shop":
+          return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <path d="M16 10a4 4 0 0 1-8 0"></path>
+          </svg>`;
+        default:
+          return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+          </svg>`;
+      }
+    }
+
+    // ─── RENDER HOME VIEW (Matches Screenshot with 3 Chatbot Cards & Normal Text Option) ──
     function renderHomeView(widget) {
       currentView = "home";
       const primary = widget.primaryColor || "#3b82f6";
@@ -776,13 +822,40 @@
         ? widget.headerBgColor
         : computeGradientEnd(primary);
       const buttonBg = widget.buttonBgColor || primary;
-      const brandName = widget.brandName || "Sky Free";
+      const brandName = widget.brandName || "Nexa AI";
+
+      const cardsList = Array.isArray(widget.chatbotCards) && widget.chatbotCards.length > 0
+        ? widget.chatbotCards
+        : [
+            { id: "chatbot-1", title: "Book a demo", subtitle: "Schedule a personalized demo", icon: "calendar", trigger: "Book a demo" },
+            { id: "chatbot-2", title: "Product tour", subtitle: "See how it works", icon: "play", trigger: "Product tour" },
+            { id: "chatbot-3", title: "Documentation", subtitle: "Browse our guides", icon: "book", trigger: "Documentation" },
+          ];
+      const homeTitle = widget.homeTitle || "Welcome!";
+      const homeSub = widget.homeSubtitle || "How can we help?";
+      const replyTime = widget.replyTimeText || "We typically reply within a few minutes";
+      const startConv = widget.startConversationText || "Start a conversation";
+
+      const cardsHtml = cardsList.map((card, idx) => `
+        <div class="chatsaas-bot-card" data-trigger="${escapeHtml(card.trigger || card.title)}" data-handle="${escapeHtml(card.id || `chatbot-${idx + 1}`)}">
+          <div class="chatsaas-card-left">
+            <div class="chatsaas-card-icon" style="color: ${primary};">
+              ${getCardIconSvg(card.icon)}
+            </div>
+            <div>
+              <div class="chatsaas-card-title">${escapeHtml(card.title)}</div>
+              <div class="chatsaas-card-sub">${escapeHtml(card.subtitle || "")}</div>
+            </div>
+          </div>
+          <div class="chatsaas-card-arrow">&rsaquo;</div>
+        </div>
+      `).join("");
 
       windowEl.innerHTML = `
         <div class="chatsaas-view chatsaas-home-view">
           <div class="chatsaas-home-header" style="background: linear-gradient(135deg, ${primary} 0%, ${gradientEnd} 100%);">
             <div class="chatsaas-home-header-top">
-              <h2 class="chatsaas-home-title">Welcome!</h2>
+              <h2 class="chatsaas-home-title">${escapeHtml(homeTitle)}</h2>
               <button type="button" class="chatsaas-close-btn" title="Close chat">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                   <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -790,71 +863,21 @@
                 </svg>
               </button>
             </div>
-            <p class="chatsaas-home-sub">How can we help?</p>
+            <p class="chatsaas-home-sub">${escapeHtml(homeSub)}</p>
           </div>
 
           <div class="chatsaas-home-body">
-            <div class="chatsaas-home-question">How can we help?</div>
+            <div class="chatsaas-home-question">${escapeHtml(homeSub)}</div>
             <div class="chatsaas-reply-time">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="10"></circle>
                 <polyline points="12 6 12 12 16 14"></polyline>
               </svg>
-              <span>We typically reply within a few minutes</span>
+              <span>${escapeHtml(replyTime)}</span>
             </div>
 
             <div class="chatsaas-cards-list">
-              <!-- Option 1: Book a demo -->
-              <div class="chatsaas-bot-card" data-trigger="Book a demo">
-                <div class="chatsaas-card-left">
-                  <div class="chatsaas-card-icon" style="color: ${primary};">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-                      <line x1="16" y1="2" x2="16" y2="6"></line>
-                      <line x1="8" y1="2" x2="8" y2="6"></line>
-                      <line x1="3" y1="10" x2="21" y2="10"></line>
-                    </svg>
-                  </div>
-                  <div>
-                    <div class="chatsaas-card-title">Book a demo</div>
-                    <div class="chatsaas-card-sub">Schedule a personalized demo</div>
-                  </div>
-                </div>
-                <div class="chatsaas-card-arrow">&rsaquo;</div>
-              </div>
-
-              <!-- Option 2: Product tour -->
-              <div class="chatsaas-bot-card" data-trigger="Product tour">
-                <div class="chatsaas-card-left">
-                  <div class="chatsaas-card-icon" style="color: ${primary};">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                      <polygon points="6 4 19 12 6 20 6 4"></polygon>
-                    </svg>
-                  </div>
-                  <div>
-                    <div class="chatsaas-card-title">Product tour</div>
-                    <div class="chatsaas-card-sub">See how it works</div>
-                  </div>
-                </div>
-                <div class="chatsaas-card-arrow">&rsaquo;</div>
-              </div>
-
-              <!-- Option 3: Documentation -->
-              <div class="chatsaas-bot-card" data-trigger="Documentation">
-                <div class="chatsaas-card-left">
-                  <div class="chatsaas-card-icon" style="color: ${primary};">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
-                      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
-                    </svg>
-                  </div>
-                  <div>
-                    <div class="chatsaas-card-title">Documentation</div>
-                    <div class="chatsaas-card-sub">Browse our guides</div>
-                  </div>
-                </div>
-                <div class="chatsaas-card-arrow">&rsaquo;</div>
-              </div>
+              ${cardsHtml}
             </div>
 
             <!-- Start a conversation button -->
@@ -862,7 +885,7 @@
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
               </svg>
-              <span>Start a conversation</span>
+              <span>${escapeHtml(startConv)}</span>
             </button>
           </div>
 
@@ -876,15 +899,16 @@
       const closeBtn = windowEl.querySelector(".chatsaas-close-btn");
       if (closeBtn) closeBtn.addEventListener("click", closeWindow);
 
-      // Event listeners: 3 Pre-built Bot Cards
+      // Event listeners: Chatbot Cards
       const cards = windowEl.querySelectorAll(".chatsaas-bot-card");
       cards.forEach((card) => {
         card.addEventListener("click", async () => {
           const trigger = card.getAttribute("data-trigger");
+          const handle = card.getAttribute("data-handle") || "next-step";
           transitionToChat();
           await ensureChatReady();
           if (trigger) {
-            sendMessage(trigger);
+            sendMessage(trigger, handle);
           }
         });
       });
@@ -897,8 +921,8 @@
           await ensureChatReady();
           // If conversation has a default flow or prefill, trigger it
           if (widget.flow_id || widget.prefillMessage) {
-            const startText = widget.prefillMessage || "Start a conversation";
-            sendMessage(startText);
+            const startText = widget.prefillMessage || startConv;
+            sendMessage(startText, "next-step");
           }
         });
       }
@@ -990,7 +1014,7 @@
       }
     }
 
-    async function sendMessage(text) {
+    async function sendMessage(text, triggerHandle = null) {
       if (!text) return;
       requestNotificationPermission();
 
@@ -1005,7 +1029,7 @@
         await fetch(`${backendUrl}/api/v1/webchat/message`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ widgetKey, visitorId, conversationId, body: text }),
+          body: JSON.stringify({ widgetKey, visitorId, conversationId, body: text, triggerHandle }),
         });
       } catch (err) {
         console.error("Error sending webchat message:", err);

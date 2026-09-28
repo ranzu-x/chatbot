@@ -17,8 +17,8 @@ import {
   User, Settings2, CornerDownRight, Image, Upload,
   Video, Music, FileText, Globe, ExternalLink,
   Smartphone, RotateCcw, Undo2, Redo2, ThumbsUp, Sparkles, MoreVertical,
-  Copy, ShoppingBag, HelpCircle, Flag, ClipboardList, Workflow, Tag, Timer, Palette, Megaphone, Network, MessagesSquare,
-  ArrowUp, ArrowDown, MapPin, Contact, CalendarDays
+  Copy, ShoppingBag, BarChart3, PackageSearch, MailPlus, ListChecks, HelpCircle, Flag, ClipboardList, Workflow, Tag, Timer, Palette, Megaphone, Network, MessagesSquare,
+  ArrowUp, ArrowDown, MapPin, Contact, CalendarDays, BellRing, BellOff, Headset, Bot as BotIcon
 } from 'lucide-react';
 import FlowPhonePreview from './FlowPhonePreview';
 import PlatformIcon, { getPlatformMeta } from '../../Components/Common/PlatformIcon';
@@ -26,12 +26,18 @@ import BroadcastStartNodeProperties from '../../Components/Broadcast/BroadcastSt
 import BroadcastSendDialog from '../../Components/Broadcast/BroadcastSendDialog';
 import useBroadcastCampaign, { BroadcastCampaignContext } from '../../Components/Broadcast/useBroadcastCampaign';
 import MessageTemplateFields from '../../Components/Templates/MessageTemplateFields';
+import MessengerTemplateFields from '../../Components/Templates/MessengerTemplateFields';
+import { validateMessengerTemplate } from '../../Components/Templates/messengerTemplateUtils';
 import { validateMessageTemplate } from '../../Components/Templates/messageTemplateUtils';
 import ChatWidgetStartNodeProperties from '../../Components/Engagement/ChatWidgetStartNodeProperties';
 import { buildDefaultWidgetFlowGraph } from '../../utils/chatWidgetHelpers';
 import { flowAPI, uploadAPI, integrationAPI, customFieldAPI, userInputFlowAPI, sequenceAPI, labelAPI, googleSheetsAPI, channelAPI, httpApiCampaignAPI, appointmentCampaignAPI } from '../../services/api';
 import WidgetAppearancePanel from '../../Components/Engagement/WidgetAppearancePanel';
-import Swal from 'sweetalert2';
+import AutoResponderPicker from '../../Components/UserInputFlows/AutoResponderPicker';
+import { ctaUrlProblem, CTA_LIMITS } from '../../utils/ctaUrlRules';
+import { channelLimitProblem, findDeadEndOptions, LIMITS as CHANNEL_LIMITS } from '../../utils/flowChannelRules';
+import PersonalizeField from '../../Components/Flows/PersonalizeField';
+import { alert, toast } from '../../lib/alerts';
 
 /* ═══════════════════════════════════════════════════════════════════
    CONSTANTS
@@ -44,6 +50,7 @@ const PLATFORM_RULES = {
     // accepts outside the 24-hour window. WhatsApp-only (absent elsewhere = unsupported).
     whatsappTemplate: true,
     interactive: true, // WhatsApp Interactive message with Header, Body, Footer & Reply/CTA buttons
+    whatsappCtaUrl: true, // CTA URL Button — one link button (utils/ctaUrlRules.js); WhatsApp only
     image: true,
     video: true,
     audio: true,
@@ -75,6 +82,7 @@ const PLATFORM_RULES = {
     delay: true,
     webhook: true,
     httpApi: true,
+    orderStatus: true, // Order Tracking (utils/orderLookup.js)
     payment: true,     // WhatsApp In-Chat Payment / Catalog Orders
     handoff: true,
     end: true,
@@ -82,6 +90,9 @@ const PLATFORM_RULES = {
   },
   FACEBOOK: {
     text: true,
+    // Utility Template element — an approved Messenger Utility template, the only
+    // automated Messenger message allowed after the 24-hour window. Messenger-only.
+    messengerTemplate: true,
     interactive: false,
     image: true,
     video: true,
@@ -114,6 +125,8 @@ const PLATFORM_RULES = {
     delay: true,
     webhook: true,
     httpApi: true,
+    marketingOptIn: true, // Marketing Messages opt-in request (utils/messengerMarketing.js)
+    orderStatus: true, // Order Tracking (utils/orderLookup.js)
     payment: true,
     handoff: true,
     end: true,
@@ -152,6 +165,7 @@ const PLATFORM_RULES = {
     delay: true,
     webhook: true,
     httpApi: true,
+    orderStatus: true, // Order Tracking (utils/orderLookup.js)
     payment: false,
     handoff: true,
     end: true,
@@ -190,6 +204,9 @@ const PLATFORM_RULES = {
     delay: true,
     webhook: true,
     httpApi: true,
+    telegramPoll: true, // native Telegram poll (utils/telegramPolls.js)
+    telegramChecklist: true, // checklist (interactive in Telegram Business chats)
+    orderStatus: true, // Order Tracking (utils/orderLookup.js)
     payment: true,
     handoff: true,
     end: true,
@@ -238,6 +255,7 @@ const PLATFORM_RULES = {
     delay: true,
     webhook: true,
     httpApi: true,
+    orderStatus: true, // Order Tracking (utils/orderLookup.js)
     payment: false,
     handoff: true,
     end: true,
@@ -276,6 +294,7 @@ const PLATFORM_RULES = {
     delay: true,
     webhook: true,
     httpApi: true,
+    orderStatus: true, // Order Tracking (utils/orderLookup.js)
     payment: true,
     handoff: true,
     end: true,
@@ -345,6 +364,10 @@ const NODE_COLORS = {
   webhook: '#2563eb',      // Royal blue
   httpApi: '#7c3aed',      // Violet (distinct from webhook's blue, matches Automation module's purple elsewhere)
   payment: '#16a34a',      // Green
+  telegramPoll: '#229ed9', // Telegram blue
+  telegramChecklist: '#229ed9',
+  orderStatus: '#0d9488',  // Teal
+  marketingOptIn: '#0866ff', // Messenger blue
   handoff: '#6366f1',      // Indigo
   end: '#dc2626',          // Soft red
   question: '#0d9488',           // Teal (same family as Collect Input — same concept)
@@ -359,6 +382,8 @@ const NODE_COLORS = {
   messageBlock: '#0284c7',
   appointment: '#0d9488',   // Teal — healthcare/calendar feel
   whatsappTemplate: '#15803d', // WhatsApp green — approved template
+  whatsappCtaUrl: '#15803d',   // WhatsApp green — CTA URL Button
+  messengerTemplate: '#0866ff', // Messenger blue — Utility template
 };
 
 // Dynamic light-color styling themes per connected channel for the main Save button
@@ -450,6 +475,10 @@ const NODE_ICONS = {
   webhook: Globe,
   httpApi: Network,
   payment: ShoppingBag,
+  telegramPoll: BarChart3,
+  telegramChecklist: ListChecks,
+  orderStatus: PackageSearch,
+  marketingOptIn: MailPlus,
   handoff: Headphones,
   end: CircleStop,
   question: HelpCircle,
@@ -463,6 +492,8 @@ const NODE_ICONS = {
   messageBlock: MessagesSquare,
   appointment: CalendarDays,
   whatsappTemplate: FileText,
+  messengerTemplate: BellRing,
+  whatsappCtaUrl: ExternalLink,
 };
 
 const PALETTE_CATEGORIES = [
@@ -471,6 +502,8 @@ const PALETTE_CATEGORIES = [
     items: [
       { type: 'messageBlock', label: 'Send Message' },
       { type: 'whatsappTemplate', label: 'Message Template' },
+      { type: 'messengerTemplate', label: 'Utility Template' },
+      { type: 'whatsappCtaUrl', label: 'CTA URL Button' },
       { type: 'interactive', label: 'Interactive (Header/Footer)' },
       { type: 'buttons', label: 'Text Message' },
       { type: 'quickReplies', label: 'Quick Replies' },
@@ -486,6 +519,8 @@ const PALETTE_CATEGORIES = [
       { type: 'file', label: 'File / Document' },
       { type: 'card', label: 'Card' },
       { type: 'carousel', label: 'Carousel' },
+      { type: 'telegramPoll', label: 'Poll (Telegram)' },
+      { type: 'telegramChecklist', label: 'Checklist (Telegram)' },
     ],
   },
   {
@@ -498,6 +533,8 @@ const PALETTE_CATEGORIES = [
       { type: 'webhook', label: 'Webhook / Zapier' },
       { type: 'httpApi', label: 'HTTP API' },
       { type: 'payment', label: 'Catalog / Payment' },
+      { type: 'orderStatus', label: 'Order Tracking' },
+      { type: 'marketingOptIn', label: 'Marketing opt-in (Messenger)' },
     ],
   },
   {
@@ -564,6 +601,8 @@ const SEQUENCE_PALETTE = [
       { type: 'file', label: 'File / Document' },
       // For a step days after the last message — outside WhatsApp's 24-hour window.
       { type: 'whatsappTemplate', label: 'Message Template' },
+      // Same for Messenger: a Utility template (order / account / appointment updates).
+      { type: 'messengerTemplate', label: 'Utility Template' },
     ],
   },
   {
@@ -602,6 +641,10 @@ const DEFAULT_NODE_DATA = {
   delay:        { label: 'Delay', seconds: 3 },
   webhook:      { label: 'Webhook / Zapier Action', url: '', method: 'POST', payloadMode: 'ALL_VARIABLES', customPayload: '', customHeaders: '' },
   httpApi:      { label: 'HTTP API', campaignId: '' },
+  marketingOptIn: { label: 'Marketing opt-in', title: 'Get our offers and updates', imageUrl: '' },
+  orderStatus: { label: 'Order Tracking', lookup: 'latest', orderNumberVariable: '', message: 'Your order #{{order.order_number}} is {{order.order_status}}.\nItems: {{order.items}}\nTotal: {{order.total}}', notFoundMessage: "Sorry, I couldn't find an order for you. Please check the order number or contact us.", showTrackButton: true, trackButtonLabel: 'Track order' },
+  telegramChecklist: { label: 'Checklist', title: 'Your checklist', tasks: ['First step', 'Second step'], othersCanMarkDone: true, othersCanAdd: false, saveToFieldId: null },
+  telegramPoll: { label: 'Poll', question: 'Which do you prefer?', options: ['Option 1', 'Option 2'], allowMultiple: false, saveToFieldId: null },
   payment:      { label: 'Catalog / Payment', productName: 'Order Product / Catalog', amount: 49.99, currency: 'USD', buttonLabel: '🛍️ View Catalog / Pay', successMessage: '🎉 Order received! We will process it shortly.' },
   handoff:      { label: 'Agent Handoff', message: '' },
   end:          { label: 'End', message: '' },
@@ -612,7 +655,9 @@ const DEFAULT_NODE_DATA = {
   startAutomation: { label: 'Start Automation', flowId: null, flowName: '' },
   messageBlock: { label: 'Send Message', items: [{ id: 'it_first', type: 'buttons', data: { label: 'Text Message', message: '', buttons: [] } }] },
   appointment:  { label: 'Appointment Booking', campaignId: null, campaignName: '' },
+  whatsappCtaUrl: { label: 'CTA URL Button', headerType: 'none', headerText: '', headerMediaUrl: '', body: '', buttonText: 'Open link', url: 'https://', footerText: '' },
   whatsappTemplate: { label: 'Message Template', templateId: null, templateName: '', language: '', params: { header: {}, body: {}, buttons: {} }, templateMeta: null },
+  messengerTemplate: { label: 'Utility Template', messengerTemplateId: null, messengerTemplateName: '', language: '', params: { header: {}, body: {}, buttons: {} }, templateMeta: null },
   // Sequence-only delay step, between two content nodes — see SEQUENCE_PALETTE.
   wait: { label: 'Wait', preset: '5m', customValue: '', customUnit: 'minutes' },
   // The following two only ever appear inside a User Input Flow's own mini-builder:
@@ -624,13 +669,23 @@ const DEFAULT_NODE_DATA = {
 // (scheduled — see flowDelayScheduler.js on the backend, never a blocking
 // sleep) EXCEPT `start` (a trigger definition, not a runtime step) and `wait`
 // A Message Template element has no Delay / typing options either (a template is sent as-is).
-const DELAY_EXCLUDED_NODE_TYPES = new Set(['start', 'wait', 'delay', 'whatsappTemplate']);
+// Protected subscriber fields (chatbot_api/utils/systemFields.js) a Question /
+// Collect Input can save into — stored as "sys:<key>" instead of a custom field id.
+const SYSTEM_FIELD_OPTIONS = [
+  { ref: 'sys:name', label: 'Name', type: 'TEXT' },
+  { ref: 'sys:email', label: 'Email', type: 'TEXT' },
+  { ref: 'sys:phone', label: 'Phone', type: 'TEXT' },
+  { ref: 'sys:age', label: 'Age', type: 'NUMBER' },
+];
+const parseFieldRef = (val) => (!val ? null : String(val).startsWith('sys:') ? val : Number(val));
+
+const DELAY_EXCLUDED_NODE_TYPES = new Set(['start', 'wait', 'delay', 'whatsappTemplate', 'messengerTemplate']);
 
 // A "typing…" indicator before sending only makes sense for node types that
 // actually send a message to the contact.
 const TYPING_ELIGIBLE_NODE_TYPES = new Set([
   'text', 'interactive', 'image', 'video', 'audio', 'file',
-  'buttons', 'quickReplies', 'listMenu', 'carousel', 'card', 'messageBlock',
+  'buttons', 'quickReplies', 'listMenu', 'carousel', 'card', 'messageBlock', 'whatsappCtaUrl',
 ]);
 
 // Small on/off switch for settings rows (clearer than a bare tick box).
@@ -1301,6 +1356,7 @@ const builderStyles = `
   .react-flow__handle.btn-handle,
   .react-flow__handle[id^="btn-"],
   .react-flow__handle[id^="qr-"],
+  .react-flow__handle[id^="chatbot-"],
   .react-flow__handle[id^="item-"],
   .react-flow__handle[id="then"],
   .react-flow__handle[id="next-step"],
@@ -1319,6 +1375,7 @@ const builderStyles = `
   .react-flow__handle.btn-handle.connected,
   .react-flow__handle[id^="btn-"].connected,
   .react-flow__handle[id^="qr-"].connected,
+  .react-flow__handle[id^="chatbot-"].connected,
   .react-flow__handle[id^="item-"].connected,
   .react-flow__handle[id="then"].connected,
   .react-flow__handle[id="next-step"].connected,
@@ -1342,6 +1399,7 @@ const builderStyles = `
   .react-flow__handle.btn-handle:hover,
   .react-flow__handle[id^="btn-"]:hover,
   .react-flow__handle[id^="qr-"]:hover,
+  .react-flow__handle[id^="chatbot-"]:hover,
   .react-flow__handle[id^="item-"]:hover,
   .react-flow__handle[id="then"]:hover,
   .react-flow__handle[id="next-step"]:hover,
@@ -1356,6 +1414,7 @@ const builderStyles = `
   .react-flow__handle.btn-handle.connected:hover,
   .react-flow__handle[id^="btn-"].connected:hover,
   .react-flow__handle[id^="qr-"].connected:hover,
+  .react-flow__handle[id^="chatbot-"].connected:hover,
   .react-flow__handle[id^="item-"].connected:hover,
   .react-flow__handle[id="then"].connected:hover,
   .react-flow__handle[id="next-step"].connected:hover,
@@ -1980,11 +2039,49 @@ const ACTION_TYPES = {
   remove_sequence: { label: 'Remove from Sequence',  group: 'Sequences',     icon: Layers,    target: 'sequence' },
   set_field:       { label: 'Set Custom Field',      group: 'Custom Fields', icon: Settings2, target: 'field', hasValue: true },
   clear_field:     { label: 'Clear Custom Field',    group: 'Custom Fields', icon: Settings2, target: 'field' },
+  // Quick Actions (Bot Manager → Quick Actions, chatbot_api/utils/quickActions.js).
+  // `sendReply` (default on) hands the chat to the action's own reply flow afterwards.
+  chat_human:      { label: 'Chat with Human',       group: 'Quick Actions', icon: Headset,   target: 'quick', quick: 'chatHuman' },
+  chat_robot:      { label: 'Chat with Robot',       group: 'Quick Actions', icon: BotIcon,   target: 'quick', quick: 'chatRobot' },
+  unsubscribe:     { label: 'Unsubscribe',           group: 'Quick Actions', icon: BellOff,   target: 'quick', quick: 'unsubscribe' },
+  resubscribe:     { label: 'Resubscribe',           group: 'Quick Actions', icon: BellRing,  target: 'quick', quick: 'resubscribe' },
 };
+
+/* ── Quick Action buttons ──────────────────────────────────────────────
+   A button / quick reply / list item whose "When pressed" is one of these runs
+   that bot account's Quick Action (effect + its reply flow) — no wire needed,
+   same as "Go to Existing Flow". The server intercepts the tap before the
+   paused-bot check, so "Chat with Robot" works while a person has the chat. */
+const QUICK_BUTTON_ACTIONS = {
+  chatHuman:   { label: 'Chat with Human', short: 'Human',   description: 'Pauses the bot and hands the chat to your team.', Icon: Headset },
+  chatRobot:   { label: 'Chat with Robot', short: 'Robot',   description: 'Turns the bot back on for this chat.', Icon: BotIcon },
+  unsubscribe: { label: 'Unsubscribe',     short: 'Unsub',   description: 'Stops broadcasts and sequences for them.', Icon: BellOff },
+  resubscribe: { label: 'Resubscribe',     short: 'Resub',   description: 'Subscribes them to broadcasts again.', Icon: BellRing },
+};
+
+/** Quick actions a channel has (mirrors actionsForPlatform in chatbot_api/utils/quickActions.js). */
+function quickButtonActionsFor(platform) {
+  const p = (platform || 'WEBCHAT').toUpperCase();
+  if (p === 'TIKTOK') return [];
+  if (p === 'WEBCHAT') return ['chatHuman', 'chatRobot'];
+  return Object.keys(QUICK_BUTTON_ACTIONS);
+}
+
+/** A button action that does its own thing instead of following a canvas wire. */
+function isOwnActionButton(action) {
+  return action === 'goToFlow' || Boolean(QUICK_BUTTON_ACTIONS[action]);
+}
+
+function OwnActionIcon({ action, title, ...props }) {
+  const quick = QUICK_BUTTON_ACTIONS[action];
+  const Icon = quick ? quick.Icon : Workflow;
+  return <Icon {...props} title={quick ? `Quick Action: ${quick.label}` : title} />;
+}
 
 function isActionConfigured(a) {
   const t = ACTION_TYPES[a?.type];
   if (!t) return false;
+  if (t.target === 'quick') return true;
   if (t.target === 'label') return !!a.labelId;
   if (t.target === 'sequence') return !!a.sequenceId;
   if (t.target === 'field') return !!a.fieldId && (!t.hasValue || String(a.value ?? '').trim() !== '');
@@ -1994,6 +2091,7 @@ function isActionConfigured(a) {
 function describeAction(a) {
   const t = ACTION_TYPES[a?.type];
   if (!t) return '';
+  if (t.target === 'quick') return a.sendReply === false ? 'without its reply' : 'then its reply';
   if (t.target === 'label') return a.labelName || '';
   if (t.target === 'sequence') return a.sequenceName || '';
   if (t.hasValue) return a.fieldName ? `${a.fieldName} = ${a.value ?? ''}` : '';
@@ -2139,10 +2237,9 @@ function findForeignRefs(nodes, { sequences, userInputFlows, flows }) {
   return out;
 }
 
-const escapeHtml = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // Message Block: the error text AND the id of the element that has it (so the panel can open it).
-function validateMessageBlock(data) {
+function validateMessageBlock(data, platform = null) {
   const items = Array.isArray(data.items) ? data.items : [];
   if (items.length === 0) return { error: 'Add at least one element', itemId: null };
   const endIdx = items.findIndex((i) => BLOCK_ENDING_TYPES.includes(i.type));
@@ -2155,13 +2252,21 @@ function validateMessageBlock(data) {
     if (items[i].type === 'quickReplies' && !(itemData.message || '').trim() && isPlainBlockText(items[i - 1])) {
       itemData = { ...itemData, message: items[i - 1].data.message };
     }
-    const err = validateNodeData({ type: items[i].type, data: itemData });
+    const err = validateNodeData({ type: items[i].type, data: itemData }, platform);
     if (err) return { error: `${BLOCK_ITEM_LABELS[items[i].type] || 'Element'} ${i + 1}: ${err}`, itemId: items[i].id };
   }
   return { error: null, itemId: null };
 }
 
-function validateNodeData(node) {
+// Required settings first, then what the channel accepts (utils/flowChannelRules.js).
+function validateNodeData(node, platform = null) {
+  const base = validateNodeRequirements(node, platform);
+  if (base || !node || node.type === 'messageBlock') return base;
+  const data = node.data || {};
+  return channelLimitProblem(node.type, data, platform, node.type === 'listMenu' ? { lists: normalizeListMenuData(data) } : {});
+}
+
+function validateNodeRequirements(node, platform = null) {
   if (!node) return null;
   const data = node.data || {};
 
@@ -2208,6 +2313,7 @@ function validateNodeData(node) {
         data.uifStart ||
         data.sequenceStart ||
         data.broadcastStart ||
+        data.quickActionStart ||
         data.chatWidgetStart ||
         data.trigger_type === 'CHAT_WIDGET' ||
         data.trigger_type === 'chat_widget'
@@ -2228,7 +2334,7 @@ function validateNodeData(node) {
         }
         return null;
       }
-      if (data.trigger_type === 'keyword' || (!data.trigger_type && !data.chatWidgetStart && !data.broadcastStart && !data.uifStart && !data.sequenceStart)) {
+      if (data.trigger_type === 'keyword' || (!data.trigger_type && !data.chatWidgetStart && !data.broadcastStart && !data.uifStart && !data.sequenceStart && !data.quickActionStart)) {
         if (data.match_type === 'thumbs_up') return null;
         const rawKw = data.keywords || (data.trigger_keyword ? data.trigger_keyword.split(',') : []);
         const kwList = Array.isArray(rawKw) ? rawKw.filter((k) => k && String(k).trim()) : [];
@@ -2278,6 +2384,9 @@ function validateNodeData(node) {
 
     case 'whatsappTemplate':
       return validateMessageTemplate(data);
+
+    case 'messengerTemplate':
+      return validateMessengerTemplate(data);
 
     case 'video':
       if (!(data.mediaUrl || '').trim()) {
@@ -2410,7 +2519,7 @@ function validateNodeData(node) {
       return null;
 
     case 'messageBlock':
-      return validateMessageBlock(data).error;
+      return validateMessageBlock(data, platform).error;
 
     case 'actions': {
       const list = Array.isArray(data.actions) ? data.actions : [];
@@ -2471,12 +2580,46 @@ function validateNodeData(node) {
       }
       return null;
 
+    case 'marketingOptIn':
+      if (!String(data.title || '').trim()) return 'The opt-in request needs a title';
+      if (String(data.title).length > 65) return 'The title can be at most 65 characters';
+      if (data.imageUrl && !/^(https:\/\/|\/uploads\/)/i.test(data.imageUrl)) return 'The image must be an https:// link';
+      return null;
+
+    case 'orderStatus':
+      if (data.lookup === 'variable' && !String(data.orderNumberVariable || '').trim()) return 'Choose the variable that holds the order number';
+      if (!String(data.message || '').trim()) return 'The order message is empty';
+      return null;
+
+    case 'whatsappCtaUrl':
+      return ctaUrlProblem(data);
+
+    case 'telegramChecklist': {
+      if (!String(data.title || '').trim()) return 'Checklist title is required';
+      const tasks = (data.tasks || []).filter((t) => String(t || '').trim());
+      if (!tasks.length) return 'Add at least one task';
+      if (tasks.length > 30) return 'A checklist can have at most 30 tasks';
+      return null;
+    }
+
+    case 'telegramPoll': {
+      if (!data.question || !data.question.trim()) return 'Poll question is required';
+      const opts = (data.options || []).filter((o) => String(o || '').trim());
+      if (opts.length < 2) return 'A poll needs at least 2 options';
+      if (opts.length > 12) return 'A poll can have at most 12 options';
+      return null;
+    }
+
     case 'payment':
       if (!data.productName || !data.productName.trim()) {
         return 'Product or service name is required';
       }
-      if (!data.amount || Number(data.amount) <= 0) {
-        return 'Payment amount must be greater than 0';
+      // Telegram flows use the Stars price; every other channel the amount.
+      if (data.starsAmount) {
+        const stars = Number(data.starsAmount);
+        if (!Number.isInteger(stars) || stars < 1 || stars > 100000) return 'Telegram Stars price must be 1 – 100,000';
+      } else if (!data.amount || Number(data.amount) <= 0) {
+        return 'Payment amount must be greater than 0 (or set a Telegram Stars price)';
       }
       return null;
 
@@ -2547,9 +2690,15 @@ function getNodeDimensions(node) {
     case 'collectInput':
     case 'question':
     case 'payment':
+    case 'telegramPoll':
+    case 'telegramChecklist':
+    case 'whatsappCtaUrl':
+    case 'orderStatus':
+    case 'marketingOptIn':
     case 'webhook':
     case 'runUserInputFlow':
     case 'whatsappTemplate':
+    case 'messengerTemplate':
       return { width, height: 130 };
     case 'delay':
     case 'video':
@@ -3058,6 +3207,47 @@ function StartNode({ id, data = {}, selected }) {
   // keyword trigger, since it's never triggered by an inbound message at
   // all; it's invoked directly by routes/broadcasts.js's send engine. Same
   // reasoning/fix as uifStart/sequenceStart above.
+  // A Quick Action's reply flow (Bot Manager → Quick Actions): started by its
+  // action (a button, the Actions element or a keyword), never by a trigger.
+  if (data.quickActionStart) {
+    const QA_LABELS = { NO_MATCH: 'No match reply', CHAT_HUMAN: 'Chat with Human', CHAT_ROBOT: 'Chat with Robot', UNSUBSCRIBE: 'Unsubscribe', RESUBSCRIBE: 'Resubscribe' };
+    return (
+      <div
+        className={`fb-node${selected ? ' selected' : ''}`}
+        style={{
+          borderColor: selected ? '#059669' : '#e2e8f0', background: '#ffffff',
+          minWidth: 270, maxWidth: 270, width: 270, borderRadius: 16,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.06)', padding: '16px 16px 14px 16px',
+          position: 'relative',
+        }}
+      >
+        <NodeHoverActions nodeId={id} nodeType="start" />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, paddingLeft: 2 }}>
+          <Zap size={18} strokeWidth={2.5} color="#059669" />
+          <span style={{ fontWeight: 800, fontSize: 15, color: '#0f172a' }}>Quick Action</span>
+        </div>
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px',
+          borderRadius: 12, background: '#ecfdf5', border: '1px solid #d1fae5',
+        }}>
+          <div style={{
+            width: 20, height: 20, borderRadius: '50%', background: '#059669',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1,
+          }}>
+            <Zap size={11} color="#fff" />
+          </div>
+          <div style={{ fontSize: 11.5, color: '#047857', lineHeight: 1.4 }}>
+            <b>{QA_LABELS[data.quickAction] || 'Quick Action'}</b> reply — runs when this action happens (a button, the Actions element or a keyword).
+          </div>
+        </div>
+        <div className="fb-next-step-row" style={{ marginTop: 14, marginRight: -16, marginLeft: -16, paddingLeft: 16 }}>
+          <span>Reply</span>
+          <Handle type="source" position={Position.Right} id="next-step" className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`} />
+        </div>
+      </div>
+    );
+  }
+
   if (data.broadcastStart) {
     return (
       <div
@@ -3110,6 +3300,131 @@ function StartNode({ id, data = {}, selected }) {
     const isWc = plat === 'WEBCHAT';
     const platColor = plat === 'WHATSAPP' ? '#25D366' : plat === 'FACEBOOK' ? '#0084FF' : plat === 'TELEGRAM' ? '#26A5E4' : plat === 'INSTAGRAM' ? '#E1306C' : '#6366f1';
     const WidgetIcon = isWc ? Globe : MessageCircle;
+
+    if (isWc) {
+      const rawCards = data.chatbotCards;
+      const cardsList = Array.isArray(rawCards) && rawCards.length > 0
+        ? rawCards
+        : (typeof rawCards === 'string' ? (() => { try { return JSON.parse(rawCards); } catch { return [
+            { id: 'chatbot-1', title: 'Book a demo', subtitle: 'Schedule a personalized demo', icon: 'calendar', trigger: 'Book a demo' },
+            { id: 'chatbot-2', title: 'Product tour', subtitle: 'See how it works', icon: 'play', trigger: 'Product tour' },
+            { id: 'chatbot-3', title: 'Documentation', subtitle: 'Browse our guides', icon: 'book', trigger: 'Documentation' },
+          ]; } })() : [
+            { id: 'chatbot-1', title: 'Book a demo', subtitle: 'Schedule a personalized demo', icon: 'calendar', trigger: 'Book a demo' },
+            { id: 'chatbot-2', title: 'Product tour', subtitle: 'See how it works', icon: 'play', trigger: 'Product tour' },
+            { id: 'chatbot-3', title: 'Documentation', subtitle: 'Browse our guides', icon: 'book', trigger: 'Documentation' },
+          ]);
+
+      return (
+        <div
+          className={`fb-node${selected ? ' selected' : ''}`}
+          style={{
+            borderColor: selected ? '#6366f1' : '#e2e8f0', background: '#ffffff',
+            minWidth: 285, maxWidth: 310, width: 295, borderRadius: 20,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.06)', padding: '16px 16px 14px 16px',
+            position: 'relative',
+          }}
+        >
+          <NodeHoverActions nodeId={id} nodeType="start" />
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, paddingLeft: 2 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ width: 26, height: 26, borderRadius: 7, background: '#6366f118', color: '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Globe size={15} />
+              </div>
+              <span style={{ fontWeight: 800, fontSize: 13.5, color: '#0f172a' }}>Live Webchat Hub</span>
+            </div>
+            <span style={{ fontSize: 9.5, fontWeight: 800, color: '#6366f1', background: '#6366f115', padding: '2px 7px', borderRadius: 999 }}>
+              3 BOTS + CHAT
+            </span>
+          </div>
+
+          {/* Home Screen Header Banner */}
+          <div style={{
+            padding: '8px 10px', borderRadius: 10, background: 'linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)',
+            color: '#ffffff', marginBottom: 10,
+          }}>
+            <div style={{ fontSize: 12, fontWeight: 800 }}>{data.homeTitle || 'Hi there 👋'}</div>
+            <div style={{ fontSize: 10.5, opacity: 0.9 }}>{data.homeSubtitle || 'How can we help you today?'}</div>
+          </div>
+
+          {/* 3 Chatbot Cards with visual handles */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+            {cardsList.map((card, idx) => {
+              const handleId = card.id || `chatbot-${idx + 1}`;
+              const isConnected = connectedHandles.has(handleId);
+              const CardIcon = card.icon === 'calendar' ? CalendarDays
+                : card.icon === 'play' ? Play
+                : card.icon === 'book' ? FileText
+                : card.icon === 'sparkles' ? Sparkles
+                : card.icon === 'shopping' ? ShoppingBag
+                : card.icon === 'help' ? HelpCircle
+                : MessageSquare;
+
+              return (
+                <div
+                  key={handleId}
+                  style={{
+                    position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '6px 10px', borderRadius: 8, background: '#f8fafc', border: `1px solid ${isConnected ? '#c7d2fe' : '#e2e8f0'}`,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0, paddingRight: 10 }}>
+                    <div style={{
+                      width: 22, height: 22, borderRadius: 6, background: '#ede9fe', color: '#6366f1',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                    }}>
+                      <CardIcon size={12} />
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 11.5, fontWeight: 700, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {card.title || `Chatbot ${idx + 1}`}
+                      </div>
+                      {card.subtitle && (
+                        <div style={{ fontSize: 9.5, color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {card.subtitle}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <Handle
+                    type="source"
+                    position={Position.Right}
+                    id={handleId}
+                    className={`btn-handle${isConnected ? ' connected' : ''}`}
+                    style={{ right: -6 }}
+                    title={`Bot ${idx + 1}: ${card.title}`}
+                  />
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Normal Conversation Step */}
+          <div
+            className="fb-next-step-row"
+            style={{
+              position: 'relative', marginTop: 8, marginRight: -16, marginLeft: -16, paddingLeft: 16,
+              background: '#f1f5f9', borderTop: '1px solid #e2e8f0',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <MessageCircle size={12} color="#475569" />
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#334155' }}>
+                {data.startConversationText || 'Start a conversation'}
+              </span>
+            </div>
+            <Handle
+              type="source"
+              position={Position.Right}
+              id="next-step"
+              className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`}
+              title="General Chat (next-step)"
+            />
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div
         className={`fb-node${selected ? ' selected' : ''}`}
@@ -3468,7 +3783,7 @@ function TextNode({ id, data, selected }) {
           const btnAction = typeof btn === 'object' ? btn?.action : 'flow';
           const isPhone = btnAction === 'phone';
           const isUrl = btnAction === 'url';
-          const isGoToFlow = btnAction === 'goToFlow';
+          const isGoToFlow = isOwnActionButton(btnAction);
 
           return (
             <div
@@ -3521,7 +3836,7 @@ function TextNode({ id, data, selected }) {
                 />
               )}
               {isGoToFlow && (
-                <Workflow
+                <OwnActionIcon action={btnAction}
                   size={14}
                   style={{
                     position: 'absolute',
@@ -3801,7 +4116,7 @@ function InteractiveNode({ id, data, selected }) {
           const btnAction = typeof btn === 'object' ? btn?.action : 'flow';
           const isPhone = btnAction === 'phone';
           const isUrl = btnAction === 'url';
-          const isGoToFlow = btnAction === 'goToFlow';
+          const isGoToFlow = isOwnActionButton(btnAction);
 
           return (
             <div
@@ -3854,7 +4169,7 @@ function InteractiveNode({ id, data, selected }) {
                 />
               )}
               {isGoToFlow && (
-                <Workflow
+                <OwnActionIcon action={btnAction}
                   size={14}
                   style={{
                     position: 'absolute',
@@ -4114,7 +4429,7 @@ function ImageNode({ id, data, selected }) {
           const btnAction = typeof btn === 'object' ? btn?.action : 'flow';
           const isPhone = btnAction === 'phone';
           const isUrl = btnAction === 'url';
-          const isGoToFlow = btnAction === 'goToFlow';
+          const isGoToFlow = isOwnActionButton(btnAction);
 
           return (
             <div
@@ -4167,7 +4482,7 @@ function ImageNode({ id, data, selected }) {
                 />
               )}
               {isGoToFlow && (
-                <Workflow
+                <OwnActionIcon action={btnAction}
                   size={14}
                   style={{
                     position: 'absolute',
@@ -4347,7 +4662,7 @@ function VideoNode({ id, data, selected }) {
             const btnAction = typeof btn === 'object' ? btn?.action : 'flow';
             const isPhone = btnAction === 'phone';
             const isUrl = btnAction === 'url';
-            const isGoToFlow = btnAction === 'goToFlow';
+            const isGoToFlow = isOwnActionButton(btnAction);
             return (
               <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '9px 14px', borderRadius: 12, background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.03)', position: 'relative' }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: '#334155', textAlign: 'center', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -4355,7 +4670,7 @@ function VideoNode({ id, data, selected }) {
                 </span>
                 {isPhone && <Phone size={14} style={{ position: 'absolute', right: 12, color: '#334155' }} />}
                 {isUrl && <ExternalLink size={14} style={{ position: 'absolute', right: 12, color: '#334155' }} />}
-                {isGoToFlow && <Workflow size={14} style={{ position: 'absolute', right: 12, color: '#334155' }} />}
+                {isGoToFlow && <OwnActionIcon action={btnAction} size={14} style={{ position: 'absolute', right: 12, color: '#334155' }} />}
                 {!isPhone && !isUrl && !isGoToFlow && (
                   <Handle type="source" position={Position.Right} id={`btn-${i}`} className={`btn-handle${connectedHandles.has(`btn-${i}`) ? ' connected' : ''}`} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)' }} />
                 )}
@@ -4529,6 +4844,84 @@ function MessageTemplateNode({ id, data, selected }) {
   );
 }
 
+/* ── Utility Template Node (approved Messenger Utility template) ── */
+function MessengerTemplateNode({ id, data, selected }) {
+  const validationError = data?._validationError;
+  const connectedHandles = useConnectedHandles(id);
+  const color = NODE_COLORS.messengerTemplate;
+  const meta = data?.templateMeta;
+  // Reply buttons made in this app get their own wire (btn-<index>) in a flow.
+  const { currentFlowId } = useContext(FlowNodeActionsContext);
+  const routable = Boolean(currentFlowId);
+  const headerImage = data?.params?.headerImage || '';
+
+  return (
+    <div
+      className={`fb-node${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
+      style={{
+        borderRadius: 16, background: '#ffffff',
+        border: selected ? `1.5px solid ${color}` : '1.5px solid #e2e8f0',
+        boxShadow: selected ? `0 0 0 3px ${color}26, 0 6px 24px rgba(0,0,0,0.10)` : '0 4px 20px rgba(0,0,0,0.06)',
+        width: 270, minWidth: 270, maxWidth: 270, overflow: 'visible', position: 'relative', padding: '14px 14px 10px 14px',
+      }}
+    >
+      <NodeHoverActions nodeId={id} nodeType="messengerTemplate" />
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 24 }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <div style={{ width: 20, height: 20, borderRadius: '50%', background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <BellRing size={11} color="#ffffff" />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', lineHeight: 1.2 }}>Utility Template</div>
+          <div style={{ fontSize: 10.5, color: '#94a3b8', fontWeight: 600 }}>Messenger update · any time</div>
+        </div>
+      </div>
+      {data?.messengerTemplateId && meta?.headerType === 'IMAGE' && (
+        headerImage && !headerImage.includes('{{') ? (
+          <img draggable={false} src={resolveMediaPreviewUrl(headerImage)} alt="" style={{ width: '100%', height: 110, objectFit: 'cover', borderRadius: 12, display: 'block', marginBottom: 8, border: '1px solid #e2e8f0' }} />
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px', marginBottom: 8, borderRadius: 12, fontSize: 11, fontWeight: 600, background: '#f8fafc', border: '1px solid #e2e8f0', color: '#475569' }}>
+            <Image size={13} /> {headerImage ? 'Header image set' : 'Header image: template sample'}
+          </div>
+        )
+      )}
+      {data?.messengerTemplateId ? (
+        <div style={{ padding: '9px 11px', borderRadius: 12, background: '#eff6ff', border: '1px solid #dbeafe' }}>
+          <div style={{ fontSize: 11.5, fontWeight: 700, color: '#1e40af', marginBottom: meta?.bodyText ? 4 : 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {data.messengerTemplateName}{data.language ? ` · ${data.language}` : ''}
+          </div>
+          {meta?.headerText && <div style={{ fontSize: 11.5, fontWeight: 700, color: '#0f172a', marginBottom: 2 }}>{meta.headerText}</div>}
+          {meta?.bodyText && (
+            <div style={{ fontSize: 11.5, color: '#334155', lineHeight: 1.45, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', whiteSpace: 'pre-wrap' }}>{meta.bodyText}</div>
+          )}
+        </div>
+      ) : (
+        <div style={{ padding: '16px 12px', borderRadius: 12, background: '#f8fafc', border: '1.5px dashed #cbd5e1', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, color: '#94a3b8' }}>
+          <BellRing size={22} style={{ color }} />
+          <span style={{ fontSize: 11, fontWeight: 600 }}>Select an approved Utility template</span>
+        </div>
+      )}
+      {(meta?.buttons || []).length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+          {meta.buttons.map((b) => (
+            <BlockButtonRow
+              key={b.index}
+              title={b.text}
+              handleId={`btn-${b.index}`}
+              connected={connectedHandles.has(`btn-${b.index}`)}
+              icon={b.type === 'URL' ? ExternalLink : (b.routable && routable) ? null : CornerDownRight}
+            />
+          ))}
+        </div>
+      )}
+      <div className="fb-next-step-row" style={{ marginTop: 8, marginRight: -14, marginLeft: -14, paddingLeft: 14 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>Next Step</span>
+        <Handle type="source" position={Position.Right} id="next-step" className={`next-step-handle${connectedHandles.has('next-step') ? ' connected' : ''}`} />
+      </div>
+    </div>
+  );
+}
+
 /* ── File Node (Send Message card style) ──────────────────────── */
 function FileNode({ id, data, selected }) {
   const validationError = data?._validationError;
@@ -4690,7 +5083,7 @@ function ButtonsNode({ id, data, selected }) {
           const btnAction = typeof btn === 'object' ? btn?.action : 'flow';
           const isPhone = btnAction === 'phone';
           const isUrl = btnAction === 'url';
-          const isGoToFlow = btnAction === 'goToFlow';
+          const isGoToFlow = isOwnActionButton(btnAction);
 
           return (
             <div
@@ -4743,7 +5136,7 @@ function ButtonsNode({ id, data, selected }) {
                 />
               )}
               {isGoToFlow && (
-                <Workflow
+                <OwnActionIcon action={btnAction}
                   size={14}
                   style={{
                     position: 'absolute',
@@ -4870,7 +5263,7 @@ function QuickRepliesNode({ id, data, selected }) {
         {replies.map((r, i) => {
           const qr = normalizeQuickReply(r);
           const isSpecial = qr.kind !== 'text';
-          const isGoToFlow = qr.action === 'goToFlow';
+          const isGoToFlow = isOwnActionButton(qr.action);
           const SpecialIcon = isSpecial ? QUICK_REPLY_KINDS[qr.kind]?.icon : null;
           return (
             <div key={i} className="fb-node-btn-chip">
@@ -4883,7 +5276,7 @@ function QuickRepliesNode({ id, data, selected }) {
                 // action elsewhere on this canvas.
                 SpecialIcon && <SpecialIcon size={12} style={{ opacity: 0.7, flexShrink: 0, color: '#334155' }} />
               ) : isGoToFlow ? (
-                <Workflow size={12} style={{ opacity: 0.85, flexShrink: 0, color: '#4338ca' }} title={`Goes to flow: ${qr.flowName || 'Selected Flow'}`} />
+                <OwnActionIcon action={qr.action} size={12} style={{ opacity: 0.85, flexShrink: 0, color: '#4338ca' }} title={`Goes to flow: ${qr.flowName || 'Selected Flow'}`} />
               ) : (
                 <>
                   <ChevronRight size={12} style={{ opacity: 0.6, flexShrink: 0 }} />
@@ -4942,12 +5335,12 @@ function ListMenuNode({ id, data, selected }) {
                   // Same idea as a button: an action that jumps elsewhere on
                   // its own (Go to Flow) doesn't route through a canvas wire,
                   // so it gets a small indicator instead of a connector dot.
-                  const isGoToFlow = item.action === 'goToFlow';
+                  const isGoToFlow = isOwnActionButton(item.action);
                   return (
                     <div key={ii} className="fb-node-btn-chip">
                       <span style={{ fontSize: '11px', fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.title || `Option ${ii + 1}`}</span>
                       {isGoToFlow ? (
-                        <Workflow size={12} style={{ opacity: 0.8, flexShrink: 0, color: '#334155' }} />
+                        <OwnActionIcon action={item.action} size={12} style={{ opacity: 0.8, flexShrink: 0, color: '#334155' }} />
                       ) : (
                         <>
                           <ChevronRight size={12} style={{ opacity: 0.6, flexShrink: 0 }} />
@@ -5464,6 +5857,85 @@ function HttpApiNode({ id, data, selected }) {
   );
 }
 
+/* ── Marketing opt-in Node (Messenger) ───────────────────────── */
+function MarketingOptInNode({ id, data, selected }) {
+  return (
+    <NodeWrapper id={id} color={NODE_COLORS.marketingOptIn} label="Marketing opt-in" icon={MailPlus} selected={selected} data={data} type="marketingOptIn">
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
+      <div className="fb-node-body">
+        <div className="fb-node-body-preview">📬 {data.title || 'Get our offers and updates'}</div>
+        <div style={{ fontSize: 10, color: '#64748b', marginTop: 4 }}>Messenger "Get updates" request</div>
+      </div>
+    </NodeWrapper>
+  );
+}
+
+/* ── Order Tracking Node ─────────────────────────────────────── */
+function OrderStatusNode({ id, data, selected }) {
+  return (
+    <NodeWrapper id={id} color={NODE_COLORS.orderStatus} label="Order Tracking" icon={PackageSearch} selected={selected} data={data} type="orderStatus">
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
+      <div className="fb-node-body">
+        <div style={{ fontSize: 10.5, fontWeight: 700, color: '#0f766e', marginBottom: 4 }}>
+          {data.lookup === 'variable' ? `Order number from {{${data.orderNumberVariable || '…'}}}` : "Subscriber's latest order"}
+        </div>
+        <div className="fb-node-body-preview" style={{ whiteSpace: 'pre-wrap' }}>{data.message || 'Order message'}</div>
+      </div>
+    </NodeWrapper>
+  );
+}
+
+/* ── Telegram Checklist Node ─────────────────────────────────── */
+function TelegramChecklistNode({ id, data, selected }) {
+  const tasks = (data.tasks || []).filter((t) => String(t || '').trim());
+  return (
+    <NodeWrapper id={id} color={NODE_COLORS.telegramChecklist} label="Checklist (Telegram)" icon={ListChecks} selected={selected} data={data} type="telegramChecklist">
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
+      <div className="fb-node-body">
+        <strong style={{ fontSize: 11, color: '#1e293b', display: 'block', marginBottom: 4 }}>{data.title || 'Checklist'}</strong>
+        {tasks.slice(0, 4).map((t, i) => <div key={i} style={{ fontSize: 10, color: '#475569' }}>☐ {t}</div>)}
+        {tasks.length > 4 && <div style={{ fontSize: 10, color: '#94a3b8' }}>+{tasks.length - 4} more</div>}
+      </div>
+    </NodeWrapper>
+  );
+}
+
+/* ── WhatsApp CTA URL Button Node ────────────────────────────── */
+function WhatsAppCtaUrlNode({ id, data, selected }) {
+  const headerType = data.headerType || 'none';
+  return (
+    <NodeWrapper id={id} color={NODE_COLORS.whatsappCtaUrl} label="CTA URL Button" icon={ExternalLink} selected={selected} data={data} type="whatsappCtaUrl">
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
+      <div className="fb-node-body">
+        {headerType === 'text' && data.headerText && <strong style={{ fontSize: 11, color: '#1e293b', display: 'block', marginBottom: 3 }}>{data.headerText}</strong>}
+        {['image', 'video', 'document'].includes(headerType) && <div style={{ fontSize: 10, color: '#64748b', marginBottom: 3 }}>[{headerType} header]</div>}
+        <div style={{ fontSize: 11, color: '#334155', whiteSpace: 'pre-wrap', maxHeight: 48, overflow: 'hidden' }}>{data.body || <span style={{ color: '#94a3b8' }}>Message text…</span>}</div>
+        {data.footerText && <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 3 }}>{data.footerText}</div>}
+        <div style={{ marginTop: 6, padding: '4px 8px', borderRadius: 6, background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#15803d', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 5, justifyContent: 'center' }}>
+          <ExternalLink size={11} /> {data.buttonText || 'Open link'}
+        </div>
+      </div>
+    </NodeWrapper>
+  );
+}
+
+/* ── Telegram Poll Node ──────────────────────────────────────── */
+function TelegramPollNode({ id, data, selected }) {
+  const opts = (data.options || []).filter((o) => String(o || '').trim());
+  return (
+    <NodeWrapper id={id} color={NODE_COLORS.telegramPoll} label="Poll (Telegram)" icon={BarChart3} selected={selected} data={data} type="telegramPoll">
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
+      <div className="fb-node-body">
+        <strong style={{ fontSize: 11, color: '#1e293b', display: 'block', marginBottom: 4 }}>{data.question || 'Poll question'}</strong>
+        {opts.slice(0, 4).map((o, i) => (
+          <div key={i} style={{ fontSize: 10, color: '#475569', padding: '2px 6px', marginBottom: 2, borderRadius: 4, background: '#f1f5f9' }}>{o}</div>
+        ))}
+        {opts.length > 4 && <div style={{ fontSize: 10, color: '#94a3b8' }}>+{opts.length - 4} more</div>}
+      </div>
+    </NodeWrapper>
+  );
+}
+
 /* ── Collect Payment Node ────────────────────────────────────── */
 function PaymentNode({ id, data, selected }) {
   return (
@@ -5475,7 +5947,7 @@ function PaymentNode({ id, data, selected }) {
             {data.productName || 'Order Product'}
           </strong>
           <span style={{ fontSize: 10, fontWeight: 800, padding: '1px 6px', borderRadius: 4, background: 'rgba(22, 163, 74, 0.12)', color: '#16a34a' }}>
-            ${Number(data.amount || 0).toFixed(2)}
+            {data.starsAmount ? `⭐${data.starsAmount}` : `${Number(data.amount || 0).toFixed(2)} ${data.currency || 'USD'}`}
           </span>
         </div>
         <div style={{ fontSize: 10, color: '#64748b' }}>
@@ -5920,7 +6392,7 @@ function BlockItemView({ item, connectedHandles, onAddButton, onAddReply, attach
   const caption = (text) => (text ? <div style={{ ...bubble, padding: '8px 12px', marginBottom: 8 }}>{text}</div> : null);
   const actionOf = (b) => (typeof b === 'string' ? 'flow' : (b?.action || 'flow'));
   const titleOf = (b, fallback) => (typeof b === 'string' ? b : (b?.title || fallback));
-  const ownIconOf = (a) => (a === 'phone' ? Phone : a === 'url' ? ExternalLink : a === 'goToFlow' ? Workflow : null);
+  const ownIconOf = (a) => (a === 'phone' ? Phone : a === 'url' ? ExternalLink : a === 'goToFlow' ? Workflow : (QUICK_BUTTON_ACTIONS[a]?.Icon || null));
 
   const canAddButton = !!onAddButton && ['buttons', 'text', 'image'].includes(item.type);
   const buttonRows = (list) => ((list.length > 0 || canAddButton) && (
@@ -6088,7 +6560,7 @@ function BlockItemView({ item, connectedHandles, onAddButton, onAddReply, attach
             {(d.replies || []).map((r, i) => {
               const qr = normalizeQuickReply(r);
               const isSpecial = qr.kind !== 'text';
-              const isGoToFlow = qr.action === 'goToFlow';
+              const isGoToFlow = isOwnActionButton(qr.action);
               const SpecialIcon = isSpecial ? QUICK_REPLY_KINDS[qr.kind]?.icon : null;
               return (
                 <div key={i} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, padding: (isSpecial || isGoToFlow) ? '6px 12px' : '6px 34px 6px 14px', borderRadius: 999, background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)', fontSize: 12, fontWeight: 600, color: '#1e293b', maxWidth: '100%' }}>
@@ -6097,7 +6569,7 @@ function BlockItemView({ item, connectedHandles, onAddButton, onAddReply, attach
                     {isSpecial ? (QUICK_REPLY_KINDS[qr.kind]?.label || 'Special') : (qr.title || `Reply ${i + 1}`)}
                   </span>
                   {isGoToFlow ? (
-                    <Workflow size={12} style={{ opacity: 0.85, flexShrink: 0, color: '#4338ca' }} title={`Goes to flow: ${qr.flowName || 'Selected Flow'}`} />
+                    <OwnActionIcon action={qr.action} size={12} style={{ opacity: 0.85, flexShrink: 0, color: '#4338ca' }} title={`Goes to flow: ${qr.flowName || 'Selected Flow'}`} />
                   ) : !isSpecial && (
                     <Handle
                       type="source"
@@ -6130,12 +6602,12 @@ function BlockItemView({ item, connectedHandles, onAddButton, onAddReply, attach
                   <div className="fb-node-btn-list" style={{ padding: 0, marginTop: 2 }}>
                     {section.items.map((it, ii) => {
                       gi += 1;
-                      const own = it.action === 'goToFlow';
+                      const own = isOwnActionButton(it.action);
                       return (
                         <div key={ii} className="fb-node-btn-chip">
                           <span style={{ fontSize: 11, fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.title || `Option ${ii + 1}`}</span>
                           {own ? (
-                            <Workflow size={12} style={{ flexShrink: 0, color: '#334155' }} />
+                            <OwnActionIcon action={it.action} size={12} style={{ flexShrink: 0, color: '#334155' }} />
                           ) : (
                             <>
                               <ChevronRight size={12} style={{ opacity: 0.6, flexShrink: 0 }} />
@@ -6455,7 +6927,7 @@ function ImageUploadField({ label = 'Image', value, onChange, placeholder = 'htt
       }
     } catch (err) {
       console.error('Failed to upload image:', err);
-      alert('Failed to upload image. Please try again.');
+      alert.error('Upload failed', 'Failed to upload image. Please try again.');
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -6542,7 +7014,7 @@ function MediaUploadField({ label = 'Media File', value, onChange, accept = '*/*
       }
     } catch (err) {
       console.error('Failed to upload file:', err);
-      alert('Failed to upload media file.');
+      alert.error('Upload failed', 'Failed to upload media file.');
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -7118,6 +7590,8 @@ function ButtonActionEditor({
   const isTG = p === 'TELEGRAM';
   const isMeta = isWA || isFB || isIG;
   const qrKind = btnObj.kind || 'text';
+  // Title limit: WhatsApp list rows 24, every other Meta button / reply 20 (utils/flowChannelRules.js).
+  const titleMax = isWA && isItem ? 24 : 20;
   const isSpecial = isQR && qrKind !== 'text';
 
   // Same-platform flows only — jumping into a flow built for a different
@@ -7130,16 +7604,22 @@ function ButtonActionEditor({
   // Allowed action types, per Meta's docs:
   // Quick replies support continuing in flow or jumping directly to another flow.
   const skipUrlPhoneOnWA = isWA && isItem;
+  // Quick Actions (Bot Manager → Quick Actions) — any option that replies to the bot can run one.
+  const quickOptions = isSpecial ? [] : quickButtonActionsFor(p).map((key) => ({
+    value: key, label: QUICK_BUTTON_ACTIONS[key].label, description: `Quick Action — ${QUICK_BUTTON_ACTIONS[key].description}`, Icon: QUICK_BUTTON_ACTIONS[key].Icon,
+  }));
   const actionOptions = (isQR || isTplBtn)
     ? [
         { value: 'flow', label: 'Continue Flow (Next Step)', description: 'Follows the wire connected to this reply on the canvas.', Icon: CornerDownRight },
         { value: 'goToFlow', label: 'Go to Existing Flow', description: "Jumps straight to another flow's start — no wire needed.", Icon: Workflow },
+        ...quickOptions,
       ]
     : [
         { value: 'flow', label: 'Continue Flow (Next Step)', description: 'Follows the wire connected to this button on the canvas.', Icon: CornerDownRight },
         { value: 'goToFlow', label: 'Go to Existing Flow', description: "Jumps straight to another flow's start — no wire needed.", Icon: Workflow },
         ...(skipUrlPhoneOnWA ? [] : [{ value: 'url', label: 'Open Website / URL', description: 'Opens a link — never replies back to the bot.', Icon: ExternalLink }]),
         ...(!skipUrlPhoneOnWA && (isFB || p === 'WEBCHAT') ? [{ value: 'phone', label: 'Call Phone Number', description: 'Dials a number — never replies back to the bot.', Icon: Phone }] : []),
+        ...quickOptions,
       ];
 
   const updateProp = (field, val) => {
@@ -7154,6 +7634,11 @@ function ButtonActionEditor({
       case 'url': return { label: 'URL', bg: '#f1f5f9', color: '#334155' };
       case 'phone': return { label: 'Call', bg: '#f1f5f9', color: '#334155' };
       case 'goToFlow': return { label: 'Go to Flow', bg: '#eef2ff', color: '#4338ca' };
+      case 'chatHuman':
+      case 'chatRobot':
+      case 'unsubscribe':
+      case 'resubscribe':
+        return { label: QUICK_BUTTON_ACTIONS[btnObj.action].short, bg: '#ecfdf5', color: '#047857' };
       default: return { label: isQR ? 'Reply' : 'Flow', bg: '#f1f5f9', color: '#334155' };
     }
   };
@@ -7368,6 +7853,33 @@ function ButtonActionEditor({
                 );
               })()}
 
+              {/* Telegram inline buttons can be coloured (Bot API: style primary / success / danger). */}
+              {isTG && !isQR && !isItem && !isTplBtn && (
+                <div className="fb-field" style={{ margin: 0 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: '#475569' }}>Button colour (Telegram)</label>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {[
+                      { value: '', label: 'Default', bg: '#f1f5f9', color: '#334155' },
+                      { value: 'primary', label: 'Blue', bg: '#2563eb', color: '#ffffff' },
+                      { value: 'success', label: 'Green', bg: '#16a34a', color: '#ffffff' },
+                      { value: 'danger', label: 'Red', bg: '#dc2626', color: '#ffffff' },
+                    ].map((o) => {
+                      const active = (btnObj.tgStyle || '') === o.value;
+                      return (
+                        <button
+                          key={o.value || 'default'}
+                          type="button"
+                          onClick={() => updateProp('tgStyle', o.value || null)}
+                          style={{ fontSize: 11.5, fontWeight: 700, padding: '5px 10px', borderRadius: 7, cursor: 'pointer', background: o.bg, color: o.color, border: active ? '2px solid #0f172a' : '2px solid transparent' }}
+                        >
+                          {o.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {isTplBtn ? (
                 <div className="fb-field" style={{ margin: 0 }}>
                   <label style={{ fontSize: 11, fontWeight: 700, color: '#475569' }}>Button text</label>
@@ -7383,8 +7895,8 @@ function ButtonActionEditor({
                   <label style={{ fontSize: 11, fontWeight: 700, color: '#475569', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span>{isQR ? 'Reply title' : isItem ? 'Item title' : 'Button title'}</span>
                     {(isMeta || isQR) && (
-                      <span style={{ fontSize: 10, fontWeight: 600, color: (btnObj.title || '').length > 20 ? '#ef4444' : '#64748b' }}>
-                        {(btnObj.title || '').length}/20 chars
+                      <span style={{ fontSize: 10, fontWeight: 600, color: Array.from(btnObj.title || '').length > titleMax ? '#ef4444' : '#64748b' }}>
+                        {Array.from(btnObj.title || '').length}/{titleMax} chars
                       </span>
                     )}
                   </label>
@@ -7393,12 +7905,12 @@ function ButtonActionEditor({
                     value={btnObj.title || ''}
                     onChange={(e) => updateProp('title', e.target.value)}
                     placeholder={isQR ? `Reply ${index + 1} text...` : isItem ? `Option ${index + 1} text...` : `Button ${index + 1} text...`}
-                    maxLength={(isMeta || isQR) ? 20 : (isItem ? 24 : 20)}
+                    maxLength={titleMax}
                     style={{ fontSize: 13, padding: '7px 9px', borderRadius: 7, border: '1px solid #cbd5e1', background: '#ffffff' }}
                   />
                   {(isMeta || isQR) && (
                     <span style={{ fontSize: 9.5, color: '#64748b', fontStyle: 'italic', marginTop: 2 }}>
-                      Meta channel rule: maximum 20 characters per reply title.
+                      {isWA && isItem ? 'WhatsApp rule: maximum 24 characters per list item.' : `Meta channel rule: maximum ${titleMax} characters per ${isItem ? 'item' : isQR ? 'reply' : 'button'} title.`}
                     </span>
                   )}
                 </div>
@@ -7467,6 +7979,14 @@ function ButtonActionEditor({
                   })}
                 </div>
               </div>
+
+              {/* Action: a Quick Action — nothing to configure here */}
+              {QUICK_BUTTON_ACTIONS[btnObj.action] && (
+                <span style={{ display: 'block', fontSize: 10.5, color: '#475569', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '7px 9px', lineHeight: 1.45 }}>
+                  Runs this bot's <b>{QUICK_BUTTON_ACTIONS[btnObj.action].label}</b> Quick Action and sends its reply — no wire needed.
+                  Edit that reply in Bot Manager → Quick Actions. Works even while a person is handling the chat.
+                </span>
+              )}
 
               {/* Action: Go to Existing Flow */}
               {btnObj.action === 'goToFlow' && (
@@ -8331,7 +8851,7 @@ function StartAutomationFields({ data, updateFields, flows, currentFlowId, platf
 }
 
 /* ── Actions properties (ManyChat-style action list) ─────────── */
-function ActionsFields({ data, updateFields, sequences, customFields }) {
+function ActionsFields({ data, updateFields, sequences, customFields, platform }) {
   const labels = useAvailableLabels();
   const [menuOpen, setMenuOpen] = useState(false);
   const list = Array.isArray(data.actions) ? data.actions : [];
@@ -8343,7 +8863,9 @@ function ActionsFields({ data, updateFields, sequences, customFields }) {
     setMenuOpen(false);
   };
 
+  const quickAllowed = quickButtonActionsFor(platform);
   const groups = Object.entries(ACTION_TYPES).reduce((acc, [type, t]) => {
+    if (t.target === 'quick' && !quickAllowed.includes(t.quick)) return acc;
     (acc[t.group] = acc[t.group] || []).push([type, t]);
     return acc;
   }, {});
@@ -8366,6 +8888,19 @@ function ActionsFields({ data, updateFields, sequences, customFields }) {
                 <Trash2 size={14} />
               </button>
             </div>
+            {t.target === 'quick' && (
+              <>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#334155', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={a.sendReply !== false} onChange={(e) => patch(a.id, { sendReply: e.target.checked })} />
+                  Then send its Quick Action reply
+                </label>
+                <span className="fb-hint" style={{ display: 'block', marginTop: 4 }}>
+                  {a.sendReply !== false
+                    ? 'After this step the chat continues in the reply you set in Bot Manager → Quick Actions (this flow stops here).'
+                    : 'Only the change happens; this flow continues with its next step.'}
+                </span>
+              </>
+            )}
             {t.target === 'label' && (
               <select value={a.labelId || ''} onChange={(e) => {
                 const l = labels.find((x) => x.id === Number(e.target.value));
@@ -8668,7 +9203,7 @@ function formatDelayLong(hours = 0, minutes = 0, seconds = 0) {
    Flow" node invokes it). Instead it carries the settings that apply to the
    whole form: its name, the channel it's locked to, an optional label to tag
    the subscriber with, and where completed submissions get exported to. */
-function UserInputFlowStartProperties({ data, updateField, platform, flowName, onFlowNameChange }) {
+function UserInputFlowStartProperties({ data, updateField, updateFields, platform, flowName, onFlowNameChange }) {
   const [labels, setLabels] = useState([]);
   const [sheetStatus, setSheetStatus] = useState(null);
   const [spreadsheets, setSpreadsheets] = useState([]);
@@ -8828,7 +9363,7 @@ function UserInputFlowStartProperties({ data, updateField, platform, flowName, o
           <>
             <select
               value={data.googleSheetId || ''}
-              onChange={(e) => { updateField('googleSheetId', e.target.value || null); updateField('googleSheetTab', null); }}
+              onChange={(e) => updateFields({ googleSheetId: e.target.value || null, googleSheetTab: null })}
               disabled={loadingSheets}
             >
               <option value="">{loadingSheets ? 'Loading your sheets...' : "Don't send to a sheet"}</option>
@@ -8855,6 +9390,8 @@ function UserInputFlowStartProperties({ data, updateField, platform, flowName, o
           </>
         )}
       </div>
+
+      <AutoResponderPicker data={data} updateFields={updateFields} />
     </>
   );
 }
@@ -8879,6 +9416,10 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
     onUpdate(node.id, { ...data, ...partial });
   };
 
+  // Channel limit for a kind of text, shown as a counter under the field (utils/flowChannelRules.js).
+  const channelLimit = (kind) => CHANNEL_LIMITS[String(platform || '').toUpperCase()]?.[kind] || null;
+  const bodyLimit = (hasButtons) => (hasButtons ? channelLimit('withButtons') || channelLimit('text') : channelLimit('text'));
+
   const renderFields = () => {
     switch (type) {
       case 'start':
@@ -8895,6 +9436,11 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
             inputPlaceholder: data.inputPlaceholder || 'Type a message…',
             allowedDomains: data.allowedDomains || '',
             prefillMessage: data.prefillMessage || '',
+            homeTitle: data.homeTitle || 'Hi there 👋',
+            homeSubtitle: data.homeSubtitle || 'How can we help you today?',
+            replyTimeText: data.replyTimeText || 'We typically reply within a few minutes',
+            startConversationText: data.startConversationText || 'Start a conversation',
+            chatbotCards: data.chatbotCards,
           };
           return (
             <ChatWidgetStartNodeProperties
@@ -8911,6 +9457,11 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
                   greetingMessage: updated.greetingMessage,
                   prefillMessage: updated.prefillMessage,
                   targetPlatform: updated.targetPlatform,
+                  homeTitle: updated.homeTitle,
+                  homeSubtitle: updated.homeSubtitle,
+                  replyTimeText: updated.replyTimeText,
+                  startConversationText: updated.startConversationText,
+                  chatbotCards: updated.chatbotCards,
                 });
               }}
               platform={platform}
@@ -8924,6 +9475,18 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
         // A Broadcast campaign's / User Input Flow's / Sequence's Start node
         // configures the campaign/form/sequence itself, not a trigger — none
         // of the three is ever keyword-triggered.
+        if (data.quickActionStart) {
+          return (
+            <div className="fb-field">
+              <label>Quick Action reply</label>
+              <span className="fb-hint">
+                This flow is what the bot sends when its Quick Action runs — from a flow button set to that action, the Actions element,
+                or a keyword. The action itself (pausing the bot, unsubscribing…) always happens; switch the reply off or reset it in
+                Bot Manager → Quick Actions. Add any elements after this step: text, buttons, images, questions.
+              </span>
+            </div>
+          );
+        }
         if (isBroadcastFlow) {
           return (
             <BroadcastStartNodeProperties
@@ -8953,6 +9516,7 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
           <UserInputFlowStartProperties
             data={data}
             updateField={updateField}
+            updateFields={updateFields}
             platform={platform}
             flowName={flowName}
             onFlowNameChange={onFlowNameChange}
@@ -8994,9 +9558,11 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
           <>
             <div className="fb-field">
               <label>Message</label>
-              <textarea
+              <PersonalizeField
+                fields={customFields}
+                limit={bodyLimit(textBtnList.length > 0)}
                 value={data.message || ''}
-                onChange={(e) => updateField('message', e.target.value)}
+                onChange={(v) => updateField('message', v)}
                 placeholder="Enter your text message..."
               />
             </div>
@@ -9104,11 +9670,13 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
             {data.headerType === 'text' && (
               <div className="fb-field">
                 <label>Header Text (max 60 chars)</label>
-                <input
+                <PersonalizeField
+                  as="input"
                   type="text"
-                  maxLength={60}
+                  fields={customFields}
+                  limit={60}
                   value={data.headerText || ''}
-                  onChange={(e) => updateField('headerText', e.target.value)}
+                  onChange={(v) => updateField('headerText', v)}
                   placeholder="e.g. Special Offer!"
                 />
               </div>
@@ -9143,11 +9711,12 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
             {/* Body Message (Required) */}
             <div className="fb-field">
               <label>Body Message (Required, max 1024 chars)</label>
-              <textarea
+              <PersonalizeField
                 rows={4}
-                maxLength={1024}
+                fields={customFields}
+                limit={1024}
                 value={data.message || ''}
-                onChange={(e) => updateField('message', e.target.value)}
+                onChange={(v) => updateField('message', v)}
                 placeholder="Enter the main message body for this WhatsApp interactive message..."
               />
             </div>
@@ -9155,11 +9724,13 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
             {/* Footer Text (Optional) */}
             <div className="fb-field">
               <label>Footer Text (Optional, max 60 chars)</label>
-              <input
+              <PersonalizeField
+                as="input"
                 type="text"
-                maxLength={60}
+                fields={customFields}
+                limit={60}
                 value={data.footerText || ''}
-                onChange={(e) => updateField('footerText', e.target.value)}
+                onChange={(v) => updateField('footerText', v)}
                 placeholder="e.g. Reply STOP to unsubscribe"
               />
             </div>
@@ -9257,19 +9828,15 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
             <ImageUploadField
               label="Image File or URL"
               value={data.imageUrl || data.mediaUrl || ''}
-              onChange={(val) => {
-                updateField('imageUrl', val);
-                updateField('mediaUrl', val);
-              }}
+              onChange={(val) => updateFields({ imageUrl: val, mediaUrl: val })}
             />
             <div className="fb-field">
               <label>Caption (Optional)</label>
-              <textarea
+              <PersonalizeField
+                fields={customFields}
+                limit={imageButtons.length ? bodyLimit(true) : channelLimit('caption')}
                 value={data.caption || data.message || ''}
-                onChange={(e) => {
-                  updateField('caption', e.target.value);
-                  updateField('message', e.target.value);
-                }}
+                onChange={(v) => updateFields({ caption: v, message: v })}
                 placeholder="Caption text shown below image..."
                 rows={2}
               />
@@ -9349,9 +9916,11 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
             />
             <div className="fb-field">
               <label>Caption (Optional)</label>
-              <textarea
+              <PersonalizeField
+                fields={customFields}
+                limit={channelLimit('caption')}
                 value={data.caption || data.message || ''}
-                onChange={(e) => updateField('caption', e.target.value)}
+                onChange={(v) => updateField('caption', v)}
                 placeholder="Caption text..."
                 rows={2}
               />
@@ -9416,9 +9985,11 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
           <>
             <div className="fb-field">
               <label>Message</label>
-              <textarea
+              <PersonalizeField
+                fields={customFields}
+                limit={bodyLimit(btnList.length > 0)}
                 value={data.message || ''}
-                onChange={(e) => updateField('message', e.target.value)}
+                onChange={(v) => updateField('message', v)}
                 placeholder="Message shown above buttons..."
               />
             </div>
@@ -9517,9 +10088,11 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
           <>
             <div className="fb-field">
               <label>Message</label>
-              <textarea
+              <PersonalizeField
+                fields={customFields}
+                limit={pUpper === 'WHATSAPP' ? channelLimit('withButtons') : channelLimit('text')}
                 value={data.message || ''}
-                onChange={(e) => updateField('message', e.target.value)}
+                onChange={(v) => updateField('message', v)}
                 placeholder="Message shown with quick replies..."
               />
             </div>
@@ -9598,12 +10171,16 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
                       </button>
                     )}
                   </div>
-                  <input
-                    value={list.title || ''}
-                    onChange={(e) => updateList(li, { title: e.target.value })}
-                    placeholder="Menu title..."
-                    style={{ marginBottom: 8 }}
-                  />
+                  <div style={{ marginBottom: 8 }}>
+                    <PersonalizeField
+                      as="input"
+                      fields={customFields}
+                      limit={channelLimit('listHeader')}
+                      value={list.title || ''}
+                      onChange={(v) => updateList(li, { title: v })}
+                      placeholder="Menu title..."
+                    />
+                  </div>
                   <label>Button Text</label>
                   <input
                     value={list.buttonText || ''}
@@ -9706,17 +10283,23 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
           <>
             <div className="fb-field">
               <label>Title</label>
-              <input
+              <PersonalizeField
+                as="input"
+                fields={customFields}
+                limit={channelLimit('cardTitle')}
                 value={data.title || ''}
-                onChange={(e) => updateField('title', e.target.value)}
+                onChange={(v) => updateField('title', v)}
                 placeholder="Card title..."
               />
             </div>
             <div className="fb-field">
               <label>Subtitle</label>
-              <input
+              <PersonalizeField
+                as="input"
+                fields={customFields}
+                limit={channelLimit('cardSubtitle')}
                 value={data.subtitle || ''}
-                onChange={(e) => updateField('subtitle', e.target.value)}
+                onChange={(v) => updateField('subtitle', v)}
                 placeholder="Card subtitle..."
               />
             </div>
@@ -9751,38 +10334,48 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
                       <Trash2 size={12} />
                     </button>
                   </div>
-                  <input
-                    value={card.title || ''}
-                    onChange={(e) => {
-                      const updated = [...(data.cards || [])];
-                      updated[i] = { ...updated[i], title: e.target.value };
-                      updateField('cards', updated);
-                    }}
-                    placeholder="Title"
-                    style={{
-                      width: '100%', marginBottom: 6,
-                      background: 'var(--bg-card)', border: '1px solid var(--border, rgba(255,255,255,0.06))',
-                      borderRadius: 6, padding: '6px 10px', fontSize: 12,
-                      color: 'var(--text-primary)', outline: 'none',
-                      boxSizing: 'border-box',
-                    }}
-                  />
-                  <input
-                    value={card.subtitle || ''}
-                    onChange={(e) => {
-                      const updated = [...(data.cards || [])];
-                      updated[i] = { ...updated[i], subtitle: e.target.value };
-                      updateField('cards', updated);
-                    }}
-                    placeholder="Subtitle"
-                    style={{
-                      width: '100%', marginBottom: 6,
-                      background: 'var(--bg-card)', border: '1px solid var(--border, rgba(255,255,255,0.06))',
-                      borderRadius: 6, padding: '6px 10px', fontSize: 12,
-                      color: 'var(--text-primary)', outline: 'none',
-                      boxSizing: 'border-box',
-                    }}
-                  />
+                  <div style={{ marginBottom: 6 }}>
+                    <PersonalizeField
+                      as="input"
+                      fields={customFields}
+                      limit={channelLimit('cardTitle')}
+                      value={card.title || ''}
+                      onChange={(v) => {
+                        const updated = [...(data.cards || [])];
+                        updated[i] = { ...updated[i], title: v };
+                        updateField('cards', updated);
+                      }}
+                      placeholder="Title"
+                      style={{
+                        width: '100%',
+                        background: 'var(--bg-card)', border: '1px solid var(--border, rgba(255,255,255,0.06))',
+                        borderRadius: 6, padding: '6px 10px', fontSize: 12,
+                        color: 'var(--text-primary)', outline: 'none',
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                  </div>
+                  <div style={{ marginBottom: 6 }}>
+                    <PersonalizeField
+                      as="input"
+                      fields={customFields}
+                      limit={channelLimit('cardSubtitle')}
+                      value={card.subtitle || ''}
+                      onChange={(v) => {
+                        const updated = [...(data.cards || [])];
+                        updated[i] = { ...updated[i], subtitle: v };
+                        updateField('cards', updated);
+                      }}
+                      placeholder="Subtitle"
+                      style={{
+                        width: '100%',
+                        background: 'var(--bg-card)', border: '1px solid var(--border, rgba(255,255,255,0.06))',
+                        borderRadius: 6, padding: '6px 10px', fontSize: 12,
+                        color: 'var(--text-primary)', outline: 'none',
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                  </div>
                   <ImageUploadField
                     label={`Card ${i + 1} Image`}
                     value={card.imageUrl || ''}
@@ -9825,10 +10418,12 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
           <>
             <div className="fb-field">
               <label>Prompt Message</label>
-              <textarea
+              <PersonalizeField
                 rows={2}
+                fields={customFields}
+                limit={channelLimit('text')}
                 value={data.message || ''}
-                onChange={(e) => updateField('message', e.target.value)}
+                onChange={(v) => updateField('message', v)}
                 placeholder="e.g. What's your email address?"
               />
               <span className="fb-hint">Sent to the subscriber to ask the question. Works the same on every channel.</span>
@@ -9963,15 +10558,24 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
                   onChange={(e) => {
                     const val = e.target.value;
                     if (val === 'CREATE_NEW') { updateField('saveToFieldId', 'CREATE_NEW'); return; }
-                    const id = val ? Number(val) : null;
+                    const id = parseFieldRef(val);
+                    const sys = SYSTEM_FIELD_OPTIONS.find((f) => f.ref === id);
+                    if (sys) { updateFields({ saveToFieldId: sys.ref, fieldLabel: sys.label, fieldKey: sys.ref.slice(4) }); return; }
                     const field = matchingFields.find((f) => f.id === id);
                     updateFields({ saveToFieldId: id, fieldLabel: field?.name || '', fieldKey: field?.field_key || '' });
                   }}
                 >
                   <option value="">Select or create a field...</option>
-                  {matchingFields.map((f) => (
-                    <option key={f.id} value={f.id}>{f.name}</option>
-                  ))}
+                  {!isChoice && SYSTEM_FIELD_OPTIONS.some((f) => f.type === fieldType) && (
+                    <optgroup label="System fields">
+                      {SYSTEM_FIELD_OPTIONS.filter((f) => f.type === fieldType).map((f) => <option key={f.ref} value={f.ref}>{f.label}</option>)}
+                    </optgroup>
+                  )}
+                  <optgroup label="Custom fields">
+                    {matchingFields.map((f) => (
+                      <option key={f.id} value={f.id}>{f.name}</option>
+                    ))}
+                  </optgroup>
                   <option value="CREATE_NEW">+ Create new {fieldType.toLowerCase()} field...</option>
                 </select>
               )}
@@ -10002,10 +10606,12 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
             {data.endFlow && (
               <div className="fb-field">
                 <label>Closing Message</label>
-                <textarea
+                <PersonalizeField
                   rows={2}
+                  fields={customFields}
+                  limit={channelLimit('text')}
                   value={data.finalMessage || ''}
-                  onChange={(e) => updateField('finalMessage', e.target.value)}
+                  onChange={(v) => updateField('finalMessage', v)}
                   placeholder="e.g. Perfect — that's everything, thank you!"
                 />
               </div>
@@ -10021,10 +10627,12 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
           <>
             <div className="fb-field">
               <label>Prompt Message</label>
-              <textarea
+              <PersonalizeField
                 rows={2}
+                fields={customFields}
+                limit={channelLimit('text')}
                 value={data.message || ''}
-                onChange={(e) => updateField('message', e.target.value)}
+                onChange={(v) => updateField('message', v)}
                 placeholder="e.g. What's your email address?"
               />
               <span className="fb-hint">Sent to the subscriber to ask the question. Works the same on every channel.</span>
@@ -10078,13 +10686,20 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
                   value={data.saveToFieldId || ''}
                   onChange={(e) => {
                     const val = e.target.value;
-                    updateField('saveToFieldId', val === 'CREATE_NEW' ? 'CREATE_NEW' : (val ? Number(val) : null));
+                    updateField('saveToFieldId', val === 'CREATE_NEW' ? 'CREATE_NEW' : parseFieldRef(val));
                   }}
                 >
                   <option value="">Don't save to a custom field</option>
-                  {matchingFields.map((f) => (
-                    <option key={f.id} value={f.id}>{f.name}</option>
-                  ))}
+                  {SYSTEM_FIELD_OPTIONS.some((f) => f.type === fieldType) && (
+                    <optgroup label="System fields">
+                      {SYSTEM_FIELD_OPTIONS.filter((f) => f.type === fieldType).map((f) => <option key={f.ref} value={f.ref}>{f.label}</option>)}
+                    </optgroup>
+                  )}
+                  <optgroup label="Custom fields">
+                    {matchingFields.map((f) => (
+                      <option key={f.id} value={f.id}>{f.name}</option>
+                    ))}
+                  </optgroup>
                   <option value="CREATE_NEW">+ Create new {fieldType.toLowerCase()} field...</option>
                 </select>
               )}
@@ -10433,6 +11048,216 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
           </div>
         );
 
+      case 'marketingOptIn':
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div className="fb-field">
+              <label>Title *</label>
+              <PersonalizeField as="input" type="text" fields={customFields} limit={65} value={data.title || ''} onChange={(v) => updateField('title', v)} placeholder="Get our offers and updates" />
+            </div>
+            <div className="fb-field">
+              <label>Image (optional, https:// link)</label>
+              <input type="text" value={data.imageUrl || ''} onChange={(e) => updateField('imageUrl', e.target.value)} placeholder="https://…/offer.jpg" />
+            </div>
+            <div style={{ padding: '10px 12px', borderRadius: 8, background: '#f8fafc', border: '1px solid #e2e8f0', fontSize: 11, color: '#475569', lineHeight: 1.45 }}>
+              Messenger shows the person a "Get updates" request from your Page. If they accept, they become a Marketing Messages subscriber (Bot Manager → Marketing Messages) and can receive paid marketing messages at any time. The flow continues right away.
+            </div>
+          </div>
+        );
+
+      case 'orderStatus':
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div className="fb-field">
+              <label>Which order</label>
+              <select value={data.lookup || 'latest'} onChange={(e) => updateField('lookup', e.target.value)}>
+                <option value="latest">The subscriber's most recent order</option>
+                <option value="variable">The order number they typed (from a variable)</option>
+              </select>
+            </div>
+            {data.lookup === 'variable' && (
+              <div className="fb-field">
+                <label>Variable holding the order number *</label>
+                <input type="text" value={data.orderNumberVariable || ''} onChange={(e) => updateField('orderNumberVariable', e.target.value.replace(/[{}\s]/g, ''))} placeholder="e.g. order_number (saved by a Collect Input step)" />
+              </div>
+            )}
+            <div className="fb-field">
+              <label>Message when the order is found *</label>
+              <PersonalizeField rows={5} fields={customFields} limit={channelLimit('text')} value={data.message || ''} onChange={(v) => updateField('message', v)} />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+                {["order_number","order_status","items","item_count","total","payment_method","shipping_address","tracking_number","tracking_url","order_url","customer_first_name","store_name"].map((f) => (
+                  <button key={f} type="button" onClick={() => updateField('message', `${data.message || ''}{{order.${f}}}`)}
+                    style={{ fontSize: 10.5, padding: '2px 6px', borderRadius: 5, border: '1px solid #e2e8f0', background: '#f8fafc', color: '#0f766e', cursor: 'pointer' }}>
+                    {f}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12 }}>
+              <input type="checkbox" checked={data.showTrackButton !== false} onChange={(e) => updateField('showTrackButton', e.target.checked)} /> Add a button to the tracking / order page (when the store has one)
+            </label>
+            {data.showTrackButton !== false && (
+              <div className="fb-field">
+                <label>Button text</label>
+                <input type="text" maxLength={20} value={data.trackButtonLabel || ''} onChange={(e) => updateField('trackButtonLabel', e.target.value)} placeholder="Track order" />
+              </div>
+            )}
+            <div className="fb-field">
+              <label>Message when no order is found</label>
+              <PersonalizeField rows={2} fields={customFields} limit={channelLimit('text')} value={data.notFoundMessage || ''} onChange={(v) => updateField('notFoundMessage', v)} />
+            </div>
+            <div style={{ padding: '10px 12px', borderRadius: 8, background: '#f8fafc', border: '1px solid #e2e8f0', fontSize: 11, color: '#475569', lineHeight: 1.4 }}>
+              Reads orders from your connected Shopify / WooCommerce stores. Only the subscriber's own orders are ever shown (same phone number or email) — a typed order number of someone else finds nothing. Afterwards {'{{order_found}}'} is "yes" or "no" for a Condition step, and every field is available as {'{{order_<field>}}'}.
+            </div>
+          </div>
+        );
+
+      case 'telegramChecklist': {
+        const tasks = data.tasks || [];
+        const setTask = (i, v) => updateField('tasks', tasks.map((t, j) => (j === i ? v : t)));
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div className="fb-field">
+              <label>Title *</label>
+              <input type="text" maxLength={255} value={data.title || ''} onChange={(e) => updateField('title', e.target.value)} />
+            </div>
+            <div className="fb-field">
+              <label>Tasks (1 – 30)</label>
+              {tasks.map((t, i) => (
+                <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                  <input type="text" maxLength={100} value={t} onChange={(e) => setTask(i, e.target.value)} placeholder={`Task ${i + 1}`} />
+                  {tasks.length > 1 && (
+                    <button type="button" onClick={() => updateField('tasks', tasks.filter((_, j) => j !== i))} style={{ border: '1px solid #e2e8f0', background: '#fff', borderRadius: 6, padding: '0 8px', cursor: 'pointer', color: '#64748b' }} aria-label="Remove task">
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              ))}
+              {tasks.length < 30 && (
+                <button type="button" onClick={() => updateField('tasks', [...tasks, ''])} style={{ fontSize: 12, fontWeight: 600, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>+ Add task</button>
+              )}
+            </div>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12 }}>
+              <input type="checkbox" checked={data.othersCanMarkDone !== false} onChange={(e) => updateField('othersCanMarkDone', e.target.checked)} /> The customer can tick tasks
+            </label>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12 }}>
+              <input type="checkbox" checked={Boolean(data.othersCanAdd)} onChange={(e) => updateField('othersCanAdd', e.target.checked)} /> The customer can add tasks
+            </label>
+            <div className="fb-field">
+              <label>Save ticked tasks to a custom field (optional)</label>
+              <select value={data.saveToFieldId || ''} onChange={(e) => updateField('saveToFieldId', e.target.value ? Number(e.target.value) : null)}>
+                <option value="">— Don't save —</option>
+                {customFields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+              </select>
+            </div>
+            <div style={{ padding: '10px 12px', borderRadius: 8, background: '#f8fafc', border: '1px solid #e2e8f0', fontSize: 11, color: '#475569', lineHeight: 1.45 }}>
+              Telegram allows interactive checklists only in Telegram Business chats (Bot Manager → Telegram Business). There the customer ticks tasks right in the chat; in a normal bot chat the same tasks are sent as a ☐ list. The flow continues right away.
+            </div>
+          </div>
+        );
+      }
+
+      case 'whatsappCtaUrl': {
+        const headerType = data.headerType || 'none';
+        const count = (v, max) => <span style={{ float: 'right', fontWeight: 500, color: String(v || '').length > max ? '#dc2626' : '#94a3b8' }}>{String(v || '').length}/{max}</span>;
+        const problem = ctaUrlProblem(data);
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ padding: '10px 12px', borderRadius: 8, background: '#f0fdf4', border: '1px solid #bbf7d0', fontSize: 11, color: '#166534', lineHeight: 1.45 }}>
+              One button that opens a web page in the browser (WhatsApp&apos;s <b>CTA URL</b> message). Like any normal message it can only
+              be sent within 24 hours of the subscriber&apos;s last message — outside that window it is skipped and logged in Bot Errors.
+            </div>
+            <div className="fb-field">
+              <label>Header</label>
+              <select value={headerType} onChange={(e) => updateFields({ headerType: e.target.value, headerText: '', headerMediaUrl: '' })}>
+                <option value="none">None</option>
+                <option value="text">Text</option>
+                <option value="image">Image</option>
+                <option value="video">Video</option>
+                <option value="document">Document</option>
+              </select>
+            </div>
+            {headerType === 'text' && (
+              <div className="fb-field">
+                <label>Header text * {count(data.headerText, CTA_LIMITS.headerText)}</label>
+                <PersonalizeField as="input" fields={customFields} value={data.headerText || ''} onChange={(v) => updateField('headerText', v)} placeholder="e.g. Your order" />
+              </div>
+            )}
+            {['image', 'video', 'document'].includes(headerType) && (
+              <MediaUploadField
+                label={`Header ${headerType} *`}
+                value={data.headerMediaUrl || ''}
+                onChange={(url) => updateField('headerMediaUrl', url)}
+                accept={headerType === 'image' ? 'image/jpeg,image/png' : headerType === 'video' ? 'video/mp4,video/3gpp' : '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt'}
+                placeholder="https://… (public link) or upload"
+              />
+            )}
+            <div className="fb-field">
+              <label>Message text * {count(data.body, CTA_LIMITS.body)}</label>
+              <PersonalizeField rows={4} fields={customFields} value={data.body || ''} onChange={(v) => updateField('body', v)} placeholder="Tap the button below to track your order, {{contact.first_name}}." />
+              <span className="fb-hint">Variables like {'{{contact.name}}'} or {'{{var.support_phone}}'} work here.</span>
+            </div>
+            <div className="fb-field">
+              <label>Button text * {count(data.buttonText, CTA_LIMITS.buttonText)}</label>
+              <input value={data.buttonText || ''} maxLength={CTA_LIMITS.buttonText} onChange={(e) => updateField('buttonText', e.target.value)} placeholder="e.g. Track order" />
+              <span className="fb-hint">Up to 20 characters, no variables (WhatsApp&apos;s rule).</span>
+            </div>
+            <div className="fb-field">
+              <label>Button URL *</label>
+              <input value={data.url || ''} maxLength={CTA_LIMITS.url} onChange={(e) => updateField('url', e.target.value.trim())} placeholder="https://shop.com/order?id={{order_id}}" />
+              <span className="fb-hint">Must start with https://. Variables can be used after the domain (path or query) — they are filled in and URL-encoded when sending.</span>
+            </div>
+            <div className="fb-field">
+              <label>Footer (optional) {count(data.footerText, CTA_LIMITS.footer)}</label>
+              <PersonalizeField as="input" fields={customFields} value={data.footerText || ''} onChange={(v) => updateField('footerText', v)} placeholder="e.g. Link valid for 24 hours" />
+            </div>
+            {problem && <div style={{ fontSize: 11.5, color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 10px' }}>{problem}</div>}
+          </div>
+        );
+      }
+
+      case 'telegramPoll': {
+        const options = data.options || [];
+        const setOption = (i, v) => updateField('options', options.map((o, j) => (j === i ? v : o)));
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div className="fb-field">
+              <label>Question *</label>
+              <textarea rows={2} maxLength={300} value={data.question || ''} onChange={(e) => updateField('question', e.target.value)} placeholder="Which do you prefer?" />
+            </div>
+            <div className="fb-field">
+              <label>Options (2 – 12)</label>
+              {options.map((o, i) => (
+                <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                  <input type="text" maxLength={100} value={o} onChange={(e) => setOption(i, e.target.value)} placeholder={`Option ${i + 1}`} />
+                  {options.length > 2 && (
+                    <button type="button" onClick={() => updateField('options', options.filter((_, j) => j !== i))} style={{ border: '1px solid #e2e8f0', background: '#fff', borderRadius: 6, padding: '0 8px', cursor: 'pointer', color: '#64748b' }} aria-label="Remove option">
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              ))}
+              {options.length < 12 && (
+                <button type="button" onClick={() => updateField('options', [...options, ''])} style={{ fontSize: 12, fontWeight: 600, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>+ Add option</button>
+              )}
+            </div>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12 }}>
+              <input type="checkbox" checked={Boolean(data.allowMultiple)} onChange={(e) => updateField('allowMultiple', e.target.checked)} /> Allow more than one answer
+            </label>
+            <div className="fb-field">
+              <label>Save the answer to a custom field (optional)</label>
+              <select value={data.saveToFieldId || ''} onChange={(e) => updateField('saveToFieldId', e.target.value ? Number(e.target.value) : null)}>
+                <option value="">— Don't save —</option>
+                {customFields.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+              </select>
+            </div>
+            <div style={{ padding: '10px 12px', borderRadius: 8, background: '#f8fafc', border: '1px solid #e2e8f0', fontSize: 11, color: '#475569', lineHeight: 1.4 }}>
+              A native Telegram poll. The flow continues right away; when the person votes (or changes their vote) the chosen option is saved to the field above — several answers are saved comma-separated.
+            </div>
+          </div>
+        );
+      }
+
       case 'payment':
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -10495,8 +11320,42 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
               />
             </div>
 
+            <div className="fb-field">
+              <label>Description (optional)</label>
+              <textarea
+                rows={2}
+                value={data.description || ''}
+                onChange={(e) => updateField('description', e.target.value)}
+                placeholder="What the customer gets. Variables like {{contact.name}} work."
+              />
+            </div>
+
+            {String(platform || '').toUpperCase() === 'TELEGRAM' && (
+              <div style={{ padding: 10, borderRadius: 8, background: '#fffbeb', border: '1px solid #fde68a', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div className="fb-field" style={{ margin: 0 }}>
+                  <label>Telegram Stars price *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="100000"
+                    step="1"
+                    value={data.starsAmount || ''}
+                    onChange={(e) => updateField('starsAmount', parseInt(e.target.value, 10) || 0)}
+                    placeholder="e.g. 250"
+                  />
+                </div>
+                <div className="fb-field" style={{ margin: 0 }}>
+                  <label>Invoice photo URL (optional, https)</label>
+                  <input type="text" value={data.photoUrl || ''} onChange={(e) => updateField('photoUrl', e.target.value)} placeholder="https://…/product.jpg" />
+                </div>
+                <div style={{ fontSize: 11, color: '#92400e', lineHeight: 1.4 }}>
+                  On Telegram the customer pays inside the chat with Telegram Stars ⭐ (Telegram's own currency for digital goods and services). The Stars go to this bot's balance, which you withdraw from @BotFather. The amount above is not used on Telegram.
+                </div>
+              </div>
+            )}
+
             <div style={{ padding: '10px 12px', borderRadius: 8, background: '#f8fafc', border: '1px solid #e2e8f0', fontSize: 11, color: '#475569', lineHeight: 1.4 }}>
-              💳 A dynamic 1-click checkout link will be generated in WhatsApp, Messenger, or Instagram chat. When paid, the bot will auto-deliver the confirmation message.
+              💳 WhatsApp, Messenger and Instagram get a checkout link; Telegram gets a native Stars invoice. The flow waits here: once the order is paid, the confirmation message is sent and the flow continues from this element's next step. Orders are listed under Payments → Orders.
             </div>
           </div>
         );
@@ -10505,9 +11364,11 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
         return (
           <div className="fb-field">
             <label>Handoff Message (optional)</label>
-            <textarea
+            <PersonalizeField
+              fields={customFields}
+              limit={channelLimit('text')}
               value={data.message || ''}
-              onChange={(e) => updateField('message', e.target.value)}
+              onChange={(v) => updateField('message', v)}
               placeholder="Message before handoff..."
             />
           </div>
@@ -10517,9 +11378,11 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
         return (
           <div className="fb-field">
             <label>Closing Message (optional)</label>
-            <textarea
+            <PersonalizeField
+              fields={customFields}
+              limit={channelLimit('text')}
               value={data.message || ''}
-              onChange={(e) => updateField('message', e.target.value)}
+              onChange={(v) => updateField('message', v)}
               placeholder="Optional goodbye message..."
             />
           </div>
@@ -10529,9 +11392,11 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
         return (
           <div className="fb-field">
             <label>Closing Message</label>
-            <textarea
+            <PersonalizeField
+              fields={customFields}
+              limit={channelLimit('text')}
               value={data.message || ''}
-              onChange={(e) => updateField('message', e.target.value)}
+              onChange={(v) => updateField('message', v)}
               placeholder="e.g. Thanks — that's everything I needed!"
             />
             <span className="fb-hint">Sent once all questions are answered, then control returns to wherever this User Input Flow was run from.</span>
@@ -10604,6 +11469,35 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
           />
         );
 
+      case 'messengerTemplate':
+        return (
+          <MessengerTemplateFields
+            data={data}
+            updateFields={updateFields}
+            integrationId={panelIntegrationId}
+            platform={platform}
+            routable={Boolean(currentFlowId)}
+            renderImageField={({ value, onChange }) => (
+              <ImageUploadField label="Header Image" value={value} onChange={onChange} placeholder="https://… or {{variable}}" />
+            )}
+            renderButtonEditor={(btn, index, onChange) => (
+              <ButtonActionEditor
+                key={index}
+                btn={btn}
+                index={index}
+                variant="templateButton"
+                onChange={onChange}
+                onRemove={() => {}}
+                platform={platform}
+                flows={flows}
+                currentFlowId={currentFlowId}
+                sequences={sequences}
+                onSequenceCreated={onSequenceCreated}
+              />
+            )}
+          />
+        );
+
       case 'messageBlock':
         return (
           <MessageBlockFields
@@ -10635,7 +11529,7 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
         );
 
       case 'actions':
-        return <ActionsFields data={data} updateFields={updateFields} sequences={sequences} customFields={customFields} />;
+        return <ActionsFields data={data} updateFields={updateFields} sequences={sequences} customFields={customFields} platform={platform} />;
 
       case 'startAutomation':
         return <StartAutomationFields data={data} updateFields={updateFields} flows={flows} currentFlowId={currentFlowId} platform={platform} />;
@@ -10745,7 +11639,7 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
 // A picker that quietly shows "nothing" when its list failed to load looks like "you have none".
 function notifyPickerLoadError(what) {
   console.error(`[Flow Builder] Could not load ${what}`);
-  Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: `Couldn't load ${what}`, text: 'Reload the page to try again.', timer: 4000, showConfirmButton: false });
+  toast.error(`Couldn't load ${what}`, { description: 'Reload the page to try again.' });
 }
 
 // A broadcast has no live conversation to act on, so it can't run these.
@@ -10838,6 +11732,11 @@ const nodeTypes = {
   webhook: WebhookNode,
   httpApi: HttpApiNode,
   payment: PaymentNode,
+  telegramPoll: TelegramPollNode,
+  telegramChecklist: TelegramChecklistNode,
+  whatsappCtaUrl: WhatsAppCtaUrlNode,
+  orderStatus: OrderStatusNode,
+  marketingOptIn: MarketingOptInNode,
   handoff: HandoffNode,
   end: EndNode,
   runUserInputFlow: RunUserInputFlowNode,
@@ -10851,6 +11750,7 @@ const nodeTypes = {
   messageBlock: MessageBlockNode,
   appointment: AppointmentNode,
   whatsappTemplate: MessageTemplateNode,
+  messengerTemplate: MessengerTemplateNode,
 };
 
 /* ── Removable / Deletable Edge ────────────────────────────── */
@@ -11404,6 +12304,9 @@ function FlowBuilderInner() {
     const q = searchParams.get('platform');
     return q ? q.toUpperCase() : 'WEBCHAT';
   });
+  // The save callbacks validate against the flow's channel without re-creating themselves.
+  const platformRef = useRef(platform);
+  platformRef.current = platform;
   const [integrationId, setIntegrationId] = useState(() => {
     return searchParams.get('integration_id') || searchParams.get('integrationId') || null;
   });
@@ -11437,10 +12340,12 @@ function FlowBuilderInner() {
     const startEdges = currentEdges.filter((e) => e.source === startNode.id);
     if (onlyIfEmpty && startEdges.length) return;
     const connected = startEdges.length ? currentNodes.find((n) => n.id === startEdges[0].target) : null;
-    const wantedType = kind === 'template' ? 'whatsappTemplate' : 'messageBlock';
+    const templateType = String(platform || '').toUpperCase() === 'FACEBOOK' ? 'messengerTemplate' : 'whatsappTemplate';
+    const isTemplateNode = (n) => n?.type === 'whatsappTemplate' || n?.type === 'messengerTemplate';
+    const wantedType = kind === 'template' ? templateType : 'messageBlock';
     const alreadyRight = kind === 'template'
-      ? connected?.type === 'whatsappTemplate'
-      : Boolean(connected) && connected.type !== 'whatsappTemplate';
+      ? connected?.type === templateType
+      : Boolean(connected) && !isTemplateNode(connected);
     if (alreadyRight) return;
 
     let target = currentNodes.find((n) => n.type === wantedType);
@@ -11485,12 +12390,12 @@ function FlowBuilderInner() {
   }, [isBroadcastFlow, nodes]);
 
   // Quick-add bot reply action for Chat Widget start node
-  const handleAddReplyNode = useCallback((type) => {
+  const handleAddReplyNode = useCallback((type, customHandle = 'next-step') => {
     const startNode = nodesRef.current.find((n) => n.type === 'start');
     const startPos = startNode ? startNode.position : { x: 80, y: 120 };
     const existingReplies = nodesRef.current.filter((n) => n.type !== 'start');
-    const xOffset = 360 + (existingReplies.length * 40);
-    const yOffset = (existingReplies.length * 70);
+    const xOffset = 380;
+    const yOffset = (existingReplies.length * 80);
 
     const newId = generateNodeId(type);
     const newNode = {
@@ -11508,11 +12413,12 @@ function FlowBuilderInner() {
     setNodes((nds) => [...nds, newNode]);
 
     if (startNode) {
-      const hasStartEdge = edgesRef.current.some((e) => e.source === startNode.id && e.sourceHandle === 'next-step');
-      if (!hasStartEdge) {
+      const handleToConnect = customHandle || 'next-step';
+      const hasEdge = edgesRef.current.some((e) => e.source === startNode.id && e.sourceHandle === handleToConnect);
+      if (!hasEdge) {
         setEdges((eds) => [
           ...eds,
-          { id: `e-${startNode.id}-${newId}`, source: startNode.id, sourceHandle: 'next-step', target: newId, targetHandle: 'target', type: 'default', animated: false }
+          { id: `e-${startNode.id}-${newId}-${handleToConnect}`, source: startNode.id, sourceHandle: handleToConnect, target: newId, targetHandle: 'target', type: 'default', animated: false }
         ]);
       }
     }
@@ -11735,6 +12641,8 @@ function FlowBuilderInner() {
         // set this at creation) — its Start node shows the campaign's
         // audience/schedule/send controls instead of a keyword trigger.
         const isBroadcastFlowLoaded = flow.trigger_type === 'BROADCAST';
+        // A Quick Action's reply (Bot Manager → Quick Actions) — started by its action, never by a keyword.
+        const isQuickActionLoaded = flow.trigger_type === 'QUICK_ACTION';
 
         let resolvedPlatform = flow.platform || 'WEBCHAT';
         if (flow.integration_id && intRes.status === 'fulfilled') {
@@ -11772,6 +12680,11 @@ function FlowBuilderInner() {
                 buttonTextColor: widget.button_text_color || '#ffffff',
                 buttonSize: widget.button_size || 'MEDIUM',
                 allowedDomains: widget.allowed_domains || '',
+                homeTitle: widget.home_title || 'Hi there 👋',
+                homeSubtitle: widget.home_subtitle || 'How can we help you today?',
+                replyTimeText: widget.reply_time_text || 'We typically reply within a few minutes',
+                startConversationText: widget.start_conversation_text || 'Start a conversation',
+                chatbotCards: widget.chatbot_cards,
               });
               setNodes((nds) => nds.map((n) => n.type === 'start' ? {
                 ...n,
@@ -11786,6 +12699,11 @@ function FlowBuilderInner() {
                   prefillMessage: widget.prefill_message,
                   buttonText: widget.button_text,
                   buttonBgColor: widget.button_bg_color,
+                  homeTitle: widget.home_title,
+                  homeSubtitle: widget.home_subtitle,
+                  replyTimeText: widget.reply_time_text,
+                  startConversationText: widget.start_conversation_text,
+                  chatbotCards: widget.chatbot_cards,
                 }
               } : n));
             }
@@ -11842,6 +12760,8 @@ function FlowBuilderInner() {
             ...(isUserInputFlow && n.type === 'start' ? { uifStart: true } : {}),
             ...(isSequence && n.type === 'start' ? { sequenceStart: true } : {}),
             ...(isBroadcastFlowLoaded && n.type === 'start' ? { broadcastStart: true } : {}),
+            // Stamped from the flow itself, so a copy of a reply (an ordinary flow) loses it.
+            ...(n.type === 'start' ? { quickActionStart: isQuickActionLoaded || undefined } : {}),
             ...((isChatWidgetFlowLoaded || flow.trigger_type === 'CHAT_WIDGET' || Boolean(n.data?.chatWidgetStart)) && n.type === 'start' ? {
               chatWidgetStart: true,
               targetPlatform: (flow.platform || 'WEBCHAT').toUpperCase(),
@@ -11850,13 +12770,18 @@ function FlowBuilderInner() {
               greetingMessage: n.data?.greetingMessage || 'Hello! How can we help you today?',
               buttonText: n.data?.buttonText || 'Chat with us',
               buttonBgColor: n.data?.buttonBgColor || ((flow.platform || '').toUpperCase() === 'WHATSAPP' ? '#25D366' : '#6366f1'),
+              homeTitle: n.data?.homeTitle || 'Hi there 👋',
+              homeSubtitle: n.data?.homeSubtitle || 'How can we help you today?',
+              replyTimeText: n.data?.replyTimeText || 'We typically reply within a few minutes',
+              startConversationText: n.data?.startConversationText || 'Start a conversation',
+              chatbotCards: n.data?.chatbotCards,
             } : {}),
             _unsupported: !isNodeSupportedOnPlatform(n.type, flow.platform || 'WEBCHAT'),
           };
 
           // Skipped for a User Input Flow's / Sequence's / Broadcast's / Chat Widget's Start
           // node — none of them has a keyword trigger to backfill.
-          if (n.type === 'start' && !isUserInputFlow && !isSequence && !isBroadcastFlowLoaded && !isChatWidgetFlowLoaded && flow.trigger_type !== 'CHAT_WIDGET' && !nodeData.chatWidgetStart) {
+          if (n.type === 'start' && !isUserInputFlow && !isSequence && !isBroadcastFlowLoaded && !isQuickActionLoaded && !isChatWidgetFlowLoaded && flow.trigger_type !== 'CHAT_WIDGET' && !nodeData.chatWidgetStart) {
             if (!nodeData.triggers || !Array.isArray(nodeData.triggers) || nodeData.triggers.length === 0) {
               const kws = nodeData.keywords !== undefined
                 ? (Array.isArray(nodeData.keywords) ? nodeData.keywords : [nodeData.keywords])
@@ -11955,7 +12880,8 @@ function FlowBuilderInner() {
       try {
         if (!id || id === 'new') return;
         const currentNodes = nodesRef.current || [];
-        const hasErrors = currentNodes.some((n) => validateNodeData(n) !== null);
+        const hasErrors = currentNodes.some((n) => validateNodeData(n, platformRef.current) !== null)
+          || (!isSequence && findDeadEndOptions(currentNodes, edgesRef.current || [], { normalizeListMenuData }).length > 0);
         if (hasErrors) return;
 
         const startNode = currentNodes.find((n) => n.type === 'start');
@@ -12084,19 +13010,12 @@ function FlowBuilderInner() {
     }
 
     const shown = problems.slice(0, 5);
-    Swal.fire({
+    alert.problems({
       title,
-      html: `
-        <div style="text-align: left; font-size: 13px; color: #475569; line-height: 1.5;">
-          <p style="margin-bottom: 8px;">${escapeHtml(intro)}</p>
-          <div style="background: #fef2f2; border: 1px solid #fee2e2; border-radius: 8px; padding: 10px 12px; color: #b91c1c; font-weight: 600;">
-            ${shown.map((pr) => `<div style="margin-bottom: 4px;">${escapeHtml(pr.message)}</div>`).join('')}
-          </div>
-          <p style="margin-top: 8px; font-size: 11px; color: #94a3b8;">The first one is selected on the canvas${problems.length > 1 ? ` — ${problems.length - 1} more are marked in red.` : '.'}</p>
-        </div>`,
-      icon: 'warning',
-      confirmButtonText: confirmText,
-      confirmButtonColor: '#4f46e5',
+      text: intro,
+      items: shown.map((pr) => pr.message),
+      footer: `The first one is selected on the canvas${problems.length > 1 ? ` — ${problems.length - 1} more are marked in red.` : '.'}`,
+      confirm: confirmText,
     });
   }, [setNodes, fitView]);
 
@@ -12128,7 +13047,7 @@ function FlowBuilderInner() {
       const currentNodes = nodesRef.current || [];
       const invalidList = [];
       currentNodes.forEach((n) => {
-        const err = validateNodeData(n);
+        const err = validateNodeData(n, platformRef.current);
         if (err) invalidList.push({ node: n, error: err });
       });
 
@@ -12139,12 +13058,9 @@ function FlowBuilderInner() {
         const branchNodeId = findFirstBranchingNodeId(currentNodes, edgesRef.current || []);
         if (branchNodeId) {
           const branchNode = currentNodes.find((n) => n.id === branchNodeId);
-          Swal.fire({
+          alert.warning({
             title: 'Sequences Can\'t Branch',
-            html: `<div style="text-align:left; font-size:13px; color:#475569;">"<strong>${branchNode?.data?.label || branchNode?.type}</strong>" has more than one outgoing connection. A Sequence is a single straight line of steps — remove the extra connection before saving.</div>`,
-            icon: 'warning',
-            confirmButtonText: 'OK',
-            confirmButtonColor: '#4f46e5',
+            text: `"${branchNode?.data?.label || branchNode?.type}" has more than one outgoing connection. A Sequence is a single straight line of steps — remove the extra connection before saving.`,
           });
           setSelectedNode(branchNode || null);
           return false;
@@ -12161,15 +13077,22 @@ function FlowBuilderInner() {
 
       const problems = invalidList.map(({ node, error }) => ({
         nodeId: node.id,
-        itemId: node.type === 'messageBlock' ? validateMessageBlock(node.data || {}).itemId : null,
+        itemId: node.type === 'messageBlock' ? validateMessageBlock(node.data || {}, platformRef.current).itemId : null,
         message: `${node.data?.label || node.type}: ${error}`,
       }));
       foreign.forEach((f) => { if (!problems.some((pr) => pr.nodeId === f.nodeId)) problems.push(f); });
+      // A button / reply / list item left on "Continue Flow" with no wire does nothing when tapped.
+      // Not in Sequences: taps there aren't routed back into the sequence.
+      const deadEnds = isSequence ? [] : findDeadEndOptions(currentNodes, edgesRef.current || [], { normalizeListMenuData });
+      deadEnds.forEach((d) => { if (!problems.some((pr) => pr.nodeId === d.nodeId)) problems.push(d); });
 
       if (problems.length > 0) {
+        // Title by what the problems are: settings (missing / over the channel's limits), bot scope, or unwired options.
         surfaceProblems(problems, invalidList.length > 0
-          ? { title: 'Missing Component Data', intro: 'The flow cannot be saved because some components have missing data:', confirmText: 'Fill In Data' }
-          : { title: 'Wrong bot account', intro: "The flow cannot be saved because it uses components that don't belong to this bot account:", confirmText: 'Fix it' });
+          ? { title: 'Some steps need fixing', intro: 'The flow cannot be saved yet — some elements are missing data or break the channel limits:', confirmText: 'Fix it' }
+          : foreign.length > 0
+            ? { title: 'Wrong bot account', intro: "The flow cannot be saved because it uses components that don't belong to this bot account:", confirmText: 'Fix it' }
+            : { title: 'Buttons lead nowhere', intro: 'The flow cannot be saved because these options do nothing when tapped:', confirmText: 'Fix it' });
         return false;
       }
 
@@ -12228,57 +13151,8 @@ function FlowBuilderInner() {
       if (drilledIn) setUifDirty(false);
       if (silent) return true;
 
-      const currentPlatformKey = (platform || 'WEBCHAT').toUpperCase();
-      const currentTheme = PLATFORM_SAVE_THEMES[currentPlatformKey] || PLATFORM_SAVE_THEMES.WEBCHAT;
       const platformLabel = getPlatformMeta(platform).label || 'Channel';
-
-      Swal.fire({
-        toast: true,
-        position: 'top-end',
-        showConfirmButton: false,
-        timer: 2600,
-        timerProgressBar: true,
-        background: 'transparent',
-        customClass: {
-          popup: '!p-0 !bg-transparent !shadow-none !border-none',
-        },
-        html: `
-          <div style="
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px 18px;
-            border-radius: 12px;
-            background: #ffffff;
-            border: 1.5px solid ${currentTheme.border};
-            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04), ${currentTheme.shadow};
-            font-family: inherit;
-          ">
-            <div style="
-              width: 32px;
-              height: 32px;
-              border-radius: 8px;
-              background: ${currentTheme.badgeBg};
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              flex-shrink: 0;
-            ">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${currentTheme.iconColor}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="20 6 9 17 4 12"></polyline>
-              </svg>
-            </div>
-            <div style="display: flex; flex-direction: column; text-align: left;">
-              <div style="font-size: 13px; font-weight: 700; color: #0f172a; line-height: 1.3;">
-                Flow Saved Successfully
-              </div>
-              <div style="font-size: 11.5px; font-weight: 500; color: #64748b; margin-top: 1px;">
-                Changes live on <span style="font-weight: 700; color: ${currentTheme.iconColor};">${platformLabel}</span>
-              </div>
-            </div>
-          </div>
-        `,
-      });
+      toast.success('Flow saved', { description: `Changes live on ${platformLabel}` });
       return true;
     } catch (err) {
       console.error('Save failed:', err);
@@ -12287,12 +13161,11 @@ function FlowBuilderInner() {
         surfaceProblems(refused.violations, { title: 'Wrong bot account', intro: "The flow cannot be saved because it uses components that don't belong to this bot account:", confirmText: 'Fix it' });
         return false;
       }
-      Swal.fire({
-        title: 'Save Failed',
-        text: err?.response?.data?.message || err.message || 'Could not save flow.',
-        icon: 'error',
-        confirmButtonColor: '#4f46e5',
-      });
+      if (refused?.code === 'DEAD_END_BUTTONS' && Array.isArray(refused.violations) && refused.violations.length) {
+        surfaceProblems(refused.violations, { title: 'Buttons lead nowhere', intro: 'The flow cannot be saved because these options do nothing when tapped:', confirmText: 'Fix it' });
+        return false;
+      }
+      alert.error('Save Failed', err?.response?.data?.message || err.message || 'Could not save flow.');
       return false;
     } finally {
       setSaving(false);
@@ -12308,7 +13181,7 @@ function FlowBuilderInner() {
   const handleBroadcastSave = useCallback(async () => {
     if (!(await handleSave({ silent: true }))) return false;
     if (!broadcastEditable) {
-      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Broadcast saved', timer: 2600, showConfirmButton: false });
+      toast.success('Broadcast saved');
       return true;
     }
     try {
@@ -12316,19 +13189,14 @@ function FlowBuilderInner() {
       const count = Number(res?.audienceCount || 0);
       const reach = `Currently reaches ${count.toLocaleString()} ${count === 1 ? 'subscriber' : 'subscribers'}${res?.noFilter ? ' (no audience filter — all eligible subscribers)' : ''}.`;
       const problems = res?.readyErrors || [];
-      Swal.fire({
-        toast: true,
-        position: 'top-end',
-        icon: problems.length ? 'warning' : 'success',
-        title: problems.length ? 'Draft saved — not ready to send yet' : 'Broadcast draft saved',
-        text: problems.length ? `${problems[0]}${problems.length > 1 ? ` (+${problems.length - 1} more)` : ''}` : `${reach} Nothing was sent.`,
-        timer: problems.length ? 6000 : 3500,
-        timerProgressBar: true,
-        showConfirmButton: false,
+      const notice = problems.length ? toast.warning : toast.success;
+      notice(problems.length ? 'Draft saved — not ready to send yet' : 'Broadcast draft saved', {
+        description: problems.length ? `${problems[0]}${problems.length > 1 ? ` (+${problems.length - 1} more)` : ''}` : `${reach} Nothing was sent.`,
+        duration: problems.length ? 6000 : 3500,
       });
       return true;
     } catch (err) {
-      Swal.fire({ icon: 'error', title: 'Could not save the broadcast', text: err?.response?.data?.message || err.message, confirmButtonColor: '#2563eb' });
+      alert.error('Could not save the broadcast', err?.response?.data?.message || err.message);
       return false;
     }
   }, [handleSave, broadcastEditable, persistBroadcast]);
@@ -12441,23 +13309,18 @@ function FlowBuilderInner() {
       return;
     }
 
-    const result = await Swal.fire({
+    const choice = await alert.choose({
       title: 'Save changes to this form?',
       text: `You have unsaved changes in "${flowName || 'this User Input Flow'}".`,
-      icon: 'question',
-      showDenyButton: true,
-      showCancelButton: true,
-      confirmButtonText: 'Save & Go Back',
-      denyButtonText: "Discard",
-      cancelButtonText: 'Cancel',
-      confirmButtonColor: '#4f46e5',
-      denyButtonColor: '#ef4444',
+      confirm: 'Save & Go Back',
+      deny: 'Discard',
+      cancel: 'Cancel',
     });
 
-    if (result.isConfirmed) {
+    if (choice === 'confirm') {
       await handleSave();
       restoreParent();
-    } else if (result.isDenied) {
+    } else if (choice === 'deny') {
       restoreParent();
     }
     // Cancel (or dismiss): do nothing — stay exactly where they are.
@@ -12665,7 +13528,7 @@ function FlowBuilderInner() {
                 _unsupported: !isNodeSupportedOnPlatform(n.type, platform),
               },
             };
-            const err = validateNodeData(updated);
+            const err = validateNodeData(updated, platform);
             updated.data._validationError = err || null;
             return updated;
           }
@@ -12682,7 +13545,7 @@ function FlowBuilderInner() {
             _unsupported: !isNodeSupportedOnPlatform(prev.type, platform),
           },
         };
-        const err = validateNodeData(updated);
+        const err = validateNodeData(updated, platform);
         updated.data._validationError = err || null;
         return updated;
       });
@@ -12696,14 +13559,7 @@ function FlowBuilderInner() {
       const target = nodes.find((n) => n.id === nodeId);
       if (!target) return;
       if (target.type === 'start') {
-        Swal.fire({
-          toast: true,
-          position: 'top-end',
-          icon: 'info',
-          title: 'The Start Trigger node cannot be deleted.',
-          showConfirmButton: false,
-          timer: 2500,
-        });
+        toast.info('The Start Trigger node cannot be deleted.');
         return;
       }
       const nextNodes = nodes.filter((n) => n.id !== nodeId);
@@ -12723,14 +13579,7 @@ function FlowBuilderInner() {
       if (!source) return;
 
       if (source.type === 'start') {
-        Swal.fire({
-          toast: true,
-          position: 'top-end',
-          icon: 'info',
-          title: 'The Start Trigger node cannot be duplicated.',
-          showConfirmButton: false,
-          timer: 2500,
-        });
+        toast.info('The Start Trigger node cannot be duplicated.');
         return;
       }
 

@@ -34,7 +34,11 @@ const RULES = [
   ["POST", /^\/channels\/webchat$/, "webchat_bot.create"],
   ["PUT|PATCH", /^\/channels\/webchat\//, "webchat_bot.update"],
   ["DELETE", /^\/channels\/webchat\//, "webchat_bot.delete"],
-  ["POST", new RegExp(`^/channels/facebook/${ID}/send-utility$`), "live_chat.update"],
+  // Messenger Utility templates (routes/messengerTemplates.js). Human Agent is owner-only in the route itself.
+  ["POST", /^\/messenger-utility\/templates\/validate$/, null], // pre-check only, saves nothing
+  ["POST", /^\/messenger-utility\/templates\/sync$/, "messenger_template.update"],
+  ...crud("/messenger-utility/templates", "messenger_template"),
+  ["*", /^\/messenger-utility\/accounts\//, "connect_account.update"],
   ["POST", new RegExp(`^/channels/whatsapp/${ID}/(sync|register)$`), "connect_account.special"],
   ["POST", /^\/channels\/(whatsapp\/discover-accounts|facebook\/(sync-subscriptions|import-pages)|instagram\/(sync-from-facebook|import-accounts))$/, "connect_account.special"],
   ["DELETE", /^\/(channels|integrations)\//, "connect_account.delete"],
@@ -44,8 +48,11 @@ const RULES = [
   ["POST", /^\/contacts\/(import|bulk-delete|bulk-sequence|bulk-list-add|bulk-list-remove|bulk-labels|sync-avatars)$/, "subscribers.special"],
   ["POST", /^\/contacts$/, "subscribers.create"],
   ["DELETE", new RegExp(`^/contacts/${ID}$`), "subscribers.delete"],
+  ["POST", new RegExp(`^/contacts/${ID}/merge$`), "subscribers.delete"], // removes the other subscriber
   ["*", /^\/contacts\//, "subscribers.update"], // edit, tags, notes, labels, custom-field values, block, toggle-bot
   ...crud("/contact-lists", "subscribers"),
+  // Subscriber Manager → Fields & Variables (field definitions + workspace variables).
+  ["*", /^\/(custom-fields|workspace-variables)(\/|$)/, "subscribers.update"],
 
   // ── Inbox & Messaging ──
   ["*", /^\/canned-responses(\/|$)/, "live_chat.advanced"],
@@ -58,6 +65,7 @@ const RULES = [
   // read/unread markers are personal and stay open.
 
   // ── Automations ──
+  ["POST", /^\/flows\/import$/, "bot_manager.special"], // Import a bot from an export file (routes/flowTransfer.js)
   ["POST", new RegExp(`^/flows/${ID}/clone$`), "bot_manager.special"],
   ...crud("/flows", "bot_manager"),
   ["POST", /^\/bots\/errors\/test$/, "bot_manager.special"],
@@ -65,6 +73,23 @@ const RULES = [
   ["POST", new RegExp(`^/bots/${ID}/rules$`), "bot_manager.update"],
   ["DELETE", new RegExp(`^/bots/${ID}/rules/`), "bot_manager.update"],
   ...crud("/bots", "bot_manager"),
+  ["*", /^\/bot-profile\//, "bot_manager.update"], // Get Started, greeting, ice breakers, persistent menu
+  ["*", /^\/opt-out\//, "bot_manager.update"], // STOP / START keywords
+  ["*", /^\/quick-actions\//, "bot_manager.update"], // No match / Chat with human / robot / (un)subscribe replies
+  ["*", /^\/(bot-settings|business-hours)\//, "bot_manager.update"], // Bot Settings: General / Business Hours / Inbox tabs
+  // Telegram group management (routes/telegramGroups.js)
+  ["POST", new RegExp(`^/tg-groups/${ID}/refresh$`), null], // reads Telegram, changes nothing there
+  ["POST|DELETE", new RegExp(`^/tg-groups/${ID}/posts(/|$)`), "telegram_group_manager.create"],
+  ["POST", new RegExp(`^/tg-groups/${ID}/(members/${ID}/action|join-requests)$`), "telegram_group_manager.special"],
+  ["POST", new RegExp(`^/tg-groups/${ID}/leave$`), "telegram_group_manager.delete"],
+  ["DELETE", new RegExp(`^/tg-groups/${ID}$`), "telegram_group_manager.delete"],
+  ["*", /^\/tg-groups(\/|$)/, "telegram_group_manager.update"],
+  ["*", /^\/inbox-quality\//, "live_chat.special"], // SLA target, CSAT, automatic assignment
+  ["*", /^\/wa-number\//, "connect_account.update"], // WhatsApp business username
+  ["POST", /^\/wa-groups\/\d+\/messages$/, "broadcast.create"], // post to a WhatsApp group
+  ["*", /^\/wa-groups(\/|$)/, "bot_manager.update"], // create / manage WhatsApp groups
+  ["POST", /^\/wa-catalog\/send$/, "live_chat.create"], // product message into a chat
+  ["*", /^\/wa-catalog\//, "wa_catalog.update"], // catalog link, storefront switches, sync
   ...crud("/user-input-flows", "bot_manager"),
   ["POST", /^\/comments\/(link-user-token|post-comment|reply-comment|like-comment|hide-comment)$/, "comment_automation.special"],
   ["DELETE", /^\/comments\/delete-comment\//, "comment_automation.delete"],
@@ -72,6 +97,12 @@ const RULES = [
   ...crud("/comments/campaigns", "comment_automation"),
 
   // ── Marketing ──
+  // Marketing Messages on Messenger (routes/messengerMarketing.js): paid sending = broadcast.special.
+  ["POST", new RegExp(`^/marketing-messages/${ID}/campaigns/${ID}/send$`), "broadcast.special"],
+  ["POST", new RegExp(`^/marketing-messages/${ID}/campaigns$`), "broadcast.create"],
+  ["PUT", new RegExp(`^/marketing-messages/${ID}/campaigns/${ID}$`), "broadcast.update"],
+  ["DELETE", new RegExp(`^/marketing-messages/${ID}/campaigns/${ID}$`), "broadcast.delete"],
+  ["POST", new RegExp(`^/marketing-messages/${ID}/(opt-in|subscribers/sync)$`), "broadcast.create"],
   ["POST", /^\/broadcasts\/audience-preview$/, null], // read-only preview
   ["POST", new RegExp(`^/broadcasts/(start-with-flow|${ID}/(send|schedule))$`), "broadcast.special"],
   ["POST", new RegExp(`^/broadcasts/${ID}/cancel$`), "broadcast.update"],
@@ -90,6 +121,8 @@ const RULES = [
   ["DELETE", /^\/slots\/purge-past$/, "wa_appointment.special"],
   ...crud("/slots", "wa_appointment"),
   ["POST", new RegExp(`^/calls/permission/${ID}/request$`), "wa_calling.special"],
+  ["*", /^\/calls\/settings\//, "wa_calling.update"], // call settings (Meta + recording / missed-call reply)
+  ["DELETE", /^\/calls\//, "wa_calling.delete"], // delete a call recording
   ["POST", /^\/calls\//, "wa_calling.create"],
   ...crud("/whatsapp-flow-refs", "wa_flows"),
   ["POST", new RegExp(`^/commerce/connections/${ID}/(poll|sync)$`), "wa_shopify_integration.special"],
@@ -97,13 +130,16 @@ const RULES = [
   ...crud("/commerce/campaigns", "wa_shopify_integration"),
 
   // ── Integrations & APIs ──
+  // Auto responders (Bot Settings → Auto Responder, routes/autoResponders.js). Re-testing saved keys changes nothing.
+  ["POST", new RegExp(`^/auto-responders/${ID}/test$`), null],
+  ...crud("/auto-responders", "autoresponder"),
   ["POST", new RegExp(`^/http-api-campaigns/${ID}/test$`), "integration_http_api.special"],
   ...crud("/http-api-campaigns", "integration_http_api"),
 
   // ── AI ──
   ["POST", new RegExp(`^/ai/agents/${ID}/test-chat$`), "ai_agent.special"],
   ["POST", new RegExp(`^/ai/agents/${ID}/knowledge/${ID}/reindex$`), "ai_agent.special"],
-  ["*", new RegExp(`^/ai/agents/${ID}/(knowledge|routing|actions)(/|$)`), "ai_agent.update"],
+  ["*", new RegExp(`^/ai/agents/${ID}/(knowledge|routing|actions|answers)(/|$)`), "ai_agent.update"],
   ...crud("/ai/agents", "ai_agent"),
   ["*", /^\/ai\/reply-settings\//, "ai_agent.update"],
   ["POST", /^\/ai\/rewrite-message$/, "ai_assistant.special"],

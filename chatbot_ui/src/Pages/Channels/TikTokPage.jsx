@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
+import useUrlState from '../../hooks/useUrlState';
 import AppLayout from '../../Layout/AppLayout';
 import ChannelBreadcrumb from '../../Components/Common/ChannelBreadcrumb';
 import { channelAPI } from '../../services/api';
-import { handleLimitError } from '../../utils/alerts';
+import { handleLimitError, alert } from '../../utils/alerts';
 import { useAuth } from '../../Provider/AuthContext';
 import { Plus, Trash2, CheckCircle2, RefreshCw, Key, Music, ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router';
@@ -18,7 +19,7 @@ export default function TikTokPage({ embedded = false }) {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
   const [form, setForm] = useState(DEFAULT_FORM);
-  const [view, setView] = useState('list'); // 'list' | 'connect'
+  const [view, setView] = useUrlState('view', 'list', { allowed: ['list','connect'] });
 
   const fetchAccounts = useCallback(async () => {
     setLoading(true);
@@ -62,7 +63,7 @@ export default function TikTokPage({ embedded = false }) {
   };
 
   const handleDelete = async (id) => {
-    if (!confirm('Remove this TikTok account?')) return;
+    if (!(await alert.ask('Remove this TikTok account?'))) return;
     try {
       await channelAPI.deleteTikTok(id);
       showToast('TikTok account removed');
@@ -92,9 +93,11 @@ export default function TikTokPage({ embedded = false }) {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <Link to="/settings/tiktok-app" className="btn btn-secondary btn-sm" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 34, padding: '0 12px', fontSize: '0.82rem' }}>
-            <Key size={13} /> App Setup
-          </Link>
+          {user?.canManageDeveloperApps && (
+            <Link to="/settings/developer-apps?tab=tiktok" className="btn btn-secondary btn-sm" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 34, padding: '0 12px', fontSize: '0.82rem' }}>
+              <Key size={13} /> App Setup
+            </Link>
+          )}
           <button onClick={fetchAccounts} className="btn btn-secondary btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 12px', fontSize: '0.82rem' }}>
             <RefreshCw size={13} className={loading ? 'spin' : ''} /> Refresh
           </button>

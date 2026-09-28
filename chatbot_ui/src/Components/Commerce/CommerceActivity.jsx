@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import useUrlState from '../../hooks/useUrlState';
 import { commerceAPI } from '../../services/api';
 import { notify } from '../../utils/alerts';
 import { RefreshCw, ExternalLink } from 'lucide-react';
@@ -24,7 +25,7 @@ const money = (v, c) => (v === null || v === undefined ? '—' : `${c ? `${c} ` 
 
 /** Automation → Commerce → Activity: what the campaigns sent, COD answers, carts. */
 export default function CommerceActivity({ selectedAccount, integrationId }) {
-  const [view, setView] = useState('messages');
+  const [view, setView] = useUrlState('cview', 'messages', { allowed: VIEWS.map((v) => v.id) });
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
   const [data, setData] = useState({ rows: [], total: 0, pageSize: 25 });

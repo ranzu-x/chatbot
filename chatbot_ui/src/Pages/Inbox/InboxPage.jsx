@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { chatHeaderIdentifier } from './chatHeaderIdentifier';
+import SubscriberInfoBanner from '../../Components/Inbox/SubscriberInfoBanner';
 import AppLayout from '../../Layout/AppLayout';
 import {
   conversationAPI,
@@ -10,7 +12,11 @@ import {
   customFieldAPI,
   sequenceAPI,
   aiRewriteAPI,
+  inboxQualityAPI,
+  marketingMessagesAPI,
 } from '../../services/api';
+import { notify, alert, toast } from '../../utils/alerts';
+import { contactIdentifier, isWhatsAppUserId } from '../Contacts/subscriberUtils';
 import SendMenuPanel from '../../Components/Inbox/SendMenuPanel';
 import JoinChatModal from '../../Components/Inbox/JoinChatModal';
 import CreateCannedModal from '../../Components/Inbox/CreateCannedModal';
@@ -19,6 +25,10 @@ import FollowUpPanel from '../../Components/Inbox/FollowUpPanel';
 import FollowUpAlerts from '../../Components/Inbox/FollowUpAlerts';
 import { socketAuth } from '../../utils/socketAuth';
 import WhatsAppCallPanel from '../../Components/Inbox/WhatsAppCallPanel';
+import WaitingBadge from '../../Components/Inbox/WaitingBadge';
+import TranscriptLine from '../../Components/Inbox/TranscriptLine';
+import MentionTextarea from '../../Components/Inbox/MentionTextarea';
+import HumanAgentToggle from '../../Components/Inbox/HumanAgentToggle';
 import useWhatsAppCall from '../../hooks/useWhatsAppCall';
 import { useAuth } from '../../Provider/AuthContext';
 import { useLayout } from '../../Provider/LayoutContext';
@@ -692,7 +702,73 @@ function FailedMessageStatus({ msg }) {
 
 function formatTime(ts) {
   if (!ts) return '';
-  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const date = new Date(ts);
+  if (isNaN(date.getTime())) return '';
+
+  const now = new Date();
+  const timeStr = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+  const isToday =
+    date.getDate() === now.getDate() &&
+    date.getMonth() === now.getMonth() &&
+    date.getFullYear() === now.getFullYear();
+  if (isToday) return timeStr;
+
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday =
+    date.getDate() === yesterday.getDate() &&
+    date.getMonth() === yesterday.getMonth() &&
+    date.getFullYear() === yesterday.getFullYear();
+  if (isYesterday) return `Yesterday, ${timeStr}`;
+
+  const isCurrentYear = date.getFullYear() === now.getFullYear();
+  if (isCurrentYear) {
+    const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return `${dateStr}, ${timeStr}`;
+  }
+
+  const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+  return `${dateStr}, ${timeStr}`;
+}
+
+function formatDateDivider(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return '';
+  const now = new Date();
+
+  const isToday =
+    d.getDate() === now.getDate() &&
+    d.getMonth() === now.getMonth() &&
+    d.getFullYear() === now.getFullYear();
+  if (isToday) return 'Today';
+
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday =
+    d.getDate() === yesterday.getDate() &&
+    d.getMonth() === yesterday.getMonth() &&
+    d.getFullYear() === yesterday.getFullYear();
+  if (isYesterday) return 'Yesterday';
+
+  const isCurrentYear = d.getFullYear() === now.getFullYear();
+  if (isCurrentYear) {
+    return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function isSameDay(ts1, ts2) {
+  if (!ts1 || !ts2) return false;
+  const d1 = new Date(ts1);
+  const d2 = new Date(ts2);
+  if (isNaN(d1.getTime()) || isNaN(d2.getTime())) return false;
+  return (
+    d1.getDate() === d2.getDate() &&
+    d1.getMonth() === d2.getMonth() &&
+    d1.getFullYear() === d2.getFullYear()
+  );
 }
 
 function formatRelativeTime(ts) {
@@ -873,6 +949,11 @@ export default function InboxPage() {
   // Conversations & Messages
   const [conversations, setConversations] = useState([]);
   const [convLoading, setConvLoading] = useState(true);
+  // SLA target for the waiting badges (Inbox Insights page, chatbot_api/utils/inboxQuality.js).
+  const [inboxQuality, setInboxQuality] = useState(null);
+  useEffect(() => {
+    inboxQualityAPI.getSettings().then((res) => setInboxQuality(res.data?.settings || null)).catch(() => {});
+  }, []);
   // Server-side pagination for the conversation list (never loads an
   // agency's entire conversation set — see the approved Live Inbox
   // performance plan).
@@ -922,6 +1003,24 @@ export default function InboxPage() {
   const [statusFilter, setStatusFilter] = useState('All');
   const [platformFilter, setPlatformFilter] = useState('');
   const [agentFilter, setAgentFilter] = useState(''); // '' = any, 'unassigned', or an agent_profile id
+
+  // Left rail: a double-click on the item that is ALREADY selected goes back to
+  // the default "All Chats" view (the same filters the Inbox opens with). The
+  // selection state is noted when the double-click starts, so double-clicking an
+  // item that wasn't selected just selects it; the double-click's second click
+  // is ignored, so nothing flickers and no extra request is made.
+  const railWasActiveRef = useRef({});
+  const resetRailView = useCallback(() => {
+    setViewFilter('all');
+    setStatusFilter('All');
+    setAgentFilter('');
+    setPlatformFilter('');
+  }, []);
+  const railPressProps = (key, active, onClick) => ({
+    onMouseDown: (e) => { if (e.detail === 1) railWasActiveRef.current[key] = active; },
+    onClick: (e) => { if (e.detail > 1) return; onClick(); },
+    onDoubleClick: () => { if (railWasActiveRef.current[key]) resetRailView(); },
+  });
   // Date range — defaults to the last 7 days server-side too (routes/conversations.js);
   // 'custom' reveals two date inputs, clamped to a 30-day max span server-side regardless.
   const [dateRangePreset, setDateRangePreset] = useState('7d'); // '7d' | '30d' | 'today' | 'custom'
@@ -1061,10 +1160,13 @@ export default function InboxPage() {
   const [sendMenuSection, setSendMenuSection] = useState('menu');
   const [showSendMenuPicker, setShowSendMenuPicker] = useState(false);
 
+  // A Messenger conversation's "template" is a Utility template (Send Menu → Utility Template).
+  const selectedPlatformUpper = (selectedConv?.platform || selectedConv?.integrationPlatform || selectedConv?.contactPlatform || '').toUpperCase();
   const handleOpenTemplatePicker = useCallback(() => {
-    setSendMenuSection('template');
+    setSendMenuSection(selectedPlatformUpper === 'FACEBOOK' ? 'utilityTemplate' : 'template');
     setShowSendMenu(true);
-  }, []);
+  }, [selectedPlatformUpper]);
+
 
   // Canned Responses "/" picker — shows while the composer's entire content
   // is still just "/" + a partial shortcut/name (no space typed yet).
@@ -1103,6 +1205,25 @@ export default function InboxPage() {
 
   const selectedId = selectedConv?._id || selectedConv?.id;
   const selectedIdRef = useRef(selectedId);
+  // Messenger / Instagram messaging window: OPEN (24h) · HUMAN_AGENT (24h–7d,
+  // a person's reply goes out with Meta's HUMAN_AGENT tag) · CLOSED. The server
+  // decides on every send (routes/conversations.js); this drives the banner.
+  // Kept with the conversation it belongs to: right after switching chats the
+  // previous chat's window (and Human Agent state) must never show for the new one.
+  const [msgWindowState, setMsgWindow] = useState(null);
+  const msgWindow = msgWindowState && String(msgWindowState.conversationId) === String(selectedId) ? msgWindowState : null;
+  const [msgWindowTick, setMsgWindowTick] = useState(0); // bump = reload the window (Human Agent switch)
+  const lastInboundKey = selectedConv?.lastInboundAt || selectedConv?.last_inbound_at || null;
+  useEffect(() => {
+    if (!selectedId || (selectedPlatformUpper !== 'FACEBOOK' && selectedPlatformUpper !== 'INSTAGRAM')) { setMsgWindow(null); return undefined; }
+    let alive = true;
+    const load = () => conversationAPI.getMessagingWindow(selectedId)
+      .then((res) => { if (alive) setMsgWindow({ ...res.data, conversationId: selectedId }); })
+      .catch(() => { if (alive) setMsgWindow(null); });
+    load();
+    const timer = setInterval(load, 60 * 1000);
+    return () => { alive = false; clearInterval(timer); };
+  }, [selectedId, selectedPlatformUpper, lastInboundKey, msgWindowTick]);
   const selectedContactId = selectedConv?.contact_id || selectedConv?.contactId;
   const selectedContactIdRef = useRef(selectedContactId);
 
@@ -1342,11 +1463,13 @@ export default function InboxPage() {
     }
   }, []);
 
-  // Restore the previously selected subscriber after a page refresh (once, on mount).
+  // Open the chat named in ?conv= (notification / call pop-up links), else restore
+  // the previously selected subscriber after a page refresh (once, on mount).
   useEffect(() => {
     let savedId = null;
     try {
-      savedId = sessionStorage.getItem(SELECTED_CONVERSATION_KEY);
+      const linked = new URLSearchParams(window.location.search).get('conv');
+      savedId = /^\d+$/.test(linked || '') ? linked : sessionStorage.getItem(SELECTED_CONVERSATION_KEY);
     } catch {
       // ignore
     }
@@ -1492,6 +1615,10 @@ export default function InboxPage() {
           lastMessageTime: incoming.created_at,
           last_message_at: incoming.created_at,
           ...(incoming.direction === 'INBOUND' ? { lastInboundAt: incoming.created_at, last_inbound_at: incoming.created_at } : {}),
+          // Waiting clock (same rule as the DB trigger): a customer message starts it, a sent reply stops it.
+          awaiting_reply_since: incoming.direction === 'INBOUND'
+            ? (prev[idx].awaiting_reply_since || incoming.created_at)
+            : (incoming.status === 'FAILED' ? prev[idx].awaiting_reply_since : null),
           unread_count: (isOpenConv && !document.hidden) ? 0 : (Number(prev[idx].unread_count) || 0) + (incoming.direction === 'INBOUND' ? 1 : 0),
         };
         const next = [...prev];
@@ -1528,6 +1655,12 @@ export default function InboxPage() {
 
     // Live tick updates: delivered / read / failed status arriving asynchronously
     // (e.g. WhatsApp status webhooks) get patched onto the already-rendered message.
+    // A voice message's transcript (made automatically or by a teammate) — utils/transcribe.js.
+    socket.on('message_transcribed', (data) => {
+      if (String(data.conversationId) !== String(selectedIdRef.current)) return;
+      setMessages((prev) => prev.map((m) => (String(m.id) === String(data.messageId) ? { ...m, transcript: data.transcript } : m)));
+    });
+
     socket.on('message_status_update', (data) => {
       if (String(data.conversationId) !== String(selectedIdRef.current)) return;
       setMessages((prev) =>
@@ -1815,6 +1948,13 @@ export default function InboxPage() {
         return;
       }
     }
+    if ((selectedPlatformUpper === 'FACEBOOK' || selectedPlatformUpper === 'INSTAGRAM') && msgWindow?.state === 'CLOSED') {
+      setSendError(selectedPlatformUpper === 'FACEBOOK'
+        ? 'Outside the messaging window — send a Utility template instead.'
+        : "Instagram's messaging window is closed — wait for this person to write again.");
+      setTimeout(() => setSendError(''), 9000);
+      return;
+    }
 
     const text = messageText.trim();
     const sentConvId = selectedId; // the reply may finish after the agent has opened another chat
@@ -1905,6 +2045,13 @@ export default function InboxPage() {
         return;
       }
     }
+    if ((selectedPlatformUpper === 'FACEBOOK' || selectedPlatformUpper === 'INSTAGRAM') && msgWindow?.state === 'CLOSED') {
+      setSendError(selectedPlatformUpper === 'FACEBOOK'
+        ? 'Outside the messaging window — send a Utility template instead.'
+        : "Instagram's messaging window is closed — wait for this person to write again.");
+      setTimeout(() => setSendError(''), 9000);
+      return;
+    }
 
     const uploadConvId = selectedId;
     setUploading(true);
@@ -1949,7 +2096,7 @@ export default function InboxPage() {
         setSendError(err?.response?.data?.message || 'Failed to deliver attachment.');
         setTimeout(() => setSendError(''), 8000);
       } else {
-        alert('Failed to upload attachment.');
+        toast.error('Failed to upload attachment.');
       }
     } finally {
       setUploading(false);
@@ -2061,7 +2208,7 @@ export default function InboxPage() {
       loadConversations();
     } catch (err) {
       console.error('Failed to leave chat', err);
-      alert(err?.response?.data?.message || 'Failed to leave chat');
+      toast.error(err?.response?.data?.message || 'Failed to leave chat');
     } finally {
       setSubscriberActionBusy(false);
     }
@@ -2070,14 +2217,14 @@ export default function InboxPage() {
   const handleResetFlow = async () => {
     if (!selectedId || subscriberActionBusy) return;
     setShowSubscriberMenu(false);
-    if (!window.confirm('Reset this subscriber\'s current bot flow progress? Their next message will start fresh from the beginning.')) return;
+    if (!(await alert.ask('Reset this subscriber\'s current bot flow progress? Their next message will start fresh from the beginning.'))) return;
     setSubscriberActionBusy(true);
     try {
       const res = await conversationAPI.resetFlow(selectedId);
-      alert(res.data?.reset ? 'Flow progress has been reset.' : 'This subscriber had no active flow to reset.');
+      (res.data?.reset ? toast.success : toast.info)(res.data?.reset ? 'Flow progress has been reset.' : 'This subscriber had no active flow to reset.');
     } catch (err) {
       console.error('Failed to reset flow', err);
-      alert(err?.response?.data?.message || 'Failed to reset flow');
+      toast.error(err?.response?.data?.message || 'Failed to reset flow');
     } finally {
       setSubscriberActionBusy(false);
     }
@@ -2086,14 +2233,14 @@ export default function InboxPage() {
   const handleUnsubscribe = async () => {
     if (!selectedId || subscriberActionBusy) return;
     setShowSubscriberMenu(false);
-    if (!window.confirm('Unsubscribe this contact from all Sequences they are currently enrolled in? This cannot be undone — they would need to be re-enrolled manually.')) return;
+    if (!(await alert.ask('Unsubscribe this contact from all Sequences they are currently enrolled in? This cannot be undone — they would need to be re-enrolled manually.'))) return;
     setSubscriberActionBusy(true);
     try {
       const res = await conversationAPI.unsubscribe(selectedId);
-      alert(res.data?.sequencesStopped > 0 ? `Unsubscribed from ${res.data.sequencesStopped} sequence(s).` : 'This contact had no active sequence enrollments.');
+      (res.data?.sequencesStopped > 0 ? toast.success : toast.info)(res.data?.sequencesStopped > 0 ? `Unsubscribed from ${res.data.sequencesStopped} sequence(s).` : 'This contact had no active sequence enrollments.');
     } catch (err) {
       console.error('Failed to unsubscribe', err);
-      alert(err?.response?.data?.message || 'Failed to unsubscribe');
+      toast.error(err?.response?.data?.message || 'Failed to unsubscribe');
     } finally {
       setSubscriberActionBusy(false);
     }
@@ -2108,16 +2255,17 @@ export default function InboxPage() {
         await contactAPI.unblock(selectedContactId);
         setSelectedConv((prev) => (prev ? { ...prev, contactIsBlocked: false, contactBlockedReason: null } : prev));
       } else {
-        const reason = window.prompt('Block this subscriber — their messages will stop reaching your inbox entirely (bot, AI, and agents). Optional reason:');
+        const reason = await alert.prompt({ title: 'Block this subscriber?', text: 'Their messages will stop reaching your inbox entirely (bot, AI, and agents).', label: 'Reason (optional)', confirm: 'Block', confirmTone: 'danger', tone: 'danger' });
         if (reason === null) return; // cancelled
         setSubscriberActionBusy(true);
-        await contactAPI.block(selectedContactId, reason);
+        const blockRes = await contactAPI.block(selectedContactId, reason);
+        if (blockRes.data?.whatsappNote) notify.info(blockRes.data.whatsappNote);
         setSelectedConv((prev) => (prev ? { ...prev, contactIsBlocked: true, contactBlockedReason: reason || null } : prev));
       }
       loadConversations();
     } catch (err) {
       console.error('Failed to update block status', err);
-      alert(err?.response?.data?.message || 'Failed to update block status');
+      toast.error(err?.response?.data?.message || 'Failed to update block status');
     } finally {
       setSubscriberActionBusy(false);
     }
@@ -2126,7 +2274,7 @@ export default function InboxPage() {
   const handleClearHistory = async () => {
     if (!selectedId || subscriberActionBusy) return;
     setShowSubscriberMenu(false);
-    if (!window.confirm('Clear this conversation\'s entire message history? This cannot be undone.')) return;
+    if (!(await alert.ask('Clear this conversation\'s entire message history? This cannot be undone.'))) return;
     setSubscriberActionBusy(true);
     try {
       await conversationAPI.clearHistory(selectedId);
@@ -2134,7 +2282,7 @@ export default function InboxPage() {
       loadConversations();
     } catch (err) {
       console.error('Failed to clear history', err);
-      alert(err?.response?.data?.message || 'Failed to clear history');
+      toast.error(err?.response?.data?.message || 'Failed to clear history');
     } finally {
       setSubscriberActionBusy(false);
     }
@@ -2253,9 +2401,10 @@ export default function InboxPage() {
           setSelectedConv((prev) => (prev ? { ...prev, contactIsBlocked: false, contactBlockedReason: null } : prev));
         }
       } else {
-        const reason = window.prompt('Block this subscriber — their messages will stop reaching your inbox entirely (bot, AI, and agents). Optional reason:');
+        const reason = await alert.prompt({ title: 'Block this subscriber?', text: 'Their messages will stop reaching your inbox entirely (bot, AI, and agents).', label: 'Reason (optional)', confirm: 'Block', confirmTone: 'danger', tone: 'danger' });
         if (reason === null) return;
-        await contactAPI.block(contactId, reason);
+        const blockRes = await contactAPI.block(contactId, reason);
+        if (blockRes.data?.whatsappNote) notify.info(blockRes.data.whatsappNote);
         setConversations((prev) => prev.map((c) => (
           String(c.contact_id || c.contactId) === String(contactId)
             ? { ...c, contactIsBlocked: true, contactBlockedReason: reason || null }
@@ -2267,14 +2416,14 @@ export default function InboxPage() {
       }
     } catch (err) {
       console.error('Failed to update block status', err);
-      alert(err?.response?.data?.message || 'Failed to update block status');
+      toast.error(err?.response?.data?.message || 'Failed to update block status');
     }
   };
 
   const handleMenuClearHistory = async (conv) => {
     setConvMenuTarget(null);
     const convId = conv._id || conv.id;
-    if (!window.confirm("Clear this conversation's entire message history? This cannot be undone.")) return;
+    if (!(await alert.ask("Clear this conversation's entire message history? This cannot be undone."))) return;
     try {
       await conversationAPI.clearHistory(convId);
       if (String(selectedId) === String(convId)) {
@@ -2287,7 +2436,7 @@ export default function InboxPage() {
       )));
     } catch (err) {
       console.error('Failed to clear history', err);
-      alert(err?.response?.data?.message || 'Failed to clear history');
+      toast.error(err?.response?.data?.message || 'Failed to clear history');
     }
   };
 
@@ -2295,7 +2444,7 @@ export default function InboxPage() {
     setConvMenuTarget(null);
     const contactId = conv.contact_id || conv.contactId;
     const displayName = conv.contactName || conv.contact_name || conv.external_id || 'Subscriber';
-    if (!window.confirm(`Delete subscriber "${displayName}" and all associated conversations? This cannot be undone.`)) return;
+    if (!(await alert.ask(`Delete subscriber "${displayName}" and all associated conversations? This cannot be undone.`))) return;
     try {
       await contactAPI.delete(contactId);
       setConversations((prev) => prev.filter((c) => String(c.contact_id || c.contactId) !== String(contactId)));
@@ -2305,7 +2454,7 @@ export default function InboxPage() {
       }
     } catch (err) {
       console.error('Failed to delete subscriber', err);
-      alert(err?.response?.data?.message || 'Failed to delete subscriber');
+      toast.error(err?.response?.data?.message || 'Failed to delete subscriber');
     }
   };
 
@@ -2358,7 +2507,7 @@ export default function InboxPage() {
       loadConversations();
     } catch (err) {
       console.error('Failed to assign team', err);
-      alert(err?.response?.data?.message || 'Failed to assign team');
+      toast.error(err?.response?.data?.message || 'Failed to assign team');
     } finally {
       setAssigningAgent(false);
     }
@@ -2445,7 +2594,7 @@ export default function InboxPage() {
     } catch (err) {
       const msg = err?.response?.data?.message || 'Failed to rewrite message';
       console.error('AI rewrite failed', err);
-      alert(msg);
+      toast.error(msg);
     } finally {
       setRewriting(false);
     }
@@ -2590,13 +2739,14 @@ export default function InboxPage() {
       setShowNewFieldForm(false);
     } catch (err) {
       console.error('Failed to create custom field', err);
-      alert(err?.response?.data?.message || 'Failed to create custom field');
+      toast.error(err?.response?.data?.message || 'Failed to create custom field');
     } finally {
       setSavingNewField(false);
     }
   };
 
   // Add Internal Agent Note
+  const [noteMentions, setNoteMentions] = useState([]);
   const handleAddNote = async (e) => {
     e?.preventDefault();
     const noteText = newNoteText.trim();
@@ -2605,10 +2755,12 @@ export default function InboxPage() {
 
     setSavingNote(true);
     try {
-      await contactAPI.addNote(contactId, noteText);
+      const saved = await contactAPI.addNote(contactId, noteText, { mentionUserIds: noteMentions, conversationId: selectedConv?.id });
+      if (saved.data?.mentioned?.length) notify.success(`Notified ${saved.data.mentioned.join(', ')}`);
       const res = await contactAPI.getNotes(contactId);
       setContactNotes(res.data.notes || []);
       setNewNoteText('');
+      setNoteMentions([]);
     } catch (err) {
       console.error('Failed to add note', err);
     } finally {
@@ -2712,14 +2864,14 @@ export default function InboxPage() {
             <button
               key={key}
               type="button"
-              onClick={onClick}
+              {...railPressProps(key, active, onClick)}
               disabled={disabled}
-              title={disabled ? "You don't have a team profile on this workspace yet" : label}
+              title={disabled ? "You don't have a team profile on this workspace yet" : (active && key !== 'all' ? `${label} — double-click to show all chats` : label)}
               style={{
                 width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 3,
                 border: 'none', borderRadius: 8, cursor: disabled ? 'default' : 'pointer',
                 background: active ? 'rgba(79, 70, 229, 0.1)' : 'transparent',
-                color: disabled ? '#cbd5e1' : (active ? 'var(--primary)' : '#94a3b8'),
+                color: disabled ? '#cbd5e1' : (active ? 'var(--primary)' : '#64748b'),
               }}
               onMouseEnter={(e) => { if (!active && !disabled) e.currentTarget.style.background = '#f8fafc'; }}
               onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent'; }}
@@ -2738,14 +2890,14 @@ export default function InboxPage() {
             <button
               key={key}
               type="button"
-              onClick={onClick}
+              {...railPressProps(key, active, onClick)}
               disabled={disabled}
-              title={disabled ? "You don't have a team profile on this workspace yet" : label}
+              title={disabled ? "You don't have a team profile on this workspace yet" : (active && key !== 'all' ? `${label} — double-click to show all chats` : label)}
               style={{
                 width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 3,
                 border: 'none', borderRadius: 8, cursor: disabled ? 'default' : 'pointer',
                 background: active ? 'rgba(79, 70, 229, 0.1)' : 'transparent',
-                color: disabled ? '#cbd5e1' : (active ? 'var(--primary)' : '#94a3b8'),
+                color: disabled ? '#cbd5e1' : (active ? 'var(--primary)' : '#64748b'),
               }}
               onMouseEnter={(e) => { if (!active && !disabled) e.currentTarget.style.background = '#f8fafc'; }}
               onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent'; }}
@@ -2768,13 +2920,13 @@ export default function InboxPage() {
               <button
                 key={key}
                 type="button"
-                onClick={() => setPlatformFilter(active ? '' : key)}
-                title={label}
+                {...railPressProps(`platform:${key}`, active, () => setPlatformFilter(active ? '' : key))}
+                title={active ? `${label} — double-click to show all chats` : label}
                 style={{
                   width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 3,
                   border: 'none', borderRadius: 8, cursor: 'pointer',
                   background: active ? 'rgba(79, 70, 229, 0.1)' : 'transparent',
-                  opacity: active || !platformFilter ? 1 : 0.45,
+                  opacity: active || !platformFilter ? 1 : 0.55,
                 }}
                 onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = '#f8fafc'; }}
                 onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent'; }}
@@ -3098,8 +3250,13 @@ export default function InboxPage() {
                         <span style={{ fontWeight: 700, fontSize: '0.82rem', color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {contactName}
                         </span>
-                        <span style={{ fontSize: '0.67rem', color: '#94a3b8', flexShrink: 0, marginLeft: 4 }}>
-                          {formatRelativeTime(time)}
+                        <span style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
+                          {conv.awaiting_reply_since && conv.status !== 'RESOLVED' && (
+                            <WaitingBadge since={conv.awaiting_reply_since} slaMinutes={inboxQuality?.slaEnabled ? inboxQuality.slaMinutes : null} />
+                          )}
+                          <span style={{ fontSize: '0.67rem', color: '#94a3b8', marginLeft: 4 }}>
+                            {formatRelativeTime(time)}
+                          </span>
                         </span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, marginTop: 1 }}>
@@ -3288,7 +3445,7 @@ export default function InboxPage() {
                       >
                         {selectedConv.contactName || selectedConv.contact_name || selectedConv.external_id || 'Subscriber'}
                       </span>
-                      {selectedConv?.contactIsBlocked && (
+                      {Boolean(selectedConv?.contactIsBlocked) && (
                         <span
                           title={selectedConv?.contactBlockedReason || 'Blocked'}
                           style={{
@@ -3309,34 +3466,13 @@ export default function InboxPage() {
                       )}
                     </div>
 
-                    {/* Metadata Subtitle */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.74rem', color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: activePlatformInfo.color, fontWeight: 600 }}>
-                        <ActivePlatformIcon size={12} />
-                        {activePlatformInfo.label}
-                      </span>
-                      {selectedConv.integrationName && (
-                        <>
-                          <span style={{ color: '#cbd5e1' }}>•</span>
-                          <span style={{ color: '#475569', fontWeight: 500 }}>{selectedConv.integrationName}</span>
-                        </>
-                      )}
-                      {(selectedConv.contactPhone || selectedConv.contactEmail) && (
-                        <>
-                          <span style={{ color: '#cbd5e1' }}>•</span>
-                          <span style={{ color: '#64748b' }}>{selectedConv.contactPhone || selectedConv.contactEmail}</span>
-                        </>
-                      )}
-                      {currentAgentName && (
-                        <>
-                          <span style={{ color: '#cbd5e1' }}>•</span>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#475569' }}>
-                            <User size={10} color="#94a3b8" />
-                            {currentAgentName}
-                          </span>
-                        </>
-                      )}
-                    </div>
+                    {/* Phone number, else username / email / channel id (chatHeaderIdentifier.js). The channel,
+                        bot account and assignee live in the subscriber panel and assignment controls. */}
+                    {chatHeaderIdentifier(selectedConv) && (
+                      <div style={{ fontSize: '0.76rem', color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {chatHeaderIdentifier(selectedConv)}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -3474,6 +3610,16 @@ export default function InboxPage() {
                 </div>
               </div>
 
+              {/* Subscriber info: country, their local time, last seen (Components/Inbox/SubscriberInfoBanner.jsx) */}
+              <SubscriberInfoBanner
+                name={selectedConv.contactName || selectedConv.contact_name || null}
+                locale={selectedConv.subscriberLocale}
+                lastInboundAt={selectedConv.lastInboundAt || selectedConv.last_inbound_at || null}
+                platformProfile={selectedConv.contactPlatformProfile}
+                age={selectedConv.contactAge}
+                subscribedAt={selectedConv.contactCreatedAt}
+              />
+
               {/* Chat Message List */}
               <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="chat-messages" style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {msgLoading ? (
@@ -3507,6 +3653,10 @@ export default function InboxPage() {
                 )}
                 {!msgLoading && messages.length > 0 && (
                   messages.map((msg, idx) => {
+                    const currentTs = msg.created_at || msg.timestamp || msg.createdAt;
+                    const prevTs = idx > 0 ? (messages[idx - 1]?.created_at || messages[idx - 1]?.timestamp || messages[idx - 1]?.createdAt) : null;
+                    const showDateDivider = currentTs && (!prevTs || !isSameDay(currentTs, prevTs));
+
                     const isOutbound = (msg.direction || '').toUpperCase() === 'OUTBOUND';
                     const rawMedia = msg.media_url || msg.mediaUrl || msg.url || (
                       typeof msg.body === 'string' && (msg.body.startsWith('http') || msg.body.startsWith('/uploads')) && msg.body.match(/\.(jpeg|jpg|gif|png|webp|svg|mp4|webm|mov|ogg|mp3|pdf|doc|docx)($|\?)/i)
@@ -3551,17 +3701,56 @@ export default function InboxPage() {
                     }
 
                     return (
-                      <div
-                        key={msg.id || msg._id || idx}
-                        style={{
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: isOutbound ? 'flex-end' : 'flex-start',
-                        }}
-                      >
+                      <React.Fragment key={msg.id || msg._id || idx}>
+                        {showDateDivider && (
+                          <div
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              margin: '16px 0 10px',
+                              position: 'relative',
+                            }}
+                          >
+                            <div
+                              style={{
+                                position: 'absolute',
+                                top: '50%',
+                                left: '8%',
+                                right: '8%',
+                                height: '1px',
+                                background: 'var(--border, #e2e8f0)',
+                                zIndex: 0,
+                              }}
+                            />
+                            <span
+                              style={{
+                                position: 'relative',
+                                zIndex: 1,
+                                padding: '2px 12px',
+                                borderRadius: 12,
+                                background: 'var(--bg-muted, #f1f5f9)',
+                                color: 'var(--text-secondary, #64748b)',
+                                fontSize: '0.70rem',
+                                fontWeight: 600,
+                                border: '1px solid var(--border, #e2e8f0)',
+                                letterSpacing: '0.02em',
+                              }}
+                            >
+                              {formatDateDivider(currentTs)}
+                            </span>
+                          </div>
+                        )}
                         <div
                           style={{
-                            maxWidth: '72%',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: isOutbound ? 'flex-end' : 'flex-start',
+                          }}
+                        >
+                          <div
+                            style={{
+                              maxWidth: '60%',
                             padding: (isImage && isMediaOnly && !buttons) ? '4px' : '10px 14px',
                             borderRadius: isOutbound ? '14px 14px 2px 14px' : '14px 14px 14px 2px',
                             background: isOutbound ? 'var(--bg-selected)' : 'var(--bg-card)',
@@ -3629,6 +3818,11 @@ export default function InboxPage() {
                           {isAudio && (
                             <div style={{ marginBottom: isMediaOnly ? 0 : 8, minWidth: 220 }}>
                               <audio src={mediaUrl} controls style={{ width: '100%', height: 36 }} />
+                              <TranscriptLine
+                                conversationId={selectedId}
+                                message={msg}
+                                onTranscribed={(id, transcript) => setMessages((prev) => prev.map((m) => (String(m.id) === String(id) ? { ...m, transcript } : m)))}
+                              />
                             </div>
                           )}
 
@@ -3758,6 +3952,9 @@ export default function InboxPage() {
                             color: '#94a3b8',
                             marginTop: 4,
                             padding: '0 4px',
+                            maxWidth: '60%',
+                            flexWrap: 'wrap',
+                            justifyContent: isOutbound ? 'flex-end' : 'flex-start',
                           }}
                         >
                           {isOutbound ? (
@@ -3776,6 +3973,26 @@ export default function InboxPage() {
                               </span>
                               <span>•</span>
                               <span>{formatTime(msg.created_at || msg.timestamp || msg.createdAt)}</span>
+                              {(meta?.messagingType === 'UTILITY' || meta?.messageTag === 'HUMAN_AGENT') && (
+                                <span className="badge badge-primary" style={{ padding: '0 6px', fontSize: '0.64rem' }} title={meta?.messageTag === 'HUMAN_AGENT' ? 'Sent after the 24-hour window with the HUMAN_AGENT tag' : 'Messenger Utility template'}>
+                                  {meta?.messageTag === 'HUMAN_AGENT' ? 'Human Agent' : 'Utility'}
+                                </span>
+                              )}
+                              {meta?.heldByMeta && msg.status !== 'FAILED' && (
+                                <span className="badge badge-warning" style={{ padding: '0 6px', fontSize: '0.64rem' }} title="WhatsApp is holding this template message for a quality check (template pacing). It is sent once early recipients react well, or dropped after negative feedback.">
+                                  Held by WhatsApp
+                                </span>
+                              )}
+                              {/* AI replies: the knowledge the answer drew on (chatbot_api/utils/aiReplyEngine.js). */}
+                              {Array.isArray(meta?.sources) && meta.sources.length > 0 && (
+                                <span
+                                  className="badge badge-muted"
+                                  style={{ padding: '0 6px', fontSize: '0.64rem', cursor: 'help' }}
+                                  title={`AI answer based on:\n${[...new Set(meta.sources.map((src) => src.title))].map((t) => `• ${t}`).join('\n')}`}
+                                >
+                                  📚 {new Set(meta.sources.map((src) => src.title)).size} source{new Set(meta.sources.map((src) => src.title)).size === 1 ? '' : 's'}
+                                </span>
+                              )}
                               {msg.status === 'FAILED' ? (
                                 <FailedMessageStatus msg={msg} />
                               ) : msg.is_read ? (
@@ -3797,7 +4014,8 @@ export default function InboxPage() {
                           )}
                         </div>
                       </div>
-                    );
+                    </React.Fragment>
+                  );
                   })
                 )}
                 <div ref={messagesEndRef} />
@@ -3888,6 +4106,38 @@ export default function InboxPage() {
                       >
                         <FileText size={12} /> Send Template
                       </button>
+                    </div>
+                  );
+                })()}
+
+                {/* Messenger / Instagram window notice (Human Agent / closed) */}
+                {msgWindow && msgWindow.state !== 'OPEN' && (() => {
+                  const isFB = msgWindow.platform === 'FACEBOOK';
+                  const left = msgWindow.humanAgentEndsAt ? Math.max(0, new Date(msgWindow.humanAgentEndsAt).getTime() - Date.now()) : 0;
+                  const leftText = `${Math.floor(left / 86400000)}d ${Math.floor((left % 86400000) / 3600000)}h`;
+                  const human = msgWindow.state === 'HUMAN_AGENT';
+                  return (
+                    <div style={{
+                      padding: '8px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, fontSize: '0.76rem',
+                      background: human ? 'var(--primary-soft)' : 'rgba(239, 68, 68, 0.08)',
+                      borderBottom: `1px solid ${human ? 'var(--primary-ring)' : 'rgba(239, 68, 68, 0.25)'}`,
+                      color: human ? 'var(--primary)' : 'var(--danger)',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Clock size={13} style={{ flexShrink: 0 }} />
+                        {human ? (
+                          <span><strong>Human Agent reply:</strong> outside the 24-hour window — your message is sent with Meta's HUMAN_AGENT tag ({leftText} left). Only a person may reply now, not the bot or AI.</span>
+                        ) : isFB ? (
+                          <span><strong>Messaging window closed:</strong> {msgWindow.humanAgentAvailable && !msgWindow.humanAgentEnabled ? 'turn on the Human Agent switch below to reply for up to 7 days, or ' : ''}send an approved Utility template.</span>
+                        ) : (
+                          <span><strong>Messaging window closed:</strong> {msgWindow.humanAgentAvailable && !msgWindow.humanAgentEnabled ? 'turn on the Human Agent switch below to reply for up to 7 days after their last message.' : "Instagram only allows replies after the customer writes again."}</span>
+                        )}
+                      </div>
+                      {!human && isFB && (
+                        <button type="button" onClick={handleOpenTemplatePicker} className="btn btn-secondary btn-sm" style={{ whiteSpace: 'nowrap' }}>
+                          <FileText size={12} /> Utility Template
+                        </button>
+                      )}
                     </div>
                   );
                 })()}
@@ -4178,6 +4428,22 @@ export default function InboxPage() {
                     )}
                   </div>
 
+                  {/* Human Agent (Messenger / Instagram): the bot account's HUMAN_AGENT
+                      switch, moved here from Bot Manager. Not the per-chat bot pause. */}
+                  {msgWindow && (msgWindow.platform === 'FACEBOOK' || msgWindow.platform === 'INSTAGRAM') && (
+                    <HumanAgentToggle
+                      key={selectedConv?.integration_id || selectedConv?.integrationId}
+                      integrationId={selectedConv?.integration_id || selectedConv?.integrationId}
+                      enabled={msgWindow.humanAgentEnabled}
+                      canEdit={user?.role === 'RESELLER' || user?.role === 'ADMIN'}
+                      platformLabel={msgWindow.platform === 'FACEBOOK' ? 'this Page' : 'this Instagram account'}
+                      onChanged={(value) => {
+                        setMsgWindow((prev) => (prev ? { ...prev, humanAgentEnabled: value } : prev));
+                        setMsgWindowTick((t) => t + 1);
+                      }}
+                    />
+                  )}
+
                   <div
                     style={{ flex: 1, position: 'relative', cursor: !botPaused ? 'pointer' : 'default' }}
                     onClick={() => {
@@ -4421,7 +4687,7 @@ export default function InboxPage() {
                     )}
                   </span>
 
-                  {selectedConv?.contactIsBlocked && (
+                  {Boolean(selectedConv?.contactIsBlocked) && (
                     <span
                       title={selectedConv?.contactBlockedReason || 'Blocked'}
                       style={{
@@ -4670,9 +4936,51 @@ export default function InboxPage() {
                     Phone / Identifier
                   </span>
                   <div style={{ fontSize: '0.82rem', color: '#0f172a', fontWeight: 600, marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <Phone size={12} color="#64748b" /> {selectedConv.contactPhone || selectedConv.external_id || '—'}
+                    <Phone size={12} color="#64748b" /> {contactIdentifier({ phone: selectedConv.contactPhone, wa_username: selectedConv.contactUsername, external_id: selectedConv.external_id })}
                   </div>
+                  {selectedPlatformUpper === 'WHATSAPP' && !selectedConv.contactPhone && isWhatsAppUserId(selectedConv.external_id) && (
+                    <div style={{ marginTop: 6 }}>
+                      <div style={{ fontSize: '0.72rem', color: '#64748b', marginBottom: 4 }}>
+                        This person hides their number behind a WhatsApp username.
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={async () => {
+                          try {
+                            await conversationAPI.sendMessage(selectedConv.id, { requestContactInfo: true });
+                            notify.success('Asked for their phone number');
+                          } catch (err) {
+                            notify.error(err.response?.data?.message || 'Could not send the request');
+                          }
+                        }}
+                      >
+                        <Phone size={12} /> Ask for phone number
+                      </button>
+                    </div>
+                  )}
                 </div>
+
+                {/* Marketing Messages on Messenger: invite this person to subscribe (chatbot_api/utils/messengerMarketing.js). */}
+                {selectedPlatformUpper === 'FACEBOOK' && (selectedConv.integration_id || selectedConv.integrationId) && (
+                  <div>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={async () => {
+                        try {
+                          const res = await marketingMessagesAPI.optIn(selectedConv.integration_id || selectedConv.integrationId, { contactId: selectedConv.contact_id || selectedConv.contactId });
+                          notify.success(res.data?.message || 'Opt-in request sent');
+                        } catch (err) {
+                          notify.error(err.response?.data?.message || 'Could not send the request');
+                        }
+                      }}
+                      title="Sends Messenger's 'Get updates' request — if they accept, they can receive Marketing Messages"
+                    >
+                      📬 Ask to subscribe to offers
+                    </button>
+                  </div>
+                )}
 
                 <div>
                   <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 }}>
@@ -5027,13 +5335,15 @@ export default function InboxPage() {
             {activeDrawerTab === 'Notes' && (
               <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
                 <form onSubmit={handleAddNote} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <textarea
+                  <MentionTextarea
                     rows={3}
                     className="form-input"
-                    placeholder="Write an internal note for this subscriber..."
+                    placeholder="Write an internal note — type @ to mention a teammate"
                     value={newNoteText}
-                    onChange={(e) => setNewNoteText(e.target.value)}
-                    style={{ fontSize: '0.82rem', resize: 'none' }}
+                    onChange={setNewNoteText}
+                    people={agentsList.map((a) => ({ id: a.id, name: a.name }))}
+                    onMentionsChange={setNoteMentions}
+                    style={{ fontSize: '0.82rem', resize: 'none', width: '100%' }}
                   />
                   <button type="submit" disabled={savingNote || !newNoteText.trim()} className="btn btn-primary btn-sm" style={{ alignSelf: 'flex-end' }}>
                     <Plus size={13} /> Save Note

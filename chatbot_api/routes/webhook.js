@@ -23,6 +23,25 @@ import { isValidTelegramSecret, isValidTikTokSignature } from "../utils/webhookA
 import { recountBroadcastStats } from "../utils/broadcastStats.js";
 import { loadRuleLinks, findRuleForPost } from "../utils/commentRulePosts.js";
 import { getPublicBackendUrl, resolvePublicImageUrl } from "../utils/platformSender.js";
+import { applyTemplateStatusUpdate } from "../utils/messengerUtility.js";
+import { handleWhatsAppCallEvent, handleCallSettingsUpdate } from "../utils/whatsappCallEvents.js";
+import { handleProfilePostback, isProfilePayload, handleTextTrigger, startFlowForConversation } from "../utils/messengerProfile.js";
+import { handleOptKeywords } from "../utils/optOut.js";
+import { handleQuickActionInbound, runNoMatchReply } from "../utils/quickActions.js";
+import { handleTelegramGroupUpdate } from "../utils/telegramGroups.js";
+import { handleCsatReply, getInboxSettings, autoAssign } from "../utils/inboxQuality.js";
+import { transcribeMessage } from "../utils/transcribe.js";
+import { handleGroupMessage, handleGroupEvent } from "../utils/whatsappGroups.js";
+import { describeOrder } from "../utils/whatsappCatalog.js";
+import { handleMessageEchoes, handleHistory, handleStateSync } from "../utils/whatsappCoexistence.js";
+import { parseMetaMessage, handleStoryEvent } from "../utils/storyReplies.js";
+import { extractWhatsAppReferral, extractMetaReferral, recordAdReferral, flowForAd } from "../utils/adReferrals.js";
+import { handleOptinEvent, handleMarketingChange } from "../utils/messengerMarketing.js";
+import { answerPreCheckout, handleStarsPayment, orderIdFromInvoicePayload } from "../services/chatPaymentService.js";
+import { upsertBusinessConnection, resolveBusinessMessage, businessExternalId } from "../utils/telegramBusiness.js";
+import { resolveWhatsAppSender, attachWhatsAppIdentity, linkPhoneToContact, handleUserIdUpdate, isBsuid } from "../utils/whatsappIdentity.js";
+import { META_API_VERSION } from "../utils/metaApi.js";
+import { isWorkspaceExpired } from "../utils/subscriptionStatus.js";
 
 const router = express.Router();
 
@@ -104,8 +123,10 @@ async function verifyMetaSignature(req) {
       for (const entry of (body?.entry || [])) {
         if (entry.id) wabaId = entry.id;
         for (const change of (entry?.changes || [])) {
-          if (change?.value?.metadata?.phone_number_id) {
-            waPhoneId = change.value.metadata.phone_number_id;
+          // Call-settings updates name the number in phone_number_settings, not metadata.
+          const pid = change?.value?.metadata?.phone_number_id || change?.value?.phone_number_settings?.phone_number_id;
+          if (pid) {
+            waPhoneId = pid;
             break;
           }
         }
@@ -162,7 +183,7 @@ async function markBroadcastLogStatus(externalMsgId, status, errorMessage = null
     // Never move a log backwards (e.g. a late "delivered" event arriving
     // after "read" already landed) — READ implies DELIVERED already happened.
     // FAILED is final, and a repeated "failed" event changes nothing.
-    const rank = { PENDING: 0, SENT: 1, DELIVERED: 2, READ: 3, FAILED: 4 };
+    const rank = { PENDING: 0, HELD: 0.5, SENT: 1, DELIVERED: 2, READ: 3, FAILED: 4 };
     if (log.status === "FAILED") return;
     if (status !== "FAILED" && rank[status] <= rank[log.status]) return;
 
@@ -209,33 +230,6 @@ async function handleWhatsAppCallStatus(statusObj) {
   return true;
 }
 
-async function handleWhatsAppCallEvent(callObj) {
-  const wacid = callObj.id;
-  const event = callObj.event; // "connect" | "terminate"
-  if (!wacid || !event) return;
-
-  try {
-    const [[call]] = await pool.query("SELECT * FROM whatsapp_calls WHERE wacid = ? LIMIT 1", [wacid]);
-    if (!call) return;
-
-    if (event === "connect") {
-      const sdpAnswer = callObj.session?.sdp;
-      if (!sdpAnswer) return;
-      await pool.query("UPDATE whatsapp_calls SET status = 'CONNECTED', sdp_answer = ?, connected_at = NOW() WHERE id = ?", [sdpAnswer, call.id]);
-      emitToAgency(call.agency_id, "whatsapp_call_answer", { callDbId: call.id, wacid, sdpAnswer });
-    } else if (event === "terminate") {
-      const finalStatus = callObj.status === "COMPLETED" ? "COMPLETED" : "FAILED";
-      const duration = typeof callObj.duration === "number" ? callObj.duration : null;
-      await pool.query(
-        "UPDATE whatsapp_calls SET status = ?, duration_seconds = ?, ended_at = NOW() WHERE id = ?",
-        [finalStatus, duration, call.id]
-      );
-      emitToAgency(call.agency_id, "whatsapp_call_terminated", { callDbId: call.id, wacid, status: finalStatus, duration });
-    }
-  } catch (err) {
-    console.error("[WA Calling] call event webhook error:", err.message);
-  }
-}
 
 /**
  * Meta Webhook handler for WhatsApp, Facebook Messenger, and Instagram.
@@ -475,8 +469,38 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
         // webhook carrying call activity.
         if (Array.isArray(value.calls)) {
           for (const callObj of value.calls) {
-            await handleWhatsAppCallEvent(callObj);
+            await handleWhatsAppCallEvent(callObj, { agencyId, integrationId, integration, contacts: value.contacts });
           }
+        }
+
+        // Call settings changed (here or in WhatsApp Manager) — refresh open settings screens.
+        // Coexistence (number also on the WhatsApp Business app): echoes of what the business
+        // sent from the phone, past chat history, and the app's contacts (utils/whatsappCoexistence.js).
+        if (change.field === "smb_message_echoes" || Array.isArray(value.message_echoes)) {
+          await handleMessageEchoes(agencyId, integration, value.message_echoes || []).catch((e) => console.error("[Coexistence] echoes:", e.message));
+          continue;
+        }
+        if (change.field === "history" || Array.isArray(value.history)) {
+          await handleHistory(agencyId, integration, value.history || []).catch((e) => console.error("[Coexistence] history:", e.message));
+          continue;
+        }
+        if (change.field === "smb_app_state_sync" || Array.isArray(value.state_sync)) {
+          await handleStateSync(agencyId, integration, value.state_sync || []).catch((e) => console.error("[Coexistence] contacts:", e.message));
+          continue;
+        }
+        // Groups API lifecycle / participants / settings / status events.
+        if (String(change.field || "").startsWith("group_")) {
+          await handleGroupEvent({ agencyId, integration, field: change.field, value }).catch((e) => console.error("[WA Groups] event:", e.message));
+          continue;
+        }
+        // Business username approved / reserved / deleted (Username API) — refresh open screens.
+        if (change.field === "business_username_updates") {
+          emitToAgency(agencyId, "whatsapp_username_updated", { integrationId, username: value?.username || null, status: value?.status || null });
+          continue;
+        }
+        if (change.field === "account_settings_update") {
+          handleCallSettingsUpdate(agencyId, integrationId, value);
+          continue;
         }
 
         // Handle message status updates (sent, delivered, read, failed) —
@@ -502,7 +526,16 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
               );
               if (!msgRow) continue;
 
-              if (status === "delivered") {
+              // A message held by WhatsApp's pacing was released — no longer "held".
+              if (status === "sent" || status === "delivered" || status === "read") {
+                await pool.query(
+                  "UPDATE messages SET metadata = JSON_REMOVE(metadata, '$.heldByMeta') WHERE id = ? AND JSON_EXTRACT(metadata, '$.heldByMeta') IS NOT NULL",
+                  [msgRow.id]
+                ).catch(() => {});
+              }
+              if (status === "sent") {
+                await markBroadcastLogStatus(externalMsgId, "SENT");
+              } else if (status === "delivered") {
                 await pool.query("UPDATE messages SET delivered_at = NOW() WHERE id = ?", [msgRow.id]);
                 await markBroadcastLogStatus(externalMsgId, "DELIVERED");
                 const payload = { messageId: msgRow.id, conversationId: msgRow.conversation_id, deliveredAt: new Date().toISOString() };
@@ -510,10 +543,17 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
                 // `conv:` room is for webchat widget sessions. Emit to both so either listener works.
                 emitToAgency(msgRow.agency_id, "message_status_update", payload);
                 emitToConversation(msgRow.conversation_id, "message_status_update", payload);
-              } else if (status === "read") {
-                await pool.query("UPDATE messages SET read_at = NOW(), is_read = 1 WHERE id = ?", [msgRow.id]);
+              } else if (status === "read" || status === "played") {
+                // "played" (Nov 2025): a voice message was listened to — it implies read.
+                const played = status === "played";
+                await pool.query(
+                  played
+                    ? "UPDATE messages SET read_at = COALESCE(read_at, NOW()), is_read = 1, metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.playedAt', DATE_FORMAT(NOW(), '%Y-%m-%dT%H:%i:%s')) WHERE id = ?"
+                    : "UPDATE messages SET read_at = NOW(), is_read = 1 WHERE id = ?",
+                  [msgRow.id]
+                );
                 await markBroadcastLogStatus(externalMsgId, "READ");
-                const payload = { messageId: msgRow.id, conversationId: msgRow.conversation_id, readAt: new Date().toISOString(), isRead: true };
+                const payload = { messageId: msgRow.id, conversationId: msgRow.conversation_id, readAt: new Date().toISOString(), isRead: true, ...(played ? { played: true } : {}) };
                 emitToAgency(msgRow.agency_id, "message_status_update", payload);
                 emitToConversation(msgRow.conversation_id, "message_status_update", payload);
               } else if (status === "failed") {
@@ -524,7 +564,10 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
                 const metaError = Array.isArray(statusObj.errors) && statusObj.errors[0]
                   ? statusObj.errors[0]
                   : null;
-                const errorMessage = metaError
+                const errorMessage = Number(metaError?.code) === 132015
+                  // Template pacing: Meta held this message, early recipients reacted badly, so it was dropped.
+                  ? "[Code 132015] Not sent — WhatsApp held this template message for a quality check and dropped it after negative feedback from early recipients. The template is paused; edit it before sending again."
+                  : metaError
                   ? `[Code ${metaError.code || "?"}] ${metaError.title || metaError.message || "Delivery failed"}${metaError.error_data?.details ? ` — ${metaError.error_data.details}` : ""}`
                   : "WhatsApp reported this message as failed to deliver.";
 
@@ -560,19 +603,48 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
           }
         }
 
+        // A user's business-scoped id changed (they changed phone number).
+        if (Array.isArray(value.user_id_update)) {
+          for (const upd of value.user_id_update) {
+            await handleUserIdUpdate(agencyId, integrationId, upd).catch((e) => console.error("[WA Identity] user_id_update:", e.message));
+          }
+        }
+
         const messages = value?.messages;
         if (!messages || !Array.isArray(messages) || messages.length === 0) continue;
 
-        // Build contact map for profile names
+        // Profile per sender — keyed by phone (wa_id) and by BSUID (user_id),
+        // since a user with a username arrives without a phone.
         const contactMap = {};
         if (Array.isArray(value?.contacts)) {
           for (const c of value.contacts) {
-            if (c.wa_id) contactMap[c.wa_id] = c.profile?.name;
+            if (c.wa_id) contactMap[c.wa_id] = c;
+            if (c.user_id) contactMap[c.user_id] = c;
           }
         }
 
         for (const msg of messages) {
-          const externalId = msg.from; // sender's WA phone number
+          // A WhatsApp group message → the group's feed (utils/whatsappGroups.js), never a
+          // one-to-one chat: the bot must not answer a group member privately.
+          if (msg.group_id) {
+            await handleGroupMessage({ agencyId, integration, msg, contacts: value.contacts })
+              .catch((e) => console.error("[WA Groups] inbound:", e.message));
+            continue;
+          }
+          // Sender: phone (msg.from) when Meta shares it, always a BSUID
+          // (from_user_id). utils/whatsappIdentity.js maps both to one
+          // subscriber and merges duplicates.
+          const profileEntry = contactMap[msg.from_user_id] || contactMap[msg.from] || (value.contacts?.length === 1 ? value.contacts[0] : null);
+          const waIdentity = await resolveWhatsAppSender({
+            agencyId,
+            integrationId,
+            phone: msg.from || profileEntry?.wa_id,
+            userId: msg.from_user_id || profileEntry?.user_id,
+            parentUserId: msg.from_parent_user_id || profileEntry?.parent_user_id,
+            username: profileEntry?.profile?.username,
+          });
+          const externalId = waIdentity.externalId;
+          if (!externalId) continue;
           const externalMsgId = msg.id;
           const msgType = (msg.type || "text").toUpperCase();
           let mediaUrl = null;
@@ -597,7 +669,7 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
               try {
                 const [[contact]] = await pool.query(
                   "SELECT id FROM contacts WHERE agency_id = ? AND platform = 'WHATSAPP' AND external_id = ? LIMIT 1",
-                  [agencyId, msg.from]
+                  [agencyId, externalId]
                 );
                 if (contact) {
                   const status = reply.response === "accept" ? "GRANTED" : "REJECTED";
@@ -634,17 +706,48 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
           } else if (msg.type === "document") {
             msgBody = msg.document?.filename || "";
             mediaUrl = msg.document?.link || msg.document?.url || null;
+          } else if (msg.type === "order") {
+            // A cart sent from the WhatsApp catalog (utils/whatsappCatalog.js).
+            msgBody = describeOrder(msg.order);
+          } else if (msg.type === "sticker") {
+            mediaUrl = msg.sticker?.link || msg.sticker?.url || null;
+          } else if (msg.type === "location") {
+            const loc = msg.location || {};
+            msgBody = `📍 ${[loc.name, loc.address].filter(Boolean).join(", ") || "Location"}${loc.latitude != null ? ` (${loc.latitude}, ${loc.longitude})` : ""}`;
+          } else if (msg.type === "reaction") {
+            // A reaction to one of our messages — not a new message; no bot run.
+            continue;
+          } else if (msg.type === "contacts") {
+            // A shared contact card. From the REQUEST_CONTACT_INFO button
+            // (origin "contact_request") it is the user's OWN number: link it
+            // so a username-only subscriber merges with their phone record.
+            const shared = msg.contacts?.[0];
+            const sharedPhone = shared?.phones?.[0]?.wa_id || shared?.phones?.[0]?.phone;
+            const ORIGINS = ["contact_request", "request_contact_info"];
+            const isOwn = ORIGINS.includes(msg.origin) || ORIGINS.includes(shared?.origin) || ORIGINS.includes(msg.contacts?.origin);
+            msgBody = shared?.name?.formatted_name ? `📇 ${shared.name.formatted_name}${sharedPhone ? ` (${sharedPhone})` : ""}` : "📇 Contact";
+            if (isOwn && sharedPhone && waIdentity.contactId) {
+              try {
+                const [[current]] = await pool.query("SELECT * FROM contacts WHERE id = ?", [waIdentity.contactId]);
+                const linked = await linkPhoneToContact(agencyId, current, sharedPhone, "CONTACT_SHARED");
+                if (linked) waIdentity.externalId = linked.external_id;
+              } catch (linkErr) {
+                console.error("[WA Identity] contact share link failed:", linkErr.message);
+              }
+            }
           } else {
             msgBody = msg.image?.caption || msg.video?.caption || msg.document?.filename || "";
           }
 
-          const senderName = contactMap[externalId] || value?.contacts?.[0]?.profile?.name || externalId;
+          const senderName = profileEntry?.profile?.name || profileEntry?.profile?.username || value?.contacts?.[0]?.profile?.name || externalId;
 
           await handleIncomingPayload({
             agencyId,
             integrationId,
             platform: "WHATSAPP",
-            externalId,
+            externalId: waIdentity.externalId,
+            waIdentity: waIdentity.identity,
+            adReferral: extractWhatsAppReferral(msg),
             externalMsgId,
             msgType: msgType === "INTERACTIVE" || msgType === "BUTTON" ? "TEXT" : msgType,
             msgBody,
@@ -666,6 +769,7 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
 async function processCommentAutomation({ commentId, postId, senderId, senderName, commentText }, platform, agencyId, integrationId, integration) {
   try {
     if (!commentId || !commentText || !integration?.access_token) return;
+    if (await isWorkspaceExpired(agencyId)) return; // expired plan → no comment replies / DMs
 
     console.log(`\n💬 [Comment Automation] Incoming ${platform} comment (${commentId}) on post (${postId}) from ${senderName} (${senderId}): "${commentText}"`);
 
@@ -719,13 +823,13 @@ async function processCommentAutomation({ commentId, postId, senderId, senderNam
         console.log(`[Comment Automation] 🚨 Offensive comment detected on ${platform} (${commentId}): "${commentText}"`);
         if (rule.offensive_action === "HIDE") {
           await axios.post(
-            `https://graph.facebook.com/v21.0/${commentId}?is_hidden=true`,
+            `https://graph.facebook.com/${META_API_VERSION}/${commentId}?is_hidden=true`,
             {},
             { headers: { Authorization: `Bearer ${integration.access_token}` } }
           ).catch(e => console.warn("Hide comment warning:", e.response?.data || e.message));
         } else if (rule.offensive_action === "DELETE") {
           await axios.delete(
-            `https://graph.facebook.com/v21.0/${commentId}`,
+            `https://graph.facebook.com/${META_API_VERSION}/${commentId}`,
             { headers: { Authorization: `Bearer ${integration.access_token}` } }
           ).catch(e => console.warn("Delete comment warning:", e.response?.data || e.message));
         }
@@ -736,7 +840,7 @@ async function processCommentAutomation({ commentId, postId, senderId, senderNam
             .replace(/\{\{first_name\}\}/gi, (senderName || "").split(" ")[0] || "there");
 
           await axios.post(
-            `https://graph.facebook.com/v21.0/me/messages`,
+            `https://graph.facebook.com/${META_API_VERSION}/me/messages`,
             { recipient: { comment_id: commentId }, message: { text: privateText } },
             { headers: { Authorization: `Bearer ${integration.access_token}` } }
           ).catch(e => console.warn("Offensive DM warning:", e.response?.data || e.message));
@@ -781,7 +885,7 @@ async function processCommentAutomation({ commentId, postId, senderId, senderNam
         if (liked) break;
         try {
           await axios.post(
-            `https://graph.facebook.com/v21.0/${commentId}/likes`,
+            `https://graph.facebook.com/${META_API_VERSION}/${commentId}/likes`,
             {},
             {
               headers: { Authorization: `Bearer ${tok}` },
@@ -844,7 +948,7 @@ async function processCommentAutomation({ commentId, postId, senderId, senderNam
         let lastError = null;
         for (const tok of tokensToTry) {
           try {
-            await axios.post(`https://graph.facebook.com/v21.0/${commentId}/comments`, body, {
+            await axios.post(`https://graph.facebook.com/${META_API_VERSION}/${commentId}/comments`, body, {
               headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
               params: { access_token: tok },
             });
@@ -852,7 +956,7 @@ async function processCommentAutomation({ commentId, postId, senderId, senderNam
           } catch (postErr) {
             lastError = postErr.response?.data?.error?.message || postErr.message;
             try {
-              await axios.post(`https://graph.facebook.com/v21.0/${commentId}/comments`, null, { params: { ...body, access_token: tok } });
+              await axios.post(`https://graph.facebook.com/${META_API_VERSION}/${commentId}/comments`, null, { params: { ...body, access_token: tok } });
               return { ok: true };
             } catch (postErr2) {
               lastError = postErr2.response?.data?.error?.message || postErr2.message;
@@ -900,7 +1004,7 @@ async function processCommentAutomation({ commentId, postId, senderId, senderNam
 
       try {
         await axios.post(
-          `https://graph.facebook.com/v21.0/me/messages`,
+          `https://graph.facebook.com/${META_API_VERSION}/me/messages`,
           { recipient: { comment_id: commentId }, message: { text: formattedPrivate } },
           { headers: { Authorization: `Bearer ${integration.access_token}` } }
         );
@@ -924,6 +1028,23 @@ async function handleFacebookPayload(body, agencyId, integrationId, integration)
       // 1. Check for Feed Changes (Comments on Posts)
       const changes = entry?.changes || [];
       for (const change of changes) {
+        // Marketing Messages delivery / read / click / failure (utils/messengerMarketing.js).
+        if (String(change.field || "").startsWith("marketing_message")) {
+          await handleMarketingChange(integration, change).catch((e) => console.error("[Marketing Messages] webhook:", e.message));
+          continue;
+        }
+        // A Messenger Utility template was approved / rejected / paused (utils/messengerUtility.js).
+        if (change.field === "message_template_status_update") {
+          try {
+            const updated = await applyTemplateStatusUpdate(agencyId, entry.id, change.value || {});
+            for (const u of updated) {
+              emitToAgency(u.agency_id, "messenger_template_update", { integrationId: u.integration_id, templateId: u.id, status: u.status, reason: u.reason });
+            }
+          } catch (tplErr) {
+            console.error("[Messenger template status] update failed:", tplErr.message);
+          }
+          continue;
+        }
         if (change.field === "feed") {
           const val = change.value;
           if (val && val.item === "comment" && (val.verb === "add" || val.verb === "edit")) {
@@ -941,6 +1062,11 @@ async function handleFacebookPayload(body, agencyId, integrationId, integration)
       // 2. Direct Messages
       const messaging = entry?.messaging || [];
       for (const event of messaging) {
+        // Someone opted in to (or out of) Marketing Messages — keep their subscription token.
+        if (event.optin?.type === "notification_messages") {
+          await handleOptinEvent(integration, event).catch((e) => console.error("[Marketing Messages] opt-in:", e.message));
+          continue;
+        }
         // Delivery/read receipts — Messenger reports these as separate
         // `delivery`/`read` events on the same `messaging` array, not as a
         // `statuses` array like WhatsApp. `delivery` carries the specific
@@ -986,19 +1112,19 @@ async function handleFacebookPayload(body, agencyId, integrationId, integration)
         let msgType = "TEXT";
         let mediaUrl = null;
         let buttonRoute = null; // raw postback/quick_reply payload, checked for our own routing token
+        let storyEvent = null;
 
         if (event.postback) {
           msgBody = event.postback.title || event.postback.payload || "";
           buttonRoute = event.postback.payload || null;
         } else {
-          msgBody = event.message?.quick_reply?.payload || event.message?.text || "";
           buttonRoute = event.message?.quick_reply?.payload || null;
-          if (event.message?.attachments && event.message.attachments.length > 0) {
-            const att = event.message.attachments[0];
-            const attType = (att.type || "image").toUpperCase();
-            msgType = attType === "VIDEO" ? "VIDEO" : (attType === "AUDIO" ? "AUDIO" : "IMAGE");
-            mediaUrl = att.payload?.url || null;
-          }
+          // Shares (post / reel), story mentions and story replies get readable text (utils/storyReplies.js).
+          const parsed = parseMetaMessage(event.message);
+          msgBody = parsed.msgBody;
+          msgType = parsed.msgType;
+          mediaUrl = parsed.mediaUrl;
+          storyEvent = parsed.storyEvent;
         }
 
         // Fetch real subscriber name, profile pic & system fields from Facebook Graph API
@@ -1026,6 +1152,8 @@ async function handleFacebookPayload(body, agencyId, integrationId, integration)
           avatar,
           platformProfile,
           integration,
+          storyEvent,
+          adReferral: extractMetaReferral(event),
         });
       }
     }
@@ -1059,6 +1187,8 @@ async function handleInstagramPayload(body, agencyId, integrationId, integration
       const messaging = entry?.messaging || [];
       for (const event of messaging) {
         if (!event.message && !event.postback) continue;
+        // Our own messages echoed back — never a customer message (the bot would answer itself).
+        if (event.message?.is_echo || (event.sender?.id && String(event.sender.id) === String(integration?.ig_account_id))) continue;
 
         const externalId = event.sender?.id;
         let externalMsgId = event.message?.mid || event.timestamp?.toString();
@@ -1066,19 +1196,19 @@ async function handleInstagramPayload(body, agencyId, integrationId, integration
         let msgType = "TEXT";
         let mediaUrl = null;
         let buttonRoute = null;
+        let storyEvent = null;
 
         if (event.postback) {
           msgBody = event.postback.title || event.postback.payload || "";
           buttonRoute = event.postback.payload || null;
         } else {
-          msgBody = event.message?.quick_reply?.payload || event.message?.text || "";
           buttonRoute = event.message?.quick_reply?.payload || null;
-          if (event.message?.attachments && event.message.attachments.length > 0) {
-            const att = event.message.attachments[0];
-            const attType = (att.type || "image").toUpperCase();
-            msgType = attType === "VIDEO" ? "VIDEO" : (attType === "AUDIO" ? "AUDIO" : "IMAGE");
-            mediaUrl = att.payload?.url || null;
-          }
+          // Shares (post / reel), story mentions and story replies get readable text (utils/storyReplies.js).
+          const parsed = parseMetaMessage(event.message);
+          msgBody = parsed.msgBody;
+          msgType = parsed.msgType;
+          mediaUrl = parsed.mediaUrl;
+          storyEvent = parsed.storyEvent;
         }
 
         // Fetch subscriber name, profile pic & system fields from Instagram
@@ -1106,6 +1236,8 @@ async function handleInstagramPayload(body, agencyId, integrationId, integration
           avatar,
           platformProfile,
           integration,
+          storyEvent,
+          adReferral: extractMetaReferral(event),
         });
       }
     }
@@ -1157,11 +1289,71 @@ export async function processTelegramUpdate(agencyId, integrationId, update) {
     if (!integRows.length) return;
     const integration = integRows[0];
 
+    // Group management (utils/telegramGroups.js): anything from a group or
+    // supergroup — the bot joining / leaving, members, join requests, group
+    // messages and captcha taps — never becomes a subscriber or an Inbox chat.
+    if (await handleTelegramGroupUpdate(integration, update)) return;
+
+    // Telegram Stars: confirm the order is still payable (Telegram waits max 10s).
+    if (update.pre_checkout_query) {
+      await answerPreCheckout(integration, update.pre_checkout_query);
+      return;
+    }
+    // A vote on a Telegram Poll element (utils/telegramPolls.js) — saved to the subscriber's field.
+    if (update.poll_answer) {
+      const { handlePollAnswer } = await import("../utils/telegramPolls.js");
+      const result = await handlePollAnswer(integration, update.poll_answer);
+      if (result?.conversationId) emitToAgency(agencyId, "poll_answer", { conversationId: result.conversationId, ...result });
+      return;
+    }
+    // Telegram Business: a Premium user connected / changed / disconnected this bot.
+    if (update.business_connection) {
+      await upsertBusinessConnection(integration, update.business_connection);
+      return;
+    }
+
+    // A business chat (the owner's customer) is its own subscriber, "bc:<connection>:<chat>" (utils/telegramBusiness.js).
+    let businessConn = null;
+    if (update.business_message) {
+      businessConn = await resolveBusinessMessage(integration, update.business_message);
+      if (!businessConn) return;
+      update.message = update.business_message;
+    }
+
+    // A customer ticked tasks on a checklist the bot sent (utils/telegramChecklists.js).
+    if (update.message?.checklist_tasks_done && businessConn) {
+      const { handleChecklistTasksDone } = await import("../utils/telegramChecklists.js");
+      const chatId = String(update.message.chat?.id || "");
+      await handleChecklistTasksDone(integration, businessExternalId(businessConn.id, chatId), update.message.checklist_tasks_done)
+        .catch((e) => console.error("[Telegram checklist] update:", e.message));
+      return;
+    }
+    if (update.message?.checklist_tasks_added) return; // tasks added by the customer — nothing to do
+
+    // A paid (or refunded) Stars invoice — services/chatPaymentService.js confirms and continues the flow.
+    if (update.message?.successful_payment) {
+      await handleStarsPayment(integration, update.message);
+      return;
+    }
+    if (update.message?.refunded_payment) {
+      const orderId = orderIdFromInvoicePayload(update.message.refunded_payment.invoice_payload);
+      if (orderId) {
+        await pool.query(
+          "UPDATE chat_orders SET status = 'REFUNDED', refunded_at = COALESCE(refunded_at, NOW()) WHERE id = ? AND agency_id = ? AND provider = 'TELEGRAM_STARS'",
+          [orderId, agencyId]
+        );
+      }
+      return;
+    }
+
     const messageObj = update.message || update.callback_query?.message;
     if (!messageObj) return;
 
-    const externalId = (messageObj.chat?.id || update.message?.from?.id || update.callback_query?.from?.id)?.toString();
-    if (!externalId) return;
+    const rawChatId = (messageObj.chat?.id || update.message?.from?.id || update.callback_query?.from?.id)?.toString();
+    if (!rawChatId) return;
+    // A button tapped in a business chat carries the connection on its message.
+    const connId = businessConn?.id || update.callback_query?.message?.business_connection_id || null;
+    const externalId = connId ? businessExternalId(connId, rawChatId) : rawChatId;
 
     const externalMsgId = (update.message?.message_id || update.callback_query?.id || `tg_${Date.now()}`)?.toString();
 
@@ -1203,6 +1395,8 @@ export async function processTelegramUpdate(agencyId, integrationId, update) {
       username: fromObj.username || null,
       language_code: fromObj.language_code || null,
       is_premium: fromObj.is_premium ?? null,
+      // Telegram Business: this chat is with a business account's customer, answered on its behalf.
+      business_account: connId ? (businessConn?.tg_user_name || true) : null,
     } : null;
 
     console.log(`📩 [Telegram Incoming] From: ${senderName} (${externalId}) Avatar: ${avatar ? 'Found' : 'None'} Msg: "${msgBody}"`);
@@ -1277,6 +1471,11 @@ router.post(["/webhook/tiktok/:agencyId", "/webhook/tiktok/:agencyId/:integratio
     if (integrationId) {
       [integs] = await pool.query("SELECT * FROM integrations WHERE id = ? AND agency_id = ? AND platform = 'TIKTOK'", [integrationId, agencyId]);
     }
+    // The event names the Business Account it belongs to (user_openid) — match that one.
+    const payloadAccount = req.body?.user_openid || req.body?.business_id || null;
+    if ((!integs || !integs.length) && payloadAccount) {
+      [integs] = await pool.query("SELECT * FROM integrations WHERE agency_id = ? AND platform = 'TIKTOK' AND tiktok_open_id = ? AND is_active = 1 LIMIT 1", [agencyId, payloadAccount]);
+    }
     if (!integs || !integs.length) {
       [integs] = await pool.query("SELECT * FROM integrations WHERE agency_id = ? AND platform = 'TIKTOK' AND is_active = 1 LIMIT 1", [agencyId]);
     }
@@ -1284,28 +1483,24 @@ router.post(["/webhook/tiktok/:agencyId", "/webhook/tiktok/:agencyId/:integratio
     if (!integration) return;
     integrationId = integration.id;
 
-    const payload = req.body || {};
-    const eventType = payload.event || payload.type || "message";
-    const msgData = payload.data || payload.content || payload;
-
-    const externalId = msgData.from_user_id || msgData.open_id || msgData.sender_id || payload.open_id || "tiktok_user";
-    const externalMsgId = msgData.message_id || payload.msg_id || `tt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const msgBody = msgData.text || msgData.content || msgData.message || (typeof payload === 'string' ? payload : '');
-    const senderName = msgData.nickname || msgData.user_name || "TikTok User";
-    const avatar = msgData.avatar_url || null;
-
-    if (!msgBody) return;
+    // Business Messaging event (utils/tiktokBusiness.js). The subscriber's id is the
+    // TikTok conversation id — that is what a reply is addressed to.
+    const { parseTikTokEvent } = await import("../utils/tiktokBusiness.js");
+    const evt = parseTikTokEvent(req.body || {});
+    if (!evt || !evt.externalId || (!evt.body && !evt.buttonRoute)) return;
 
     await handleIncomingPayload({
       agencyId,
       integrationId,
       platform: "TIKTOK",
-      externalId,
-      externalMsgId,
-      msgType: "TEXT",
-      msgBody,
-      senderName,
-      avatar,
+      externalId: String(evt.externalId),
+      externalMsgId: evt.messageId || `tt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      msgType: evt.msgType,
+      buttonRoute: evt.buttonRoute,
+      msgBody: evt.body,
+      senderName: evt.senderName || "TikTok User",
+      avatar: evt.avatar,
+      platformProfile: { tiktok_user_id: evt.senderId || null, referral: evt.referral || null },
       integration,
     });
   } catch (err) {
@@ -1316,6 +1511,9 @@ router.post(["/webhook/tiktok/:agencyId", "/webhook/tiktok/:agencyId/:integratio
 /**
  * Handle incoming message payload, process flows, match bot rules, and notify socket
  */
+// Message kinds a No match reply answers (a reaction, call or system event never does).
+const NO_MATCH_TYPES = new Set(["TEXT", "IMAGE", "VIDEO", "AUDIO", "VOICE", "DOCUMENT", "FILE", "STICKER", "LOCATION", "CONTACTS"]);
+
 async function handleIncomingPayload({
   agencyId,
   integrationId,
@@ -1330,6 +1528,9 @@ async function handleIncomingPayload({
   avatar = null,
   platformProfile = null,
   integration,
+  waIdentity = null,
+  storyEvent = null,
+  adReferral = null,
 }) {
   try {
     // 1. Prevent duplicate messages
@@ -1343,21 +1544,53 @@ async function handleIncomingPayload({
       platform,
       externalId,
       senderName,
-      platform === "WHATSAPP" ? externalId : null,
+      platform === "WHATSAPP" && !isBsuid(externalId) ? externalId : null,
       avatar,
       platformProfile
     );
+    if (waIdentity) {
+      await attachWhatsAppIdentity(agencyId, contact.id, waIdentity).catch((e) => console.error("[WA Identity] attach:", e.message));
+    }
 
     // 2b. A blocked subscriber's messages are dropped here, before any
     // conversation is touched or reopened, any bot/AI runs, or any agent is
     // notified — see migrate_block_subscriber.js.
     if (contact.is_blocked) return;
 
+    // 2c. A 1–5 answer to a pending rating question (utils/inboxQuality.js) is
+    // filed into the resolved chat it rates — it must not open a new chat.
+    if (msgType === "TEXT" && !buttonRoute) {
+      const csat = await handleCsatReply({ agencyId, integrationId, contactId: contact.id, text: msgBody }).catch(() => null);
+      if (csat) {
+        const [[ratedConv]] = await pool.query("SELECT * FROM conversations WHERE id = ?", [csat.conversation_id]);
+        if (ratedConv) {
+          const saved = await saveMessage(ratedConv.id, "INBOUND", msgType, msgBody, externalMsgId, mediaUrl, { csatRating: csat.rating });
+          emitToAgency(agencyId, "new_message", { conversationId: ratedConv.id, message: saved });
+          const { csatThanks } = await getInboxSettings(agencyId);
+          if (csatThanks) {
+            const { sendMsg } = await import("../utils/flowEngine.js");
+            await sendMsg(agencyId, ratedConv, csatThanks, "TEXT", integration).catch(() => {});
+          }
+          // The rating is the last word — the chat isn't waiting for an answer.
+          await pool.query("UPDATE conversations SET awaiting_reply_since = NULL WHERE id = ?", [ratedConv.id]);
+          return;
+        }
+      }
+    }
+
     // 3. Find or create conversation
     const { conversation, isNew } = await findOrCreateConversation(agencyId, contact.id, integrationId, platform, contact._overLimit);
+    // Automatic assignment of a new chat, when the workspace uses it (never blocks the message).
+    if (isNew) autoAssign({ agencyId, conversationId: conversation.id, integration, trigger: "NEW" });
 
     // 4. Save incoming message with mediaUrl
     const message = await saveMessage(conversation.id, "INBOUND", msgType, msgBody, externalMsgId, mediaUrl);
+    // Voice message → text in the background when "transcribe automatically" is on (utils/transcribe.js).
+    if (msgType === "AUDIO") {
+      getInboxSettings(agencyId)
+        .then((s) => (s.autoTranscribe ? transcribeMessage(agencyId, message.id) : null))
+        .catch((e) => console.warn("[Transcribe] auto:", e.message));
+    }
 
     const socketMsg = { ...message };
     if (socketMsg.media_url && socketMsg.media_url.includes("lookaside.fbsbx.com")) {
@@ -1380,9 +1613,70 @@ async function handleIncomingPayload({
       });
     }
 
+    // Opt-out / opt-in keywords ("STOP" / "START", utils/optOut.js) — always
+    // honoured, even with a paused bot or an expired plan.
+    if (msgType === "TEXT" && !buttonRoute && platform !== "WEBCHAT") {
+      const opted = await handleOptKeywords({ agencyId, integration, conversation, contact, text: msgBody })
+        .catch((e) => { console.error("[Opt-out] error:", e.message); return false; });
+      if (opted) return;
+    }
+
+    // Quick Actions (utils/quickActions.js): a tapped Chat with Human / Chat with
+    // Robot / Unsubscribe / Resubscribe button, or a Chat with Human / Robot
+    // keyword. Before the paused-bot checks — "Chat with bot" must work while a
+    // person has the chat — and before the expired-plan gate, like opt-out.
+    if (platform !== "TIKTOK") {
+      const quick = await handleQuickActionInbound({ agencyId, platform, integration, conversation, contact, text: msgBody, buttonRoute, msgType })
+        .catch((e) => { console.error("[Quick Action] error:", e.message); return false; });
+      if (quick) return;
+    }
+
+    // Expired plan → read-only (utils/subscriptionStatus.js): the message is kept
+    // and shown in the Inbox, but no bot, AI or automation answers it.
+    if (await isWorkspaceExpired(agencyId)) return;
+
+    // Click-to-chat ad (utils/adReferrals.js): record it; a flow chosen for this ad answers first.
+    if (adReferral) {
+      await recordAdReferral({ agencyId, integrationId, platform, contact, conversationId: conversation.id, referral: adReferral })
+        .catch((e) => console.error("[Ads] record referral:", e.message));
+      if (!conversation.bot_paused && !contact.bot_paused) {
+        const adFlowId = await flowForAd(agencyId, integrationId, adReferral.sourceId).catch(() => null);
+        if (adFlowId) {
+          const [[flow]] = await pool.query("SELECT * FROM flows WHERE id = ? AND agency_id = ?", [adFlowId, agencyId]);
+          if (flow) {
+            const started = await startFlowForConversation({ agencyId, flow, conversation, contact, integration, platform })
+              .catch((e) => { console.error("[Ads] ad flow:", e.message); return false; });
+            if (started) return;
+          }
+        }
+      }
+    }
+
+    // 4-. Messenger / Instagram Get Started, ice breaker or persistent-menu tap
+    // (utils/messengerProfile.js). Paused bot (a person is handling the chat)
+    // → the tap just shows in the Inbox.
+    if ((platform === "FACEBOOK" || platform === "INSTAGRAM") && isProfilePayload(buttonRoute)) {
+      if (conversation.bot_paused || contact.bot_paused) return;
+      const handled = await handleProfilePostback({ agencyId, platform, integration, conversation, contact, route: buttonRoute })
+        .catch((e) => { console.error("[Messenger Profile] postback error:", e.message); return true; });
+      if (handled) return;
+    }
+    // Story mention / story reply automation (utils/storyReplies.js).
+    if (storyEvent && (platform === "FACEBOOK" || platform === "INSTAGRAM") && !conversation.bot_paused && !contact.bot_paused) {
+      const handled = await handleStoryEvent({ agencyId, platform, integration, conversation, contact, kind: storyEvent })
+        .catch((e) => { console.error("[Stories] error:", e.message); return false; });
+      if (handled) return;
+    }
+    // WhatsApp / Telegram: an ice breaker or "/command" arrives as plain text.
+    if ((platform === "WHATSAPP" || platform === "TELEGRAM") && msgType === "TEXT" && !buttonRoute && !conversation.bot_paused && !contact.bot_paused) {
+      const handled = await handleTextTrigger({ agencyId, platform, integration, conversation, contact, text: msgBody })
+        .catch((e) => { console.error("[Bot Profile] text trigger error:", e.message); return false; });
+      if (handled) return;
+    }
+
     // 4a. Store automation: COD Confirm / Cancel tap (utils/commerceEvents.js).
     // Handled whatever the business hours — the customer is answering us.
-    if (platform === "WHATSAPP" && isCommerceButton(buttonRoute)) {
+    if ((platform === "WHATSAPP" || platform === "FACEBOOK") && isCommerceButton(buttonRoute)) {
       const handled = await handleCommerceButton({ agencyId, buttonRoute, contact, conversation, integration });
       if (handled) return;
     }
@@ -1422,7 +1716,15 @@ async function handleIncomingPayload({
 
     // 8. AI Reply in "Only when nothing else matches" mode (the default) —
     // also a no-op if AI Replies aren't enabled on this bot at all.
-    if (allowAiNow) await runAIReply(agencyId, platform, conversation, contact, msgBody, integration, msgType, "fallback");
+    const aiRan = allowAiNow && await runAIReply(agencyId, platform, conversation, contact, msgBody, integration, msgType, "fallback");
+    if (aiRan) return;
+
+    // 9. Nothing answered: the bot account's No match reply (Quick Actions).
+    // Not for a tapped button that simply leads nowhere, or non-message events.
+    if (allowBotNow && !buttonRoute && NO_MATCH_TYPES.has(String(msgType || "TEXT").toUpperCase())) {
+      await runNoMatchReply({ agencyId, platform, integration, conversation, contact })
+        .catch((err) => console.error("[Quick Action] no-match reply:", err.message));
+    }
   } catch (err) {
     console.error("[Webhook Incoming Payload Error]:", err);
     await logBotError({

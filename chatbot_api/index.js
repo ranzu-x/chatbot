@@ -10,6 +10,7 @@ import pool from "./db.js";
 import authRoutes from "./routes/auth.js";
 import { authLimiter, apiLimiter } from "./middleware/rateLimiter.js";
 import { tenantContext } from "./middleware/tenant.js";
+import { subscriptionGuard } from "./middleware/subscriptionGuard.js";
 import { teamPermissions } from "./middleware/teamPermissions.js";
 import { startFollowUpScheduler } from "./utils/followUpScheduler.js";
 import adminRoutes from "./routes/admin.js";
@@ -30,17 +31,21 @@ import { authMiddleware } from "./middleware/authmiddleware.js";
 import contactListRoutes from "./routes/contactLists.js";
 import uploadRoutes from "./routes/upload.js";
 import templateRoutes from "./routes/templates.js";
+import messengerTemplateRoutes from "./routes/messengerTemplates.js";
+import messengerMarketingRoutes from "./routes/messengerMarketing.js";
 import cannedResponseRoutes from "./routes/cannedResponses.js";
 import broadcastRoutes from "./routes/broadcasts.js";
 import whatsappCallRoutes from "./routes/whatsappCalls.js";
 import supportDeskRoutes from "./routes/supportDesk.js";
 import sequenceRoutes from "./routes/sequences.js";
 import domainRoutes from "./routes/domains.js";
+import { isWhiteLabelOrigin, startCustomDomainScheduler } from "./utils/customDomains.js";
 import commentRoutes from "./routes/comments.js";
 import packageRoutes from "./routes/packages.js";
 import billingRoutes from "./routes/billing.js";
 import flowWebhookRoutes from "./routes/flowWebhooks.js";
 import chatPaymentRoutes from "./routes/chatPayments.js";
+import resellerBillingRoutes from "./routes/resellerBilling.js";
 import notificationRoutes from "./routes/notifications.js";
 import userNotificationRoutes from "./routes/userNotifications.js";
 import socialPostRoutes from "./routes/socialPosts.js";
@@ -53,6 +58,15 @@ import labelsRoutes from "./routes/labels.js";
 import mediaRoutes from "./routes/media.js";
 import agencyPaymentGatewayRoutes from "./routes/agencyPaymentGateways.js";
 import platformPaymentGatewayRoutes from "./routes/platformPaymentGateways.js";
+import couponRoutes from "./routes/coupons.js";
+import messengerProfileRoutes from "./routes/messengerProfile.js";
+import optOutRoutes from "./routes/optOut.js";
+import whatsappNumberRoutes from "./routes/whatsappNumber.js";
+import whatsappGroupRoutes from "./routes/whatsappGroups.js";
+import telegramGroupRoutes from "./routes/telegramGroups.js";
+import quickActionRoutes from "./routes/quickActions.js";
+import storeTemplateRoutes from "./routes/storeTemplates.js";
+import whatsappCatalogRoutes from "./routes/whatsappCatalog.js";
 import apiKeyRoutes from "./routes/apiKeys.js";
 import publicApiRoutes from "./routes/publicApi.js";
 import commerceRoutes from "./routes/commerce.js";
@@ -63,6 +77,10 @@ import aiReplySettingsRoutes from "./routes/aiReplySettings.js";
 import businessHoursRoutes from "./routes/businessHours.js";
 import aiKnowledgeRoutes from "./routes/aiKnowledge.js";
 import customFieldRoutes from "./routes/customFields.js";
+import flowTransferRoutes from "./routes/flowTransfer.js";
+import botSettingsRoutes from "./routes/botSettings.js";
+import autoResponderRoutes from "./routes/autoResponders.js";
+import workspaceVariableRoutes from "./routes/workspaceVariables.js";
 import userInputFlowRoutes from "./routes/userInputFlows.js";
 import googleSheetsRoutes from "./routes/googleSheets.js";
 import followupRoutes from "./routes/followups.js";
@@ -76,12 +94,15 @@ import resellerCustomerRoutes from "./routes/resellerCustomers.js";
 import agencyPackageRoutes from "./routes/agencyPackages.js";
 import platformSettingsRoutes from "./routes/platformSettings.js";
 import blogRoutes from "./routes/blog.js";
+import docsRoutes from "./routes/docs.js";
+import resellerSiteRoutes from "./routes/resellerSite.js";
 import { initBlogTable } from "./routes/blog.js";
 
 import http from "http";
 import { initSocket } from "./utils/socket.js";
 import { startSequenceScheduler } from "./utils/sequenceRunner.js";
 import { startTelegramPoller } from "./utils/telegramPoller.js";
+import { startTelegramGroupScheduler } from "./utils/telegramGroups.js";
 import { ensureTelegramWebhookSecrets } from "./utils/webhookAuth.js";
 import { initBotErrorLogsTable } from "./utils/botLogger.js";
 import { startSocialPostScheduler } from "./utils/socialPostScheduler.js";
@@ -117,9 +138,11 @@ startBroadcastScheduler();
 startSupportDeskScheduler();
 startCommerceSyncScheduler();
 startCommerceEventScheduler();
+startCustomDomainScheduler();
 startMetaAppHealthScheduler();
 startBotErrorLogRetentionScheduler();
 startFollowUpScheduler();
+startTelegramGroupScheduler();
 
 // ─── Middleware ────────────────────────────────────────────────────────────────
 app.use(
@@ -152,28 +175,39 @@ const corsAppDashboard = cors({
     if (allowed.includes(origin)) {
       return callback(null, true);
     }
-    // Dev-tunnel domains (ngrok/localtunnel) — a real convenience for local
-    // testing, but previously allowed unconditionally, in production too.
-    // Anyone can spin up a free tunnel in seconds, so with credentials:true
-    // that meant any such tunnel's origin could make authenticated
-    // cross-origin requests against a live production deploy. Now gated by
-    // the exact same NODE_ENV check the final fallback below already uses.
-    if (process.env.NODE_ENV !== 'production') {
-      if (
-        origin.endsWith('.loca.lt') ||
-        origin.endsWith('.ngrok-free.dev') ||
-        origin.endsWith('.ngrok.io') ||
-        origin.endsWith('.ngrok-free.app')
-      ) {
-        return callback(null, true);
-      }
-      // Outside production, keep dev convenient beyond just those domains too.
-      return callback(null, true);
-    }
-    return callback(new Error('Not allowed by CORS'));
+    // A reseller's live white-label domain, or <sub>.APP_ROOT_DOMAIN
+    // (utils/customDomains.js — only domains Cloudflare / DNS confirmed ACTIVE).
+    isWhiteLabelOrigin(origin)
+      .then((ok) => {
+        if (ok) return callback(null, true);
+        return fallbackOrigin(origin, callback);
+      })
+      .catch(() => fallbackOrigin(origin, callback));
   },
   credentials: true,
 });
+// Origins not on the allow-list: dev tunnels and anything else outside production.
+function fallbackOrigin(origin, callback) {
+  // Dev-tunnel domains (ngrok/localtunnel) — a real convenience for local
+  // testing, but previously allowed unconditionally, in production too.
+  // Anyone can spin up a free tunnel in seconds, so with credentials:true
+  // that meant any such tunnel's origin could make authenticated
+  // cross-origin requests against a live production deploy. Now gated by
+  // the exact same NODE_ENV check the final fallback below already uses.
+  if (process.env.NODE_ENV !== 'production') {
+    if (
+      origin.endsWith('.loca.lt') ||
+      origin.endsWith('.ngrok-free.dev') ||
+      origin.endsWith('.ngrok.io') ||
+      origin.endsWith('.ngrok-free.app')
+    ) {
+      return callback(null, true);
+    }
+    // Outside production, keep dev convenient beyond just those domains too.
+    return callback(null, true);
+  }
+  return callback(new Error('Not allowed by CORS'));
+}
 // The Webchat widget (public/widget.js) is embedded on arbitrary third-party
 // sites an agency's customers choose — it can never be known ahead of time,
 // so it can't go through the dashboard's fixed origin allowlist above. Those
@@ -231,6 +265,8 @@ app.use("/api/v1", apiLimiter);
 // (deactivated workspace, or a token pointing at a workspace the user does not
 // belong to, is refused here once instead of in each route). See middleware/tenant.js.
 app.use("/api/v1", tenantContext);
+// Expired plan → the workspace is read-only (utils/subscriptionStatus.js).
+app.use("/api/v1", subscriptionGuard);
 // Team Rules matrix (Create/Update/Delete/Special per feature) for team members — see middleware/teamPermissions.js.
 app.use("/api/v1", teamPermissions);
 
@@ -258,6 +294,11 @@ app.use("/api/v1", commerceRoutes);
 // router.use("/admin/forum", ...) below its public routes), so nothing loses
 // protection by being mounted early.
 app.use("/api/v1", forumRoutes);
+// The blog, documentation and reseller landing pages are read logged-out too —
+// same reason. Their admin routes carry their own auth + permission per route.
+app.use("/api/v1", blogRoutes);
+app.use("/api/v1", docsRoutes);
+app.use("/api/v1", resellerSiteRoutes);
 // Same reason again: each of these has endpoints called WITHOUT a dashboard
 // login — the inbound flow webhook (per-flow key), the public booking portal
 // (booking key, utils/publicBooking.js) and the developer API (API key). Mounted
@@ -269,6 +310,10 @@ app.use("/api/v1", appointmentRoutes);
 app.use("/api/v1", appointmentServicesRoutes);
 app.use("/api/v1", slotRoutes);
 app.use("/api/v1", publicApiRoutes);
+// In-chat order checkout page (public, per-order token) + Stripe's calls for
+// reseller payments — both anonymous, both scope their own auth per path.
+app.use("/api/v1", chatPaymentRoutes);
+app.use("/api/v1", resellerBillingRoutes);
 
 // ─── Protected Application Routes ─────────────────────────────────────────────
 app.use("/api/v1", adminRoutes);
@@ -281,10 +326,13 @@ app.use("/api/v1", metaAppRoutes);
 app.use("/api/v1", metaAppPoolRoutes);
 app.use("/api/v1", tiktokAppRoutes);
 app.use("/api/v1", flowRoutes);
+app.use("/api/v1", flowTransferRoutes);
 app.use("/api/v1", contactRoutes);
 app.use("/api/v1", contactListRoutes);
 app.use("/api/v1", uploadRoutes);
 app.use("/api/v1", templateRoutes);
+app.use("/api/v1", messengerTemplateRoutes);
+app.use("/api/v1", messengerMarketingRoutes);
 app.use("/api/v1", cannedResponseRoutes);
 app.use("/api/v1", broadcastRoutes);
 app.use("/api/v1", whatsappCallRoutes);
@@ -293,7 +341,6 @@ app.use("/api/v1", sequenceRoutes);
 app.use("/api/v1", domainRoutes);
 app.use("/api/v1", commentRoutes);
 app.use("/api/v1", packageRoutes);
-app.use("/api/v1", chatPaymentRoutes);
 app.use("/api/v1", userNotificationRoutes); // in-app inbox (top-bar bell) — before notificationRoutes, whose bare router.use(authMiddleware) catches everything
 app.use("/api/v1", notificationRoutes);
 app.use("/api/v1", socialPostRoutes);
@@ -302,6 +349,15 @@ app.use("/api/v1", appointmentCampaignRoutes);
 app.use("/api/v1", labelsRoutes);
 app.use("/api/v1", agencyPaymentGatewayRoutes);
 app.use("/api/v1", platformPaymentGatewayRoutes);
+app.use("/api/v1", couponRoutes);
+app.use("/api/v1", messengerProfileRoutes);
+app.use("/api/v1", optOutRoutes);
+app.use("/api/v1", whatsappNumberRoutes);
+app.use("/api/v1", whatsappGroupRoutes);
+app.use("/api/v1", telegramGroupRoutes);
+app.use("/api/v1", quickActionRoutes);
+app.use("/api/v1", storeTemplateRoutes);
+app.use("/api/v1", whatsappCatalogRoutes);
 app.use("/api/v1", apiKeyRoutes);
 app.use("/api/v1", httpApiCampaignRoutes);
 app.use("/api/v1", aiProviderRoutes);
@@ -310,6 +366,9 @@ app.use("/api/v1", aiReplySettingsRoutes);
 app.use("/api/v1", businessHoursRoutes);
 app.use("/api/v1", aiKnowledgeRoutes);
 app.use("/api/v1", customFieldRoutes);
+app.use("/api/v1", botSettingsRoutes);
+app.use("/api/v1", autoResponderRoutes);
+app.use("/api/v1", workspaceVariableRoutes);
 app.use("/api/v1", userInputFlowRoutes);
 app.use("/api/v1", googleSheetsRoutes);
 app.use("/api/v1", followupRoutes);
@@ -321,7 +380,6 @@ app.use("/api/v1", auditLogRoutes);
 app.use("/api/v1", resellerCustomerRoutes);
 app.use("/api/v1", agencyPackageRoutes);
 app.use("/api/v1", platformSettingsRoutes);
-app.use("/api/v1", blogRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {

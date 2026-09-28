@@ -1,128 +1,83 @@
-import Swal from 'sweetalert2';
-import toast from 'react-hot-toast';
+// App-wide alert helpers — thin wrappers over the in-house alert library
+// (src/lib/alerts). Kept so the many existing `showAlert.*` / `notify.*`
+// callers keep working; new code can import `alert` / `toast` directly.
+import { alert, toast } from '../lib/alerts';
 
+const asText = (text) => {
+  if (text == null || text === '') return '';
+  if (typeof text === 'string') return text;
+  if (typeof text?.message === 'string') return text.message;
+  try { return JSON.stringify(text); } catch { return String(text); }
+};
 
 export const showAlert = {
-  success: (title, text = '') => {
-    return Swal.fire({
-      icon: 'success',
-      title: title || 'Success!',
-      text: typeof text === 'string' ? text : JSON.stringify(text),
-      confirmButtonColor: '#25d366',
-      confirmButtonText: 'OK',
-    });
-  },
+  success: (title, text = '') => alert.success({ title: title || 'Success!', text: asText(text) }),
+  error: (title, text = '') => alert.error({ title: title || 'Error', text: asText(text) }),
+  warning: (title, text = '') => alert.warning({ title: title || 'Warning', text: asText(text) }),
+  info: (title, text = '') => alert.info({ title: title || 'Information', text: asText(text) }),
 
-  error: (title, text = '') => {
-    return Swal.fire({
-      icon: 'error',
-      title: title || 'Error',
-      text: typeof text === 'string' ? text : (text?.message || JSON.stringify(text)),
-      confirmButtonColor: '#ef4444',
-      confirmButtonText: 'OK',
-    });
-  },
-
-  warning: (title, text = '') => {
-    return Swal.fire({
-      icon: 'warning',
-      title: title || 'Warning',
-      text: typeof text === 'string' ? text : JSON.stringify(text),
-      confirmButtonColor: '#f59e0b',
-      confirmButtonText: 'OK',
-    });
-  },
-
-  info: (title, text = '') => {
-    return Swal.fire({
-      icon: 'info',
-      title: title || 'Information',
-      text: typeof text === 'string' ? text : JSON.stringify(text),
-      confirmButtonColor: '#6366f1',
-      confirmButtonText: 'OK',
-    });
-  },
-
-  confirm: async (optionsOrTitle, text, confirmButtonText = 'Yes, continue') => {
-    let title = optionsOrTitle;
-    let desc = text;
-    let btnText = confirmButtonText;
-
+  /** Resolves true when confirmed. Red (danger) like before. */
+  confirm: (optionsOrTitle, text, confirmButtonText = 'Yes, continue') => {
     if (typeof optionsOrTitle === 'object' && optionsOrTitle !== null) {
-      title = optionsOrTitle.title || 'Are you sure?';
-      desc = optionsOrTitle.text || 'This action cannot be undone.';
-      btnText = optionsOrTitle.confirmButtonText || 'Yes, continue';
+      const o = optionsOrTitle;
+      return alert.confirm({
+        ...o,
+        title: o.title || 'Are you sure?',
+        text: o.text || 'This action cannot be undone.',
+        confirm: o.confirm || o.confirmButtonText || 'Yes, continue',
+        cancel: o.cancel || o.cancelButtonText || 'Cancel',
+      });
     }
-
-    const res = await Swal.fire({
-      title: title || 'Are you sure?',
-      text: desc || 'This action cannot be undone.',
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonColor: '#ef4444',
-      cancelButtonColor: '#94a3b8',
-      confirmButtonText: btnText,
-      cancelButtonText: 'Cancel',
-      reverseButtons: true,
+    return alert.confirm({
+      title: optionsOrTitle || 'Are you sure?',
+      text: text || 'This action cannot be undone.',
+      confirm: confirmButtonText,
     });
-    return res.isConfirmed;
   },
 
-  limit: (title, text = '', options = {}) => {
-    return showLimitModal({ title, message: text, ...options });
-  },
+  limit: (title, text = '', options = {}) => showLimitModal({ title, message: text, ...options }),
 };
 
 /**
- * Interactive SweetAlert modal for plan quota / limit reached boundaries.
- * Provides clear information and direct action (e.g. Upgrade Plan) rather than an auto-dismissing toast.
+ * Plan quota / limit reached. Resolves true when the person chose to upgrade
+ * (then runs `onUpgrade`, or opens the billing page).
  */
-export const showLimitModal = ({
+export const showLimitModal = async ({
   title = 'Account Limit Reached',
   message,
   currentUsage,
   maxLimit,
   userRole,
   onUpgrade,
+  label,
 } = {}) => {
   const isReseller = userRole === 'RESELLER';
   const displayMsg =
     message ||
     (maxLimit !== undefined && maxLimit !== null
-      ? `You have reached the maximum of ${maxLimit} connected account(s) allowed by your current plan${
-          currentUsage !== undefined ? ` (currently using ${currentUsage})` : ''
-        }. Please upgrade your package to connect more accounts.`
+      ? `You have reached the maximum of ${maxLimit} connected account(s) allowed by your current plan. Please upgrade your package to connect more accounts.`
       : 'You have reached the connected account limit for your current package. Please upgrade your plan to connect additional accounts.');
 
-  return Swal.fire({
-    title: `<span style="font-weight:800; font-size:1.25rem; color:#0f172a;">${title}</span>`,
-    html: `
-      <div style="font-size:0.92rem; color:#475569; line-height:1.55; margin-top:8px;">
-        ${displayMsg}
-      </div>
-    `,
-    icon: 'warning',
-    showCancelButton: true,
-    confirmButtonColor: '#2563eb',
-    cancelButtonColor: '#94a3b8',
-    confirmButtonText: isReseller ? 'Upgrade Plan' : 'View Plans',
-    cancelButtonText: 'Dismiss',
-    reverseButtons: true,
-  }).then((result) => {
-    if (result.isConfirmed) {
-      if (typeof onUpgrade === 'function') {
-        onUpgrade();
-      } else if (typeof window !== 'undefined') {
-        window.location.href = isReseller ? '/account?tab=billing' : '/account';
-      }
-    }
-    return result;
+  const hasMeter = maxLimit !== undefined && maxLimit !== null && currentUsage !== undefined && currentUsage !== null;
+  const ok = await alert.limit({
+    title,
+    text: displayMsg,
+    used: hasMeter ? currentUsage : undefined,
+    max: hasMeter ? maxLimit : undefined,
+    label: label || 'Usage',
+    confirm: isReseller ? 'Upgrade Plan' : 'View Plans',
+    cancel: 'Not now',
   });
+  if (ok) {
+    if (typeof onUpgrade === 'function') onUpgrade();
+    else if (typeof window !== 'undefined') window.location.href = isReseller ? '/account?tab=billing' : '/account';
+  }
+  return ok;
 };
 
 /**
  * Inspects an API error: if it represents a capacity limit error (403 LIMIT_EXCEEDED),
- * shows the SweetAlert limit modal and returns true. Otherwise returns false.
+ * shows the limit dialog and returns true. Otherwise returns false.
  */
 export const handleLimitError = (err, { userRole, onUpgrade } = {}) => {
   const res = err?.response;
@@ -146,24 +101,13 @@ export const handleLimitError = (err, { userRole, onUpgrade } = {}) => {
 };
 
 export const notify = {
-  success: (msg) =>
-    toast.success(msg, {
-      duration: 4000,
-    }),
-
-  error: (msg) =>
-    toast.error(msg, {
-      duration: 5000,
-    }),
-
-  info: (msg) =>
-    toast(msg, {
-      duration: 4000,
-    }),
-
-  loading: (msg) => toast.loading(msg),
-
+  success: (msg, opts) => toast.success(msg, opts),
+  error: (msg, opts) => toast.error(msg, opts),
+  warning: (msg, opts) => toast.warning(msg, opts),
+  info: (msg, opts) => toast.info(msg, opts),
+  loading: (msg, opts) => toast.loading(msg, opts),
   dismiss: (id) => toast.dismiss(id),
 };
 
+export { alert, toast };
 export default { showAlert, notify, showLimitModal, handleLimitError };

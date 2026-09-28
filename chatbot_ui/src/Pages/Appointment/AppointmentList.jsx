@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Link } from "react-router";
 import AppLayout from "../../Layout/AppLayout";
 import { useAuth } from "../../Provider/AuthContext";
-import toast from "react-hot-toast";
+import { toast, alert } from '../../lib/alerts';
 import {
   Calendar,
   Clock,
@@ -337,19 +337,10 @@ export default function AppointmentList() {
       });
 
       socket.on("new_appointment", (data) => {
-        toast((tObj) => (
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <CalendarCheck style={{ color: "var(--success)" }} size={20} />
-            <div>
-              <div style={{ fontWeight: 700, fontSize: "0.82rem", color: "var(--text-primary)" }}>
-                New Booking Received!
-              </div>
-              <div style={{ fontSize: "0.74rem", color: "var(--text-secondary)" }}>
-                {data.customerName} booked {data.service} on {data.date} at {data.time}
-              </div>
-            </div>
-          </div>
-        ));
+        toast.success("New Booking Received!", {
+          icon: CalendarCheck,
+          description: `${data.customerName} booked ${data.service} on ${data.date} at ${data.time}`,
+        });
         loadAppointments();
         loadStats();
       });
@@ -446,7 +437,7 @@ export default function AppointmentList() {
 
   // ── Delete Appointment ───────────────────────────────────────────────────────
   const handleDelete = async (id) => {
-    if (!window.confirm("Are you sure you want to permanently delete this appointment record?")) {
+    if (!(await alert.ask("Are you sure you want to permanently delete this appointment record?"))) {
       return;
     }
     try {

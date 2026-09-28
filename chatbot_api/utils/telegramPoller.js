@@ -1,5 +1,8 @@
 import pool from "../db.js";
 import { processTelegramUpdate } from "../routes/webhook.js";
+import { TELEGRAM_ALLOWED_UPDATES } from "./webhookAuth.js";
+
+const ALLOWED_UPDATES_PARAM = encodeURIComponent(JSON.stringify(TELEGRAM_ALLOWED_UPDATES));
 
 const offsets = new Map();
 let isRunning = false;
@@ -67,7 +70,7 @@ async function runPollCycle() {
       const currentOffset = offsets.get(bot.id) || 0;
 
       try {
-        const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${currentOffset}&timeout=3&limit=20`;
+        const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${currentOffset}&timeout=3&limit=20&allowed_updates=${ALLOWED_UPDATES_PARAM}`;
         const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
         const data = await res.json();
 

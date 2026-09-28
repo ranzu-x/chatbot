@@ -20,6 +20,19 @@ test("writes map to the right Team Rules key", () => {
     ["POST", "/channels/whatsapp", "connect_account.update"],
     ["POST", "/broadcasts/3/send", "broadcast.special"],
     ["POST", "/social-posts/publish", "social_posting.special"],
+    ["POST", "/messenger-utility/templates", "messenger_template.create"],
+    ["POST", "/messenger-utility/templates/from-library", "messenger_template.create"],
+    ["POST", "/messenger-utility/templates/sync", "messenger_template.update"],
+    ["DELETE", "/messenger-utility/templates/4", "messenger_template.delete"],
+    ["PATCH", "/messenger-utility/accounts/4/human-agent", "connect_account.update"],
+    ["POST", "/flows/import", "bot_manager.special"],
+    ["PUT", "/bot-settings/4", "bot_manager.update"],
+    ["PUT", "/business-hours/4", "bot_manager.update"],
+    ["POST", "/auto-responders", "autoresponder.create"],
+    ["PUT", "/auto-responders/2", "autoresponder.update"],
+    ["DELETE", "/auto-responders/2", "autoresponder.delete"],
+    ["POST", "/workspace-variables", "subscribers.update"],
+    ["DELETE", "/custom-fields/3", "subscribers.update"],
   ];
   for (const [method, path, key] of cases) assert.equal(requiredTeamPermission(method, path), key, `${method} ${path}`);
 });
@@ -27,6 +40,8 @@ test("writes map to the right Team Rules key", () => {
 test("public and personal writes stay open", () => {
   assert.equal(requiredTeamPermission("POST", "/appointments/book-public"), null);
   assert.equal(requiredTeamPermission("POST", "/broadcasts/audience-preview"), null);
+  assert.equal(requiredTeamPermission("POST", "/messenger-utility/templates/validate"), null);
+  assert.equal(requiredTeamPermission("POST", "/auto-responders/2/test"), null);
   assert.equal(requiredTeamPermission("PATCH", "/conversations/5/read"), undefined);
   assert.equal(requiredTeamPermission("POST", "/follow-ups"), undefined);
 });

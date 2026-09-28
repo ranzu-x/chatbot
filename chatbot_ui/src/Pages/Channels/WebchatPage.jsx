@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import useUrlState from '../../hooks/useUrlState';
 import { useNavigate, useLocation } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
 import ChannelBreadcrumb from '../../Components/Common/ChannelBreadcrumb';
@@ -25,7 +26,7 @@ export default function WebchatPage({ embedded = false }) {
   const [copied, setCopied] = useState(false);
   const [form, setForm] = useState(DEFAULT_FORM);
   const [formError, setFormError] = useState('');
-  const [view, setView] = useState('list'); // 'list' | 'connect'
+  const [view, setView] = useUrlState('view', 'list', { allowed: ['list','connect'] });
   const [fixDomainWidget, setFixDomainWidget] = useState(null);
   const [fixDomainInput, setFixDomainInput] = useState('');
   const [fixDomainError, setFixDomainError] = useState('');

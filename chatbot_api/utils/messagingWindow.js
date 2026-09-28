@@ -9,11 +9,13 @@ import pool from "../db.js";
  *  - WhatsApp: 24h customer-service window from the contact's last inbound
  *    message. Outside it, only a pre-approved Template (routes/templates.js /
  *    the `whatsapp_templates` table) can go out.
- *  - Messenger / Instagram: 24h window. Both lost their automated
- *    outside-window tools in Feb 2026 (message tags deprecated) — the
- *    replacement, Marketing Messages, is Messenger-only and needs a Meta
- *    Business-app Advanced Access review, explicitly out of scope for this
- *    pass. A step scheduled outside the window is simply skipped.
+ *  - Messenger / Instagram: 24h window. The automated message tags
+ *    (ACCOUNT_UPDATE, POST_PURCHASE_UPDATE, CONFIRMED_EVENT_UPDATE) were
+ *    removed on 27 Apr 2026. Messenger's replacement is the Utility template
+ *    (utils/messengerUtility.js, element type `messengerTemplate`) — always
+ *    allowed. Instagram has nothing automated outside the window. HUMAN_AGENT
+ *    (7 days) is for a person in the Inbox only, never automation, so it is
+ *    not considered here.
  *  - Telegram / Webchat: no messaging-window concept at all.
  *  - TikTok: 48h window AND a hard cap of 10 consecutive outbound messages
  *    since the contact's last inbound one — a budget, not a template system.
@@ -58,7 +60,14 @@ export async function canSendNow(platform, conversationId, agencyId, node) {
 
   if (p === "FACEBOOK" || p === "INSTAGRAM") {
     if (hoursSinceInbound <= 24) return { allowed: true };
-    return { allowed: false, reason: `Outside the 24-hour window — ${p === "FACEBOOK" ? "Messenger" : "Instagram"} has no automated send path here (see plan: Marketing Messages is out of scope)` };
+    // A Utility Template element IS the outside-window message for Messenger.
+    if (p === "FACEBOOK" && node?.type === "messengerTemplate") return { allowed: true };
+    return {
+      allowed: false,
+      reason: p === "FACEBOOK"
+        ? "Outside Messenger's 24-hour window — only a Utility Template element can be sent now"
+        : "Outside Instagram's 24-hour window — Instagram has no automated message for this",
+    };
   }
 
   if (p === "TIKTOK") {

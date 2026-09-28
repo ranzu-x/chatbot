@@ -2,7 +2,12 @@ import React, { useMemo } from 'react';
 import { Link, useLocation } from 'react-router';
 import { useAuth } from '../Provider/AuthContext';
 import { useLayout } from '../Provider/LayoutContext';
+import { useBranding } from '../Provider/BrandingContext';
+import { assetUrl } from '../services/api';
+import { accountKind } from '../utils/accountLabel';
 import {
+  Ticket,
+  Timer,
   LayoutDashboard,
   MessageSquare,
   MessageCircle,
@@ -28,7 +33,10 @@ import {
   Blocks,
   KeyRound,
   ScrollText,
-  Gift,
+ CreditCard,
+  BookOpen,
+  Newspaper,
+  PanelsTopLeft,
 } from 'lucide-react';
 
 const NAV_CONFIG = {
@@ -36,6 +44,7 @@ const NAV_CONFIG = {
     { section: 'Main', items: [
       { label: 'Dashboard',        icon: LayoutDashboard, path: '/admin' },
       { label: 'Inbox',             icon: MessageSquare,   path: '/inbox',        moduleKey: 'feature_live_chat' },
+      { label: 'Inbox Insights',    icon: Timer,   path: '/inbox/insights',        moduleKey: 'feature_live_chat' },
       { label: 'Subscribers',      icon: Users,           path: '/contacts',     moduleKey: 'feature_subscribers' },
       { label: 'Automation',      icon: Bot,             path: '/bots',         moduleKey: 'feature_bot_manager' },
       { label: 'Post Publishing',  icon: FileText,        path: '/social-posting' },
@@ -60,15 +69,22 @@ const NAV_CONFIG = {
     { section: 'Billing & Platform', items: [
       { label: 'Packages & Modules',  icon: Package,   path: '/admin/packages' },
       { label: 'Payment Gateways',    icon: Zap,       path: '/admin/payment-gateways' },
-      { label: 'Affiliates',          icon: Gift,      path: '/admin/affiliates' },
+      { label: 'Coupons',             icon: Ticket,    path: '/admin/coupons' },
       { label: 'Resellers',           icon: Building2, path: '/admin/agencies' },
+      { label: 'Developer Apps',      icon: KeyRound,  path: '/settings/developer-apps' },
       { label: 'Platform Settings',   icon: Settings,  path: '/admin/platform-settings' },
+    ]},
+    // Public content of the main site — only for staff whose role has the key (flags from /auth/me).
+    { section: 'Content', items: [
+      { label: 'Blog',                icon: Newspaper, path: '/admin/blog', userFlag: 'canManageBlog' },
+      { label: 'Documentation',       icon: BookOpen,  path: '/admin/docs', userFlag: 'canManageDocs' },
     ]},
   ],
   RESELLER: [
     { section: 'Main', items: [
       { label: 'Dashboard',        icon: LayoutDashboard, path: '/agency' },
       { label: 'Inbox',             icon: MessageSquare,   path: '/inbox',        moduleKey: 'feature_live_chat' },
+      { label: 'Inbox Insights',    icon: Timer,   path: '/inbox/insights',        moduleKey: 'feature_live_chat' },
       { label: 'Subscribers',      icon: Users,           path: '/contacts',     moduleKey: 'feature_subscribers' },
       { label: 'Automation',      icon: Bot,             path: '/bots',         moduleKey: 'feature_bot_manager' },
       { label: 'Post Publishing',  icon: FileText,        path: '/social-posting' },
@@ -82,15 +98,20 @@ const NAV_CONFIG = {
       { label: 'App Integrations',    icon: Blocks,   path: '/settings/apps' },
       { label: 'AI Providers',        icon: KeyRound, path: '/settings/ai-providers', moduleKey: 'feature_ai_agent' },
       { label: 'Webhooks & Zapier',   icon: Globe,    path: '/webhooks' },
-      { label: 'Custom Domain',       icon: Globe,    path: '/agency/domain-settings', moduleKey: 'feature_custom_domain' },
+      { label: 'Custom Domain',       icon: Globe,    path: '/agency/domain-settings', moduleKey: 'feature_custom_domain', accountTypeIn: ['RESELLER'] },
+      // The Reseller's own public landing page + pricing (chatbot_api/routes/resellerSite.js).
+      { label: 'Landing Page',        icon: PanelsTopLeft, path: '/agency/landing-page', accountTypeIn: ['RESELLER'] },
     ]},
     { section: 'Users & Billing', items: [
       { label: 'User Manager',        icon: Users,    path: '/reseller/users', accountTypeIn: ['RESELLER'] },
       { label: 'Team Members',        icon: Users,    path: '/agency/team' },
       { label: 'Team Roles & Permissions', icon: KeyRound, path: '/roles' },
-      { label: 'Audit Log',                icon: ScrollText, path: '/admin/audit-log' },
-      { label: 'Packages & Modules',  icon: Package,  path: '/agency/packages' },
-      { label: 'Affiliate Program',   icon: Gift,     path: '/affiliate', accountTypeIn: ['RESELLER', 'DIRECT_CUSTOMER'] },
+      // Resellers only — an End User owner is also role RESELLER in code (chatbot_api/routes/auditLog.js).
+      { label: 'Audit Log',                icon: ScrollText, path: '/admin/audit-log', accountTypeIn: ['RESELLER'] },
+      { label: 'Packages & Modules',  icon: Package,  path: '/agency/packages', accountTypeIn: ['RESELLER'] },
+      { label: 'Customer Payments',   icon: CreditCard, path: '/agency/payments', accountTypeIn: ['RESELLER'] },
+      // The Reseller's own Meta / TikTok apps — its customers connect channels through them.
+      { label: 'Developer Apps',      icon: KeyRound,  path: '/settings/developer-apps', accountTypeIn: ['RESELLER'] },
     ]},
   ],
   // User (a Reseller's team member) gets every day-to-day operational menu
@@ -109,6 +130,7 @@ const NAV_CONFIG = {
     { section: 'Main', items: [
       { label: 'Dashboard',        icon: LayoutDashboard, path: '/agency' },
       { label: 'Inbox',             icon: MessageSquare, path: '/inbox',          moduleKey: 'feature_live_chat' },
+      { label: 'Inbox Insights',    icon: Timer, path: '/inbox/insights',          moduleKey: 'feature_live_chat' },
       { label: 'Subscribers',      icon: Users,         path: '/contacts',       moduleKey: 'feature_subscribers' },
       { label: 'Automation',      icon: Bot,           path: '/bots',           moduleKey: 'feature_bot_manager' },
       { label: 'Post Publishing',  icon: FileText,      path: '/social-posting' },
@@ -120,7 +142,8 @@ const NAV_CONFIG = {
     ]},
     { section: 'Control Panel', items: [
       { label: 'Team Members',     icon: Users,    path: '/team' },
-      { label: 'Affiliate Program', icon: Gift,    path: '/affiliate', accountTypeIn: ['RESELLER', 'DIRECT_CUSTOMER'] },
+      // Only with the developer_apps.manage team permission, on the Platform's / a Reseller's team.
+      { label: 'Developer Apps',   icon: KeyRound, path: '/settings/developer-apps', userFlag: 'canManageDeveloperApps' },
     ]},
   ],
 };
@@ -131,7 +154,47 @@ const NAV_CONFIG = {
 // "RESELLER"-role account is a Reseller (whether or not it has sub-clients
 // of its own — see routes/admin.js's isReseller capability flag), and a
 // "USER"-role account is a User (a team member).
-const ROLE_SUBTITLES = { ADMIN: 'Super Admin', RESELLER: 'Reseller Portal', USER: 'User Portal' };
+const KIND_SUBTITLES = { SUPER_ADMIN: 'Super Admin', RESELLER: 'Reseller Portal', END_USER: 'Workspace', TEAM_MEMBER: 'Team Member' };
+
+/** The brand in the sidebar header: the uploaded logo, else icon + name. `compact` = collapsed sidebar. */
+function BrandMark({ compact = false, size = 36, subtitle = '' }) {
+  const { brandName, logoUrl, logoIconUrl } = useBranding();
+  if (compact) {
+    return logoIconUrl
+      ? <img src={assetUrl(logoIconUrl)} alt={brandName} style={{ width: size, height: size, objectFit: 'contain', borderRadius: 8, flexShrink: 0 }} />
+      : <DefaultMark size={size} />;
+  }
+  if (logoUrl) {
+    return <img src={assetUrl(logoUrl)} alt={brandName} style={{ maxHeight: size, maxWidth: 170, objectFit: 'contain', display: 'block' }} />;
+  }
+  return (
+    <>
+      {logoIconUrl
+        ? <img src={assetUrl(logoIconUrl)} alt="" style={{ width: size, height: size, objectFit: 'contain', borderRadius: 8, flexShrink: 0 }} />
+        : <DefaultMark size={size} />}
+      <div style={{ minWidth: 0 }}>
+        <div className="sidebar-logo-text" style={{ fontSize: '0.98rem', fontWeight: 800, letterSpacing: '-0.3px', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 150 }}>
+          {brandName}
+        </div>
+        {subtitle && (
+          <div className="sidebar-logo-sub" style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>{subtitle}</div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function DefaultMark({ size }) {
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: 10, flexShrink: 0,
+      background: 'linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ffffff', boxShadow: '0 2px 8px var(--primary-ring)',
+    }}>
+      <Sparkles size={Math.round(size / 2)} />
+    </div>
+  );
+}
 
 export default function Sidebar() {
   const { user, hasModule } = useAuth();
@@ -140,7 +203,8 @@ export default function Sidebar() {
 
   const role        = user?.role || 'USER';
   const rawSections = NAV_CONFIG[role] || [];
-  const subtitle    = ROLE_SUBTITLES[role] || '';
+  const subtitle    = KIND_SUBTITLES[accountKind(user)] || '';
+  const { brandName } = useBranding();
 
   const accountType = user?.accountType;
   const passesAccountType = (accountTypeIn) => !accountTypeIn || accountTypeIn.includes(accountType);
@@ -150,16 +214,26 @@ export default function Sidebar() {
       .filter((sec) => passesAccountType(sec.accountTypeIn))
       .map((sec) => ({
         ...sec,
-        items: sec.items.filter((item) => (!item.moduleKey || hasModule(item.moduleKey)) && passesAccountType(item.accountTypeIn)),
+        items: sec.items.filter((item) => (!item.moduleKey || hasModule(item.moduleKey)) && passesAccountType(item.accountTypeIn) && (!item.userFlag || user?.[item.userFlag])),
       }))
       .filter((sec) => sec.items.length > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawSections, hasModule, accountType]);
+  }, [rawSections, hasModule, accountType, user]);
 
-  const isActive = (path) => {
-    if (path === '/admin' || path === '/agency') return location.pathname === path;
-    return location.pathname.startsWith(path);
-  };
+  // An item is active on its own page and the pages under it ("/contacts/…"),
+  // but when another menu item matches more specifically ("/inbox/insights"
+  // vs "/inbox") only that one is highlighted.
+  const activePath = useMemo(() => {
+    const here = location.pathname;
+    const matches = (path) => {
+      if (path === '/admin' || path === '/agency') return here === path;
+      return here.startsWith(path);
+    };
+    const matching = sections.flatMap((sec) => sec.items.map((item) => item.path)).filter(matches);
+    return matching.sort((a, b) => b.length - a.length)[0] || null;
+  }, [sections, location.pathname]);
+
+  const isActive = (path) => path === activePath;
 
   // ── 1. Pop Bar Overlay Drawer (When in Inbox or when pop bar triggered) ──
   if (isInbox || popupNavOpen) {
@@ -223,29 +297,7 @@ export default function Sidebar() {
               title="Visit Landing Page"
               onClick={closePopupNav}
             >
-              <div
-                style={{
-                  width: 34,
-                  height: 34,
-                  borderRadius: 8,
-                  background: 'linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: '#ffffff',
-                  boxShadow: '0 2px 6px var(--primary-ring)',
-                }}
-              >
-                <Sparkles size={17} />
-              </div>
-              <div>
-                <div style={{ fontSize: '0.92rem', fontWeight: 800, color: 'var(--text-primary)' }}>
-                  Nexa Chatbot
-                </div>
-                <div style={{ fontSize: '0.68rem', color: 'var(--text-tertiary)' }}>
-                  {subtitle}
-                </div>
-              </div>
+              <BrandMark size={34} subtitle={subtitle} />
             </Link>
 
             <button
@@ -329,7 +381,7 @@ export default function Sidebar() {
 
           {/* Drawer Footer */}
           <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', background: 'var(--bg-input)', fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'center' }}>
-            Nexa Chatbot • Enterprise Suite
+            {brandName}
           </div>
         </aside>
       </>
@@ -347,12 +399,12 @@ export default function Sidebar() {
         borderRight: '1px solid var(--border)',
       }}
     >
-      {/* Brand Logo Header — fixed to 56px to match .top-bar's height so the
+      {/* Brand Logo Header — the same --topbar-height as .top-bar so the
           sidebar header and top bar form one continuous, aligned strip. */}
       <div
         className="sidebar-logo"
         style={{
-          height: 56,
+          height: 'var(--topbar-height)',
           padding: collapsed ? '0 12px' : '0 16px',
           justifyContent: collapsed ? 'center' : 'space-between',
           borderBottom: '1px solid var(--border)',
@@ -372,33 +424,7 @@ export default function Sidebar() {
           }}
           title="Visit Landing Page"
         >
-          <div
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: 10,
-              background: 'linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#ffffff',
-              boxShadow: '0 2px 8px var(--primary-ring)',
-              flexShrink: 0,
-            }}
-          >
-            <Sparkles size={18} />
-          </div>
-
-          {!collapsed && (
-            <div>
-              <div className="sidebar-logo-text" style={{ fontSize: '0.98rem', fontWeight: 800, letterSpacing: '-0.3px', color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
-                Nexa Chatbot
-              </div>
-              <div className="sidebar-logo-sub" style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>
-                {subtitle}
-              </div>
-            </div>
-          )}
+          <BrandMark compact={collapsed} subtitle={subtitle} />
         </Link>
 
         {!collapsed && (
@@ -500,7 +526,7 @@ export default function Sidebar() {
       >
         {!collapsed ? (
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 500 }}>
-            Nexa Chatbot v2.0
+            {brandName}
           </div>
         ) : null}
 

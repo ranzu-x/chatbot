@@ -1,4 +1,6 @@
 import Stripe from "stripe";
+import { periodEndFor, invalidateSubscriptionCache } from "../utils/subscriptionStatus.js";
+import { priceForCheckout, recordCouponRedemption } from "../utils/checkoutPricing.js";
 import pool from "../db.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
@@ -77,15 +79,63 @@ export async function ensureStripePrice(pkg) {
 }
 
 // ─── CREATE STRIPE CHECKOUT SESSION ──────────────────────────────────────────
-export async function createCheckoutSession({ agencyId, userId, packageId, userEmail, userName, successUrl, cancelUrl }) {
-  const [pkgRows] = await pool.query("SELECT * FROM packages WHERE id = ? AND is_public = 1", [packageId]);
-  if (!pkgRows.length) throw new Error("Package not found");
+/**
+ * A package a signed-in customer may buy: any public, active package — or
+ * their workspace's CURRENT package even when private (Super-Admin-assigned
+ * plans must be renewable too, or an expired private plan could never be paid).
+ */
+export async function loadPurchasablePackage(packageId, agencyId) {
+  const [[pkg]] = await pool.query(
+    `SELECT p.* FROM packages p
+     WHERE p.id = ? AND p.is_active = 1
+       AND (p.is_public = 1 OR p.id = (SELECT package_id FROM agencies WHERE id = ?))`,
+    [packageId, agencyId || 0]
+  );
+  if (!pkg) {
+    const err = new Error("Package not found");
+    err.status = 404;
+    throw err;
+  }
+  return pkg;
+}
 
-  const pkg = pkgRows[0];
+/** The checkout's discount as a single-use Stripe coupon (amount off, USD). */
+export async function stripeDiscountsFor(quote, label) {
+  if (!stripe || !quote?.discountAmount || quote.discountAmount <= 0) return undefined;
+  const coupon = await stripe.coupons.create({
+    amount_off: Math.round(quote.discountAmount * 100),
+    currency: "usd",
+    duration: quote.recurring ? "forever" : "once",
+    max_redemptions: 1,
+    name: String(label || "Discount").slice(0, 40),
+  });
+  return [{ coupon: coupon.id }];
+}
 
-  // If free package ($0), instantly assign without Stripe redirect
+export async function createCheckoutSession({ agencyId, userId, packageId, userEmail, userName, successUrl, cancelUrl, couponCode = null }) {
+  const pkg = await loadPurchasablePackage(packageId, agencyId);
+  const quote = await priceForCheckout({ pkg, userId, agencyId, email: userEmail, couponCode });
+  if (quote.couponError) {
+    const err = new Error(quote.couponError);
+    err.status = 400;
+    throw err;
+  }
+
+  // Free package ($0) → assigned at once, no payment.
   if (Number(pkg.price) === 0 || pkg.billing_cycle === "free") {
     await assignPackageLocally({ agencyId, userId, packageId, notes: `Switched to Free plan (${pkg.name})` });
+    return { isFree: true, url: successUrl || "/agency/plan" };
+  }
+
+  // Fully discounted (e.g. a 100% coupon) → one billing period, no payment.
+  if (quote.finalPrice <= 0) {
+    await assignPackageLocally({ agencyId, userId, packageId, notes: `${pkg.name} — fully discounted${quote.coupon ? ` (coupon ${quote.coupon.code})` : ""}` });
+    const [inv] = await pool.query(
+      `INSERT INTO invoices (agency_id, user_id, package_id, amount_paid, currency, status, discount_amount, coupon_id, paid_at)
+       VALUES (?, ?, ?, 0, 'USD', 'PAID', ?, ?, NOW())`,
+      [agencyId || null, userId || null, packageId, quote.discountAmount, quote.coupon?.id || null]
+    );
+    await recordCouponRedemption({ couponId: quote.coupon?.id, agencyId, email: userEmail, invoiceId: inv.insertId, discountAmount: quote.discountAmount });
     return { isFree: true, url: successUrl || "/agency/plan" };
   }
 
@@ -100,12 +150,14 @@ export async function createCheckoutSession({ agencyId, userId, packageId, userE
       stripeSubId: `mock_sub_${Date.now()}`,
       notes: `Activated in Dev/Test Mode (${pkg.name})`,
     });
+    await recordCouponRedemption({ couponId: quote.coupon?.id, agencyId, email: userEmail, discountAmount: quote.discountAmount });
     return { isSimulated: true, url: `${successUrl || "/agency/plan"}?status=success&simulated=true` };
   }
 
   // Live Stripe Checkout
   const stripeCustomerId = await getOrCreateStripeCustomer({ agencyId, userId, email: userEmail, name: userName });
   const priceId = await ensureStripePrice(pkg);
+  const discounts = await stripeDiscountsFor(quote, quote.coupon ? `Coupon ${quote.coupon.code}` : "Discount");
 
   const session = await stripe.checkout.sessions.create({
     customer: stripeCustomerId,
@@ -116,6 +168,7 @@ export async function createCheckoutSession({ agencyId, userId, packageId, userE
         quantity: 1,
       },
     ],
+    ...(discounts ? { discounts } : {}),
     mode: pkg.billing_cycle === "lifetime" ? "payment" : "subscription",
     success_url: `${successUrl || "http://localhost:5173/billing/success"}?session_id={CHECKOUT_SESSION_ID}&pkg_id=${packageId}`,
     cancel_url: cancelUrl || "http://localhost:5173/agency/plan",
@@ -124,6 +177,9 @@ export async function createCheckoutSession({ agencyId, userId, packageId, userE
       userId: String(userId || ""),
       packageId: String(packageId),
       packageName: pkg.name,
+      couponId: quote.coupon ? String(quote.coupon.id) : "",
+      discountAmount: String(quote.discountAmount || 0),
+      email: userEmail || "",
     },
     subscription_data: pkg.billing_cycle === "lifetime" ? undefined : {
       metadata: {
@@ -173,30 +229,49 @@ export async function assignPackageLocally({
   stripeSubId = null,
   stripePriceId = null,
   notes = null,
+  periodEnd, // Date | null — default: one billing cycle (null for free / lifetime)
 }) {
   const [pkgRows] = await pool.query("SELECT * FROM packages WHERE id = ?", [packageId]);
   if (!pkgRows.length) return;
   const pkg = pkgRows[0];
 
+  // Buying the same plan again before it ends (a renewal) adds a full cycle
+  // after the current end date — paid days are never lost.
+  const endFor = async (column, id) => {
+    if (periodEnd !== undefined) return periodEnd;
+    const [[current]] = await pool.query(
+      `SELECT package_id, COALESCE(expires_at, current_period_end) AS ends_at FROM subscriptions
+       WHERE ${column} = ? AND status = 'ACTIVE' ORDER BY id DESC LIMIT 1`,
+      [id]
+    );
+    const from = current && Number(current.package_id) === Number(packageId) && current.ends_at && new Date(current.ends_at) > new Date()
+      ? new Date(current.ends_at)
+      : new Date();
+    return periodEndFor(pkg.billing_cycle, from);
+  };
+
+  const insert = async (column, id) => {
+    const end = await endFor(column, id);
+    await pool.query(`UPDATE subscriptions SET status = 'CANCELLED' WHERE ${column} = ? AND status = 'ACTIVE'`, [id]);
+    await pool.query(
+      `INSERT INTO subscriptions (
+        ${column}, package_id, stripe_customer_id, stripe_subscription_id, stripe_price_id, status, started_at,
+        current_period_start, current_period_end, expires_at, notes
+      ) VALUES (?, ?, ?, ?, ?, 'ACTIVE', NOW(), NOW(), ?, ?, ?)`,
+      [id, packageId, stripeCustomerId, stripeSubId, stripePriceId, end, end, notes || `Subscribed to ${pkg.name}`]
+    );
+  };
+
   if (agencyId) {
     await pool.query("UPDATE agencies SET package_id = ? WHERE id = ?", [packageId, agencyId]);
-    await pool.query("UPDATE subscriptions SET status = 'CANCELLED' WHERE agency_id = ? AND status = 'ACTIVE'", [agencyId]);
-    await pool.query(
-      `INSERT INTO subscriptions (
-        agency_id, package_id, stripe_customer_id, stripe_subscription_id, stripe_price_id, status, started_at, notes
-      ) VALUES (?, ?, ?, ?, ?, 'ACTIVE', NOW(), ?)`,
-      [agencyId, packageId, stripeCustomerId, stripeSubId, stripePriceId, notes || `Subscribed to ${pkg.name}`]
-    );
+    await insert("agency_id", agencyId);
   }
-
   if (userId) {
     await pool.query("UPDATE users SET package_id = ? WHERE id = ?", [packageId, userId]);
-    await pool.query("UPDATE subscriptions SET status = 'CANCELLED' WHERE user_id = ? AND status = 'ACTIVE'", [userId]);
-    await pool.query(
-      `INSERT INTO subscriptions (
-        user_id, package_id, stripe_customer_id, stripe_subscription_id, stripe_price_id, status, started_at, notes
-      ) VALUES (?, ?, ?, ?, ?, 'ACTIVE', NOW(), ?)`,
-      [userId, packageId, stripeCustomerId, stripeSubId, stripePriceId, notes || `Subscribed to ${pkg.name}`]
-    );
+    await insert("user_id", userId);
   }
+  invalidateSubscriptionCache(); // the workspace may have just left read-only mode
+  // A Reseller package makes the workspace a Reseller; a Reseller never goes back (utils/accountTypeRules.js).
+  const { applyPackageAccountType } = await import("../utils/accountTypeRules.js");
+  return applyPackageAccountType({ agencyId, userId: agencyId ? null : userId, packageId });
 }

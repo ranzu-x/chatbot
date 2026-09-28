@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { packageAPI, billingAPI } from '../../services/api';
 import { useAuth } from '../../Provider/AuthContext';
+import CheckoutDialog from '../../Components/Billing/CheckoutDialog';
+import ResellerPlansPanel from '../../Components/Billing/ResellerPlansPanel';
 import {
   Zap,
   CheckCircle2,
@@ -25,15 +27,16 @@ import {
  * unchanged from the old MyPlanPage.jsx, just without its own AppLayout/page
  * chrome since it now renders as one tab inside MyAccountPage.jsx.
  */
-export default function BillingTab() {
-  const { refreshEntitlements } = useAuth();
+function PlatformBillingTab() {
+  const { refreshEntitlements, user, refreshUser } = useAuth();
+  const [checkoutPlan, setCheckoutPlan] = useState(null); // plan being bought / renewed (CheckoutDialog)
   const [entitlements, setEntitlements] = useState(null);
   const [modulesRegistry, setModulesRegistry] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [availablePlans, setAvailablePlans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
-  const [subscribingId, setSubscribingId] = useState(null);
+  const subscribingId = null; // purchases now go through CheckoutDialog
   const [portalLoading, setPortalLoading] = useState(false);
   const [toast, setToast] = useState(null);
 
@@ -44,6 +47,12 @@ export default function BillingTab() {
 
   useEffect(() => {
     loadData();
+    const params = new URLSearchParams(window.location.search);
+    const payment = params.get('payment');
+    if (payment === 'success') { showToast('Payment received — your plan is being activated'); refreshUser?.(); refreshEntitlements?.(); }
+    else if (payment === 'fail') showToast('The payment failed — nothing was charged', 'error');
+    else if (payment === 'cancel') showToast('Payment cancelled', 'error');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadData = async () => {
@@ -66,29 +75,10 @@ export default function BillingTab() {
     }
   };
 
-  const handleSubscribe = async (plan) => {
-    setSubscribingId(plan.id);
-    try {
-      const res = await billingAPI.createCheckout({
-        packageId: plan.id,
-        successUrl: window.location.origin + '/billing/success',
-        cancelUrl: window.location.href,
-      });
-
-      if (res.data?.url) {
-        window.location.href = res.data.url;
-      } else if (res.data?.isFree || res.data?.isSimulated) {
-        showToast(`Successfully switched to ${plan.name}!`);
-        setUpgradeModalOpen(false);
-        refreshEntitlements();
-        loadData();
-      }
-    } catch (err) {
-      console.error(err);
-      showToast(err.response?.data?.message || 'Failed to initiate checkout', 'error');
-    } finally {
-      setSubscribingId(null);
-    }
+  // Every purchase / renewal goes through CheckoutDialog: payment method, coupon, discounted price.
+  const handleSubscribe = (plan) => {
+    setUpgradeModalOpen(false);
+    setCheckoutPlan(plan);
   };
 
   const handleOpenPortal = async () => {
@@ -217,6 +207,11 @@ export default function BillingTab() {
               </h1>
               <p style={{ fontSize: '0.8rem', color: '#94a3b8', margin: 0 }}>
                 Billing cycle: <strong style={{ color: '#ffffff' }}>{pkg.billingCycle}</strong>
+                {user?.subscription?.endsAt && (
+                  <> · {user.subscription.expired ? 'Expired on' : 'Active until'}{' '}
+                    <strong style={{ color: user.subscription.expired ? '#fca5a5' : '#ffffff' }}>{new Date(user.subscription.endsAt).toLocaleDateString(undefined, { dateStyle: 'medium' })}</strong>
+                  </>
+                )}
               </p>
             </div>
 
@@ -229,6 +224,15 @@ export default function BillingTab() {
                   {pkg.price > 0 ? `per ${pkg.billingCycle}` : 'Included Plan'}
                 </span>
               </div>
+              {pkg.id > 0 && pkg.price > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setCheckoutPlan({ id: pkg.id, name: pkg.name, billingCycle: pkg.billingCycle })}
+                  style={{ padding: '8px 16px', borderRadius: 8, background: user?.subscription?.expired ? '#f87171' : '#ffffff', color: '#0f172a', border: 'none', fontWeight: 800, fontSize: '0.78rem', cursor: 'pointer' }}
+                >
+                  Renew
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setUpgradeModalOpen(true)}
@@ -610,6 +614,19 @@ export default function BillingTab() {
           </div>
         </div>
       )}
+      {checkoutPlan && (
+        <CheckoutDialog
+          plan={checkoutPlan}
+          onClose={() => setCheckoutPlan(null)}
+          onDone={() => { setCheckoutPlan(null); refreshUser?.(); refreshEntitlements?.(); loadData(); }}
+        />
+      )}
     </div>
   );
+}
+
+/** A reseller's customer pays its reseller's plans; everyone else the platform's. */
+export default function BillingTab() {
+  const { user } = useAuth();
+  return user?.accountType === 'RESELLER_CUSTOMER' ? <ResellerPlansPanel /> : <PlatformBillingTab />;
 }

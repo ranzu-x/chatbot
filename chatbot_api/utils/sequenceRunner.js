@@ -1,9 +1,14 @@
 import pool from "../db.js";
 import { sendMsg, normalizeListMenuData, replaceVariables } from "./flowEngine.js";
 import { loadApprovedTemplate, buildTemplateSend } from "./templateMessage.js";
+import { loadApprovedMessengerTemplate, buildMessengerUtilitySend } from "./messengerUtility.js";
 import { resolveNextNodeId } from "./flowGraph.js";
 import { canSendNow } from "./messagingWindow.js";
+import { warmWorkspaceVariables } from "./workspaceVariables.js";
+import { attachContactFields } from "./contactFields.js";
 import { logBotError } from "./botLogger.js";
+import { isWorkspaceExpired } from "./subscriptionStatus.js";
+import { lockedJob } from "./jobLock.js";
 
 /**
  * Sequence Messages runner — walks a Sequence's own node/edge canvas
@@ -84,6 +89,8 @@ async function markComplete(subscriberId) {
  * (this is a real WhatsApp constraint, not a design choice: an unapproved
  * free-form message can't be sent outside the window regardless of content). */
 async function sendSequenceContent(node, contact, agencyId, conversation, integration, useTemplate) {
+  await warmWorkspaceVariables(agencyId); // {{var.key}} (utils/workspaceVariables.js)
+  await attachContactFields(agencyId, contact); // {{field.key}} (utils/contactFields.js)
   const flowIdForLogs = null; // sequences have no `flow_id` — logBotError's flowId field is optional
   const common = { flowId: flowIdForLogs, nodeId: node.id, contactIdentifier: contact?.external_id || contact?.phone || null };
 
@@ -169,6 +176,16 @@ async function sendSequenceContent(node, contact, agencyId, conversation, integr
       if (!tpl) throw new Error("Message Template: the selected template is missing, not approved, or belongs to another WhatsApp account");
       const send = buildTemplateSend(tpl, data.params, (t) => replaceVars(replaceVariables(t, {}, contact || {}), contact));
       await sendMsg(agencyId, conversation, send.bodyText, "TEXT", integration, { ...common, ...send.extraFields });
+      return;
+    }
+    case "messengerTemplate": {
+      // Utility Template element (utils/messengerUtility.js) — Messenger only.
+      if ((integration?.platform || "").toUpperCase() !== "FACEBOOK") return;
+      const tpl = await loadApprovedMessengerTemplate(agencyId, integration.id, data.messengerTemplateId);
+      if (!tpl) throw new Error("Utility Template: the selected template is missing, not approved, or belongs to another Page");
+      const send = buildMessengerUtilitySend(tpl, data.params, (t) => replaceVars(replaceVariables(t, {}, contact || {}), contact));
+      const message = await sendMsg(agencyId, conversation, send.bodyText, "TEXT", integration, { ...common, ...send.extraFields });
+      if (!message?.external_msg_id) throw new Error(message?.sendError || "Messenger did not accept the Utility template");
       return;
     }
     case "text":
@@ -341,7 +358,7 @@ async function processSubscriber(sub) {
 export async function processDueSequenceSteps() {
   try {
     const [dueSubscribers] = await pool.query(
-      `SELECT ss.* FROM sequence_subscribers ss
+      `SELECT ss.*, s.agency_id AS seq_agency_id FROM sequence_subscribers ss
        JOIN sequences s ON s.id = ss.sequence_id
        WHERE ss.status = 'ACTIVE' AND ss.next_run_at IS NOT NULL AND ss.next_run_at <= NOW() AND s.is_active = 1
        LIMIT 50`
@@ -349,6 +366,11 @@ export async function processDueSequenceSteps() {
 
     for (const sub of dueSubscribers) {
       try {
+        // Expired plan → nothing is sent; the step waits (checked again in 15 min) until the plan is renewed.
+        if (await isWorkspaceExpired(sub.seq_agency_id)) {
+          await pool.query("UPDATE sequence_subscribers SET next_run_at = NOW() + INTERVAL 15 MINUTE WHERE id = ?", [sub.id]);
+          continue;
+        }
         const claimed = await claimSubscriber(sub);
         if (!claimed) continue; // another tick/instance already grabbed this one
         await processSubscriber(sub);
@@ -364,5 +386,5 @@ export async function processDueSequenceSteps() {
 /** Start 60-second interval background timer for Sequence Messages. */
 export function startSequenceScheduler() {
   console.log("⏱️  Sequence Messages scheduler started (runs every 60 seconds)");
-  setInterval(processDueSequenceSteps, 60000);
+  setInterval(lockedJob("sequences", processDueSequenceSteps), 60000);
 }

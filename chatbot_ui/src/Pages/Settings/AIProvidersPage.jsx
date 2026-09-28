@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import AppLayout from '../../Layout/AppLayout';
 import { aiProviderAPI } from '../../services/api';
-import { notify } from '../../utils/alerts';
+import { notify, alert } from '../../utils/alerts';
 import {
   Sparkles, KeyRound, CheckCircle2, XCircle, AlertTriangle,
   Loader2, RefreshCw, Shield,
@@ -243,8 +243,8 @@ export default function AIProvidersPage() {
       .finally(() => { setTestingId(null); fetchProviders(); });
   };
 
-  const handleDisconnect = (providerId) => {
-    if (!window.confirm('Remove this provider\'s saved API key? Agents relying on it as their only option will stop replying until another provider is connected.')) return;
+  const handleDisconnect = async (providerId) => {
+    if (!(await alert.ask('Remove this provider\'s saved API key? Agents relying on it as their only option will stop replying until another provider is connected.'))) return;
     aiProviderAPI.remove(providerId)
       .then(() => { notify.success('Disconnected'); fetchProviders(); })
       .catch(() => notify.error('Failed to disconnect'));

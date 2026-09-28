@@ -2,6 +2,7 @@ import pool from "../db.js";
 import fs from "fs";
 import path from "path";
 import axios from "axios";
+import { META_API_VERSION } from "./metaApi.js";
 
 const AVATAR_DIR = path.join(process.cwd(), "uploads", "avatars");
 
@@ -91,7 +92,7 @@ export async function fetchMetaUserProfile(platform, externalId, accessToken) {
   try {
     if (platform === "FACEBOOK") {
       const res = await axios.get(
-        `https://graph.facebook.com/v21.0/${externalId}?fields=first_name,last_name,name,profile_pic,locale,timezone,gender&access_token=${accessToken}`,
+        `https://graph.facebook.com/${META_API_VERSION}/${externalId}?fields=first_name,last_name,name,profile_pic,locale,timezone,gender&access_token=${accessToken}`,
         { timeout: 6000 }
       );
       const name = res.data?.name || `${res.data?.first_name || ""} ${res.data?.last_name || ""}`.trim() || null;
@@ -109,7 +110,7 @@ export async function fetchMetaUserProfile(platform, externalId, accessToken) {
       return { name, avatar, systemFields };
     } else if (platform === "INSTAGRAM") {
       const res = await axios.get(
-        `https://graph.facebook.com/v21.0/${externalId}?fields=name,username,profile_pic,is_verified_user,follower_count&access_token=${accessToken}`,
+        `https://graph.facebook.com/${META_API_VERSION}/${externalId}?fields=name,username,profile_pic,is_verified_user,follower_count&access_token=${accessToken}`,
         { timeout: 6000 }
       );
       const name = res.data?.name || res.data?.username || null;

@@ -8,6 +8,7 @@
  */
 import pool from "../db.js";
 import { emitToAgency, emitToTicket } from "./socket.js";
+import { lockedJob } from "./jobLock.js";
 
 const AUTO_CLOSE_AFTER_DAYS = 5;
 const INTERVAL_MS = 60 * 1000;
@@ -41,6 +42,6 @@ async function runOnce() {
 }
 
 export function startSupportDeskScheduler() {
-  setInterval(runOnce, INTERVAL_MS);
+  setInterval(lockedJob("support-desk", runOnce), INTERVAL_MS);
   console.log("🎫 Support Desk auto-close scheduler started (runs every 60 seconds)");
 }

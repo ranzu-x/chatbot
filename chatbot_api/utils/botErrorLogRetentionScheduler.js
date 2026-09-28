@@ -1,4 +1,5 @@
 import pool from "../db.js";
+import { lockedJob } from "./jobLock.js";
 
 // Bot error logs are diagnostic, not billing/audit records — keeping them
 // indefinitely just grows bot_error_logs forever for no benefit. Purge
@@ -24,6 +25,6 @@ export async function purgeOldBotErrorLogs() {
 export function startBotErrorLogRetentionScheduler() {
   const intervalMs = 24 * 60 * 60 * 1000; // once a day
   console.log(`🧹 Bot Error Log Retention Scheduler started (runs daily, purges entries older than ${RETENTION_DAYS} days)`);
-  purgeOldBotErrorLogs();
-  setInterval(purgeOldBotErrorLogs, intervalMs);
+  lockedJob("bot-error-log-retention", purgeOldBotErrorLogs)();
+  setInterval(lockedJob("bot-error-log-retention", purgeOldBotErrorLogs), intervalMs);
 }

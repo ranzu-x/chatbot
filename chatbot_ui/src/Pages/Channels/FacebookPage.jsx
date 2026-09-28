@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
+import useUrlState from '../../hooks/useUrlState';
 import AppLayout from '../../Layout/AppLayout';
 import ChannelBreadcrumb from '../../Components/Common/ChannelBreadcrumb';
 import { channelAPI } from '../../services/api';
-import useFacebookSDK from '../../hooks/useFacebookSDK';
-import { notify, handleLimitError } from '../../utils/alerts';
+import useFacebookSDK, { META_API_VERSION } from '../../hooks/useFacebookSDK';
+import { notify, handleLimitError, alert } from '../../utils/alerts';
 import { useAuth } from '../../Provider/AuthContext';
 import {
   Facebook, MessageSquare, Heart, EyeOff, Plus, CheckCircle2,
@@ -11,6 +12,10 @@ import {
   MessageCircle, Radio, Tag, Filter, Check, Copy, AlertTriangle,
   ClipboardList, XCircle, Circle, Globe, X, ArrowLeft, ArrowRight,
 } from 'lucide-react';
+
+// Extra Facebook Login permissions: pages_utility_messaging lets the Page send
+// Messenger Utility templates (Bot Manager → Message Templates).
+const FB_EXTRA_SCOPES = import.meta.env.VITE_FB_EXTRA_SCOPES ?? 'pages_utility_messaging';
 
 // ─── Facebook Login Button ─────────────────────────────────────────
 function FBLoginButton({ onClick, loading, disabled }) {
@@ -55,7 +60,7 @@ export default function FacebookPage({ embedded = false }) {
   const [manualSaving, setManualSaving] = useState(false);
 
   // Connect flow: 'list' | 'choose_method' | 'oauth' | 'token'
-  const [pagesView, setPagesView] = useState('list');
+  const [pagesView, setPagesView] = useUrlState('view', 'list', { allowed: ['list', 'oauth', 'token'] });
   const [quickToken, setQuickToken] = useState('');
   const [quickConnecting, setQuickConnecting] = useState(false);
 
@@ -95,7 +100,9 @@ export default function FacebookPage({ embedded = false }) {
         showToast('Facebook login was cancelled or failed', 'error');
       }
     }, {
-      scope: 'pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_manage_engagement,pages_manage_posts,business_management',
+      // pages_utility_messaging = Messenger Utility templates. Set VITE_FB_EXTRA_SCOPES
+      // (comma-separated, may be empty) if Facebook ever reports "Invalid Scopes".
+      scope: ['pages_show_list,pages_messaging,pages_read_engagement,pages_manage_metadata,pages_manage_engagement,pages_manage_posts,business_management', FB_EXTRA_SCOPES].filter(Boolean).join(','),
       return_scopes: true,
       auth_type: 'rerequest',
     });
@@ -126,7 +133,7 @@ export default function FacebookPage({ embedded = false }) {
             if (fbRes && !fbRes.error && Array.isArray(fbRes.data)) {
               pages = fbRes.data.map(p => ({
                 ...p,
-                profile_picture_url: p.picture?.data?.url || (p.id ? `https://graph.facebook.com/v21.0/${p.id}/picture?type=large` : null),
+                profile_picture_url: p.picture?.data?.url || (p.id ? `https://graph.facebook.com/${META_API_VERSION}/${p.id}/picture?type=large` : null),
               }));
             }
             resolve();
@@ -216,7 +223,7 @@ export default function FacebookPage({ embedded = false }) {
   };
 
   const handleDeletePage = async (id) => {
-    if (!window.confirm('Disconnect this Facebook Page?')) return;
+    if (!(await alert.ask('Disconnect this Facebook Page?'))) return;
     try {
       await channelAPI.deleteFacebook(id);
       showToast('Page disconnected');

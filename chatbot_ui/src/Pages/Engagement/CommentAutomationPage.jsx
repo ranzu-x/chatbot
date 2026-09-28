@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import useUrlState from '../../hooks/useUrlState';
 import { useNavigate } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
 import { integrationAPI } from '../../services/api';
@@ -16,7 +17,7 @@ export default function CommentAutomationPage() {
   const navigate = useNavigate();
   const [integrations, setIntegrations] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedId, setSelectedId] = useState(null);
+  const [selectedId, setSelectedId] = useUrlState('account', null, { type: 'number' });
   const [search, setSearch] = useState('');
 
   useEffect(() => {
@@ -27,7 +28,7 @@ export default function CommentAutomationPage() {
           ['FACEBOOK', 'INSTAGRAM'].includes((i.platform || '').toUpperCase())
         );
         setIntegrations(list);
-        setSelectedId((prev) => prev || list[0]?.id || null);
+        setSelectedId((prev) => (prev && list.some((i) => i.id === prev) ? prev : list[0]?.id || null));
       } catch (err) {
         console.error('Failed to load Facebook/Instagram accounts:', err);
       } finally {
@@ -49,7 +50,7 @@ export default function CommentAutomationPage() {
   const selectedAccount = integrations.find((i) => i.id === selectedId) || null;
 
   return (
-    <AppLayout>
+    <AppLayout hasSubmenu>
       {/* AppLayout's .page-wrapper defaults to height:auto/overflow:visible
           (it only switches to a fixed viewport height in Inbox mode), so an
           explicit height here — matching Bot Manager's own root — is what
@@ -58,48 +59,48 @@ export default function CommentAutomationPage() {
       <div style={{ display: 'flex', height: 'calc(100vh - 60px)', overflow: 'hidden' }}>
 
         {/* Left rail — Facebook/Instagram accounts only */}
-        <div style={{ width: 260, flexShrink: 0, borderRight: '1px solid #e2e8f0', background: '#ffffff', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div style={{ padding: '18px 16px 12px 16px', borderBottom: '1px solid #f1f5f9' }}>
+        <div style={{ width: 260, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--bg-surface)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <div style={{ padding: '18px 16px 12px 16px', borderBottom: '1px solid var(--border)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 3 }}>
-              <div style={{ width: 30, height: 30, borderRadius: 8, background: '#eef2ff', color: '#4338ca', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <div style={{ width: 30, height: 30, borderRadius: 8, background: 'var(--primary-soft)', color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 <MessageSquare size={16} />
               </div>
-              <h1 style={{ margin: 0, fontSize: '1.02rem', fontWeight: 800, color: '#0f172a' }}>Comment Automation</h1>
+              <h1 style={{ margin: 0, fontSize: '1.02rem', fontWeight: 800, color: 'var(--text-primary)' }}>Comment Automation</h1>
             </div>
-            <p style={{ margin: '2px 0 12px 0', fontSize: '0.76rem', color: '#64748b' }}>
+            <p style={{ margin: '2px 0 12px 0', fontSize: '0.76rem', color: 'var(--text-secondary)' }}>
               Auto-reply to post &amp; reel comments on your Facebook Pages and Instagram accounts.
             </p>
             <div style={{ position: 'relative' }}>
-              <Search size={13} color="#94a3b8" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+              <Search size={13} color="var(--text-muted)" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search accounts…"
-                style={{ width: '100%', boxSizing: 'border-box', height: 32, padding: '0 10px 0 28px', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: '0.78rem', color: '#0f172a', outline: 'none' }}
+                style={{ width: '100%', boxSizing: 'border-box', height: 32, padding: '0 10px 0 28px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-input)', fontSize: '0.78rem', color: 'var(--text-primary)', outline: 'none' }}
               />
             </div>
           </div>
 
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 2 }}>
             {loading ? (
-              <div style={{ padding: '24px 8px', textAlign: 'center', fontSize: '0.78rem', color: '#94a3b8' }}>Loading accounts…</div>
+              <div style={{ padding: '24px 8px', textAlign: 'center', fontSize: '0.78rem', color: 'var(--text-muted)' }}>Loading accounts…</div>
             ) : filteredIntegrations.length === 0 ? (
               integrations.length === 0 ? (
                 <div style={{ padding: '18px 12px', textAlign: 'center' }}>
-                  <p style={{ margin: '0 0 10px 0', fontSize: '0.78rem', color: '#64748b', lineHeight: 1.5 }}>
+                  <p style={{ margin: '0 0 10px 0', fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                     No Facebook Page or Instagram account connected yet.
                   </p>
                   <button
                     type="button"
                     onClick={() => navigate('/connect-accounts')}
-                    style={{ width: '100%', height: 32, borderRadius: 8, border: '1px solid #e2e8f0', background: '#f8fafc', color: '#334155', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                    style={{ width: '100%', height: 32, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-hover)', color: 'var(--text-primary)', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
                   >
                     <Radio size={13} /> Connect an account
                   </button>
                 </div>
               ) : (
-                <div style={{ padding: '18px 12px', textAlign: 'center', fontSize: '0.78rem', color: '#94a3b8' }}>No accounts match "{search}"</div>
+                <div style={{ padding: '18px 12px', textAlign: 'center', fontSize: '0.78rem', color: 'var(--text-muted)' }}>No accounts match "{search}"</div>
               )
             ) : (
               filteredIntegrations.map((acc) => {
@@ -115,8 +116,8 @@ export default function CommentAutomationPage() {
                     style={{
                       display: 'flex', alignItems: 'center', gap: 8, padding: '8px 8px', borderRadius: 8,
                       border: 'none', textAlign: 'left', cursor: 'pointer', width: '100%',
-                      background: active ? '#eff6ff' : 'transparent',
-                      boxShadow: active ? 'inset 0 0 0 1px #bfdbfe' : 'none',
+                      background: active ? 'var(--primary-soft)' : 'transparent',
+                      boxShadow: active ? 'inset 0 0 0 1px var(--primary-ring)' : 'none',
                     }}
                   >
                     <span style={{
@@ -127,8 +128,8 @@ export default function CommentAutomationPage() {
                       {isFb ? <Facebook size={14} /> : <Instagram size={14} />}
                     </span>
                     <span style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
-                      <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
-                      <span style={{ fontSize: '0.71rem', color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{handle}</span>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
+                      <span style={{ fontSize: '0.71rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{handle}</span>
                     </span>
                   </button>
                 );
@@ -138,7 +139,7 @@ export default function CommentAutomationPage() {
         </div>
 
         {/* Right panel — Comment Automation for the selected account */}
-        <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', padding: 20, background: '#f8fafc' }}>
+        <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', padding: 20, background: 'var(--bg-base)' }}>
           {selectedAccount ? (
             <CommentAutomationManager
               key={selectedAccount.id}
@@ -147,7 +148,7 @@ export default function CommentAutomationPage() {
               hideAccountSelector
             />
           ) : !loading && integrations.length > 0 ? (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#94a3b8', fontSize: '0.85rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
               Select an account on the left to manage its comment automation.
             </div>
           ) : null}

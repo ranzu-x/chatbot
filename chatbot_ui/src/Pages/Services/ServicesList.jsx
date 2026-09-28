@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import api from '../../services/api';
 import DataTable from "../../Components/Table Components/DataTable";
 import TableActions from "../../Components/Table Components/TableActionButtons";
-import Swal from 'sweetalert2';
+import { alert, toast } from '../../lib/alerts';
 import { FaMicroscope, FaTimesCircle } from 'react-icons/fa';
 
 const ServicesList = () => {
@@ -41,7 +41,7 @@ const ServicesList = () => {
       setServices(filteredData.slice(start, start + limit));
     } catch (error) {
       console.error('Error fetching services:', error);
-      Swal.fire('Error', 'Failed to load services', 'error');
+      alert.error('Error', 'Failed to load services');
     } finally {
       setLoading(false);
     }
@@ -67,15 +67,15 @@ const ServicesList = () => {
     try {
       if (selectedService) {
         await api.put(`/api/v1/services/${selectedService.id}`, data);
-        Swal.fire('Updated!', 'Test/Service updated successfully', 'success');
+        toast.success('Test/Service updated successfully');
       } else {
         await api.post('/api/v1/services', data);
-        Swal.fire('Created!', 'New Test/Service added', 'success');
+        toast.success('New Test/Service added');
       }
       setShowModal(false);
       fetchServices(currentPage, itemsPerPage, searchTerm);
     } catch (error) {
-      Swal.fire('Error', 'Failed to save service', 'error');
+      alert.error('Error', 'Failed to save service');
     }
   };
 

@@ -389,6 +389,14 @@
 .blog-detail__content p { margin: 0 0 1em; }
 .blog-detail__content ul, .blog-detail__content ol { padding-left: 1.6em; margin: 0.5em 0 1em; }
 .blog-detail__content li { margin-bottom: 0.3em; }
+/* Tailwind's reset strips list markers; posts need them back (nested bullets change shape). */
+.blog-detail__content ul { list-style: disc; }
+.blog-detail__content ol { list-style: decimal; }
+.blog-detail__content ul ul, .blog-detail__content ol ul { list-style: circle; margin: 0.3em 0; }
+.blog-detail__content ol ol { list-style: lower-alpha; margin: 0.3em 0; }
+.blog-detail__content li::marker { color: #6366f1; font-weight: 700; }
+/* The editor wraps each list item in a <p>; without this every item gets a paragraph gap. */
+.blog-detail__content li > p { margin: 0; }
 .blog-detail__content blockquote { border-left: 4px solid #6366f1; margin: 1.5em 0; padding: 1em 1.5em; background: rgba(99,102,241,0.04); border-radius: 0 10px 10px 0; color: #475569; font-style: italic; }
 .blog-detail__content pre { background: #1e293b; color: #e2e8f0; padding: 1.2em; border-radius: 10px; overflow-x: auto; margin: 1em 0; font-size: 0.9em; }
 .blog-detail__content code { background: rgba(0,0,0,0.06); padding: 2px 7px; border-radius: 5px; font-size: 0.88em; font-family: monospace; }
@@ -400,6 +408,13 @@
 .blog-detail__content th, .blog-detail__content td { border: 1px solid #e2e8f0; padding: 10px 14px; }
 .blog-detail__content th { background: #f8fafc; font-weight: 700; }
 .blog-detail__content iframe { max-width: 100%; border-radius: 8px; }
+/* Video embeds keep 16:9 at every width (the editor saves a fixed 400px height). */
+.blog-detail__content [data-youtube-video] { margin: 1.5em 0 0.5em; }
+.blog-detail__content [data-youtube-video] iframe,
+.blog-detail__content iframe[src*="youtube"],
+.blog-detail__content iframe[src*="vimeo"] { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; border: 0; }
+/* A wide table scrolls sideways on phones instead of pushing the page wider. */
+@media (max-width: 640px) { .blog-detail__content table { display: block; overflow-x: auto; } }
 
 /* ─── Share Bar ───────────────────────────────────────────────────── */
 .blog-share {

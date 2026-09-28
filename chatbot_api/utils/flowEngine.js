@@ -10,8 +10,16 @@ import { enrollContactsInSequence, unsubscribeContactFromSequence } from "../rou
 import { executeHttpApiCampaign } from "../services/httpApiExecutor.js";
 import { scheduleFlowDelayResume } from "./flowDelayScheduler.js";
 import { getBusinessHoursStatus } from "./businessHours.js";
+import { uifSessionMinutes } from "./botSettings.js";
+import { systemFieldFromRef, saveSystemField } from "./systemFields.js";
+import { warmWorkspaceVariables, applyWorkspaceVariables } from "./workspaceVariables.js";
+import { applyPersonalization } from "./personalize.js";
+import { attachContactFields } from "./contactFields.js";
+import { validateFinalCta, fillCtaUrl } from "./whatsappCtaUrl.js";
+import { subscribeToAutoResponder, pickCollectedEmail } from "./autoResponders.js";
 import { handleAppointmentBooking } from "./appointmentBookingEngine.js";
 import { loadApprovedTemplate, buildTemplateSend } from "./templateMessage.js";
+import { loadApprovedMessengerTemplate, buildMessengerUtilitySend, friendlyMessengerError } from "./messengerUtility.js";
 
 // BOT SCOPE (see utils/botScope.js): a flow may only use Sequences, User Input Flows and
 // other Flows of ITS OWN bot account (same integration_id) — every lookup below is scoped
@@ -34,13 +42,14 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
   const isMedia = ["IMAGE", "VIDEO", "AUDIO", "VOICE", "DOCUMENT", "FILE"].includes(upperMsgType);
   
   const integId = integration?.id || null;
+  // A Quick Action's reply flow (utils/quickActions.js) only ever runs from its action.
   const query = integId
-    ? `SELECT * FROM flows 
-       WHERE agency_id = ? AND platform = ? AND is_active = 1 
+    ? `SELECT * FROM flows
+       WHERE agency_id = ? AND platform = ? AND is_active = 1 AND trigger_type <> 'QUICK_ACTION'
          AND integration_id = ?
        ORDER BY (trigger_type = 'KEYWORD') DESC, created_at DESC`
-    : `SELECT * FROM flows 
-       WHERE agency_id = ? AND platform = ? AND is_active = 1 
+    : `SELECT * FROM flows
+       WHERE agency_id = ? AND platform = ? AND is_active = 1 AND trigger_type <> 'QUICK_ACTION'
          AND integration_id IS NULL
        ORDER BY (trigger_type = 'KEYWORD') DESC, created_at DESC`;
   const queryParams = integId ? [agencyId, platform, integId] : [agencyId, platform];
@@ -226,7 +235,7 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
       "SELECT COUNT(*) as count FROM messages WHERE conversation_id = ? AND direction = 'INBOUND'",
       [conversationId]
     );
-    if (inboundCount[0]?.count <= 1) {
+    if (inboundCount[0]?.count <= 1 || extraContext?.sourceHandle) {
       let widgetFlow = flows.find(f => f.id === extraContext.widgetFlowId);
       if (!widgetFlow) {
         const [[fRow]] = await pool.query("SELECT * FROM flows WHERE id = ? AND is_active = 1", [extraContext.widgetFlowId]);
@@ -295,11 +304,14 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
   let currentNodeId = null;
 
   try {
-    // Check if bot is paused for this conversation or contact
-    if (conversation?.bot_paused || contact?.bot_paused) {
+    // Check if bot is paused for this conversation or contact. A Quick Action's
+    // own reply (utils/quickActions.js) is sent on a paused chat on purpose.
+    if ((conversation?.bot_paused || contact?.bot_paused) && !extraContext?.ignorePause) {
       console.log(`🤖 [Flow Engine] Bot/Flow is paused for conversation ${conversationId} or contact ${contact?.id}`);
       return false;
     }
+    await warmWorkspaceVariables(agencyId); // {{var.key}} in this run's messages
+    if (contact) await attachContactFields(agencyId, contact); // {{field.key}} in this run's messages
 
     // 0. Direct button routing. Every button this engine sends now carries an
     // encoded "which flow, which node, which button index sent it" token as its
@@ -315,86 +327,23 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
     // A Delay resume has no inbound message/button tap to decode — skip
     // straight past all of step 0 below.
     const decodedRoute = resumeContext ? null : (decodeButtonRoute(buttonRoute) || decodeButtonRoute(incomingMsgBody));
-    if (decodedRoute) {
-      const [[routedFlow]] = await pool.query(
-        "SELECT * FROM flows WHERE id = ? AND agency_id = ? AND is_active = 1",
-        [decodedRoute.flowId, agencyId]
-      );
-      if (routedFlow) {
-        const { nodes: routedNodes, edges: routedEdges } = expandMessageBlocks(
-          JSON.parse(routedFlow.nodes_json || "[]"),
-          JSON.parse(routedFlow.edges_json || "[]")
-        );
-        const sourceNode = routedNodes.find((n) => n.id === decodedRoute.nodeId);
-        if (sourceNode) {
-          // A listMenu node's items now live under data.lists (see
-          // normalizeListMenuData below) rather than a flat data.items — flatten
-          // them here too so the single-option fallback right below still counts
-          // correctly for a node using the new shape.
-          const flatListCount = Array.isArray(sourceNode.data?.lists)
-            ? sourceNode.data.lists.reduce((sum, l) => sum + (l.items?.length || 0), 0)
-            : 0;
-          const optionCount = (sourceNode.data?.buttons || sourceNode.data?.replies || sourceNode.data?.quickReplies || sourceNode.data?.items || []).length || flatListCount;
-
-          // The tapped option's object — a button (data.buttons[idx]) or, for
-          // a listMenu node, the item at the same flat index across all its
-          // sections (see flattenListMenuItems) — used below for the two
-          // capabilities that don't route through a canvas wire at all: "Go
-          // to Existing Flow" and "Also enroll in a Sequence".
-          let tappedButton = (sourceNode.data?.buttons || [])[decodedRoute.idx];
-          if (!tappedButton && sourceNode.type === "listMenu") {
-            const flatItems = flattenListMenuItems(normalizeListMenuData(sourceNode.data));
-            tappedButton = flatItems.find((f) => f.globalIndex === decodedRoute.idx)?.item;
-          }
-          if (!tappedButton && (sourceNode.type === "quickReplies" || sourceNode.type === "quick_reply")) {
-            const replies = sourceNode.data?.quickReplies || sourceNode.data?.replies || [];
-            const r = replies[decodedRoute.idx];
-            tappedButton = typeof r === "string" ? { title: r, action: "flow" } : r;
+    const tapped = decodedRoute ? await resolveTappedButton(agencyId, decodedRoute) : null;
+    if (tapped) {
+      const { flow: routedFlow, edges: routedEdges, sourceNode, button: tappedButton, optionCount } = tapped;
+      {
+          // Quick Action button (Chat with Human / Robot, Unsubscribe / Resubscribe —
+          // utils/quickActions.js). Normally intercepted before this point by
+          // handleQuickActionInbound; handled here too for any other entry path.
+          const { BUTTON_QUICK_ACTIONS, runQuickAction } = await import("./quickActions.js");
+          if (tappedButton && BUTTON_QUICK_ACTIONS[tappedButton.action]) {
+            await applyButtonSideEffects({ agencyId, contact, button: tappedButton, integrationId: routedFlow.integration_id });
+            await runQuickAction({ agencyId, platform, integration, conversation, contact, actionKey: BUTTON_QUICK_ACTIONS[tappedButton.action], source: "button" });
+            return true;
           }
 
-          // "Also enroll in a Sequence": independent of whatever the tap's
-          // primary action does (continue the flow, jump elsewhere, open a
-          // link) — fires first, same additive relationship the Start node's
-          // own Attach Sequence branch already has to the rest of that flow.
-          if (tappedButton?.sequenceId) {
-            try {
-              await enrollContactsInSequence(tappedButton.sequenceId, agencyId, { contactId: contact?.id, enrolledVia: "button-tap", integrationId: routedFlow.integration_id ?? null });
-            } catch (err) {
-              console.error(`[Flow Engine] Attach-Sequence ${tappedButton.sequenceId} on button tap failed:`, err.message);
-            }
-          }
-
-          // "Also remove from a Sequence": the mirror of the enroll above — stops
-          // the contact's enrollment in a DIFFERENT sequence the moment this is
-          // tapped (e.g. a "Yes, I'm interested" button that both enrolls in the
-          // sales-follow-up sequence AND drops the contact out of an abandoned-
-          // cart one). Independent of enrollment above; both can fire on one tap.
-          if (tappedButton?.removeSequenceId) {
-            try {
-              await unsubscribeContactFromSequence(tappedButton.removeSequenceId, agencyId, contact?.id, { integrationId: routedFlow.integration_id ?? null });
-            } catch (err) {
-              console.error(`[Flow Engine] Remove-Sequence ${tappedButton.removeSequenceId} on button tap failed:`, err.message);
-            }
-          }
-
-          // "Tag with Label": same additive, independent-of-the-action
-          // relationship as the Sequence enrollment above — applyLabelToContact
-          // already catches/logs its own errors, so no extra try/catch needed.
-          if (Array.isArray(tappedButton?.labelIds) && contact?.id) {
-            for (const labelId of tappedButton.labelIds) {
-              await applyLabelToContact(agencyId, contact.id, labelId);
-            }
-          }
-
-          // "Remove Label": the mirror of the tag-with-label above — un-tags the
-          // contact the moment this is tapped, independent of any label(s) just
-          // added by the same tap (removeLabelFromContact also catches/logs its
-          // own errors).
-          if (Array.isArray(tappedButton?.removeLabelIds) && contact?.id) {
-            for (const labelId of tappedButton.removeLabelIds) {
-              await removeLabelFromContact(agencyId, contact.id, labelId);
-            }
-          }
+          // Sequence enroll / remove and label add / remove chosen on the button —
+          // independent of whatever the tap's primary action does.
+          await applyButtonSideEffects({ agencyId, contact, button: tappedButton, integrationId: routedFlow.integration_id });
 
           // "Go to Existing Flow" button: jumps straight into another flow's
           // start node, independent of any canvas wire on THIS flow — that's
@@ -441,7 +390,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             // Single-option nodes may only have a plain unlabeled edge (see the
             // strict-routing notes below) — unambiguous, safe to use here too.
             // (Not a Message Template: its plain wire is Next Step, not the button's.)
-            if (!targetId && optionCount === 1 && sourceNode.type !== "whatsappTemplate") {
+            if (!targetId && optionCount === 1 && sourceNode.type !== "whatsappTemplate" && sourceNode.type !== "messengerTemplate") {
               targetId = routedEdges.find((e) => e.source === decodedRoute.nodeId)?.target;
             }
 
@@ -476,15 +425,15 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             // it's very unlikely incomingMsgBody/buttonRoute also happens to match
             // a real keyword trigger, so this typically just quietly does nothing.
           }
-        }
       }
-      // Flow deleted/deactivated since the button was sent — falls through to
-      // normal handling below rather than erroring.
     }
+    // Flow deleted/deactivated since the button was sent — resolveTappedButton
+    // returned null and this falls through to normal handling below.
 
     // 1. Check for active flow session
+    // Idle time is computed by MySQL (app and DB clocks can disagree).
     const [sessions] = forcedSession ? [[]] : await pool.query(
-      "SELECT * FROM flow_sessions WHERE conversation_id = ? AND status = 'ACTIVE' LIMIT 1",
+      "SELECT *, TIMESTAMPDIFF(MINUTE, updated_at, NOW()) AS idle_minutes FROM flow_sessions WHERE conversation_id = ? AND status = 'ACTIVE' LIMIT 1",
       [conversationId]
     );
 
@@ -494,9 +443,13 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
     let edges = [];
 
     if (session && !forcedSession) {
-      // Expire session if older than 24 hours
-      const sessionAgeMs = Date.now() - new Date(session.updated_at).getTime();
-      if (sessionAgeMs > 24 * 60 * 60 * 1000) {
+      // A session idle for more than 24 hours expires. One waiting inside a User
+      // Input Flow uses the bot's own limit (Bot Settings → Inbox → User Input
+      // Flow session; not set = the same 24 hours).
+      const limitMinutes = session.active_context === "USER_INPUT_FLOW"
+        ? await uifSessionMinutes(integration?.id || conversation?.integration_id).catch(() => 24 * 60)
+        : 24 * 60;
+      if (Number(session.idle_minutes) >= limitMinutes) {
         await pool.query("UPDATE flow_sessions SET status = 'EXPIRED' WHERE id = ?", [session.id]);
         session = null;
       }
@@ -660,7 +613,10 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         // still reflected correctly here. A plain "collectInput" node (main
         // flow) is unaffected — it still uses its own free-typed variable name.
         let questionField = null;
-        if (isQuestion && currentNode.data?.saveToFieldId) {
+        const systemField = systemFieldFromRef(currentNode.data?.saveToFieldId);
+        if (isQuestion && systemField) {
+          questionField = { id: null, name: systemField.label, field_key: systemField.key };
+        } else if (isQuestion && currentNode.data?.saveToFieldId) {
           const [[fieldRow]] = await pool.query(
             "SELECT id, name, field_key FROM custom_field_definitions WHERE id = ? AND agency_id = ?",
             [currentNode.data.saveToFieldId, agencyId]
@@ -719,11 +675,32 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         // Save the flow-session variable (as before) ...
         await pool.query("UPDATE flow_sessions SET variables = ? WHERE id = ?", [JSON.stringify(variables), session.id]);
 
+        // An email / phone answer also fills the subscriber's own email / phone
+        // when they have none yet (never overwrites) — store automation finds a
+        // Messenger customer by these (utils/commerceEvents.js).
+        if ((inputType === "email" || inputType === "phone") && conversation?.contact_id) {
+          const col = inputType === "email" ? "email" : "phone";
+          await pool.query(
+            `UPDATE contacts SET ${col} = ? WHERE id = ? AND agency_id = ? AND (${col} IS NULL OR ${col} = '')`,
+            [String(rawInput).trim().slice(0, 190), conversation.contact_id, agencyId]
+          ).catch((e) => console.warn("[Flow Engine] saving collected contact detail failed:", e.message));
+          if (contact && !String(contact[col] || "").trim()) contact[col] = String(rawInput).trim().slice(0, 190);
+        }
+
         // ... and, if this node is configured to save into a real Custom Field, persist it
         // there too so it shows up on the subscriber's profile in the Inbox, not just for the
         // lifetime of this flow session.
         const saveFieldId = currentNode.data?.saveToFieldId;
-        if (saveFieldId && conversation?.contact_id) {
+        if (systemField && conversation?.contact_id) {
+          // A system field (Name / Email / Phone / Age) is a contacts column.
+          const saved = await saveSystemField(agencyId, conversation.contact_id, systemField, rawInput)
+            .catch((e) => { console.warn("[Flow Engine] saving system field failed:", e.message); return false; });
+          if (saved) {
+            emitToAgency(agencyId, "contact_updated", { contactId: conversation.contact_id, [systemField.key]: rawInput });
+            // Later messages in this run see the new value ({{contact.first_name}} …).
+            if (contact) contact[systemField.column] = String(rawInput).trim();
+          }
+        } else if (saveFieldId && conversation?.contact_id) {
           try {
             await pool.query(
               `INSERT INTO contact_custom_field_values (contact_id, field_id, value)
@@ -736,6 +713,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
               fieldId: Number(saveFieldId),
               value: rawInput,
             });
+            if (contact) await attachContactFields(agencyId, contact); // {{field.key}} later in this run
           } catch (cfErr) {
             console.warn(`[Flow Engine] Failed to save collectInput value to custom field ${saveFieldId}:`, cfErr.message);
           }
@@ -751,6 +729,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             label: questionField?.name || currentNode.data?.fieldLabel || "Answer",
             message: currentNode.data?.message || "",
             value: rawInput,
+            type: inputType, // lets an auto responder find the email answer (utils/autoResponders.js)
           });
           await pool.query("UPDATE flow_sessions SET variables = ? WHERE id = ?", [JSON.stringify(variables), session.id]);
         }
@@ -1179,6 +1158,57 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
       return lastInboundExternalMsgId;
     };
 
+    // Ends this flow's session at `fromNodeId` and continues in `targetFlow` from its
+    // Start node, in the same conversation (Start Automation, and the Actions
+    // element's Quick Action reply). Session / nodes / edges are swapped in place
+    // so the loop keeps running the new flow; the hop counter stops two flows
+    // that start each other from looping forever. Returns false (and changes
+    // nothing) when the target has no Start node.
+    const handOverToFlow = async (fromNodeId, targetFlow) => {
+      const { nodes: targetNodes, edges: targetEdges } = targetFlow
+        ? expandMessageBlocks(JSON.parse(targetFlow.nodes_json || "[]"), JSON.parse(targetFlow.edges_json || "[]"))
+        : { nodes: [], edges: [] };
+      const targetStart = targetNodes.find((n) => n.type === "start");
+      if (!targetStart) return false;
+      await pool.query(
+        "UPDATE flow_sessions SET status = 'COMPLETED', delay_next_run_at = NULL, current_node_id = ? WHERE id = ?",
+        [fromNodeId, session.id]
+      );
+      variables.__automationHops = Number(variables.__automationHops || 0) + 1;
+      const [handoverSess] = await pool.query(
+        "INSERT INTO flow_sessions (agency_id, conversation_id, flow_id, current_node_id, variables, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')",
+        [agencyId, conversationId, targetFlow.id, targetStart.id, JSON.stringify(variables)]
+      );
+      session = {
+        id: handoverSess.insertId,
+        agency_id: agencyId,
+        conversation_id: conversationId,
+        flow_id: targetFlow.id,
+        current_node_id: targetStart.id,
+        variables,
+        status: "ACTIVE",
+      };
+      flow = targetFlow;
+      nodes = targetNodes;
+      edges = targetEdges;
+      mainNodes = targetNodes;
+      mainEdges = targetEdges;
+      inUIF = false;
+      activeUifId = null;
+      returnNodeId = null;
+      mainParkedNodeId = targetStart.id;
+
+      // Same as a fresh trigger: the target's own Start-node label is applied.
+      const targetLabelIds = Array.isArray(targetStart.data?.labelIds) ? targetStart.data.labelIds : [];
+      if (contact?.id) {
+        for (const labelId of targetLabelIds) {
+          await applyLabelToContact(agencyId, contact.id, labelId);
+        }
+      }
+      currentNodeId = getNextNodeId(targetStart.id);
+      return true;
+    };
+
     // Main Execution Loop
     while (currentNodeId && !stopFlow) {
       const node = nodes.find(n => n.id === currentNodeId);
@@ -1199,7 +1229,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
       // re-pause on the same node forever.
       // A Message Template element has no delay option (removed from its
       // settings) — an old saved one is ignored.
-      if (node.type !== "start" && node.type !== "wait" && node.type !== "whatsappTemplate" && node.id !== resumeContext?.skipDelayForNodeId) {
+      if (node.type !== "start" && node.type !== "wait" && node.type !== "whatsappTemplate" && node.type !== "messengerTemplate" && node.id !== resumeContext?.skipDelayForNodeId) {
         const delayCfg = node.data?.delay;
         const delaySeconds = delayCfg && typeof delayCfg === "object"
           ? (Number(delayCfg.hours) || 0) * 3600 + (Number(delayCfg.minutes) || 0) * 60 + (Number(delayCfg.seconds) || 0)
@@ -1259,7 +1289,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
               console.error(`[Flow Engine] Auto-attach Sequence ${attachSequenceId} on flow start failed:`, err.message);
             }
           }
-          currentNodeId = resolveNextNodeId(edges, node.id);
+          currentNodeId = resolveNextNodeId(edges, node.id, extraContext?.sourceHandle || null);
           break;
         }
 
@@ -1279,6 +1309,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             payload: encodeButtonRoute(flow.id, node.id, idx),
             type: normalizeButtonType(btn),
             url: typeof btn === "object" ? btn.url : null,
+            style: typeof btn === "object" ? btn.tgStyle || null : null, // Telegram button colour
           }));
 
           if (textBody || formattedTextButtons.length > 0) {
@@ -1324,6 +1355,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             payload: encodeButtonRoute(flow.id, node.id, idx),
             type: normalizeButtonType(btn),
             url: typeof btn === "object" ? btn.url : null,
+            style: typeof btn === "object" ? btn.tgStyle || null : null, // Telegram button colour
           }));
 
           if (!mediaUrl) {
@@ -1417,6 +1449,31 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           break;
         }
 
+        // Messenger Utility template (utils/messengerUtility.js) — the only
+        // automated Messenger message allowed outside the 24h window. Facebook
+        // only; skipped on other channels. POSTBACK buttons whose payload is a
+        // single variable carry the routing token, like WhatsApp quick replies.
+        case "messengerTemplate": {
+          const channel = (integration?.platform || platform || "").toUpperCase();
+          if (channel === "FACEBOOK") {
+            const tpl = await loadApprovedMessengerTemplate(agencyId, integration?.id, node.data?.messengerTemplateId);
+            if (!tpl) throw new Error("Utility Template: the selected template is missing, not approved, or belongs to another Page");
+            const routeFlowId = flow?.id || session?.flow_id || null;
+            const send = buildMessengerUtilitySend(tpl, node.data?.params, (t) => replaceVariables(t, variables, contact), {
+              routeFor: routeFlowId ? (idx) => encodeButtonRoute(routeFlowId, node.id, idx) : null,
+            });
+            await sendMsg(agencyId, conversation, send.bodyText, "TEXT", integration, {
+              ...send.extraFields,
+              flowId: routeFlowId,
+              nodeId: node.id,
+              contactIdentifier: contact?.external_id || null,
+            });
+          }
+          currentNodeId = getNextStepNodeId(node.id)
+            || (edges.some((e) => e.source === node.id && isOptionHandle(e.sourceHandle)) ? null : getNextNodeId(node.id));
+          break;
+        }
+
         case "file":
         case "document": {
           const filename = replaceVariables(node.data?.filename || node.data?.title || "Document", variables, contact);
@@ -1446,6 +1503,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             payload: encodeButtonRoute(flow.id, node.id, idx),
             type: normalizeButtonType(btn),
             url: typeof btn === "object" ? btn.url : null,
+            style: typeof btn === "object" ? btn.tgStyle || null : null, // Telegram button colour
           }));
 
           await sendMsg(agencyId, conversation, textBody, "TEXT", integration, {
@@ -1492,6 +1550,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             payload: encodeButtonRoute(flow.id, node.id, idx),
             type: normalizeButtonType(btn),
             url: typeof btn === "object" ? btn.url : null,
+            style: typeof btn === "object" ? btn.tgStyle || null : null, // Telegram button colour
           }));
 
           await sendMsg(agencyId, conversation, textBody, "TEXT", integration, {
@@ -1595,7 +1654,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
               agencyId, conversation,
               // Only the first list's message carries the actual prompt text —
               // the rest are the continuation of the same logical question.
-              li === 0 ? textBody : (list.title || "More options:"),
+              li === 0 ? textBody : replaceVariables(list.title || "More options:", variables, contact),
               "TEXT", integration,
               {
                 flowId: flow?.id || session?.flow_id || null,
@@ -1897,8 +1956,19 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         // logged and skipped so it can't stop the rest of the flow.
         case "actions": {
           const actionList = Array.isArray(node.data?.actions) ? node.data.actions : [];
+          // A Quick Action (Chat with Human / Robot, Unsubscribe / Resubscribe) with
+          // "send its reply" on hands the chat over to that action's reply flow
+          // once every action here has run; the last such action wins.
+          let quickReplyAction = null;
           for (const act of actionList) {
             try {
+              const { ACTIONS_NODE_QUICK_ACTIONS, applyQuickActionEffect } = await import("./quickActions.js");
+              const quickKey = ACTIONS_NODE_QUICK_ACTIONS[act?.type];
+              if (quickKey) {
+                await applyQuickActionEffect({ agencyId, integration, conversation, contact, actionKey: quickKey });
+                if (act.sendReply !== false) quickReplyAction = quickKey;
+                continue;
+              }
               switch (act?.type) {
                 case "add_label":
                   if (act.labelId && contact?.id) await applyLabelToContact(agencyId, contact.id, act.labelId);
@@ -1936,6 +2006,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
                     );
                     emitToAgency(agencyId, "contact_custom_field_updated", { contactId: contact.id, fieldId: Number(act.fieldId), value: null });
                   }
+                  await attachContactFields(agencyId, contact); // {{field.key}} later in this run
                   break;
                 }
                 default:
@@ -1944,6 +2015,11 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             } catch (actErr) {
               console.error(`[Flow Engine] Actions node "${node.id}" action "${act?.type}" failed:`, actErr.message);
             }
+          }
+          if (quickReplyAction && Number(variables.__automationHops || 0) < 5) {
+            const { replyFlowFor } = await import("./quickActions.js");
+            const replyFlow = await replyFlowFor(agencyId, flow?.integration_id ?? integration?.id, quickReplyAction).catch(() => null);
+            if (replyFlow && replyFlow.id !== flow?.id && (await handOverToFlow(node.id, replyFlow))) break;
           }
           currentNodeId = getNextNodeId(node.id);
           break;
@@ -1967,55 +2043,13 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             break;
           }
           const [[targetFlow]] = await pool.query(
-            "SELECT * FROM flows WHERE id = ? AND agency_id = ? AND integration_id = ? AND is_active = 1",
+            "SELECT * FROM flows WHERE id = ? AND agency_id = ? AND integration_id = ? AND is_active = 1 AND trigger_type <> 'QUICK_ACTION'",
             [targetFlowId, agencyId, flow?.integration_id ?? null]
           );
-          const { nodes: targetNodes, edges: targetEdges } = targetFlow
-            ? expandMessageBlocks(JSON.parse(targetFlow.nodes_json || "[]"), JSON.parse(targetFlow.edges_json || "[]"))
-            : { nodes: [], edges: [] };
-          const targetStart = targetNodes.find((n) => n.type === "start");
-          if (!targetStart) {
+          if (!(await handOverToFlow(node.id, targetFlow))) {
             console.warn(`[Flow Engine] Start Automation node "${node.id}" target flow ${targetFlowId} is missing, inactive or has no Start node.`);
             currentNodeId = null;
-            break;
           }
-
-          await pool.query(
-            "UPDATE flow_sessions SET status = 'COMPLETED', delay_next_run_at = NULL, current_node_id = ? WHERE id = ?",
-            [node.id, session.id]
-          );
-          variables.__automationHops = hops + 1;
-          const [handoverSess] = await pool.query(
-            "INSERT INTO flow_sessions (agency_id, conversation_id, flow_id, current_node_id, variables, status) VALUES (?, ?, ?, ?, ?, 'ACTIVE')",
-            [agencyId, conversationId, targetFlow.id, targetStart.id, JSON.stringify(variables)]
-          );
-          session = {
-            id: handoverSess.insertId,
-            agency_id: agencyId,
-            conversation_id: conversationId,
-            flow_id: targetFlow.id,
-            current_node_id: targetStart.id,
-            variables,
-            status: "ACTIVE",
-          };
-          flow = targetFlow;
-          nodes = targetNodes;
-          edges = targetEdges;
-          mainNodes = targetNodes;
-          mainEdges = targetEdges;
-          inUIF = false;
-          activeUifId = null;
-          returnNodeId = null;
-          mainParkedNodeId = targetStart.id;
-
-          // Same as a fresh trigger: the target's own Start-node label is applied.
-          const targetLabelIds = Array.isArray(targetStart.data?.labelIds) ? targetStart.data.labelIds : [];
-          if (contact?.id) {
-            for (const labelId of targetLabelIds) {
-              await applyLabelToContact(agencyId, contact.id, labelId);
-            }
-          }
-          currentNodeId = getNextNodeId(targetStart.id);
           break;
         }
 
@@ -2040,7 +2074,229 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
             status: "OPEN",
             assignedToId: null
           });
+          // A person is needed — automatic assignment when the workspace uses it (utils/inboxQuality.js).
+          const { autoAssign } = await import("./inboxQuality.js");
+          await autoAssign({ agencyId, conversationId, integration, trigger: "HANDOFF" });
 
+          stopFlow = true;
+          break;
+        }
+
+        case "marketingOptIn": {
+          // Marketing Messages opt-in request (utils/messengerMarketing.js), Messenger only.
+          // Accepting it gives the Page a subscription token (messaging_optins webhook).
+          const channel = (integration?.platform || platform || "").toUpperCase();
+          if (channel === "FACEBOOK") {
+            const title = replaceVariables(node.data?.title || "Get our offers and updates", variables, contact);
+            await sendMsg(agencyId, conversation, `📬 ${title}`, "TEXT", integration, {
+              marketingOptIn: { title, imageUrl: node.data?.imageUrl || null, payload: `MM_OPTIN_FLOW_${flow?.id || ""}` },
+              flowId: flow?.id || session?.flow_id || null,
+              nodeId: node.id,
+              contactIdentifier: contact?.external_id || null,
+            });
+          }
+          currentNodeId = getNextNodeId(node.id);
+          break;
+        }
+
+        case "orderStatus": {
+          // Order Tracking (utils/orderLookup.js): the subscriber's own store order only.
+          const { findOrderForContact, renderOrderText } = await import("./orderLookup.js");
+          const wantedNumber = node.data?.lookup === "variable" && node.data?.orderNumberVariable
+            ? replaceVariables(`{{${node.data.orderNumberVariable}}}`, variables, contact)
+            : null;
+          const cleanWanted = wantedNumber && !wantedNumber.includes("{{") ? wantedNumber : null;
+          const found = contact ? await findOrderForContact(agencyId, contact, node.data?.lookup === "variable" ? (cleanWanted || "__none__") : null) : null;
+          const template = found
+            ? (node.data?.message || "Order #{{order.order_number}}: {{order.order_status}}.")
+            : (node.data?.notFoundMessage || "Sorry, I couldn't find an order for you. Please check the order number or contact us.");
+          const text = replaceVariables(found ? renderOrderText(template, found.fields) : template, variables, contact).trim();
+          const trackingUrl = found?.fields?.tracking_url || found?.fields?.order_url || "";
+          const trackButton = found && node.data?.showTrackButton !== false && /^https?:\/\//i.test(trackingUrl)
+            ? [{ id: `track_${found.order.id}`, title: String(node.data?.trackButtonLabel || "Track order").slice(0, 20), payload: `track_${found.order.id}`, type: "URL", url: trackingUrl }]
+            : [];
+          if (text) {
+            await sendMsg(agencyId, conversation, text, "TEXT", integration, {
+              ...(trackButton.length ? { buttons: trackButton } : {}),
+              flowId: flow?.id || session?.flow_id || null,
+              nodeId: node.id,
+              contactIdentifier: contact?.external_id || contact?.phone || null,
+            });
+          }
+          variables.order_found = found ? "yes" : "no";
+          if (found) {
+            for (const [k, v] of Object.entries(found.fields)) variables[`order_${k}`] = v;
+          }
+          await pool.query("UPDATE flow_sessions SET variables = ? WHERE id = ?", [JSON.stringify(variables), session.id]);
+          currentNodeId = getNextNodeId(node.id);
+          break;
+        }
+
+        case "whatsappCtaUrl": {
+          // CTA URL Button (utils/whatsappCtaUrl.js): WhatsApp only, inside the 24-hour
+          // window only (it's a free-form message). Validated on the final values —
+          // anything invalid is logged and skipped, never sent. The flow continues.
+          const channel = (integration?.platform || platform || "").toUpperCase();
+          const logSkip = (why) => logBotError({
+            agencyId, flowId: flow?.id || session?.flow_id || null, integrationId: integration?.id || null, platform: channel,
+            contactId: contact?.id || null, contactIdentifier: contact?.external_id || null, nodeId: node.id,
+            customMessage: `CTA URL Button not sent: ${why}`,
+          });
+          if (channel !== "WHATSAPP") {
+            await logSkip("this element only works on WhatsApp");
+          } else {
+            const { canSendNow } = await import("./messagingWindow.js");
+            const windowCheck = await canSendNow("WHATSAPP", conversationId, agencyId, node);
+            if (!windowCheck.allowed || windowCheck.useTemplate) {
+              await logSkip("outside WhatsApp's 24-hour window (only templates can be sent now)");
+            } else {
+              const d = node.data || {};
+              const fill = (t) => replaceVariables(t || "", variables, contact);
+              const cta = {
+                body: fill(d.body),
+                buttonText: String(d.buttonText || "").trim(),
+                url: fillCtaUrl(d.url, fill),
+                headerType: d.headerType || "none",
+                headerText: fill(d.headerText),
+                headerMediaUrl: d.headerMediaUrl ? fill(d.headerMediaUrl) : null,
+                footerText: fill(d.footerText),
+              };
+              const problems = validateFinalCta(cta);
+              if (problems.length) {
+                await logSkip(problems.join(" "));
+              } else {
+                await sendMsg(agencyId, conversation, cta.body, "TEXT", integration, {
+                  ctaUrl: cta,
+                  // Inbox display: the link button + header / footer.
+                  buttons: [{ title: cta.buttonText, type: "URL", url: cta.url }],
+                  headerType: cta.headerType !== "none" ? cta.headerType : undefined,
+                  headerText: cta.headerType === "text" ? cta.headerText : undefined,
+                  headerMediaUrl: ["image", "video", "document"].includes(cta.headerType) ? cta.headerMediaUrl : undefined,
+                  footerText: cta.footerText || undefined,
+                  flowId: flow?.id || session?.flow_id || null,
+                  nodeId: node.id,
+                  contactIdentifier: contact?.external_id || null,
+                });
+              }
+            }
+          }
+          currentNodeId = getNextNodeId(node.id);
+          break;
+        }
+
+        case "telegramChecklist": {
+          // Checklist (utils/telegramChecklists.js): interactive in a Telegram Business
+          // chat, a plain "☐" list in a normal bot chat. The flow doesn't wait.
+          const channel = (integration?.platform || platform || "").toUpperCase();
+          if (channel === "TELEGRAM") {
+            const { cleanChecklist, checklistAsText, recordChecklist } = await import("./telegramChecklists.js");
+            const checklist = cleanChecklist({
+              title: replaceVariables(node.data?.title || "", variables, contact),
+              tasks: (node.data?.tasks || []).map((t) => replaceVariables(String(t || ""), variables, contact)),
+              othersCanMarkDone: node.data?.othersCanMarkDone,
+              othersCanAdd: node.data?.othersCanAdd,
+            });
+            const isBusinessChat = String(contact?.external_id || "").startsWith("bc:");
+            const sent = await sendMsg(agencyId, conversation, checklistAsText(checklist), "TEXT", integration, {
+              ...(isBusinessChat ? { telegramChecklist: checklist } : {}),
+              flowId: flow?.id || session?.flow_id || null,
+              nodeId: node.id,
+              contactIdentifier: contact?.external_id || null,
+            });
+            if (isBusinessChat && sent?.external_msg_id) {
+              await recordChecklist({
+                agencyId, integrationId: integration.id, chatExternalId: contact.external_id, messageId: sent.external_msg_id,
+                conversationId, contactId: contact?.id, flowId: flow?.id || session?.flow_id || null, nodeId: node.id,
+                checklist, fieldId: node.data?.saveToFieldId || null,
+              });
+            }
+          }
+          currentNodeId = getNextNodeId(node.id);
+          break;
+        }
+
+        case "telegramPoll": {
+          // Telegram Poll (utils/telegramPolls.js): Telegram only; the flow doesn't wait for the vote.
+          const channel = (integration?.platform || platform || "").toUpperCase();
+          if (channel === "TELEGRAM") {
+            const { cleanPoll, recordPoll } = await import("./telegramPolls.js");
+            const poll = cleanPoll({
+              question: replaceVariables(node.data?.question || "", variables, contact),
+              options: node.data?.options,
+              allowMultiple: node.data?.allowMultiple,
+            });
+            let sent = null;
+            const pollText = [`📊 ${poll.question}`, ...poll.options.map((o) => `• ${o}`)].join("\n");
+            await sendMsg(agencyId, conversation, pollText, "TEXT", integration, {
+              telegramPoll: { poll, onSent: (r) => { sent = r; } },
+              flowId: flow?.id || session?.flow_id || null,
+              nodeId: node.id,
+              contactIdentifier: contact?.external_id || null,
+            });
+            if (sent?.pollId) {
+              await recordPoll({
+                pollId: sent.pollId, agencyId, integrationId: integration.id, conversationId, contactId: contact?.id || null,
+                flowId: flow?.id || session?.flow_id || null, nodeId: node.id, poll, fieldId: node.data?.saveToFieldId || null,
+              });
+            }
+          }
+          currentNodeId = getNextNodeId(node.id);
+          break;
+        }
+
+        case "payment": {
+          // In-Chat Payment (services/chatPaymentService.js). Telegram: a native
+          // Stars invoice; other channels: a checkout link. The flow waits here —
+          // it continues from this element's next step only once the order is
+          // paid (continueAfterPayment), after the confirmation message.
+          const { createChatPaymentLink, buildStarsInvoice } = await import("../services/chatPaymentService.js");
+          const channel = (integration?.platform || platform || "").toUpperCase();
+          const isTelegram = channel === "TELEGRAM";
+          const productName = replaceVariables(node.data?.productName || "Order", variables, contact);
+          const stars = Math.round(Number(node.data?.starsAmount) || 0);
+          if (isTelegram && stars <= 0) throw new Error("In-Chat Payment: set a Telegram Stars price for Telegram");
+          const order = await createChatPaymentLink({
+            agencyId,
+            subscriberId: contact?.id || null,
+            conversationId,
+            integrationId: integration?.id || null,
+            flowId: flow?.id || session?.flow_id || null,
+            nodeId: node.id,
+            nextNodeId: getNextNodeId(node.id) || null,
+            productName,
+            amount: isTelegram ? stars : node.data?.amount,
+            currency: node.data?.currency || "USD",
+            customerName: contact?.name || null,
+            customerEmail: contact?.email || null,
+            customerPhone: contact?.phone || null,
+            channel,
+            successMessage: node.data?.successMessage || null,
+            provider: isTelegram ? "TELEGRAM_STARS" : "STRIPE",
+          });
+          const description = replaceVariables(node.data?.description || "", variables, contact);
+          if (isTelegram) {
+            const [[orderRow]] = await pool.query("SELECT * FROM chat_orders WHERE id = ?", [order.orderId]);
+            await sendMsg(agencyId, conversation, `🧾 ${productName} — ⭐${stars}`, "TEXT", integration, {
+              telegramInvoice: buildStarsInvoice(orderRow, { description, photoUrl: node.data?.photoUrl }),
+              buttonLabel: node.data?.buttonLabel || null,
+              flowId: flow?.id || session?.flow_id || null,
+              nodeId: node.id,
+              contactIdentifier: contact?.external_id || null,
+            });
+          } else {
+            const label = String(node.data?.buttonLabel || order.buttonLabel).slice(0, 20);
+            const text = description || `${productName} — ${Number(order.amount).toFixed(2)} ${order.currency}`;
+            await sendMsg(agencyId, conversation, text, "TEXT", integration, {
+              buttons: [{ id: `pay_${order.orderId}`, title: label, payload: `pay_${order.orderId}`, type: "URL", url: order.paymentUrl }],
+              flowId: flow?.id || session?.flow_id || null,
+              nodeId: node.id,
+              contactIdentifier: contact?.external_id || contact?.phone || null,
+            });
+          }
+          await pool.query(
+            "UPDATE flow_sessions SET status = 'COMPLETED', delay_next_run_at = NULL, current_node_id = ? WHERE id = ?",
+            [node.id, session.id]
+          );
           stopFlow = true;
           break;
         }
@@ -2241,6 +2497,76 @@ function decodeButtonRoute(value) {
 }
 
 /**
+ * The button (or list item / quick reply) a routing token points at.
+ * `route` is the raw token or an already-decoded one. Returns
+ * { decoded, flow, nodes, edges, sourceNode, button, optionCount } or null when
+ * it isn't one of our tokens, or the flow / element is gone. `requireActive:
+ * false` still resolves a switched-off flow — a Quick Action reply whose reply
+ * was turned off must keep its already-sent "Chat with bot" buttons working.
+ */
+export async function resolveTappedButton(agencyId, route, { requireActive = true } = {}) {
+  const decoded = typeof route === "string" ? decodeButtonRoute(route) : route;
+  if (!decoded) return null;
+  const [[flow]] = await pool.query(
+    `SELECT * FROM flows WHERE id = ? AND agency_id = ?${requireActive ? " AND is_active = 1" : ""}`,
+    [decoded.flowId, agencyId]
+  );
+  if (!flow) return null;
+  const { nodes, edges } = expandMessageBlocks(JSON.parse(flow.nodes_json || "[]"), JSON.parse(flow.edges_json || "[]"));
+  const sourceNode = nodes.find((n) => n.id === decoded.nodeId);
+  if (!sourceNode) return null;
+  // A listMenu node's items live under data.lists (normalizeListMenuData) —
+  // flattened here so the single-option fallback still counts correctly.
+  const flatListCount = Array.isArray(sourceNode.data?.lists)
+    ? sourceNode.data.lists.reduce((sum, l) => sum + (l.items?.length || 0), 0)
+    : 0;
+  const optionCount = (sourceNode.data?.buttons || sourceNode.data?.replies || sourceNode.data?.quickReplies || sourceNode.data?.items || []).length || flatListCount;
+
+  // The tapped option's object — a button (data.buttons[idx]) or, for a
+  // listMenu node, the item at the same flat index across all its sections.
+  let button = (sourceNode.data?.buttons || [])[decoded.idx];
+  if (!button && sourceNode.type === "listMenu") {
+    const flatItems = flattenListMenuItems(normalizeListMenuData(sourceNode.data));
+    button = flatItems.find((f) => f.globalIndex === decoded.idx)?.item;
+  }
+  if (!button && (sourceNode.type === "quickReplies" || sourceNode.type === "quick_reply")) {
+    const replies = sourceNode.data?.quickReplies || sourceNode.data?.replies || [];
+    const r = replies[decoded.idx];
+    button = typeof r === "string" ? { title: r, action: "flow" } : r;
+  }
+  return { decoded, flow, nodes, edges, sourceNode, button: button || null, optionCount };
+}
+
+/**
+ * The additive options a button can carry on top of its action — enroll in /
+ * remove from a Sequence, add / remove labels. Each is independent of the
+ * others and of what the tap otherwise does.
+ */
+export async function applyButtonSideEffects({ agencyId, contact, button, integrationId }) {
+  if (!button || typeof button !== "object") return;
+  if (button.sequenceId) {
+    try {
+      await enrollContactsInSequence(button.sequenceId, agencyId, { contactId: contact?.id, enrolledVia: "button-tap", integrationId: integrationId ?? null });
+    } catch (err) {
+      console.error(`[Flow Engine] Attach-Sequence ${button.sequenceId} on button tap failed:`, err.message);
+    }
+  }
+  if (button.removeSequenceId) {
+    try {
+      await unsubscribeContactFromSequence(button.removeSequenceId, agencyId, contact?.id, { integrationId: integrationId ?? null });
+    } catch (err) {
+      console.error(`[Flow Engine] Remove-Sequence ${button.removeSequenceId} on button tap failed:`, err.message);
+    }
+  }
+  if (Array.isArray(button.labelIds) && contact?.id) {
+    for (const labelId of button.labelIds) await applyLabelToContact(agencyId, contact.id, labelId);
+  }
+  if (Array.isArray(button.removeLabelIds) && contact?.id) {
+    for (const labelId of button.removeLabelIds) await removeLabelFromContact(agencyId, contact.id, labelId);
+  }
+}
+
+/**
  * A list item used to be a plain string; it's now an object with the same
  * action shape a button has (plus `description`) — coerces either into the
  * current shape, defaulting to 'flow' so an old item (wired only by its
@@ -2352,10 +2678,9 @@ function hasWaitableButtons(formattedButtons, platform) {
     const isSingleUrlButton = formattedButtons.length === 1 && formattedButtons[0].type === "URL";
     return !isSingleUrlButton;
   }
-  // Telegram: platformSender.js's current inline keyboard implementation always
-  // sends a callback (reply) button, never a real `url` button, regardless of the
-  // configured action — so every Telegram button still replies.
-  if (platform === "TELEGRAM") return true;
+  // Telegram: a URL button is a real `url` inline button (opens the link, no
+  // reply); every other button is a callback button that replies.
+  if (platform === "TELEGRAM") return formattedButtons.some((b) => b.type !== "URL");
   // Facebook/Instagram web_url buttons genuinely open a link and generate no reply.
   return formattedButtons.some((b) => b.type !== "URL" && b.type !== "PHONE");
 }
@@ -2401,10 +2726,12 @@ export function replaceVariables(text, variables, contact) {
   if (!text) return "";
   let result = text;
   
-  // Replace contact fields
-  result = result.replace(/\{\{contact\.name\}\}/gi, contact.name || "Customer");
-  result = result.replace(/\{\{contact\.phone\}\}/gi, contact.phone || "");
-  result = result.replace(/\{\{contact\.email\}\}/gi, contact.email || "");
+  // Subscriber tokens: {{contact.name|first_name|last_name|email|phone|age}},
+  // {{field.<custom field key>}}, each with an optional |fallback (utils/personalize.js).
+  result = applyPersonalization(result, contact || {});
+
+  // Workspace variables {{var.key}} (utils/workspaceVariables.js)
+  result = applyWorkspaceVariables(result, contact.agency_id);
 
   // Replace custom variables
   const matches = result.match(/\{\{([a-zA-Z0-9_-]+)\}\}/g);
@@ -2490,6 +2817,28 @@ async function completeUserInputFlowResponse({
       });
     }
   }
+
+  // Start element → "Send the email to an auto responder" (Mailchimp, Brevo, …).
+  if (uifStartData?.autoResponderId && uifStartData?.autoResponderListId) {
+    const email = pickCollectedEmail(answers, contact);
+    if (email) {
+      const nameAnswer = answers.find((a) => a?.type === "name" && String(a.value || "").trim());
+      const result = await subscribeToAutoResponder({
+        agencyId,
+        autoResponderId: uifStartData.autoResponderId,
+        listId: uifStartData.autoResponderListId,
+        person: { email, name: nameAnswer?.value || contact?.name || "", phone: contact?.phone || "" },
+      }).catch((err) => ({ ok: false, error: err.message }));
+      if (!result.ok) {
+        await logBotError({
+          agencyId,
+          contactId: contact?.id || null,
+          contactIdentifier,
+          customMessage: `User Input Flow auto responder failed: ${result.error}`,
+        });
+      }
+    }
+  }
 }
 
 /**
@@ -2512,6 +2861,8 @@ export async function sendMsg(agencyId, conversation, bodyText, type, integratio
   // Send via platform API
   let externalMsgId = null;
   let contact = null;
+  let sendError = null;
+  let sendMeta = null; // WhatsApp: accepted, or held by Meta's pacing (platformSender waResult)
   let targetPlatform = conversation.platform || activeIntegration?.platform || "WHATSAPP";
 
   try {
@@ -2524,7 +2875,8 @@ export async function sendMsg(agencyId, conversation, bodyText, type, integratio
       externalMsgId = await sendPlatformMessage(targetPlatform, activeIntegration, contact.external_id, {
         type,
         body: bodyText,
-        ...extraFields
+        ...extraFields,
+        onSendMeta: (meta) => { sendMeta = meta; },
       });
     } else if (targetPlatform !== "WEBCHAT") {
       const reason = !activeIntegration
@@ -2544,6 +2896,7 @@ export async function sendMsg(agencyId, conversation, bodyText, type, integratio
     }
   } catch (apiErr) {
     console.error("API flow send failed:", apiErr.message || apiErr);
+    sendError = friendlyMessengerError(apiErr?.response?.data?.error, targetPlatform) || extractErrorMessage(apiErr);
     await logBotError({
       agencyId,
       flowId: extraFields?.flowId || null,
@@ -2571,6 +2924,20 @@ export async function sendMsg(agencyId, conversation, bodyText, type, integratio
   if (extraFields?.headerText) metadataObj.headerText = extraFields.headerText;
   if (extraFields?.headerMediaUrl) metadataObj.headerMediaUrl = extraFields.headerMediaUrl;
   if (extraFields?.footerText) metadataObj.footerText = extraFields.footerText;
+  // Held by WhatsApp's template / portfolio pacing: sent later, or dropped (code 132015).
+  if (sendMeta?.messageStatus === "held_for_quality_assessment") metadataObj.heldByMeta = true;
+  // AI replies: the agent's name and the knowledge sources the answer drew on (Inbox citations).
+  if (extraFields?.aiAgentName) metadataObj.aiAgent = extraFields.aiAgentName;
+  if (extraFields?.knowledgeSources?.length) {
+    metadataObj.sources = extraFields.knowledgeSources.map((src) => ({ title: src.title, url: src.url || null, score: src.score }));
+  }
+  if (extraFields?.telegramInvoice) {
+    metadataObj.invoice = { title: extraFields.telegramInvoice.title, stars: extraFields.telegramInvoice.prices?.[0]?.amount || null };
+  }
+  if (extraFields?.messengerTemplate) {
+    metadataObj.template = extraFields.messengerTemplate.name;
+    metadataObj.messagingType = "UTILITY";
+  }
   const metadataJson = JSON.stringify(metadataObj);
 
   // Insert message in DB
@@ -2600,5 +2967,8 @@ export async function sendMsg(agencyId, conversation, bodyText, type, integratio
     message
   });
 
+  // Not stored — lets a caller that needs the send to have worked (broadcasts,
+  // sequences) report Meta's real reason instead of "no message id".
+  if (sendError) Object.defineProperty(message, "sendError", { value: sendError, enumerable: false });
   return message;
 }

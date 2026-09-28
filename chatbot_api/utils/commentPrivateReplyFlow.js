@@ -23,8 +23,8 @@
 import axios from "axios";
 import pool from "../db.js";
 import { expandMessageBlocks } from "./flowGraph.js";
+import { META_API_VERSION } from "./metaApi.js";
 
-const META_API_VERSION = process.env.META_API_VERSION || "v21.0";
 
 function applyTemplate(text, senderName) {
   return (text || "")

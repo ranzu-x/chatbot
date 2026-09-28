@@ -67,6 +67,7 @@ export async function canJoinWebchat({ widgetId, sessionId, conversationId }) {
 }
 
 export function initSocket(server, corsOrigin) {
+  resetPresence(); // nobody is connected to a freshly started server
   io = new Server(server, {
     // `origin: true` reflects whatever Origin the client sent, rather than
     // pinning to corsOrigin (FRONTEND_URL) — this socket also serves the
@@ -97,6 +98,7 @@ export function initSocket(server, corsOrigin) {
       socket.join(`agency:${auth.agencyId}`);
       socket.join(`user:${auth.userId}`);
       console.log(`🔌 Socket connected: user=${auth.userId} agency=${auth.agencyId} role=${auth.role}`);
+      markConnected(auth.userId);
     }
 
     // A team member opening a conversation: it must belong to their workspace.
@@ -138,11 +140,42 @@ export function initSocket(server, corsOrigin) {
     });
 
     socket.on('disconnect', () => {
-      if (auth) console.log(`🔌 Socket disconnected: user=${auth.userId}`);
+      if (auth) {
+        console.log(`🔌 Socket disconnected: user=${auth.userId}`);
+        markDisconnected(auth.userId);
+      }
     });
   });
 
   return io;
+}
+
+// ── Presence: agent_profiles.is_online (used by automatic assignment, utils/autoAssign.js) ──
+// Online while at least one dashboard tab is connected; offline 30 s after the
+// last one closes (a page reload must not flip it). Reset to offline on start.
+const connections = new Map(); // userId → open sockets
+const offlineTimers = new Map();
+function setOnline(userId, online) {
+  pool.query('UPDATE agent_profiles SET is_online = ? WHERE user_id = ?', [online ? 1 : 0, userId]).catch(() => {});
+}
+function markConnected(userId) {
+  clearTimeout(offlineTimers.get(userId));
+  offlineTimers.delete(userId);
+  const n = (connections.get(userId) || 0) + 1;
+  connections.set(userId, n);
+  if (n === 1) setOnline(userId, true);
+}
+function markDisconnected(userId) {
+  const n = Math.max(0, (connections.get(userId) || 1) - 1);
+  connections.set(userId, n);
+  if (n > 0) return;
+  offlineTimers.set(userId, setTimeout(() => {
+    offlineTimers.delete(userId);
+    if (!connections.get(userId)) setOnline(userId, false);
+  }, 30000));
+}
+export function resetPresence() {
+  return pool.query('UPDATE agent_profiles SET is_online = 0 WHERE is_online = 1').catch(() => {});
 }
 
 export function getIO() {

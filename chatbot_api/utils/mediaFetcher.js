@@ -6,6 +6,7 @@
  * (vision fallback) can reuse it instead of a second implementation.
  */
 import pool from "../db.js";
+import { META_API_VERSION } from "./metaApi.js";
 
 async function fetchUrl(url, accessToken) {
   const resp = await fetch(url, { headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {} });
@@ -67,7 +68,7 @@ export async function fetchMessageMediaBytes(messageId) {
     const midMatch = mediaUrl.match(/mid=([0-9]+)/);
     if (!midMatch || !accessToken) return null;
     try {
-      const metaResp = await fetch(`https://graph.facebook.com/v21.0/${midMatch[1]}`, {
+      const metaResp = await fetch(`https://graph.facebook.com/${META_API_VERSION}/${midMatch[1]}`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       const metaData = await metaResp.json();

@@ -3,6 +3,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import io from 'socket.io-client';
 import { whatsappCallAPI } from '../services/api';
 import { useAuth } from '../Provider/AuthContext';
+import { startCallRecording } from '../utils/callRecorder';
 
 // STUN-only by default — works for most agents on normal home/office
 // networks. If a specific network's calls ring but never connect (audio
@@ -10,7 +11,7 @@ import { useAuth } from '../Provider/AuthContext';
 // server entry here (and on the RTCPeerConnection config below) — Meta's
 // Calling API itself doesn't provide one, per its own docs, so this side of
 // the ICE negotiation is on us the same as any other WebRTC app.
-const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
+export const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
 
 // How long to wait for ICE gathering to finish before sending whatever
 // candidates we have — Meta's /calls endpoint takes one complete SDP, not
@@ -18,7 +19,7 @@ const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
 // before it's sent. Most networks finish well under this.
 const ICE_GATHERING_TIMEOUT_MS = 4000;
 
-function waitForIceGatheringComplete(pc) {
+export function waitForIceGatheringComplete(pc) {
   if (pc.iceGatheringState === 'complete') return Promise.resolve();
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
@@ -68,6 +69,21 @@ export default function useWhatsAppCall() {
   const callDbIdRef = useRef(null);
   const durationTimerRef = useRef(null);
   const socketRef = useRef(null);
+  // Recording (when "Record calls" is on for the number): starts when the customer picks up.
+  const recordWantedRef = useRef(false);
+  const recRef = useRef(null);
+
+  const startRecording = () => {
+    if (!recordWantedRef.current || recRef.current || !pcRef.current || !localStreamRef.current) return;
+    recRef.current = startCallRecording(localStreamRef.current, pcRef.current);
+  };
+  const finishRecording = async (callDbId) => {
+    const rec = recRef.current;
+    recRef.current = null;
+    if (!rec || !callDbId) return;
+    const blob = await rec.stop();
+    if (blob) whatsappCallAPI.uploadRecording(callDbId, blob, (Date.now() - rec.startedAt) / 1000).catch(() => {});
+  };
 
   // ── Dedicated socket connection for call signaling ──────────────────────
   useEffect(() => {
@@ -97,7 +113,7 @@ export default function useWhatsAppCall() {
     socket.on('whatsapp_call_status', ({ callDbId, status }) => {
       if (String(callDbId) !== String(callDbIdRef.current)) return;
       if (status === 'RINGING') setCallState('ringing');
-      else if (status === 'ACCEPTED') setCallState('connected');
+      else if (status === 'ACCEPTED') { setCallState('connected'); startRecording(); }
       else if (status === 'REJECTED') {
         setCallState('ended');
         setErrorMessage('Call declined.');
@@ -107,6 +123,7 @@ export default function useWhatsAppCall() {
 
     socket.on('whatsapp_call_terminated', ({ callDbId, status, duration: finalDuration }) => {
       if (String(callDbId) !== String(callDbIdRef.current)) return;
+      finishRecording(callDbId);
       setCallState('ended');
       if (status === 'FAILED') setErrorMessage('The call failed to connect.');
       if (typeof finalDuration === 'number') setDuration(finalDuration);
@@ -201,6 +218,7 @@ export default function useWhatsAppCall() {
         sdpOffer: pc.localDescription.sdp,
       });
       callDbIdRef.current = res.data.callDbId;
+      recordWantedRef.current = Boolean(res.data.recordCalls);
 
       durationTimerRef.current = setInterval(() => setDuration((d) => d + 1), 1000);
     } catch (err) {
@@ -213,6 +231,7 @@ export default function useWhatsAppCall() {
 
   const hangUp = useCallback(async () => {
     const id = callDbIdRef.current;
+    await finishRecording(id);
     cleanupPeerConnection();
     setCallState('ended');
     if (id) {

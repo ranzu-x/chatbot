@@ -140,7 +140,7 @@ export default function ModerationPage() {
                   </div>
                   <h3 className="fm-thread-title">{t.title}</h3>
                   <div className="fm-thread-foot" style={{ marginTop: 6 }}>
-                    <Avatar name={t.authorName} size={22} />
+                    <Avatar name={t.authorName} src={t.authorAvatar} size={22} />
                     <b>{t.authorName}</b> <span>({t.authorEmail})</span> <span>·</span> <span>{t.authorAgencyName}</span>
                   </div>
                   <p className="fm-body" style={{ fontSize: "0.9rem", marginTop: 12, maxHeight: 150, overflow: "auto" }}>{t.body}</p>

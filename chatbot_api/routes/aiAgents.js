@@ -105,7 +105,7 @@ router.get("/ai/agents/:id", async (req, res) => {
 router.put("/ai/agents/:id", async (req, res) => {
   try {
     const agencyId = getAgencyId(req);
-    const { name, description, systemPrompt, isActive, isDefault, preferredProvider, preferredModel } = req.body || {};
+    const { name, description, systemPrompt, isActive, isDefault, preferredProvider, preferredModel, handoffWhenUnsure, handoffMessage } = req.body || {};
 
     const [[existing]] = await pool.query("SELECT * FROM ai_agents WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
     if (!existing) return res.status(404).json({ success: false, message: "Agent not found" });
@@ -128,13 +128,17 @@ router.put("/ai/agents/:id", async (req, res) => {
       is_default: isDefault !== undefined ? (isDefault ? 1 : 0) : existing.is_default,
       preferred_provider: preferredProvider !== undefined ? (preferredProvider || null) : existing.preferred_provider,
       preferred_model: preferredModel !== undefined ? (preferredModel || null) : existing.preferred_model,
+      handoff_when_unsure: handoffWhenUnsure !== undefined ? (handoffWhenUnsure ? 1 : 0) : existing.handoff_when_unsure,
+      handoff_message: handoffMessage !== undefined ? (String(handoffMessage || "").trim().slice(0, 500) || null) : existing.handoff_message,
     };
     if (!merged.name) return res.status(400).json({ success: false, message: "Agent name is required" });
 
     await pool.query(
-      `UPDATE ai_agents SET name = ?, description = ?, system_prompt = ?, is_active = ?, is_default = ?, preferred_provider = ?, preferred_model = ?
+      `UPDATE ai_agents SET name = ?, description = ?, system_prompt = ?, is_active = ?, is_default = ?, preferred_provider = ?, preferred_model = ?,
+         handoff_when_unsure = ?, handoff_message = ?
        WHERE id = ? AND agency_id = ?`,
-      [merged.name, merged.description, merged.system_prompt, merged.is_active, merged.is_default, merged.preferred_provider, merged.preferred_model, req.params.id, agencyId]
+      [merged.name, merged.description, merged.system_prompt, merged.is_active, merged.is_default, merged.preferred_provider, merged.preferred_model,
+        merged.handoff_when_unsure, merged.handoff_message, req.params.id, agencyId]
     );
 
     const [[agent]] = await pool.query("SELECT * FROM ai_agents WHERE id = ?", [req.params.id]);
@@ -143,6 +147,103 @@ router.put("/ai/agents/:id", async (req, res) => {
     const status = err.status || 500;
     console.error("Update AI agent error:", err);
     return res.status(status).json({ success: false, message: status === 500 ? "Server error" : err.message });
+  }
+});
+
+// ─── ANSWER REVIEW (ai_message_logs, migrate_ai_quality.js) ─────────────────
+// Every AI answer with the question, the knowledge it drew on and whether it
+// handed off. The owner marks answers good / bad; a corrected answer is added
+// to the agent's knowledge base as a Q&A text source, so the next customer
+// asking the same thing gets it right.
+router.get("/ai/agents/:id/answers", async (req, res) => {
+  try {
+    const agencyId = getAgencyId(req);
+    const [[agent]] = await pool.query("SELECT id FROM ai_agents WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
+    if (!agent) return res.status(404).json({ success: false, message: "Agent not found" });
+    const filter = String(req.query.filter || "all");
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = 25;
+    const where = ["l.agency_id = ?", "l.agent_id = ?", "(l.answer IS NOT NULL OR l.handed_off = 1)"];
+    const params = [agencyId, agent.id];
+    if (filter === "unreviewed") where.push("l.review_rating IS NULL");
+    else if (filter === "bad") where.push("l.review_rating = 'BAD'");
+    else if (filter === "good") where.push("l.review_rating = 'GOOD'");
+    else if (filter === "handoff") where.push("l.handed_off = 1");
+    else if (filter === "no_sources") where.push("l.sources IS NULL AND l.handed_off = 0");
+    const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total FROM ai_message_logs l WHERE ${where.join(" AND ")}`, params);
+    const [rows] = await pool.query(
+      `SELECT l.id, l.conversation_id, l.question, l.answer, l.sources, l.top_score, l.handed_off, l.review_rating, l.correction, l.created_at,
+              ct.name AS contact_name
+       FROM ai_message_logs l
+       LEFT JOIN conversations cv ON cv.id = l.conversation_id AND cv.agency_id = l.agency_id
+       LEFT JOIN contacts ct ON ct.id = cv.contact_id
+       WHERE ${where.map((w) => w).join(" AND ")} ORDER BY l.id DESC LIMIT ? OFFSET ?`,
+      [...params, pageSize, (page - 1) * pageSize]
+    );
+    const [[stats]] = await pool.query(
+      `SELECT COUNT(*) AS answered, SUM(review_rating = 'GOOD') AS good, SUM(review_rating = 'BAD') AS bad, SUM(handed_off = 1) AS handoffs,
+              SUM(sources IS NULL AND handed_off = 0) AS noSources
+       FROM ai_message_logs WHERE agency_id = ? AND agent_id = ? AND (answer IS NOT NULL OR handed_off = 1) AND created_at > NOW() - INTERVAL 30 DAY`,
+      [agencyId, agent.id]
+    );
+    return res.json({
+      success: true, total, page, pageSize,
+      answers: rows.map((r) => ({ ...r, sources: parseJsonColumn(r.sources, []), top_score: r.top_score === null ? null : Number(r.top_score) })),
+      last30Days: Object.fromEntries(Object.entries(stats).map(([k, v]) => [k, Number(v) || 0])),
+    });
+  } catch (err) {
+    console.error("List AI answers error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+router.put("/ai/agents/:id/answers/:logId", async (req, res) => {
+  try {
+    const agencyId = getAgencyId(req);
+    const [[log]] = await pool.query(
+      "SELECT * FROM ai_message_logs WHERE id = ? AND agent_id = ? AND agency_id = ?",
+      [req.params.logId, req.params.id, agencyId]
+    );
+    if (!log) return res.status(404).json({ success: false, message: "Answer not found" });
+    const rating = req.body?.rating === "GOOD" || req.body?.rating === "BAD" ? req.body.rating : null;
+    const correction = req.body?.correction !== undefined ? String(req.body.correction || "").trim().slice(0, 4000) : undefined;
+
+    let correctionSourceId = log.correction_source_id;
+    let indexed = null;
+    if (correction !== undefined) {
+      if (correction && log.question) {
+        // The corrected answer becomes knowledge: one Q&A text source per reviewed answer (updated in place).
+        const text = `Question: ${log.question}\nAnswer: ${correction}`;
+        const title = `Corrected answer: ${String(log.question).slice(0, 80)}`;
+        if (correctionSourceId) {
+          await pool.query("UPDATE ai_agent_knowledge_sources SET source_ref = ?, title = ? WHERE id = ? AND agent_id = ?", [text, title, correctionSourceId, log.agent_id]);
+        } else {
+          const [ins] = await pool.query(
+            "INSERT INTO ai_agent_knowledge_sources (agent_id, type, title, source_ref, status) VALUES (?, 'text', ?, ?, 'pending')",
+            [log.agent_id, title, text]
+          );
+          correctionSourceId = ins.insertId;
+        }
+        const { indexKnowledgeSource } = await import("../utils/aiKnowledge.js");
+        indexed = await indexKnowledgeSource({ sourceId: correctionSourceId, agentId: log.agent_id, agencyId, text });
+      } else if (!correction && correctionSourceId) {
+        await pool.query("DELETE FROM ai_knowledge_chunks WHERE source_id = ?", [correctionSourceId]);
+        await pool.query("DELETE FROM ai_agent_knowledge_sources WHERE id = ? AND agent_id = ?", [correctionSourceId, log.agent_id]);
+        correctionSourceId = null;
+      }
+    }
+
+    await pool.query(
+      `UPDATE ai_message_logs SET review_rating = ?, reviewed_by = ?, reviewed_at = NOW(), correction = ?, correction_source_id = ? WHERE id = ?`,
+      [rating ?? (correction ? "BAD" : log.review_rating), req.user.id, correction !== undefined ? (correction || null) : log.correction, correctionSourceId, log.id]
+    );
+    return res.json({
+      success: true,
+      message: correction ? (indexed?.embedded === false ? "Saved — add an embeddings-capable AI provider so the agent can use it" : "Saved and added to the agent's knowledge") : "Saved",
+    });
+  } catch (err) {
+    console.error("Review AI answer error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 

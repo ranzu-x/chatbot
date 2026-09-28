@@ -40,6 +40,7 @@
  * credentials entirely. Both fixed by routing everything through here.
  */
 import pool from "../db.js";
+import { openAppRow } from "./appSecrets.js";
 
 let cachedPlatformAgencyId = null;
 async function getPlatformAgencyId() {
@@ -51,7 +52,8 @@ async function getPlatformAgencyId() {
 
 async function resolveOwnRow(table, agencyId) {
   const [rows] = await pool.query(`SELECT * FROM ${table} WHERE agency_id = ? AND is_configured = 1 LIMIT 1`, [agencyId]);
-  return rows[0] || null;
+  // Secrets are stored encrypted (utils/appSecrets.js); callers get plain values.
+  return openAppRow(rows[0]) || null;
 }
 
 async function resolve(table, agencyId) {
@@ -106,7 +108,7 @@ async function resolveOwnPoolRow(agencyId, platformGroup) {
      LIMIT 1`,
     [agencyId, platformGroup]
   );
-  return rows[0] || null;
+  return openAppRow(rows[0]) || null;
 }
 
 async function resolvePool(agencyId, platformGroup) {
@@ -167,5 +169,5 @@ export async function resolveWhatsAppOnboardingAppId(agencyId) {
      LIMIT 1`,
     [agencyId]
   );
-  return standby ? { ...standby, appSource: "onboarding_standby" } : active;
+  return standby ? { ...openAppRow(standby), appSource: "onboarding_standby" } : active;
 }

@@ -4,13 +4,17 @@ import { LifeBuoy, Loader2 } from "lucide-react";
 import { useSupportAuth } from "../context/SupportAuthContext";
 import "../supportDesk.css";
 
+const factorOf = (v) => (/[a-z-]/i.test(v) ? { backupCode: v.trim() } : { code: v.replace(/\s+/g, "") });
+
 export default function SupportLoginPage() {
-  const { login, user } = useSupportAuth();
+  const { login, completeTwoFactor, user } = useSupportAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [challenge, setChallenge] = useState(null); // two-factor login on
+  const [code, setCode] = useState("");
 
   if (user) {
     navigate("/support/tickets", { replace: true });
@@ -22,10 +26,16 @@ export default function SupportLoginPage() {
     setError("");
     setLoading(true);
     try {
-      await login(email, password);
+      if (challenge) {
+        await completeTwoFactor(challenge, factorOf(code));
+      } else {
+        const result = await login(email, password);
+        if (result?.twoFactorRequired) { setChallenge(result.challengeToken); return; }
+      }
       navigate("/support/tickets", { replace: true });
     } catch (err) {
-      setError(err.response?.data?.message || "Invalid email or password");
+      if (err.response?.data?.code === "CHALLENGE_EXPIRED") { setChallenge(null); setCode(""); }
+      setError(err.response?.data?.message || (challenge ? "That code is not right" : "Invalid email or password"));
     } finally {
       setLoading(false);
     }
@@ -49,6 +59,12 @@ export default function SupportLoginPage() {
         )}
 
         <form onSubmit={handleSubmit}>
+          {challenge ? (
+            <div className="sd-field">
+              <label className="sd-label">Two-factor code</label>
+              <input className="sd-input" value={code} onChange={(e) => setCode(e.target.value)} placeholder="6-digit code, or a backup code" autoComplete="one-time-code" required autoFocus />
+            </div>
+          ) : (<>
           <div className="sd-field">
             <label className="sd-label">Email</label>
             <input className="sd-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
@@ -57,6 +73,7 @@ export default function SupportLoginPage() {
             <label className="sd-label">Password</label>
             <input className="sd-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
           </div>
+          </>)}
           <button type="submit" className="sd-btn sd-btn-primary" style={{ width: "100%" }} disabled={loading}>
             {loading ? <Loader2 size={14} className="sd-spinner" /> : "Sign In"}
           </button>

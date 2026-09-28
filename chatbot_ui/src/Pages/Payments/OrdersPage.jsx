@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import AppLayout from '../../Layout/AppLayout';
 import api from '../../services/api';
+import { showAlert, notify } from '../../utils/alerts';
+import { useAuth } from '../../Provider/AuthContext';
 import {
   CreditCard,
   DollarSign,
@@ -21,6 +23,25 @@ export default function OrdersPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [refundingId, setRefundingId] = useState(null);
+  const { user } = useAuth();
+  const isOwner = user?.role === 'RESELLER' || user?.role === 'ADMIN';
+
+  // Telegram Stars orders: refund the Stars to the customer (Telegram refundStarPayment).
+  const refund = async (ord) => {
+    const ok = await showAlert.confirm('Refund this order?', `⭐${Math.round(Number(ord.amount))} go back to the customer's Telegram balance. This can't be undone.`, 'Refund');
+    if (!ok) return;
+    setRefundingId(ord.id);
+    try {
+      const res = await api.post(`/payments/orders/${ord.id}/refund`);
+      notify.success(res.data?.message || 'Refunded');
+      loadOrders();
+    } catch (err) {
+      notify.error(err.response?.data?.message || 'Could not refund the order');
+    } finally {
+      setRefundingId(null);
+    }
+  };
 
   useEffect(() => {
     loadOrders();
@@ -93,7 +114,7 @@ export default function OrdersPage() {
               ${metrics.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
             <span style={{ fontSize: '0.7rem', color: '#16a34a', fontWeight: 700 }}>
-              ● Live Collected Revenue
+              ● Card payments{metrics.starsRevenue ? ` · plus ⭐${metrics.starsRevenue.toLocaleString()} Telegram Stars` : ''}
             </span>
           </div>
 
@@ -162,7 +183,7 @@ export default function OrdersPage() {
             </div>
 
             <div style={{ display: 'flex', gap: 6 }}>
-              {['ALL', 'PAID', 'PENDING'].map((st) => (
+              {['ALL', 'PAID', 'PENDING', 'REFUNDED'].map((st) => (
                 <button
                   key={st}
                   type="button"
@@ -193,7 +214,7 @@ export default function OrdersPage() {
                 No In-Chat Orders Found
               </h4>
               <p style={{ fontSize: '0.78rem', color: '#64748b', maxWidth: 360, margin: '0 auto' }}>
-                Add the "Collect Payment" node in your Bot Flows to start generating native Stripe checkout links inside chat!
+                Add the "Catalog / Payment" element to a flow: a checkout link on WhatsApp, Messenger and Instagram, a Telegram Stars invoice on Telegram.
               </p>
             </div>
           ) : (
@@ -207,7 +228,7 @@ export default function OrdersPage() {
                     <th style={{ padding: '10px 12px' }}>Amount</th>
                     <th style={{ padding: '10px 12px' }}>Status</th>
                     <th style={{ padding: '10px 12px' }}>Created</th>
-                    <th style={{ padding: '10px 12px', textAlign: 'right' }}>Checkout Link</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'right' }}>Link / Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -230,10 +251,10 @@ export default function OrdersPage() {
                         </span>
                       </td>
                       <td style={{ padding: '12px', fontWeight: 800, color: '#0f172a' }}>
-                        ${Number(ord.amount).toFixed(2)} {ord.currency}
+                        {ord.currency === 'XTR' ? `⭐${Math.round(Number(ord.amount))}` : `${Number(ord.amount).toFixed(2)} ${ord.currency}`}
                       </td>
                       <td style={{ padding: '12px' }}>
-                        <span style={{ fontSize: '0.68rem', fontWeight: 800, padding: '2px 8px', borderRadius: 6, background: ord.status === 'PAID' ? '#dcfce7' : '#fef3c7', color: ord.status === 'PAID' ? '#15803d' : '#b45309' }}>
+                        <span style={{ fontSize: '0.68rem', fontWeight: 800, padding: '2px 8px', borderRadius: 6, background: ord.status === 'PAID' ? '#dcfce7' : ord.status === 'REFUNDED' ? '#f1f5f9' : '#fef3c7', color: ord.status === 'PAID' ? '#15803d' : ord.status === 'REFUNDED' ? '#475569' : '#b45309' }}>
                           {ord.status}
                         </span>
                       </td>
@@ -241,6 +262,16 @@ export default function OrdersPage() {
                         {new Date(ord.created_at).toLocaleDateString()}
                       </td>
                       <td style={{ padding: '12px', textAlign: 'right' }}>
+                        {ord.provider === 'TELEGRAM_STARS' && ord.status === 'PAID' && isOwner && (
+                          <button
+                            type="button"
+                            onClick={() => refund(ord)}
+                            disabled={refundingId === ord.id}
+                            style={{ padding: '4px 8px', borderRadius: 6, background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer' }}
+                          >
+                            {refundingId === ord.id ? 'Refunding…' : 'Refund Stars'}
+                          </button>
+                        )}
                         {ord.payment_url && (
                           <a
                             href={ord.payment_url}

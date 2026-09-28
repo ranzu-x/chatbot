@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import AppLayout from '../../Layout/AppLayout';
 import { adminAPI, roleAPI } from '../../services/api';
-import { notify } from '../../utils/alerts';
+import { notify, alert } from '../../utils/alerts';
 import { Plus, Trash2, ShieldCheck } from 'lucide-react';
 
 const EMPTY_FORM = { name: '', email: '', password: '', roleSlug: '' };
@@ -46,8 +46,8 @@ export default function AdminTeamPage() {
       .finally(() => setSaving(false));
   };
 
-  const handleRemove = (member) => {
-    if (!window.confirm(`Remove ${member.name} from the internal team?`)) return;
+  const handleRemove = async (member) => {
+    if (!(await alert.ask(`Remove ${member.name} from the internal team?`))) return;
     adminAPI.removeTeamMember(member.id)
       .then(() => { notify.success('Removed'); load(); })
       .catch((err) => notify.error(err?.response?.data?.message || 'Failed to remove'));

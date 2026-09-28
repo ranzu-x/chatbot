@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import useUrlState from '../../hooks/useUrlState';
 import { commentAPI, integrationAPI, aiAgentAPI, flowAPI, uploadAPI } from '../../services/api';
+import { alert } from '../../lib/alerts';
 import {
   MessageSquare,
   Sparkles,
@@ -65,7 +67,7 @@ function pageNumberItems(current, total) {
 }
 
 export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK', lockPlatform, presetIntegrationId, hideAccountSelector }) {
-  const [activeTab, setActiveTab] = useState('posts'); // 'posts' | 'campaigns'
+  const [activeTab, setActiveTab] = useUrlState('view', 'posts', { allowed: ['posts', 'campaigns'] });
   const [platform, setPlatform] = useState(lockPlatform || defaultPlatform); // 'FACEBOOK' | 'INSTAGRAM'
   const [integrations, setIntegrations] = useState([]);
   const [selectedIntegrationId, setSelectedIntegrationId] = useState('');
@@ -390,7 +392,7 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
   const handleRemovePostFromCampaign = async (post) => {
     const rule = post.rule;
     if (!rule) return;
-    if (!window.confirm(`Remove the automation from this post? Its campaign "${rule.campaign_name}" is deleted (saved campaigns and other posts are not affected).`)) return;
+    if (!(await alert.ask(`Remove the automation from this post? Its campaign "${rule.campaign_name}" is deleted (saved campaigns and other posts are not affected).`))) return;
     try {
       await commentAPI.deleteCampaign(rule.id);
       showToast('Automation removed from this post');
@@ -401,7 +403,7 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
   };
 
   const handleDeleteCampaign = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this comment automation campaign?')) return;
+    if (!(await alert.ask('Are you sure you want to delete this comment automation campaign?'))) return;
     try {
       await commentAPI.deleteCampaign(id);
       showToast('Campaign deleted successfully');
@@ -570,7 +572,7 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
   };
 
   const handleDeleteComment = async (commentId) => {
-    if (!window.confirm('Are you sure you want to delete this comment permanently?')) return;
+    if (!(await alert.ask('Are you sure you want to delete this comment permanently?'))) return;
     try {
       await commentAPI.deleteComment(commentId, {
         integrationId: selectedIntegrationId,
@@ -585,7 +587,7 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
   };
 
   return (
-    <div className="comment-automation-container" style={{ background: '#f8fafc', borderRadius: 12, padding: 20 }}>
+    <div className="comment-automation-container" style={{ background: 'transparent', borderRadius: 12, padding: 20 }}>
       {/* Toast Notification */}
       {toast && (
         <div

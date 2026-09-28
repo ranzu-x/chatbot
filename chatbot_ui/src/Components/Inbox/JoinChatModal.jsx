@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { conversationAPI, teamAPI } from '../../services/api';
 import { UserCheck, X, Edit3 } from 'lucide-react';
+import { toast } from '../../lib/alerts';
 
 /**
  * Live Inbox "Join Chat" — a modal (rather than an instant action) so the
@@ -64,7 +65,7 @@ export default function JoinChatModal({ open, onClose, conversationId, onJoined 
       onClose?.();
     } catch (err) {
       console.error('Failed to join chat', err);
-      alert(err?.response?.data?.message || 'Failed to join chat');
+      toast.error(err?.response?.data?.message || 'Failed to join chat');
     } finally {
       setJoining(false);
     }

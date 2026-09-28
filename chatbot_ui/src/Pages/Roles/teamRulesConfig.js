@@ -44,6 +44,16 @@ export const TEAM_RULES_CATEGORIES = [
         ],
       },
       {
+        // Only means something on the Platform's and a Reseller's team — the workspaces
+        // that run their own apps (chatbot_api/middleware/developerAppsAccess.js).
+        id: 'developer_apps',
+        name: 'Developer Apps (Meta & TikTok)',
+        description: "Your own Meta WhatsApp / Messenger / Instagram and TikTok developer apps, Embedded Signup and standby apps. Holds app secrets — grant with care.",
+        actions: [
+          { key: 'developer_apps.manage', type: 'special', label: 'Special (View & Manage App Credentials)', restriction: false },
+        ],
+      },
+      {
         id: 'webchat_bot',
         name: 'Webchat Bot',
         description: 'Website Live Chat widget, customization, allowed domains, and embedded snippets.',
@@ -52,6 +62,16 @@ export const TEAM_RULES_CATEGORIES = [
           { key: 'webchat_bot.update', type: 'update', label: 'Update Widget' },
           { key: 'webchat_bot.delete', type: 'delete', label: 'Delete Widget' },
           { key: 'webchat_bot.special', type: 'special', label: 'Special (Embed Snippet)' },
+        ],
+      },
+      {
+        id: 'messenger_template',
+        name: 'Messenger - Utility Templates',
+        description: 'Create, sync and delete a Facebook Page\'s Utility templates (order / account / appointment updates sent after the 24-hour window).',
+        actions: [
+          { key: 'messenger_template.create', type: 'create', label: 'Create Template' },
+          { key: 'messenger_template.update', type: 'update', label: 'Sync from Meta' },
+          { key: 'messenger_template.delete', type: 'delete', label: 'Delete Template' },
         ],
       },
     ],
@@ -272,6 +292,17 @@ export const TEAM_RULES_CATEGORIES = [
         ],
       },
       {
+        // Bot Settings → Auto Responder (chatbot_api/routes/autoResponders.js). Holds API keys — grant with care.
+        id: 'autoresponder',
+        name: 'Auto Responders',
+        description: 'Connect Mailchimp, Brevo, ActiveCampaign or Mautic so User Input Flows can add collected emails to a list.',
+        actions: [
+          { key: 'autoresponder.create', type: 'create', label: 'Connect' },
+          { key: 'autoresponder.update', type: 'update', label: 'Edit Credentials' },
+          { key: 'autoresponder.delete', type: 'delete', label: 'Disconnect' },
+        ],
+      },
+      {
         id: 'google_sheets',
         name: 'Google - Google Sheet',
         description: 'Export User Input Flow responses and sync knowledge bases with Google Spreadsheets.',
@@ -318,12 +349,12 @@ export const TEAM_RULES_CATEGORIES = [
       {
         id: 'telegram_group_manager',
         name: 'Telegram - Group Manager',
-        description: 'Moderate Telegram groups: welcome messages, filters, and member actions.',
+        description: 'Bot Manager → Group Management: welcome & captcha, protection filters, members, join requests, invite links and announcements.',
         actions: [
-          { key: 'telegram_group_manager.create', type: 'create', label: 'Add Group' },
-          { key: 'telegram_group_manager.update', type: 'update', label: 'Edit Rules' },
-          { key: 'telegram_group_manager.delete', type: 'delete', label: 'Remove Group' },
-          { key: 'telegram_group_manager.special', type: 'special', label: 'Special (Ban & Mute)' },
+          { key: 'telegram_group_manager.create', type: 'create', label: 'Post Announcements' },
+          { key: 'telegram_group_manager.update', type: 'update', label: 'Edit Rules & Settings' },
+          { key: 'telegram_group_manager.delete', type: 'delete', label: 'Leave / Remove Group' },
+          { key: 'telegram_group_manager.special', type: 'special', label: 'Special (Ban, Mute & Join Requests)' },
         ],
       },
       {

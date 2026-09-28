@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
 import { googleSheetsAPI } from '../../services/api';
-import Swal from 'sweetalert2';
+import { alert, toast } from '../../lib/alerts';
 import { Sheet, CheckCircle2, AlertCircle, Link2, Unlink } from 'lucide-react';
 
 /**
@@ -38,13 +38,9 @@ export default function GoogleSheetsSettingsPage() {
     const connected = searchParams.get('connected');
     if (!connected) return;
     if (connected === '1') {
-      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Google account connected', showConfirmButton: false, timer: 2600 });
+      toast.success('Google account connected');
     } else {
-      Swal.fire({
-        icon: 'error',
-        title: "Couldn't connect",
-        text: searchParams.get('reason') || 'Google did not complete the connection.',
-      });
+      alert.error("Couldn't connect", searchParams.get('reason') || 'Google did not complete the connection.');
     }
     searchParams.delete('connected');
     searchParams.delete('reason');
@@ -61,29 +57,22 @@ export default function GoogleSheetsSettingsPage() {
         window.location.href = res.data.url; // hand off to Google's consent screen
       }
     } catch (err) {
-      Swal.fire({
-        icon: 'warning',
-        title: 'Not configured yet',
-        text: err?.response?.data?.message || 'Google Sheets is not set up on this server.',
-      });
+      alert.warning('Not configured yet', err?.response?.data?.message || 'Google Sheets is not set up on this server.');
     } finally {
       setConnecting(false);
     }
   };
 
   const handleDisconnect = async () => {
-    const ok = await Swal.fire({
+    const ok = await alert.confirm({
       title: 'Disconnect Google?',
       text: 'Forms exporting to a Google Sheet will stop writing new rows until you reconnect.',
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonColor: '#ef4444',
-      confirmButtonText: 'Disconnect',
+      confirm: 'Disconnect',
     });
-    if (!ok.isConfirmed) return;
+    if (!ok) return;
     await googleSheetsAPI.disconnect();
     load();
-    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Disconnected', showConfirmButton: false, timer: 2000 });
+    toast.success('Disconnected');
   };
 
   return (

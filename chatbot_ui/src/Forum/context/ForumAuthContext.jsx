@@ -38,12 +38,23 @@ export function ForumAuthProvider({ children }) {
     return () => window.removeEventListener("forum_auth:unauthorized", onUnauthorized);
   }, []);
 
+  const startSession = (data) => {
+    const { user: signedIn, token } = data;
+    if (token) setForumToken(token);
+    setUser(signedIn);
+    return signedIn;
+  };
+
+  // Two-factor login on → { twoFactorRequired, challengeToken }; the page then calls completeTwoFactor.
   const login = async (email, password) => {
     const res = await forumAuthAPI.login({ email, password });
-    const { user: loggedIn, token } = res.data;
-    if (token) setForumToken(token);
-    setUser(loggedIn);
-    return loggedIn;
+    if (res.data?.twoFactorRequired) return { twoFactorRequired: true, challengeToken: res.data.challengeToken };
+    return startSession(res.data);
+  };
+
+  const completeTwoFactor = async (challengeToken, factor) => {
+    const res = await forumAuthAPI.loginTwoFactor({ challengeToken, ...factor });
+    return startSession(res.data);
   };
 
   const logout = () => {
@@ -52,7 +63,7 @@ export function ForumAuthProvider({ children }) {
   };
 
   return (
-    <ForumAuthContext.Provider value={{ user, loading, login, logout, refreshUser }}>
+    <ForumAuthContext.Provider value={{ user, loading, login, completeTwoFactor, logout, refreshUser }}>
       {children}
     </ForumAuthContext.Provider>
   );

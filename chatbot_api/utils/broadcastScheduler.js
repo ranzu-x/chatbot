@@ -1,13 +1,17 @@
 import pool from "../db.js";
 import { executeBroadcast } from "./broadcastRunner.js";
+import { isWorkspaceExpired } from "./subscriptionStatus.js";
+import { lockedJob } from "./jobLock.js";
 
 // ─── PROCESS DUE SCHEDULED BROADCASTS ──────────────────────────────────────
 async function processDueBroadcasts() {
   try {
     const [due] = await pool.query(
-      "SELECT id FROM broadcast_campaigns WHERE status = 'SCHEDULED' AND scheduled_at <= NOW()"
+      "SELECT id, agency_id FROM broadcast_campaigns WHERE status = 'SCHEDULED' AND scheduled_at <= NOW()"
     );
     for (const row of due) {
+      // Expired plan → read-only: the broadcast stays scheduled and starts once the plan is renewed.
+      if (await isWorkspaceExpired(row.agency_id)) continue;
       console.log(`[BroadcastScheduler] Starting scheduled broadcast #${row.id}`);
       // Sequential, not parallel — executeBroadcast already paces its own
       // per-contact sends; running several campaigns' sends at once would
@@ -24,6 +28,6 @@ async function processDueBroadcasts() {
 // ─── START SCHEDULER (runs every 60 seconds) ───────────────────────────────
 export function startBroadcastScheduler() {
   console.log("📣 Broadcast Scheduler started (runs every 60 seconds)");
-  processDueBroadcasts();
-  setInterval(processDueBroadcasts, 60 * 1000);
+  lockedJob("broadcasts", processDueBroadcasts)();
+  setInterval(lockedJob("broadcasts", processDueBroadcasts), 60 * 1000);
 }

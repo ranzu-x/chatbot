@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
+import useUrlState from '../../hooks/useUrlState';
 import AppLayout from '../../Layout/AppLayout';
 import { roleAPI } from '../../services/api';
-import { notify } from '../../utils/alerts';
+import { notify, alert } from '../../utils/alerts';
 import { useAuth } from '../../Provider/AuthContext';
 import {
   Shield,
@@ -49,7 +50,7 @@ export default function RolesPage() {
   const [roles, setRoles] = useState([]);
   const [permissions, setPermissions] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedId, setSelectedId] = useState(null);
+  const [selectedId, setSelectedId] = useUrlState('role', null, { type: 'number' });
   const [selectedKeys, setSelectedKeys] = useState(new Set());
   const [disabledChannels, setDisabledChannels] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -67,7 +68,7 @@ export default function RolesPage() {
         const list = rolesRes.data?.roles || [];
         setRoles(list);
         setPermissions(permsRes.data?.permissions || []);
-        if (list.length && !selectedId) setSelectedId(list[0].id);
+        if (list.length) setSelectedId((cur) => (cur && list.some((r) => r.id === cur) ? cur : list[0].id));
       })
       .catch(() => notify.error('Failed to load roles'))
       .finally(() => setLoading(false));
@@ -186,8 +187,8 @@ export default function RolesPage() {
       .catch((err) => notify.error(err?.response?.data?.message || 'Failed to create role'));
   };
 
-  const handleDelete = (role) => {
-    if (!window.confirm(`Delete custom role "${role.name}"? This cannot be undone.`)) return;
+  const handleDelete = async (role) => {
+    if (!(await alert.ask(`Delete custom role "${role.name}"? This cannot be undone.`))) return;
     roleAPI
       .delete(role.id)
       .then(() => {
@@ -247,7 +248,7 @@ export default function RolesPage() {
   }, [permissions]);
 
   return (
-    <AppLayout>
+    <AppLayout hasSubmenu>
       <div
         className="page-header"
         style={{

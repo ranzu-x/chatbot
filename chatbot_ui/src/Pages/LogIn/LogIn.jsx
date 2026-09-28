@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router';
 import { useAuth } from '../../Provider/AuthContext';
-import { tenantAPI } from '../../services/api';
+import { tenantAPI, assetUrl } from '../../services/api';
 import { Sparkles, ArrowRight, Eye, EyeOff } from 'lucide-react';
+import TwoFactorStep from '../../Components/Auth/TwoFactorStep';
 
 const ROLE_HOME = {
   ADMIN:    '/admin',
@@ -11,7 +12,7 @@ const ROLE_HOME = {
 };
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login, completeTwoFactor } = useAuth();
   const navigate  = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -20,6 +21,7 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [error,        setError]        = useState('');
   const [loading,      setLoading]      = useState(false);
+  const [challenge,    setChallenge]    = useState(null); // set when the account has two-factor login on
 
   const [tenant, setTenant] = useState({
     brandName: 'Nexa Chatbot',
@@ -55,13 +57,30 @@ export default function Login() {
     setError('');
     setLoading(true);
     try {
-      const user = await login(email, password);
-      const home = ROLE_HOME[user.role] || '/login';
-      navigate(home, { replace: true });
+      const result = await login(email, password);
+      if (result?.twoFactorRequired) {
+        setChallenge(result.challengeToken);
+        return;
+      }
+      navigate(ROLE_HOME[result.role] || '/login', { replace: true });
     } catch (err) {
       setError(
         err?.response?.data?.message || 'Invalid email or password. Please try again.'
       );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTwoFactor = async (factor) => {
+    setError('');
+    setLoading(true);
+    try {
+      const user = await completeTwoFactor(challenge, factor);
+      navigate(ROLE_HOME[user.role] || '/login', { replace: true });
+    } catch (err) {
+      if (err?.response?.data?.code === 'CHALLENGE_EXPIRED') { setChallenge(null); setPassword(''); }
+      setError(err?.response?.data?.message || 'That code is not right.');
     } finally {
       setLoading(false);
     }
@@ -96,7 +115,7 @@ export default function Login() {
         <div className="login-logo" style={{ textAlign: 'center', marginBottom: 20 }}>
           {tenant.logoUrl ? (
             <img
-              src={tenant.logoUrl}
+              src={assetUrl(tenant.logoUrl)}
               alt={tenant.brandName}
               style={{ maxHeight: 48, maxWidth: 180, objectFit: 'contain', margin: '0 auto 12px', display: 'block' }}
               onError={(e) => { e.currentTarget.style.display = 'none'; }}
@@ -128,6 +147,16 @@ export default function Login() {
           </p>
         </div>
 
+        {challenge ? (
+          <TwoFactorStep
+            onSubmit={handleTwoFactor}
+            onBack={() => { setChallenge(null); setError(''); }}
+            loading={loading}
+            error={error}
+            primaryColor={tenant.primaryColor}
+          />
+        ) : (
+        <>
         {/* Error */}
         {error && <div className="login-error">{error}</div>}
 
@@ -220,8 +249,10 @@ export default function Login() {
             )}
           </button>
         </form>
+        </>
+        )}
 
-        {tenant.allowUserRegistration && (
+        {!challenge && tenant.allowUserRegistration && (
           <div style={{ textAlign: 'center', marginTop: 18, fontSize: '0.8rem', color: '#64748b' }}>
             Don't have an account?{' '}
             <Link to="/register" style={{ color: tenant.primaryColor, fontWeight: 700, textDecoration: 'none' }}>

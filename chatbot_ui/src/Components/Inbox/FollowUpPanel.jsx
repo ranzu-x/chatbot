@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BellRing, Clock, Pencil, Plus, Trash2, Undo2, CheckCircle2, XCircle } from 'lucide-react';
 import { followupAPI } from '../../services/api';
+import { alert } from '../../lib/alerts';
 import {
   DUE_PRESET_HOURS, SNOOZE_PRESETS, partsInHours, partsToIso, toLocalParts, relativeDue, formatDue,
 } from '../../utils/followUps';
@@ -117,7 +118,7 @@ export default function FollowUpPanel({ contactId, conversationId, agentsList = 
   };
   const snooze = (f, minutes) => { setSnoozeFor(null); run(() => followupAPI.snooze(f.id, minutes)); };
   const setStatus = (f, status) => run(() => followupAPI.setStatus(f.id, status));
-  const remove = (f) => { if (window.confirm('Delete this follow-up?')) run(() => followupAPI.delete(f.id)); };
+  const remove = async (f) => { if ((await alert.ask('Delete this follow-up?'))) run(() => followupAPI.delete(f.id)); };
 
   return (
     <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>

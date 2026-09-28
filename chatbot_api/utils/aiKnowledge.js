@@ -15,7 +15,59 @@ const CHUNK_SIZE = 800;
 const CHUNK_OVERLAP = 100;
 const EMBED_BATCH_SIZE = 20;
 
+/** A line that reads like a heading: markdown "#", or a short line without end punctuation. */
+function isHeading(block) {
+  const t = block.trim();
+  if (/^#{1,6}\s+\S/.test(t)) return true;
+  return !t.includes("\n") && t.length <= 80 && /^[\p{Lu}\d]/u.test(t) && !/[.!?,;]$/.test(t) && t.split(/\s+/).length <= 10;
+}
+
+/**
+ * Structure-aware chunking: paragraphs are kept whole and packed up to
+ * `chunkSize`; each chunk starts with the heading of the section it came from,
+ * so "Shipping → How long does it take?" still says "Shipping" when retrieved
+ * on its own. A paragraph longer than a chunk is split by sentences, and a
+ * sentence longer than a chunk by the plain splitter below.
+ */
 export function chunkText(text, { chunkSize = CHUNK_SIZE, overlap = CHUNK_OVERLAP } = {}) {
+  const normalized = String(text || "").replace(/\r\n?/g, "\n").replace(/[ \t\f\v]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+  if (!normalized) return [];
+  const blocks = normalized.split(/\n\s*\n|\n(?=#{1,6}\s)/).map((b) => b.trim()).filter(Boolean);
+  // Plain text with no paragraph breaks at all — nothing to preserve.
+  if (blocks.length === 1 && !normalized.includes("\n")) return splitPlain(normalized, { chunkSize, overlap });
+
+  const chunks = [];
+  let heading = "";
+  let body = [];
+  let size = 0;
+  const flush = () => {
+    if (body.length) chunks.push((heading ? `${heading}\n` : "") + body.join("\n\n"));
+    body = [];
+    size = 0;
+  };
+  const room = () => chunkSize - (heading ? heading.length + 1 : 0);
+
+  for (const block of blocks) {
+    if (isHeading(block)) {
+      flush();
+      heading = block.replace(/^#{1,6}\s+/, "").replace(/\s+/g, " ").slice(0, 120);
+      continue;
+    }
+    const pieces = block.length <= room()
+      ? [block]
+      : block.split(/(?<=[.!?])\s+/).flatMap((s) => (s.length <= room() ? [s] : splitPlain(s, { chunkSize: room(), overlap })));
+    for (const piece of pieces) {
+      if (size && size + piece.length + 2 > room()) flush();
+      body.push(piece);
+      size += piece.length + 2;
+    }
+  }
+  flush();
+  return chunks;
+}
+
+/** Fixed-size chunks breaking on a nearby space (the original splitter, for unstructured text). */
+function splitPlain(text, { chunkSize = CHUNK_SIZE, overlap = CHUNK_OVERLAP } = {}) {
   const clean = (text || "").replace(/\s+/g, " ").trim();
   if (!clean) return [];
   const chunks = [];

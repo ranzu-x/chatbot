@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { whatsappFlowRefAPI, whatsappFlowKeyAPI, integrationAPI } from '../../services/api';
-import { notify } from '../../utils/alerts';
+import { notify, alert } from '../../utils/alerts';
 import { Workflow, Plus, Trash2, KeyRound, Link2, Copy, RefreshCw, CheckCircle2, AlertTriangle } from 'lucide-react';
 
 /** One WhatsApp integration's Flow encryption key — generate/regenerate,
@@ -23,8 +23,13 @@ function EncryptionKeyCard({ integration }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [integration.id]);
 
-  const handleGenerate = () => {
-    if (key && !window.confirm(`This replaces the encryption key for ${integration.wa_display_phone || integration.name} — any WhatsApp Flow currently mid-submission for this number will fail until it's retried. Continue?`)) return;
+  const handleGenerate = async () => {
+    if (key && !(await alert.confirm({
+      tone: 'warning',
+      title: 'Replace the encryption key?',
+      text: `This replaces the encryption key for ${integration.wa_display_phone || integration.name} — any WhatsApp Flow currently mid-submission for this number will fail until it's retried.`,
+      confirm: 'Replace key',
+    }))) return;
     setGenerating(true);
     whatsappFlowKeyAPI.generate(integration.id)
       .then((res) => {
@@ -134,8 +139,8 @@ export default function WhatsAppFlowManagerList() {
       .finally(() => setSaving(false));
   };
 
-  const handleDelete = (f) => {
-    if (!window.confirm(`Remove "${f.name}"?`)) return;
+  const handleDelete = async (f) => {
+    if (!(await alert.ask(`Remove "${f.name}"?`))) return;
     whatsappFlowRefAPI.delete(f.id).then(() => load()).catch(() => notify.error('Failed to remove'));
   };
 

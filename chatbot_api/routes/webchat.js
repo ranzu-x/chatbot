@@ -13,6 +13,9 @@ import {
 import { emitToAgency, emitToConversation } from "../utils/socket.js";
 import { buildDeepLink } from "../utils/deepLinkBuilder.js";
 import { logBotPausedSkip } from "../utils/botLogger.js";
+import { isWorkspaceExpired } from "../utils/subscriptionStatus.js";
+import { handleQuickActionInbound, runNoMatchReply } from "../utils/quickActions.js";
+import { isValidTimeZone } from "../utils/subscriberLocale.js";
 
 const router = express.Router();
 
@@ -45,6 +48,18 @@ function isOriginAllowed(req, allowedDomainsRaw) {
   // Always permit local development / loopback origins so widgets can be tested locally
   if (host === "localhost" || host === "127.0.0.1" || host === "::1") {
     return true;
+  }
+  if (process.env.BACKEND_URL) {
+    try {
+      const backendHost = new URL(process.env.BACKEND_URL).hostname.toLowerCase();
+      if (host === backendHost) return true;
+    } catch {}
+  }
+  if (process.env.FRONTEND_URL) {
+    try {
+      const frontendHost = new URL(process.env.FRONTEND_URL).hostname.toLowerCase();
+      if (host === frontendHost) return true;
+    } catch {}
   }
 
   if (!list.length) return false; // no domains configured -> deny by default
@@ -86,34 +101,71 @@ async function resolveWidgetPrefill(widget) {
   return "";
 }
 
+const DEFAULT_CHATBOT_CARDS = [
+  { id: "chatbot-1", title: "Book a demo", subtitle: "Schedule a personalized demo", icon: "calendar", trigger: "Book a demo" },
+  { id: "chatbot-2", title: "Product tour", subtitle: "See how it works", icon: "play", trigger: "Product tour" },
+  { id: "chatbot-3", title: "Documentation", subtitle: "Browse our guides", icon: "book", trigger: "Documentation" },
+];
+
+async function loadFlowStartData(flowId) {
+  if (!flowId) return null;
+  try {
+    const [[flow]] = await pool.query("SELECT nodes_json FROM flows WHERE id = ?", [flowId]);
+    if (flow?.nodes_json) {
+      const nodes = JSON.parse(flow.nodes_json || "[]");
+      const start = nodes.find((n) => n.type === "start");
+      return start?.data || null;
+    }
+  } catch {}
+  return null;
+}
+
 // Shared shape between GET /webchat/config (styling only, fired on page load
 // so the closed-state launcher button can be styled correctly before the
 // visitor ever interacts) and POST /webchat/init's `widget` field below.
 // `deepLink` is only populated for a DEEPLINK widget (see buildDeepLink) —
 // null for an ordinary WEBCHAT widget, which has no external hand-off.
-function serializeWidgetConfig(widget, deepLink = null, effectivePrefill = null, brandName = null) {
+function serializeWidgetConfig(widget, deepLink = null, effectivePrefill = null, brandName = null, flowStartData = null) {
+  let cards = null;
+  if (widget.chatbot_cards) {
+    try {
+      cards = typeof widget.chatbot_cards === "string" ? JSON.parse(widget.chatbot_cards) : widget.chatbot_cards;
+    } catch {}
+  }
+  if (!cards && flowStartData?.chatbotCards && Array.isArray(flowStartData.chatbotCards) && flowStartData.chatbotCards.length > 0) {
+    cards = flowStartData.chatbotCards;
+  }
+  if (!cards || !Array.isArray(cards) || cards.length === 0) {
+    cards = DEFAULT_CHATBOT_CARDS;
+  }
+
   return {
     widgetType: widget.widget_type || "WEBCHAT",
     targetPlatform: widget.target_platform || null,
     deepLink,
     name: widget.name,
     primaryColor: widget.primary_color || "#3b82f6",
-    logoUrl: widget.logo_url,
-    displayName: widget.display_name || widget.name,
-    headerBgColor: widget.header_bg_color || widget.primary_color || "#3b82f6",
-    headerTextColor: widget.header_text_color || "#ffffff",
-    greetingMessage: widget.greeting_message,
-    placeholderText: widget.placeholder_text,
-    prefillMessage: effectivePrefill !== null ? effectivePrefill : widget.prefill_message,
-    position: widget.position || "BOTTOM_RIGHT",
-    openOnStartup: Boolean(widget.open_on_startup),
-    offsetX: widget.offset_x ?? 20,
-    offsetY: widget.offset_y ?? 20,
-    buttonText: widget.button_text,
-    buttonBgColor: widget.button_bg_color || widget.primary_color || "#3b82f6",
-    buttonTextColor: widget.button_text_color || "#ffffff",
-    buttonSize: widget.button_size || "MEDIUM",
-    brandName: brandName || "Sky Free",
+    logoUrl: widget.logo_url || flowStartData?.logoUrl,
+    displayName: widget.display_name || flowStartData?.displayName || widget.name,
+    headerBgColor: widget.header_bg_color || flowStartData?.headerBgColor || widget.primary_color || "#3b82f6",
+    headerTextColor: widget.header_text_color || flowStartData?.headerTextColor || "#ffffff",
+    greetingMessage: widget.greeting_message || flowStartData?.greetingMessage,
+    placeholderText: widget.placeholder_text || flowStartData?.placeholderText,
+    prefillMessage: effectivePrefill !== null ? effectivePrefill : (widget.prefill_message || flowStartData?.prefillMessage),
+    position: widget.position || flowStartData?.position || "BOTTOM_RIGHT",
+    openOnStartup: Boolean(widget.open_on_startup ?? flowStartData?.openOnStartup),
+    offsetX: widget.offset_x ?? flowStartData?.offsetX ?? 20,
+    offsetY: widget.offset_y ?? flowStartData?.offsetY ?? 20,
+    buttonText: widget.button_text || flowStartData?.buttonText,
+    buttonBgColor: widget.button_bg_color || flowStartData?.buttonBgColor || widget.primary_color || "#3b82f6",
+    buttonTextColor: widget.button_text_color || flowStartData?.buttonTextColor || "#ffffff",
+    buttonSize: widget.button_size || flowStartData?.buttonSize || "MEDIUM",
+    brandName: brandName || "Nexa AI",
+    homeTitle: widget.home_title || flowStartData?.homeTitle || "Welcome!",
+    homeSubtitle: widget.home_subtitle || flowStartData?.homeSubtitle || "How can we help?",
+    replyTimeText: widget.reply_time_text || flowStartData?.replyTimeText || "We typically reply within a few minutes",
+    startConversationText: widget.start_conversation_text || flowStartData?.startConversationText || "Start a conversation",
+    chatbotCards: cards,
   };
 }
 
@@ -179,7 +231,7 @@ router.get("/webchat/config", async (req, res) => {
     const originCheck = checkWidgetOrigin(req, widget);
     if (!originCheck.ok) return res.status(originCheck.status).json({ success: false, message: originCheck.message });
 
-    let brandName = "Sky Free";
+    let brandName = "Nexa AI";
     if (widget.agency_name) brandName = widget.agency_name;
     if (widget.custom_branding) {
       try {
@@ -195,7 +247,8 @@ router.get("/webchat/config", async (req, res) => {
       deepLink = buildDeepLink(target, { prefillMessage: effectivePrefill || widget.prefill_message });
     }
 
-    return res.json({ success: true, widget: serializeWidgetConfig(widget, deepLink, effectivePrefill, brandName) });
+    const flowStartData = await loadFlowStartData(widget.flow_id);
+    return res.json({ success: true, widget: serializeWidgetConfig(widget, deepLink, effectivePrefill, brandName, flowStartData) });
   } catch (err) {
     console.error("Webchat config error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -224,7 +277,7 @@ router.post("/webchat/init", async (req, res) => {
     }
     const widget = widgets[0];
 
-    let brandName = "Sky Free";
+    let brandName = "Nexa AI";
     if (widget.agency_name) brandName = widget.agency_name;
     if (widget.custom_branding) {
       try {
@@ -254,13 +307,22 @@ router.post("/webchat/init", async (req, res) => {
     // Generate session ID if not exists
     const sessId = visitorId || `visitor_${widgetKey}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
+    // The visitor's own browser time zone / language (widget.js) — shown in the
+    // Inbox's subscriber banner (utils/subscriberLocale.js). Only a real IANA zone is kept.
+    const visitorProfile = {
+      timezoneName: isValidTimeZone(req.body.timezone) ? req.body.timezone : null,
+      language: typeof req.body.language === "string" && /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(req.body.language) ? req.body.language.slice(0, 20) : null,
+    };
+
     // Create or get contact
     const contact = await findOrCreateContact(
       agencyId,
       "WEBCHAT",
       sessId,
       `Webchat Visitor (${sessId.slice(-4)})`,
-      null
+      null,
+      null,
+      visitorProfile.timezoneName || visitorProfile.language ? visitorProfile : null
     );
 
     // Create or get conversation
@@ -289,12 +351,13 @@ router.post("/webchat/init", async (req, res) => {
     );
 
     const effectivePrefill = await resolveWidgetPrefill(widget);
+    const flowStartData = await loadFlowStartData(widget.flow_id);
 
     return res.json({
       success: true,
       visitorId: sessId,
       conversationId: conversation.id,
-      widget: serializeWidgetConfig(widget, null, effectivePrefill, brandName),
+      widget: serializeWidgetConfig(widget, null, effectivePrefill, brandName, flowStartData),
       messages,
     });
   } catch (err) {
@@ -306,7 +369,7 @@ router.post("/webchat/init", async (req, res) => {
 // ─── SEND VISITOR MESSAGE (PUBLIC) ────────────────────────────────────────────
 router.post("/webchat/message", async (req, res) => {
   try {
-    const { widgetKey, visitorId, conversationId, body } = req.body;
+    const { widgetKey, visitorId, conversationId, body, triggerHandle } = req.body;
     if (!widgetKey || !visitorId || !conversationId || !body) {
       return res.status(400).json({ success: false, message: "Missing required fields" });
     }
@@ -380,6 +443,12 @@ router.post("/webchat/message", async (req, res) => {
     const allowBotNow = !offHours || bh.allowBotReplies;
     const allowAiNow = !offHours || bh.allowAiReplies;
 
+    // Quick Actions (utils/quickActions.js): a Chat with Human / Chat with Robot
+    // button or keyword — before the paused-bot checks, same as routes/webhook.js.
+    const quick = await handleQuickActionInbound({ agencyId, platform: "WEBCHAT", integration, conversation, contact, text: body, buttonRoute: null, msgType: "TEXT" })
+      .catch((e) => { console.error("[Quick Action] webchat:", e.message); return false; });
+    if (quick) return res.json({ success: true, message });
+
     // 1. Check if user is inside an ongoing interactive appointment booking session
     const [activeSessions] = await pool.query(
       `SELECT * FROM appointment_booking_sessions 
@@ -388,10 +457,39 @@ router.post("/webchat/message", async (req, res) => {
       [conversationId]
     );
 
+    // Expired plan → the visitor's message is kept for the Inbox, but no bot or AI answers.
+    if (await isWorkspaceExpired(agencyId)) return res.json({ success: true });
+
     let aptRan = false;
     if (activeSessions.length > 0) {
       aptRan = allowBotNow && await handleAppointmentBooking(agencyId, "WEBCHAT", conversation, contact, body, integration, "TEXT", null);
       if (aptRan) return res.json({ success: true, message: "Appointment flow processed" });
+    }
+
+    // Resolve chatbot card handle if triggered from widget
+    let resolvedSourceHandle = triggerHandle || null;
+    if (!resolvedSourceHandle) {
+      let cards = null;
+      if (widget.chatbot_cards) {
+        try { cards = typeof widget.chatbot_cards === "string" ? JSON.parse(widget.chatbot_cards) : widget.chatbot_cards; } catch {}
+      }
+      if (!cards && widget.flow_id) {
+        const flowStart = await loadFlowStartData(widget.flow_id);
+        cards = flowStart?.chatbotCards;
+      }
+      if (!cards || !Array.isArray(cards)) cards = DEFAULT_CHATBOT_CARDS;
+
+      const trimmedBody = (body || "").trim().toLowerCase();
+      const matchedCard = cards.find(c => {
+        const trig = (c.trigger || c.title || "").trim().toLowerCase();
+        const title = (c.title || "").trim().toLowerCase();
+        return trimmedBody === trig || trimmedBody === title;
+      });
+      if (matchedCard) {
+        resolvedSourceHandle = matchedCard.id;
+      } else if (trimmedBody === "start a conversation" || trimmedBody === (widget.start_conversation_text || "").trim().toLowerCase()) {
+        resolvedSourceHandle = "next-step";
+      }
     }
 
     // 2. Run Flow engine
@@ -401,6 +499,7 @@ router.post("/webchat/message", async (req, res) => {
       widgetPrefillMessage: effectivePrefill || widget.prefill_message,
       suppressNewTrigger: offHours && !allowBotNow,
       offHoursFlowId: offHours ? bh.offHoursFlowId : null,
+      sourceHandle: resolvedSourceHandle,
     });
     if (flowRan) return res.json({ success: true, message });
 
@@ -434,6 +533,11 @@ router.post("/webchat/message", async (req, res) => {
             botReplyText = widget.greeting_message || "Hi there! How can we help you today? Feel free to ask any questions or choose an option above.";
           }
 
+          // Nothing answered: the widget bot's No match reply (Quick Actions).
+          if (!botReplyText) {
+            await runNoMatchReply({ agencyId, platform: "WEBCHAT", integration, conversation, contact })
+              .catch((err) => console.error("[Quick Action] webchat no-match:", err.message));
+          }
           if (botReplyText) {
             const savedMsg = await saveMessage(conversationId, "OUTBOUND", "TEXT", botReplyText, null, null, { senderType: "BOT", senderName: widget.display_name || "Bot" });
             emitToAgency(agencyId, "new_message", { conversationId, message: savedMsg });

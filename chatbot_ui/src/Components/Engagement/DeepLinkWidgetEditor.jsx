@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { X, Upload, Loader2, MessageCircle, Facebook, Instagram, Send as TelegramIcon } from 'lucide-react';
 import { channelAPI, uploadAPI } from '../../services/api';
 import { resolveAssetUrl } from '../../utils/assetUrl';
+import { toast } from '../../lib/alerts';
 
 const PLATFORM_META = {
   WHATSAPP: { label: 'WhatsApp', color: '#25D366', icon: MessageCircle },
@@ -196,7 +197,7 @@ export default function DeepLinkWidgetEditor({ open, onClose, widget, integratio
 
   const handleSave = async () => {
     if (!form.integrationId) {
-      alert('Select which connected account this widget links to');
+      toast.warning('Select which connected account this widget links to');
       return;
     }
     setSaving(true);
@@ -231,7 +232,7 @@ export default function DeepLinkWidgetEditor({ open, onClose, widget, integratio
       onClose?.();
     } catch (err) {
       console.error('Failed to save widget', err);
-      alert(err?.response?.data?.message || 'Failed to save widget');
+      toast.error(err?.response?.data?.message || 'Failed to save widget');
     } finally {
       setSaving(false);
     }

@@ -1,30 +1,28 @@
-import { useState } from 'react';
-import { useSearchParams } from 'react-router';
+import useUrlState from '../../hooks/useUrlState';
+import UserAvatar from '../../Components/Common/UserAvatar';
 import AppLayout from '../../Layout/AppLayout';
 import { useAuth } from '../../Provider/AuthContext';
 import BillingTab from './BillingTab';
-import { User, CreditCard } from 'lucide-react';
+import SecurityTab from './SecurityTab';
+import { User, CreditCard, ShieldCheck } from 'lucide-react';
 
-const ROLE_LABELS = { ADMIN: 'Super Admin', RESELLER: 'Reseller', USER: 'User' };
+import { accountLabel } from '../../utils/accountLabel';
 
 function ProfileTab({ user }) {
-  const getInitials = (name = '') => (name || '').trim().split(/\s+/).map((w) => w[0]).join('').toUpperCase().slice(0, 2) || '?';
 
   const rows = [
     { label: 'Full Name', value: user?.name || '—' },
     { label: 'Email Address', value: user?.email || '—' },
-    { label: 'Role', value: ROLE_LABELS[user?.role] || user?.role || '—' },
+    { label: 'Account', value: accountLabel(user) },
   ];
 
   return (
     <div style={{ maxWidth: 520 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 22 }}>
-        <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'rgba(37,99,235,0.1)', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '1.2rem' }}>
-          {getInitials(user?.name)}
-        </div>
+        <UserAvatar src={user?.avatar} name={user?.name} size={56} />
         <div>
           <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0f172a' }}>{user?.name}</div>
-          <div style={{ fontSize: '0.8rem', color: '#64748b' }}>{ROLE_LABELS[user?.role] || user?.role}</div>
+          <div style={{ fontSize: '0.8rem', color: '#64748b' }}>{accountLabel(user)}</div>
         </div>
       </div>
 
@@ -51,18 +49,12 @@ function ProfileTab({ user }) {
  */
 export default function MyAccountPage() {
   const { user } = useAuth();
-  const [searchParams, setSearchParams] = useSearchParams();
   const showBilling = user?.role === 'RESELLER';
-  const initialTab = showBilling && searchParams.get('tab') === 'billing' ? 'billing' : 'profile';
-  const [activeTab, setActiveTab] = useState(initialTab);
-
-  const setTab = (tab) => {
-    setActiveTab(tab);
-    setSearchParams(tab === 'billing' ? { tab: 'billing' } : {});
-  };
+  const [activeTab, setTab] = useUrlState('tab', 'profile', { allowed: showBilling ? ['profile', 'security', 'billing'] : ['profile', 'security'] });
 
   const tabs = [
     { key: 'profile', label: 'Profile', icon: User },
+    { key: 'security', label: 'Security', icon: ShieldCheck },
     ...(showBilling ? [{ key: 'billing', label: 'Billing', icon: CreditCard }] : []),
   ];
 
@@ -96,6 +88,7 @@ export default function MyAccountPage() {
         </div>
 
         {activeTab === 'profile' && <ProfileTab user={user} />}
+        {activeTab === 'security' && <SecurityTab />}
         {activeTab === 'billing' && showBilling && <BillingTab />}
       </div>
     </AppLayout>

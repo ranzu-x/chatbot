@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { X, Tag, ListChecks, SlidersHorizontal, Plus, Edit2, Trash2 } from 'lucide-react';
+import { X, Tag, ListChecks, SlidersHorizontal, Edit2, Trash2, Lock, Braces } from 'lucide-react';
+import { SystemFieldsSection, VariablesSection } from './FieldsVariablesSections';
+import { alert } from '../../lib/alerts';
 
 const TABS = [
   { key: 'labels', label: 'Labels', icon: Tag },
   { key: 'lists', label: 'Lists', icon: ListChecks },
-  { key: 'fields', label: 'Custom Fields', icon: SlidersHorizontal },
+  { key: 'fields', label: 'Fields & Variables', icon: SlidersHorizontal },
 ];
 
 const FIELD_TYPES = ['TEXT', 'NUMBER', 'DATE', 'SELECT'];
@@ -82,7 +84,7 @@ function LabelsTab({ labels, labelAPI, onChanged, showToast }) {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Delete this label? It will be removed from every subscriber.')) return;
+    if (!(await alert.ask('Delete this label? It will be removed from every subscriber.'))) return;
     try {
       await labelAPI.delete(id);
       showToast('Label deleted');
@@ -164,7 +166,7 @@ function ListsTab({ lists, contactListAPI, onChanged, showToast }) {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Delete this list? Subscribers stay — only the grouping is removed.')) return;
+    if (!(await alert.ask('Delete this list? Subscribers stay — only the grouping is removed.'))) return;
     try {
       await contactListAPI.delete(id);
       showToast('List deleted');
@@ -244,8 +246,48 @@ function CustomFieldsTab({ fields, customFieldAPI, onChanged, showToast }) {
     }
   };
 
+  // Rename / change a SELECT field's options (the key stays, so flows,
+  // imports and saved values keep pointing at the same field).
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState('');
+  const [editOptions, setEditOptions] = useState('');
+  const startEdit = (f) => {
+    setEditingId(f.id);
+    setEditName(f.name || '');
+    setEditOptions(Array.isArray(f.options) ? f.options.join(', ') : '');
+  };
+  const handleUpdate = async (e) => {
+    e.preventDefault();
+    const f = fields.find((x) => x.id === editingId);
+    if (!f || !editName.trim()) return;
+    setSaving(true);
+    try {
+      const data = { name: editName.trim() };
+      if (f.field_type === 'SELECT') data.options = editOptions.split(',').map((o) => o.trim()).filter(Boolean);
+      await customFieldAPI.update(f.id, data);
+      showToast('Custom field updated');
+      setEditingId(null);
+      onChanged();
+    } catch (err) {
+      showToast(err.response?.data?.message || 'Failed to update custom field', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleDelete = async (id) => {
-    if (!window.confirm('Remove this custom field? Its saved values stay on each subscriber but the field disappears from forms.')) return;
+    // Say where it is used before removing it (GET /custom-fields/:id/usage).
+    let where = '';
+    try {
+      const { data } = await customFieldAPI.usage(id);
+      const used = [...(data.flows || []).map((f) => f.name), ...(data.userInputFlows || []).map((f) => `${f.name} (form)`)];
+      if (used.length) where += `
+
+Used in: ${used.slice(0, 5).join(', ')}${used.length > 5 ? ', …' : ''} — those steps will stop saving to it.`;
+      if (data.subscriberValues) where += `
+${data.subscriberValues} subscriber value(s) are kept and come back if you re-create a field with the same name.`;
+    } catch { /* usage is advisory */ }
+    if (!(await alert.ask(`Remove this custom field? Its saved values stay on each subscriber but the field disappears from forms.${where}`))) return;
     try {
       await customFieldAPI.delete(id);
       showToast('Custom field removed');
@@ -284,18 +326,79 @@ function CustomFieldsTab({ fields, customFieldAPI, onChanged, showToast }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, overflowY: 'auto', maxHeight: 320 }}>
         {fields.length === 0 ? (
           <EmptyRow>No custom fields yet — add one above.</EmptyRow>
-        ) : fields.map((f) => (
+        ) : fields.map((f) => (editingId === f.id ? (
+          <form key={f.id} onSubmit={handleUpdate} style={{ ...rowStyle, flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input
+                type="text" required value={editName} onChange={(e) => setEditName(e.target.value)} autoFocus
+                className="form-input" style={{ flex: 1, height: 32, fontSize: '0.82rem' }}
+              />
+              <button type="submit" disabled={saving || !editName.trim()} className="btn btn-primary btn-sm" style={{ height: 32 }}>Save</button>
+              <button type="button" onClick={() => setEditingId(null)} className="btn btn-secondary btn-sm" style={{ height: 32 }}>Cancel</button>
+            </div>
+            {f.field_type === 'SELECT' && (
+              <input
+                type="text" placeholder="Options, comma-separated" value={editOptions} onChange={(e) => setEditOptions(e.target.value)}
+                className="form-input" style={{ height: 32, fontSize: '0.82rem' }}
+              />
+            )}
+          </form>
+        ) : (
           <div key={f.id} style={rowStyle}>
-            <div>
+            <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: '0.84rem', fontWeight: 700, color: 'var(--text-primary)' }}>{f.name}</div>
               <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: 1 }}>
                 {f.field_type}{f.field_type === 'SELECT' && Array.isArray(f.options) && f.options.length ? ` · ${f.options.join(', ')}` : ''}
+                {f.field_key && <> · key <code style={{ fontSize: '0.72rem' }}>{f.field_key}</code></>}
               </div>
             </div>
-            <button type="button" onClick={() => handleDelete(f.id)} style={iconBtnStyle} title="Remove"><Trash2 size={12} /></button>
+            <div style={{ display: 'flex', gap: 4 }}>
+              <button type="button" onClick={() => startEdit(f)} style={iconBtnStyle} title="Edit"><Edit2 size={12} /></button>
+              <button type="button" onClick={() => handleDelete(f.id)} style={iconBtnStyle} title="Remove"><Trash2 size={12} /></button>
+            </div>
           </div>
-        ))}
+        )))}
       </div>
+    </>
+  );
+}
+
+// ─── FIELDS & VARIABLES: System · Custom · Variables ─────────────────────
+const FIELD_SECTIONS = [
+  { key: 'system', label: 'System fields', icon: Lock },
+  { key: 'custom', label: 'Custom fields', icon: SlidersHorizontal },
+  { key: 'variables', label: 'Variables', icon: Braces },
+];
+
+function FieldsAndVariables({ fields, customFieldAPI, onChanged, showToast }) {
+  const [section, setSection] = useState('custom');
+  return (
+    <>
+      <div style={{ display: 'inline-flex', gap: 2, padding: 3, borderRadius: 9, background: 'var(--bg-base)', border: '1px solid var(--border)', marginBottom: 14, alignSelf: 'flex-start' }}>
+        {FIELD_SECTIONS.map((sec) => {
+          const Icon = sec.icon;
+          const active = section === sec.key;
+          return (
+            <button
+              key={sec.key}
+              type="button"
+              onClick={() => setSection(sec.key)}
+              aria-pressed={active}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 7, border: 'none', cursor: 'pointer',
+                fontSize: '0.78rem', fontWeight: active ? 700 : 500,
+                background: active ? 'var(--bg-surface)' : 'transparent', color: active ? 'var(--text-primary)' : 'var(--text-muted)',
+                boxShadow: active ? 'var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.06))' : 'none',
+              }}
+            >
+              <Icon size={13} /> {sec.label}
+            </button>
+          );
+        })}
+      </div>
+      {section === 'system' && <SystemFieldsSection showToast={showToast} />}
+      {section === 'custom' && <CustomFieldsTab fields={fields} customFieldAPI={customFieldAPI} onChanged={onChanged} showToast={showToast} />}
+      {section === 'variables' && <VariablesSection showToast={showToast} />}
     </>
   );
 }
@@ -305,7 +408,7 @@ export default function ManageModal({ onClose, labels, lists, fields, labelAPI, 
   const [tab, setTab] = useState(initialTab);
 
   return (
-    <ModalShell title="Manage Subscribers" subtitle="Labels, lists, and custom fields are shared across every channel." onClose={onClose}>
+    <ModalShell title="Manage Subscribers" subtitle="Labels, lists, fields and variables are shared across every channel." onClose={onClose}>
       <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', marginBottom: 16 }}>
         {TABS.map((t) => {
           const Icon = t.icon;
@@ -329,7 +432,7 @@ export default function ManageModal({ onClose, labels, lists, fields, labelAPI, 
 
       {tab === 'labels' && <LabelsTab labels={labels} labelAPI={labelAPI} onChanged={onChanged} showToast={showToast} />}
       {tab === 'lists' && <ListsTab lists={lists} contactListAPI={contactListAPI} onChanged={onChanged} showToast={showToast} />}
-      {tab === 'fields' && <CustomFieldsTab fields={fields} customFieldAPI={customFieldAPI} onChanged={onChanged} showToast={showToast} />}
+      {tab === 'fields' && <FieldsAndVariables fields={fields} customFieldAPI={customFieldAPI} onChanged={onChanged} showToast={showToast} />}
     </ModalShell>
   );
 }

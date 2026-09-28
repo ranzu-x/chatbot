@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router';
 import AudienceForm from './AudienceForm';
+import BroadcastExtras from './BroadcastExtras';
 import { useBroadcastCampaignContext } from './useBroadcastCampaign';
 import { Megaphone, Loader2, CircleX, Clock, Lock, FileText, MessagesSquare, Send } from 'lucide-react';
 
@@ -186,8 +187,30 @@ export default function BroadcastStartNodeProperties({ flowName, onFlowNameChang
               </span>
             </div>
           )}
+          {platform === 'FACEBOOK' && (
+            <div className="fb-field">
+              <label>Sending Mode</label>
+              <Segmented
+                ariaLabel="Sending mode"
+                value={mode}
+                onChange={bc.changeMode}
+                disabled={bc.modeBusy}
+                options={[
+                  { value: 'WINDOW', label: 'Inside 24 Hours', icon: <MessagesSquare size={13} /> },
+                  { value: 'TEMPLATE', label: 'Utility Template', icon: <FileText size={13} /> },
+                ]}
+              />
+              <span className="fb-hint">
+                {mode === 'TEMPLATE'
+                  ? 'Reaches subscribers at any time with an approved Utility template — only for a personal order, account, appointment or event update, never announcements or offers. Fill at least one variable from subscriber data.'
+                  : 'Free-form messages to subscribers who wrote in during the last 24 hours — write them in the Send Message element connected to this Broadcast.'}
+              </span>
+            </div>
+          )}
 
           <AudienceForm platform={platform} integrationId={campaign.integration_id} labels={bc.labels} value={bc.audienceForm} onChange={bc.setAudienceForm} previewCount={bc.previewCount} />
+
+          <BroadcastExtras bc={bc} platform={platform} />
 
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px', borderRadius: 10, border: '1px dashed var(--border)' }}>
             <Send size={14} style={{ marginTop: 1, flexShrink: 0, color: 'var(--text-muted)' }} />
@@ -202,7 +225,9 @@ export default function BroadcastStartNodeProperties({ flowName, onFlowNameChang
         <Megaphone size={14} style={{ marginTop: 1, flexShrink: 0, color: 'var(--primary)' }} />
         <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary, #64748b)', lineHeight: 1.5 }}>
           {mode === 'TEMPLATE'
-            ? 'Anytime sends only the Message Template element connected right after this Broadcast.'
+            ? (platform === 'FACEBOOK'
+              ? 'Utility sending sends only the Utility Template element connected right after this Broadcast.'
+              : 'Anytime sends only the Message Template element connected right after this Broadcast.')
             : 'Everything connected after this Broadcast, up to the first question, condition or delay, is sent.'}
         </span>
       </div>

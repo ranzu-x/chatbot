@@ -4,9 +4,12 @@ import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { assertLimit } from "../utils/entitlements.js";
 import { buildSearch } from "../utils/searchQuery.js";
-import { emitToAgency } from "../utils/socket.js";
+import { emitToAgency, emitToUser } from "../utils/socket.js";
 import { getOwnedIntegration } from "../utils/botScope.js";
 import { getOrgMember, integrationAccessClause } from "../utils/teamAccess.js";
+import { mergeContacts } from "../utils/whatsappIdentity.js";
+import { syncWhatsAppBlock } from "../utils/whatsappNumber.js";
+import { cleanSystemValue, systemFieldFromRef } from "../utils/systemFields.js";
 
 const router = express.Router();
 router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
@@ -221,10 +224,10 @@ router.get("/contacts/search", async (req, res) => {
     let rows;
     if (isPhoneLike) {
       [rows] = await pool.query(
-        `SELECT c.id, c.name, c.phone, c.avatar, c.platform, ${convSubquery} FROM contacts c
-         WHERE c.agency_id = ? AND c.phone LIKE ?
+        `SELECT c.id, c.name, c.phone, c.avatar, c.platform, c.external_id, c.wa_username, ${convSubquery} FROM contacts c
+         WHERE c.agency_id = ? AND (c.phone LIKE ? OR c.external_id LIKE ?)
          ORDER BY c.name ASC LIMIT ?`,
-        [agencyId, `${q}%`, limit]
+        [agencyId, `${q}%`, `${q}%`, limit]
       );
     } else {
       // Ranked match across name + email. Previously this was a single
@@ -234,12 +237,12 @@ router.get("/contacts/search", async (req, res) => {
       const searchClause = await buildSearch({
         term: q,
         fulltext: [{ table: "contacts", columns: ["name", "email"], expr: "c.name, c.email", weight: 4 }],
-        like: ["c.name", "c.email"],
+        like: ["c.name", "c.email", "c.wa_username"],
         boost: { expr: "c.name" },
       });
       if (searchClause.active) {
         [rows] = await pool.query(
-          `SELECT c.id, c.name, c.phone, c.avatar, c.platform, ${convSubquery},
+          `SELECT c.id, c.name, c.phone, c.avatar, c.platform, c.external_id, c.wa_username, ${convSubquery},
                   ${searchClause.relevance} AS _relevance
              FROM contacts c
             WHERE c.agency_id = ? AND ${searchClause.where}
@@ -347,7 +350,12 @@ router.get("/contacts/:id", async (req, res) => {
       [contact.id, agencyId]
     );
 
-    return res.json({ success: true, contact, conversations });
+    // WhatsApp business-scoped ids (usernames) this subscriber has reached us with.
+    const [waIdentities] = contact.platform === "WHATSAPP"
+      ? await pool.query("SELECT user_id, kind, created_at FROM contact_wa_identities WHERE contact_id = ? AND agency_id = ? ORDER BY created_at", [contact.id, agencyId])
+      : [[]];
+
+    return res.json({ success: true, contact, conversations, waIdentities });
   } catch (err) {
     console.error("Get contact error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -477,10 +485,17 @@ router.put("/contacts/:id", async (req, res) => {
     const newPhone = phone !== undefined ? phone : current.phone;
     const newEmail = email !== undefined ? email : current.email;
     const newAvatar = avatar !== undefined ? avatar : current.avatar;
+    // Age system field (utils/systemFields.js): whole number 0–150, "" / null clears it.
+    let newAge = current.age ?? null;
+    if (req.body.age !== undefined) {
+      const cleaned = cleanSystemValue(systemFieldFromRef("sys:age"), req.body.age);
+      if (cleaned.error) return res.status(400).json({ success: false, message: cleaned.error });
+      newAge = cleaned.value;
+    }
 
     await pool.query(
-      `UPDATE contacts SET name = ?, phone = ?, email = ?, avatar = ? WHERE id = ? AND agency_id = ?`,
-      [newName, newPhone, newEmail, newAvatar, req.params.id, agencyId]
+      `UPDATE contacts SET name = ?, phone = ?, email = ?, avatar = ?, age = ? WHERE id = ? AND agency_id = ?`,
+      [newName, newPhone, newEmail, newAvatar, newAge, req.params.id, agencyId]
     );
 
     const [updated] = await pool.query("SELECT * FROM contacts WHERE id = ?", [req.params.id]);
@@ -532,7 +547,9 @@ router.patch("/contacts/:id/block", async (req, res) => {
     );
     if (!result.affectedRows) return res.status(404).json({ success: false, message: "Contact not found" });
     emitToAgency(agencyId, "contact_updated", { contactId: Number(req.params.id), isBlocked: true });
-    return res.json({ success: true, isBlocked: true });
+    // WhatsApp: also block on the number itself (Block API) — utils/whatsappNumber.js.
+    const whatsappNote = await syncWhatsAppBlock(agencyId, Number(req.params.id), true).catch(() => null);
+    return res.json({ success: true, isBlocked: true, whatsappNote });
   } catch (err) {
     console.error("Block contact error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -548,7 +565,8 @@ router.patch("/contacts/:id/unblock", async (req, res) => {
     );
     if (!result.affectedRows) return res.status(404).json({ success: false, message: "Contact not found" });
     emitToAgency(agencyId, "contact_updated", { contactId: Number(req.params.id), isBlocked: false });
-    return res.json({ success: true, isBlocked: false });
+    const whatsappNote = await syncWhatsAppBlock(agencyId, Number(req.params.id), false).catch(() => null);
+    return res.json({ success: true, isBlocked: false, whatsappNote });
   } catch (err) {
     console.error("Unblock contact error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -589,6 +607,27 @@ router.delete("/contacts/:id", async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   } finally {
     conn.release();
+  }
+});
+
+// ─── MERGE TWO SUBSCRIBERS ────────────────────────────────────────────────────
+// Keeps :id and moves everything of `otherId` into it (conversations,
+// messages, labels, fields, sequences, orders…), then deletes `otherId`.
+// For the one case WhatsApp can't resolve itself: a person who first wrote
+// with their number hidden (username) and also exists as a phone subscriber.
+router.post("/contacts/:id/merge", async (req, res) => {
+  try {
+    const agencyId = req.tenant?.agencyId ?? req.user.agencyId;
+    const otherId = Number(req.body?.otherId);
+    if (!otherId || otherId === Number(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Pick another subscriber to merge" });
+    }
+    await mergeContacts({ agencyId, survivorId: Number(req.params.id), mergedId: otherId, reason: "MANUAL", mergedBy: req.user.id });
+    return res.json({ success: true, message: "Subscribers merged" });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ success: false, message: err.message });
+    console.error("Merge contacts error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
@@ -1072,14 +1111,46 @@ router.post("/contacts/:id/notes", async (req, res) => {
     const { note } = req.body;
     if (!note || !note.trim()) return res.status(400).json({ success: false, message: "Note content is required" });
 
+    // The subscriber must belong to this workspace (the note used to be stored for any id).
+    const [[owned]] = await pool.query("SELECT id, name FROM contacts WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
+    if (!owned) return res.status(404).json({ success: false, message: "Contact not found" });
+
+    // @mentions: only people of this workspace (owner, members, agents); each gets a notification.
+    const wanted = [...new Set((Array.isArray(req.body.mentionUserIds) ? req.body.mentionUserIds : []).map(Number).filter(Boolean))]
+      .filter((id) => id !== Number(req.user.id))
+      .slice(0, 20);
+    let mentioned = [];
+    if (wanted.length) {
+      [mentioned] = await pool.query(
+        `SELECT DISTINCT u.id, u.name FROM users u
+          WHERE u.id IN (?) AND u.is_active = 1 AND (
+                u.home_agency_id = ?
+             OR u.id = (SELECT owner_id FROM agencies WHERE id = ?)
+             OR EXISTS (SELECT 1 FROM organization_members om WHERE om.user_id = u.id AND om.agency_id = ? AND om.is_active = 1))`,
+        [wanted, agencyId, agencyId, agencyId]
+      );
+    }
+
     const authorName = req.user.name || "Agent";
     const [result] = await pool.query(
-      "INSERT INTO contact_notes (agency_id, contact_id, user_id, author_name, note) VALUES (?, ?, ?, ?, ?)",
-      [agencyId, req.params.id, req.user.id || null, authorName, note.trim()]
+      "INSERT INTO contact_notes (agency_id, contact_id, user_id, author_name, note, mentions) VALUES (?, ?, ?, ?, ?, ?)",
+      [agencyId, req.params.id, req.user.id || null, authorName, note.trim(), mentioned.length ? JSON.stringify(mentioned.map((m) => m.id)) : null]
     );
 
+    if (mentioned.length) {
+      const conversationId = Number(req.body.conversationId) || null;
+      const link = conversationId ? `/inbox?conv=${conversationId}` : "/contacts";
+      const title = `${authorName} mentioned you`;
+      const body = `On ${owned.name || "a subscriber"}: ${note.trim().slice(0, 140)}`;
+      await pool.query(
+        "INSERT INTO user_notifications (user_id, title, body, link, sender_user_id) VALUES ?",
+        [mentioned.map((m) => [m.id, title, body, link, req.user.id || null])]
+      ).catch((e) => console.warn("Mention notification not stored:", e.message));
+      for (const m of mentioned) emitToUser(m.id, "user_notification", { title, body, link });
+    }
+
     const [created] = await pool.query("SELECT * FROM contact_notes WHERE id = ?", [result.insertId]);
-    return res.status(201).json({ success: true, note: created[0] });
+    return res.status(201).json({ success: true, note: created[0], mentioned: mentioned.map((m) => m.name) });
   } catch (err) {
     console.error("Add note error:", err);
     return res.status(500).json({ success: false, message: "Server error" });

@@ -341,3 +341,19 @@ export function downloadBlob(blob, filename) {
   a.remove();
   window.URL.revokeObjectURL(url);
 }
+
+// WhatsApp business-scoped user id ("US.1349…") — a subscriber who wrote with
+// their number hidden behind a username (chatbot_api/utils/whatsappIdentity.js).
+const BSUID_RE = /^[A-Z]{2}\.(?:ENT\.)?[A-Za-z0-9]{1,128}$/;
+export function isWhatsAppUserId(value) {
+  return typeof value === 'string' && BSUID_RE.test(value);
+}
+
+/** How to show who a subscriber is: phone, else @username, else the channel id. */
+export function contactIdentifier(c) {
+  if (!c) return '—';
+  if (c.phone) return c.phone;
+  if (c.wa_username) return `@${c.wa_username}`;
+  if (isWhatsAppUserId(c.external_id)) return 'WhatsApp user (number hidden)';
+  return c.external_id || '—';
+}

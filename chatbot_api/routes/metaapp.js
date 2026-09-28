@@ -5,6 +5,9 @@ import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { resolveMetaAppSettings, resolveWhatsAppOnboardingAppId } from "../utils/appCredentials.js";
 import { testMetaAppCredentials } from "../utils/metaAppHealth.js";
+import { META_API_VERSION } from "../utils/metaApi.js";
+import { requireDeveloperApps } from "../middleware/developerAppsAccess.js";
+import { maskAppRow, keepOrSeal, openAppSecret, isMaskedInput } from "../utils/appSecrets.js";
 
 const router = express.Router();
 // Scoped per-prefix — an unscoped router.use(mw) would run for every
@@ -54,7 +57,8 @@ router.get("/settings/meta-app/app-id", authMiddleware, roleMiddleware("RESELLER
   }
 });
 
-router.use("/settings/meta-app", authMiddleware, roleMiddleware("RESELLER", "ADMIN"));
+// Credentials: only workspaces that run their own apps (Platform, Resellers) — middleware/developerAppsAccess.js.
+router.use("/settings/meta-app", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireDeveloperApps);
 router.use("/channels/instagram/import-accounts", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
 
 // Helper to resolve agencyId cleanly for both AGENCY owners and ADMIN users.
@@ -62,6 +66,7 @@ router.use("/channels/instagram/import-accounts", authMiddleware, roleMiddleware
 // another user's agency row (prevents cross-tenant data leakage).
 // Exported so routes/metaapppool.js can reuse it rather than duplicating it.
 export async function resolveAgencyId(req) {
+  if (req.tenant?.agencyId) return Number(req.tenant.agencyId);
   if (req.user?.agencyId) return Number(req.user.agencyId);
   const userId = req.user?.id;
   if (!userId) return 1;
@@ -129,7 +134,8 @@ router.get("/settings/meta-app", async (req, res) => {
       success: true,
       agencyId,
       platformGroup,
-      settings: settings ? { ...settings, verify_token: verifyToken } : null,
+      // Secrets are never sent to the browser — masked; a masked value saved back keeps the stored one.
+      settings: settings ? { ...maskAppRow(settings), verify_token: verifyToken } : null,
       generatedVerifyToken: verifyToken,
     });
   } catch (err) {
@@ -141,11 +147,17 @@ router.get("/settings/meta-app", async (req, res) => {
 // ─── SAVE META APP SETTINGS (ACTIVE slot for one platform group) ─────────
 router.post("/settings/meta-app", async (req, res) => {
   const { appId, appSecret, systemUserToken, whatsappConfigId, whatsappConfigIdCatalog, verifyToken, appName, siteUrl, privacyUrl, tosUrl, isActive, customWebhookUrl } = req.body;
-  if (!appId || !appSecret || !verifyToken)
-    return res.status(400).json({ success: false, message: "App ID, App Secret and Verify Token are required" });
-
   const agencyId = await resolveAgencyId(req);
   const platformGroup = normalizePlatformGroup(req.body.platformGroup);
+  const [[stored]] = await pool.query(
+    "SELECT app_secret, system_user_token FROM meta_app_pool WHERE agency_id = ? AND platform_group = ? AND slot_role = 'ACTIVE'",
+    [agencyId, platformGroup]
+  );
+  const sealedSecret = keepOrSeal(appSecret, stored?.app_secret);
+  // An emptied token field clears it; a masked one keeps it.
+  const sealedToken = keepOrSeal(systemUserToken, stored?.system_user_token, { keepWhenEmpty: false });
+  if (!appId || !sealedSecret || !verifyToken)
+    return res.status(400).json({ success: false, message: "App ID, App Secret and Verify Token are required" });
   const webhookUrl = customWebhookUrl || `${process.env.BACKEND_URL || "http://localhost:5000"}/api/v1/webhook/${agencyId}`;
 
   try {
@@ -157,18 +169,25 @@ router.post("/settings/meta-app", async (req, res) => {
       await pool.query(
         `UPDATE meta_app_pool SET app_id=?, app_secret=?, system_user_token=?, whatsapp_config_id=?, whatsapp_config_id_catalog=?, verify_token=?, webhook_url=?, is_configured=1,
          app_name=?, site_url=?, privacy_url=?, tos_url=?, is_active=? WHERE id=?`,
-        [appId, appSecret, systemUserToken?.trim() || null, whatsappConfigId || null, whatsappConfigIdCatalog?.trim() || null, verifyToken, webhookUrl, appName || null, siteUrl || null, privacyUrl || null, tosUrl || null, isActive ? 1 : 0, existing[0].id]
+        [appId, sealedSecret, sealedToken, whatsappConfigId || null, whatsappConfigIdCatalog?.trim() || null, verifyToken, webhookUrl, appName || null, siteUrl || null, privacyUrl || null, tosUrl || null, isActive ? 1 : 0, existing[0].id]
       );
     } else {
       await pool.query(
         `INSERT INTO meta_app_pool (agency_id, platform_group, slot_role, label, app_id, app_secret, system_user_token, whatsapp_config_id, whatsapp_config_id_catalog, verify_token, webhook_url, is_configured, app_name, site_url, privacy_url, tos_url, is_active)
          VALUES (?,?,'ACTIVE','Primary',?,?,?,?,?,?,?,1,?,?,?,?,?)`,
-        [agencyId, platformGroup, appId, appSecret, systemUserToken?.trim() || null, whatsappConfigId || null, whatsappConfigIdCatalog?.trim() || null, verifyToken, webhookUrl, appName || null, siteUrl || null, privacyUrl || null, tosUrl || null, isActive ? 1 : 0]
+        [agencyId, platformGroup, appId, sealedSecret, sealedToken, whatsappConfigId || null, whatsappConfigIdCatalog?.trim() || null, verifyToken, webhookUrl, appName || null, siteUrl || null, privacyUrl || null, tosUrl || null, isActive ? 1 : 0]
+      );
+    }
+    // Marketing Messages on Messenger: the app's Facebook Login for Business configuration (utils/messengerMarketing.js).
+    if (req.body.mmConfigId !== undefined) {
+      await pool.query(
+        "UPDATE meta_app_pool SET mm_config_id = ? WHERE agency_id = ? AND platform_group = ? AND slot_role = 'ACTIVE'",
+        [String(req.body.mmConfigId || "").trim().slice(0, 64) || null, agencyId, platformGroup]
       );
     }
 
     // If systemUserToken was supplied, also update any placeholder 'embedded_token' in integrations
-    if (systemUserToken?.trim()) {
+    if (systemUserToken?.trim() && !isMaskedInput(systemUserToken)) {
       const platformFilter = platformGroup === "WHATSAPP" ? "platform = 'WHATSAPP'" : "platform IN ('FACEBOOK','INSTAGRAM')";
       await pool.query(
         `UPDATE integrations SET access_token = ? WHERE agency_id = ? AND ${platformFilter} AND (access_token = 'embedded_token' OR access_token IS NULL OR access_token = '')`,
@@ -223,6 +242,7 @@ router.post("/settings/meta-app/test", async (req, res) => {
     const platformGroup = normalizePlatformGroup(req.body.platformGroup);
     let app_id = req.body?.appId?.toString().trim();
     let app_secret = req.body?.appSecret?.toString().trim();
+    if (isMaskedInput(app_secret)) app_secret = "";
 
     if (!app_id || !app_secret) {
       const [rows] = await pool.query(
@@ -230,8 +250,8 @@ router.post("/settings/meta-app/test", async (req, res) => {
         [agencyId, platformGroup]
       );
       if (!rows.length) return res.status(404).json({ success: false, message: "Meta App not configured yet. Enter App ID and App Secret." });
-      app_id = rows[0].app_id;
-      app_secret = rows[0].app_secret;
+      app_id = app_id || rows[0].app_id;
+      app_secret = openAppSecret(rows[0].app_secret);
     }
 
     const result = await testMetaAppCredentials(app_id, app_secret);
@@ -269,7 +289,7 @@ router.post("/channels/instagram/import-accounts", async (req, res) => {
     let effectiveUserToken = userAccessToken;
     if (appId && appSecret) {
       try {
-        const exchangeUrl = `https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${userAccessToken}`;
+        const exchangeUrl = `https://graph.facebook.com/${META_API_VERSION}/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${userAccessToken}`;
         const exRes = await fetch(exchangeUrl);
         const exData = await exRes.json();
         if (exData.access_token) {
@@ -284,7 +304,7 @@ router.post("/channels/instagram/import-accounts", async (req, res) => {
     // 2. Direct /me check (if token is a direct Page Access Token with linked IG account)
     try {
       const directMeRes = await fetch(
-        `https://graph.facebook.com/v21.0/me?fields=id,name,access_token,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${effectiveUserToken}`
+        `https://graph.facebook.com/${META_API_VERSION}/me?fields=id,name,access_token,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${effectiveUserToken}`
       );
       const directMeData = await directMeRes.json();
       const directIg = directMeData.instagram_business_account || directMeData.connected_instagram_account;
@@ -304,7 +324,7 @@ router.post("/channels/instagram/import-accounts", async (req, res) => {
     // 3. Fetch all pages the user manages from /me/accounts (if token is a User token)
     try {
       const pagesRes = await fetch(
-        `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token,category,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${effectiveUserToken}`,
+        `https://graph.facebook.com/${META_API_VERSION}/me/accounts?fields=id,name,access_token,category,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${effectiveUserToken}`,
         { signal: AbortSignal.timeout(10000) }
       );
       const pagesData = await pagesRes.json();
@@ -334,7 +354,7 @@ router.post("/channels/instagram/import-accounts", async (req, res) => {
         if (!pageMap.has(targetId)) {
           try {
             const pRes = await fetch(
-              `https://graph.facebook.com/v21.0/${targetId}?fields=id,name,access_token,category,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${effectiveUserToken}`
+              `https://graph.facebook.com/${META_API_VERSION}/${targetId}?fields=id,name,access_token,category,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${effectiveUserToken}`
             );
             const pData = await pRes.json();
             if (pData.id && !pData.error) pageMap.set(pData.id, pData);
@@ -346,7 +366,7 @@ router.post("/channels/instagram/import-accounts", async (req, res) => {
     // 5. /me/businesses check for pages owned or managed via Business Manager
     try {
       const bizRes = await fetch(
-        `https://graph.facebook.com/v21.0/me/businesses?fields=id,name,owned_pages{id,name,access_token,category,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}},client_pages{id,name,access_token,category,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}}&access_token=${effectiveUserToken}`,
+        `https://graph.facebook.com/${META_API_VERSION}/me/businesses?fields=id,name,owned_pages{id,name,access_token,category,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}},client_pages{id,name,access_token,category,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}}&access_token=${effectiveUserToken}`,
         { signal: AbortSignal.timeout(7000) }
       );
       const bizData = await bizRes.json();
@@ -376,7 +396,7 @@ router.post("/channels/instagram/import-accounts", async (req, res) => {
         // Query page node directly with page's access_token
         try {
           const igRes = await fetch(
-            `https://graph.facebook.com/v21.0/${page.id}?fields=id,name,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${page.access_token}`,
+            `https://graph.facebook.com/${META_API_VERSION}/${page.id}?fields=id,name,instagram_business_account{id,name,username,profile_picture_url,followers_count},connected_instagram_account{id,name,username,profile_picture_url,followers_count}&access_token=${page.access_token}`,
             { signal: AbortSignal.timeout(6000) }
           );
           const igData = await igRes.json();

@@ -19,6 +19,8 @@
    accent picker for anyone who wants them personally.)
 ═══════════════════════════════════════════════════════════════════ */
 :root {
+  /* One height for the dashboard top bar and the sidebar logo header — they form one strip. */
+  --topbar-height: 63px;
   --primary: #2563eb;
   --primary-dark: #1d4ed8;
   --primary-light: #3b82f6;
@@ -33,7 +35,7 @@
      stand out against it, same as the reference look. --bg-input/--bg-hover
      are the secondary/tertiary greys used for input fields, nested panels
      and hover/active states (see CLAUDE.md's color-system notes). */
-  --bg-base: #f6f6f7;
+  --bg-base: #f5f5f5;
   --bg-surface: #ffffff;
   --bg-card: #ffffff;
   --bg-hover: #f4f4f5;
@@ -44,7 +46,7 @@
      than reusing --border (too dark for a fill) or --bg-hover (meant for
      transient mouse-hover, not a standing selected state) — tune this one
      value to relight all three at once. */
-  --bg-selected: #f7f8fa;
+  --bg-selected: #d6d6d6;
 
   --border: #e4e4e7;
   --border-light: #d4d4d8;
@@ -462,7 +464,7 @@ tr:hover td { background: var(--bg-hover); }
 
 /* ─── Top Bar ────────────────────────────────────────────────────  */
 .top-bar {
-  height: 56px;
+  height: var(--topbar-height);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -560,7 +562,7 @@ tr:hover td { background: var(--bg-hover); }
 .inbox-layout {
   display: flex;
   flex: 1;
-  height: calc(100vh - 56px);
+  height: calc(100vh - var(--topbar-height));
   overflow: hidden;
   position: relative;
   background: var(--bg-base);
@@ -705,11 +707,3 @@ tr:hover td { background: var(--bg-hover); }
   }
 }
 
-/* ─── SweetAlert2 Modal Z-Index (Always on top of all application modals) ─── */
-.swal2-container {
-  z-index: 9999999 !important;
-}
-.swal2-popup {
-  font-family: inherit !important;
-  border-radius: 16px !important;
-}

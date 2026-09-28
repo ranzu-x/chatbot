@@ -11,7 +11,16 @@ import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 
 const router = express.Router();
-router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN"));
+// Super Admin, and a Reseller's own admin (owner) — never an End User, a
+// Reseller's customer or any team member. Workspace owners are all
+// role RESELLER, so the workspace type (req.tenant, middleware/tenant.js)
+// decides. Scoped to /audit-log so it never touches routers mounted after this one.
+const auditLogAccess = (req, res, next) => {
+  if (req.user?.role === "ADMIN") return next();
+  if (req.user?.role === "RESELLER" && req.tenant?.accountType === "RESELLER") return next();
+  return res.status(403).json({ success: false, message: "The audit log is available to Super Admins and Resellers only." });
+};
+router.use("/audit-log", authMiddleware, roleMiddleware("RESELLER", "ADMIN"), auditLogAccess);
 
 router.get("/audit-log", async (req, res) => {
   try {

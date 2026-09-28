@@ -7,7 +7,11 @@ const ROLE_HOME = {
   USER:     '/agency',
 };
 
-export default function ProtectedRoute({ roles, children }) {
+// `accountTypes`: the workspace types allowed besides the Super Admin (e.g. only a
+// RESELLER owner — End User owners share the RESELLER role in code).
+// `requires`: a flag on the signed-in user (from /auth/me) that must be true, e.g.
+// 'canManageDeveloperApps' (chatbot_api/middleware/developerAppsAccess.js).
+export default function ProtectedRoute({ roles, accountTypes, requires, children }) {
   const { user, loading } = useAuth();
 
   if (loading) {
@@ -22,7 +26,7 @@ export default function ProtectedRoute({ roles, children }) {
     return <Navigate to="/login" replace />;
   }
 
-  if (roles && !roles.includes(user.role)) {
+  if ((roles && !roles.includes(user.role)) || (accountTypes && user.role !== 'ADMIN' && !accountTypes.includes(user.accountType)) || (requires && !user[requires])) {
     const home = ROLE_HOME[user.role] || '/login';
     return <Navigate to={home} replace />;
   }

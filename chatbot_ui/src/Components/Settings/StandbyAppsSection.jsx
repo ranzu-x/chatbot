@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Shield, Plus, RefreshCw, ArrowUpCircle, Trash2, CheckCircle2, AlertTriangle, HelpCircle, UserPlus } from 'lucide-react';
 import { metaAppPoolAPI } from '../../services/api';
-import { notify } from '../../utils/alerts';
+import { notify, alert } from '../../utils/alerts';
 
 const HEALTH_BADGE = {
   HEALTHY: { color: '#16a34a', bg: 'rgba(22,163,74,0.08)', icon: CheckCircle2, label: 'Healthy' },
@@ -96,7 +96,7 @@ export default function StandbyAppsSection({ platformGroup, isWhatsAppTab }) {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Remove this standby app?')) return;
+    if (!(await alert.ask('Remove this standby app?'))) return;
     setBusySlotId(id);
     try {
       await metaAppPoolAPI.remove(id);

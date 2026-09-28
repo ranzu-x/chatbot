@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { User, Mail, Lock, Eye, EyeOff, Sparkles, MailCheck, ArrowRight } from 'lucide-react';
 import { useNavigate, useSearchParams, Link } from 'react-router';
 import { useAuth } from '../../Provider/AuthContext';
-import { authAPI, tenantAPI } from '../../services/api';
+import { authAPI, tenantAPI, assetUrl } from '../../services/api';
 import { useResendVerification } from '../../hooks/useResendVerification';
 
 const ROLE_HOME = { ADMIN: '/admin', RESELLER: '/agency', USER: '/agency' };
@@ -219,7 +219,7 @@ export default function Register() {
         <div className="login-logo" style={{ textAlign: 'center', marginBottom: 20 }}>
           {tenant.logoUrl ? (
             <img
-              src={tenant.logoUrl}
+              src={assetUrl(tenant.logoUrl)}
               alt={tenant.brandName}
               style={{ maxHeight: 48, maxWidth: 180, objectFit: 'contain', margin: '0 auto 12px', display: 'block' }}
               onError={(e) => { e.currentTarget.style.display = 'none'; }}

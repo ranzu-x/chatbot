@@ -7,6 +7,8 @@ import {
 import { useState, useEffect } from "react";
 import { blogAPI } from "../../services/api";
 import PlatformIcon from "../../Components/Common/PlatformIcon";
+import usePublicSite from "../../hooks/usePublicSite";
+import ResellerLandingPage from "./ResellerLanding";
 
 // The channels the platform actually connects to (see routes/channels.js /
 // routes/integrations.js) — real, not aspirational, so this list stays the
@@ -134,7 +136,18 @@ function FaqAccordion() {
   );
 }
 
+// This address is a Reseller's → its own landing page (ResellerLanding.jsx);
+// the main domain → the platform's page below.
 export default function LandingPage() {
+  const publicSite = usePublicSite();
+  if (publicSite.loading) {
+    return <section className="lp-hero" style={{ minHeight: '60vh' }} aria-busy="true" />;
+  }
+  if (publicSite.kind === 'RESELLER') return <ResellerLandingPage publicSite={publicSite} />;
+  return <MainLandingPage />;
+}
+
+function MainLandingPage() {
   const [latestPosts, setLatestPosts] = useState([]);
 
   useEffect(() => {

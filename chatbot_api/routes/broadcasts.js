@@ -8,6 +8,8 @@ import { emitBroadcastUpdate } from "../utils/broadcastStats.js";
 import { findOutOfScopeRefs, describeOutOfScope, violationsForClient } from "../utils/botScope.js";
 
 const router = express.Router();
+// Channels where normal (non-template) messages are only allowed inside a 24-hour window.
+const WINDOWED_PLATFORMS = new Set(["WHATSAPP", "FACEBOOK", "INSTAGRAM"]);
 router.use("/broadcasts", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_broadcasts"));
 
 // Audiences at or above this size get an extra "Large Audience" confirmation
@@ -21,6 +23,22 @@ const LARGE_AUDIENCE_THRESHOLD = Math.max(1, Number(process.env.BROADCAST_LARGE_
 const NO_SCHEDULE_MESSAGE = "An Inside 24 hours broadcast can't be scheduled — send it now, or switch it to Anytime (template) to schedule it.";
 function canSchedule(campaign) {
   return !(campaign.platform === "WHATSAPP" && campaign.mode === "WINDOW");
+}
+
+// "Anytime" = a template: WhatsApp's Message Template, or Messenger's Utility
+// template (utils/messengerUtility.js). Instagram / Telegram / TikTok have none.
+const TEMPLATE_PLATFORMS = new Set(["WHATSAPP", "FACEBOOK"]);
+const TEMPLATE_PLATFORM_MESSAGE = "Anytime (template) sending is only available on WhatsApp and Messenger";
+
+/**
+ * A Messenger Utility broadcast is allowed only as a personal, transactional
+ * update to each subscriber (decided with the user) — Meta counts a general
+ * announcement as marketing and can restrict the Page. The sender confirms
+ * that on every send / schedule (confirmUtility: true), and the template must
+ * carry at least one subscriber variable (checked in inspectCampaign).
+ */
+function needsUtilityConfirmation(campaign) {
+  return campaign.platform === "FACEBOOK" && campaign.mode === "TEMPLATE";
 }
 
 function audienceWarnings(inspection) {
@@ -45,6 +63,15 @@ async function gateSend(campaign, body, res) {
     return null;
   }
   const warnings = audienceWarnings(inspection);
+  if (needsUtilityConfirmation(campaign) && body?.confirmUtility !== true) {
+    res.status(409).json({
+      success: false,
+      code: "UTILITY_CONFIRMATION_REQUIRED",
+      message: "Confirm that this is a personal order / account / appointment update for each subscriber — Meta treats general announcements as marketing.",
+      ...warnings,
+    });
+    return null;
+  }
   if ((warnings.noFilter || warnings.large) && body?.confirmAudience !== true) {
     res.status(409).json({ success: false, code: "AUDIENCE_CONFIRMATION_REQUIRED", message: "Confirm the audience before sending.", ...warnings });
     return null;
@@ -233,17 +260,24 @@ router.get("/broadcasts/:id", async (req, res) => {
     // A/B campaign (variant_b_template_id set), but harmless (empty/single
     // row) to compute either way.
     let variantStats = null;
-    if (campaign.variant_b_template_id) {
+    if (campaign.variant_b_template_id || campaign.variant_b_flow_id) {
+      // "replied" = the subscriber wrote to this bot within 3 days of the send —
+      // the fair way to compare two versions of a message.
       const [rows] = await pool.query(
-        `SELECT variant,
+        `SELECT bl.variant,
                 COUNT(*) AS targeted,
-                SUM(status IN ('SENT','DELIVERED','READ')) AS sent,
-                SUM(status IN ('DELIVERED','READ')) AS delivered,
-                SUM(status = 'READ') AS read_count,
-                SUM(status = 'FAILED') AS failed
-         FROM broadcast_logs WHERE campaign_id = ? AND variant IS NOT NULL
-         GROUP BY variant`,
-        [req.params.id]
+                SUM(bl.status IN ('SENT','DELIVERED','READ')) AS sent,
+                SUM(bl.status IN ('DELIVERED','READ')) AS delivered,
+                SUM(bl.status = 'READ') AS read_count,
+                SUM(bl.status = 'FAILED') AS failed,
+                SUM(bl.sent_at IS NOT NULL AND EXISTS (
+                  SELECT 1 FROM messages m JOIN conversations cv ON cv.id = m.conversation_id
+                  WHERE cv.contact_id = bl.contact_id AND cv.integration_id = ? AND m.direction = 'INBOUND'
+                    AND m.created_at > bl.sent_at AND m.created_at < bl.sent_at + INTERVAL 3 DAY
+                )) AS replied
+         FROM broadcast_logs bl WHERE bl.campaign_id = ? AND bl.variant IS NOT NULL
+         GROUP BY bl.variant`,
+        [campaign.integration_id || 0, req.params.id]
       );
       variantStats = rows;
     }
@@ -266,7 +300,7 @@ router.post("/broadcasts/start-with-flow", async (req, res) => {
   // Message Template element). Still changeable in the Broadcast element.
   const mode = req.body.mode === undefined ? "WINDOW" : req.body.mode;
   if (!["WINDOW", "TEMPLATE"].includes(mode)) return res.status(400).json({ success: false, message: "Unknown sending mode" });
-  if (mode === "TEMPLATE" && platform !== "WHATSAPP") return res.status(400).json({ success: false, message: "Anytime (template) sending is only available on WhatsApp" });
+  if (mode === "TEMPLATE" && !TEMPLATE_PLATFORMS.has(platform)) return res.status(400).json({ success: false, message: TEMPLATE_PLATFORM_MESSAGE });
   const agencyId = req.user.agencyId;
 
   let integrationId = await validateIntegration(agencyId, platform, req.body.integrationId);
@@ -294,7 +328,12 @@ router.post("/broadcasts/start-with-flow", async (req, res) => {
     // a Send Message block (Inside 24 hours) or a Message Template element
     // (Anytime) — so the user only fills in the content. Switching the mode
     // in the builder swaps the connected element.
-    const firstStep = mode === "TEMPLATE"
+    const firstStep = mode === "TEMPLATE" && platform === "FACEBOOK"
+      ? {
+          id: "template_1", type: "messengerTemplate", position: { x: 380, y: 0 },
+          data: { label: "Utility Template", messengerTemplateId: null, messengerTemplateName: "", language: "", params: { header: {}, body: {}, buttons: {} }, templateMeta: null },
+        }
+      : mode === "TEMPLATE"
       ? {
           id: "template_1", type: "whatsappTemplate", position: { x: 380, y: 0 },
           data: { label: "Message Template", templateId: null, templateName: "", language: "", params: { header: {}, body: {}, buttons: {} }, templateMeta: null },
@@ -377,6 +416,7 @@ router.put("/broadcasts/:id", async (req, res) => {
   const {
     name, includeLabelIds, excludeLabelIds, includeContactIds, excludeContactIds,
     tagLabelId, scheduledAt, templateId, integrationId, variantBTemplateId, abSplitPercent, mode,
+    variantBFlowId, sendTimeMode,
   } = req.body;
 
   try {
@@ -422,6 +462,27 @@ router.put("/broadcasts/:id", async (req, res) => {
         resolvedVariantB = variantBTemplateId;
       }
     }
+    // A/B between two flows for a normal-message (WINDOW) campaign: flow B must
+    // be another flow of the same bot account.
+    let resolvedVariantBFlow = existing.variant_b_flow_id;
+    if (variantBFlowId !== undefined) {
+      if (variantBFlowId === null || variantBFlowId === "") {
+        resolvedVariantBFlow = null;
+      } else {
+        const [[flowB]] = await pool.query(
+          "SELECT id FROM flows WHERE id = ? AND agency_id = ? AND integration_id = ? AND id <> COALESCE(?, 0)",
+          [variantBFlowId, agencyId, resolvedIntegrationId, existing.flow_id]
+        );
+        if (!flowB) return res.status(400).json({ success: false, message: "Variant B must be another flow of this campaign's bot account" });
+        resolvedVariantBFlow = flowB.id;
+      }
+    }
+    // "Best time" can't be used where a 24-hour window applies to normal messages.
+    let resolvedSendTime = existing.send_time_mode || "NOW";
+    if (sendTimeMode !== undefined) {
+      if (!["NOW", "BEST_HOUR"].includes(sendTimeMode)) return res.status(400).json({ success: false, message: "Unknown send time option" });
+      resolvedSendTime = sendTimeMode;
+    }
     const resolvedSplit = abSplitPercent !== undefined ? Math.min(99, Math.max(1, Number(abSplitPercent) || 50)) : existing.ab_split_percent;
 
     // Sending mode of a flow-built campaign (Broadcast element: Inside 24
@@ -430,7 +491,7 @@ router.put("/broadcasts/:id", async (req, res) => {
     let resolvedMode = existing.mode;
     if (mode !== undefined) {
       if (!["WINDOW", "TEMPLATE"].includes(mode)) return res.status(400).json({ success: false, message: "Unknown sending mode" });
-      if (mode === "TEMPLATE" && existing.platform !== "WHATSAPP") return res.status(400).json({ success: false, message: "Anytime (template) sending is only available on WhatsApp" });
+      if (mode === "TEMPLATE" && !TEMPLATE_PLATFORMS.has(existing.platform)) return res.status(400).json({ success: false, message: TEMPLATE_PLATFORM_MESSAGE });
       if (!existing.flow_id && mode !== "TEMPLATE") return res.status(400).json({ success: false, message: "This campaign has no flow, so it can only send a template" });
       resolvedMode = mode;
     }
@@ -456,7 +517,7 @@ router.put("/broadcasts/:id", async (req, res) => {
         integration_id = ?,
         include_label_ids = ?, exclude_label_ids = ?, include_contact_ids = ?, exclude_contact_ids = ?,
         tag_label_id = ?, scheduled_at = ?, template_id = COALESCE(?, template_id),
-        variant_b_template_id = ?, ab_split_percent = ?, mode = ?
+        variant_b_template_id = ?, ab_split_percent = ?, mode = ?, variant_b_flow_id = ?, send_time_mode = ?
        WHERE id = ? AND agency_id = ?`,
       [
         name || null,
@@ -466,7 +527,8 @@ router.put("/broadcasts/:id", async (req, res) => {
         idsOrExisting(includeLabelIds, existing.include_label_ids), idsOrExisting(excludeLabelIds, existing.exclude_label_ids),
         idsOrExisting(includeContactIds, existing.include_contact_ids), idsOrExisting(excludeContactIds, existing.exclude_contact_ids),
         tagLabelId === undefined ? existing.tag_label_id : (tagLabelId || null), resolvedScheduledAt, templateId || null,
-        resolvedVariantB, resolvedSplit, resolvedMode,
+        resolvedVariantB, resolvedSplit, resolvedMode, resolvedMode === "WINDOW" ? resolvedVariantBFlow : null,
+        resolvedMode === "WINDOW" && WINDOWED_PLATFORMS.has(existing.platform) ? "NOW" : resolvedSendTime,
         req.params.id, agencyId,
       ]
     );

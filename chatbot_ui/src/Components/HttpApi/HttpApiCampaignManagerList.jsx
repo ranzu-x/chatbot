@@ -1,7 +1,7 @@
 import { Fragment, useState, useEffect, useCallback } from 'react';
 import { httpApiCampaignAPI, customFieldAPI } from '../../services/api';
 import { ChevronDown, ChevronRight, RefreshCw, Plus, Pencil, Trash2, PlayCircle, Globe, Loader2 } from 'lucide-react';
-import Swal from 'sweetalert2';
+import { alert } from '../../lib/alerts';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 const TYPES = [
@@ -97,7 +97,7 @@ export default function HttpApiCampaignManagerList() {
 
   const handleSave = async () => {
     if (!form.name.trim() || !form.url.trim()) {
-      Swal.fire({ icon: 'error', title: 'Missing fields', text: 'Name and URL are required.' });
+      alert.error('Missing fields', 'Name and URL are required.');
       return;
     }
     setSaving(true);
@@ -113,23 +113,23 @@ export default function HttpApiCampaignManagerList() {
       setShowForm(false);
       load();
     } catch (err) {
-      Swal.fire({ icon: 'error', title: 'Could not save campaign', text: err?.response?.data?.message || 'Please try again.' });
+      alert.error('Could not save campaign', err?.response?.data?.message || 'Please try again.');
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = async (c) => {
-    const ok = await Swal.fire({
+    const ok = await alert.confirm({
       title: `Delete "${c.name}"?`, text: 'Any flow node calling this campaign will stop working. This cannot be undone.',
-      icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete',
+      confirm: 'Delete',
     });
-    if (!ok.isConfirmed) return;
+    if (!ok) return;
     try {
       await httpApiCampaignAPI.delete(c.id);
       setCampaigns((prev) => prev.filter((x) => x.id !== c.id));
     } catch (err) {
-      Swal.fire({ icon: 'error', title: 'Could not delete', text: err?.response?.data?.message || 'Please try again.' });
+      alert.error('Could not delete', err?.response?.data?.message || 'Please try again.');
     }
   };
 
@@ -138,16 +138,15 @@ export default function HttpApiCampaignManagerList() {
     try {
       const res = await httpApiCampaignAPI.test(c.id);
       const r = res.data?.result;
-      Swal.fire({
-        icon: r?.success ? 'success' : 'error',
+      const show = r?.success ? alert.success : alert.error;
+      show({
         title: r?.success ? `Success (HTTP ${r.status})` : 'Request failed',
-        html: `<pre style="text-align:left;max-height:260px;overflow:auto;font-size:11px;white-space:pre-wrap;">${
-          (r?.errorMessage || JSON.stringify(r?.responseBody, null, 2) || '').replace(/</g, '&lt;')
-        }</pre>`,
+        details: r?.errorMessage || JSON.stringify(r?.responseBody, null, 2) || '',
+        wide: true,
       });
       setExpandedId(c.id);
     } catch (err) {
-      Swal.fire({ icon: 'error', title: 'Test failed', text: err?.response?.data?.message || 'Please try again.' });
+      alert.error('Test failed', err?.response?.data?.message || 'Please try again.');
     } finally {
       setTestingId(null);
     }

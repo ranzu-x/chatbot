@@ -167,7 +167,6 @@ async function run() {
       CREATE TRIGGER trg_agencies_tree_bu BEFORE UPDATE ON agencies FOR EACH ROW
       BEGIN
         DECLARE parent_type VARCHAR(32);
-        DECLARE child_count INT DEFAULT 0;
         IF NEW.account_type = 'RESELLER_CUSTOMER' THEN
           IF NEW.parent_agency_id IS NULL THEN
             SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'tenant guard: a reseller customer must have a parent reseller';
@@ -182,11 +181,9 @@ async function run() {
         ELSEIF NEW.parent_agency_id IS NOT NULL THEN
           SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'tenant guard: only reseller customers may have a parent workspace';
         END IF;
+        -- A Reseller is permanent (migrate_reseller_permanent.js, utils/accountTypeRules.js).
         IF OLD.account_type = 'RESELLER' AND NEW.account_type <> 'RESELLER' THEN
-          SELECT COUNT(*) INTO child_count FROM agencies WHERE parent_agency_id = OLD.id;
-          IF child_count > 0 THEN
-            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'tenant guard: a reseller that still has customers cannot be changed to another type';
-          END IF;
+          SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'tenant guard: a reseller cannot be changed to another account type';
         END IF;
       END`);
     console.log("✅ agencies tree triggers (re)created");

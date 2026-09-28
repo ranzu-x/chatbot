@@ -4,7 +4,8 @@ import {
   Tag, Zap, SlidersHorizontal,
 } from 'lucide-react';
 import { contactAPI, sequenceAPI, labelAPI, customFieldAPI } from '../../services/api';
-import { getPlatform, getInitials, fmtDate, formatSubscriberId } from './subscriberUtils';
+import { getPlatform, getInitials, fmtDate, formatSubscriberId, contactIdentifier } from './subscriberUtils';
+import MergeSubscriberCard from './MergeSubscriberCard';
 
 const TABS = ['Overview', 'Agent', 'Labels', 'Sequences', 'Custom Fields', 'Notes'];
 
@@ -14,7 +15,7 @@ const chip = {
   display: 'inline-flex', alignItems: 'center', gap: 5,
 };
 
-export default function SubscriberDetailDrawer({ contact, availableLabels, onClose, onNavigateInbox, onContactPatched }) {
+export default function SubscriberDetailDrawer({ contact, availableLabels, onClose, onNavigateInbox, onContactPatched, onMerged }) {
   const [activeTab, setActiveTab] = useState('Overview');
   const [notes, setNotes] = useState([]);
   const [newNote, setNewNote] = useState('');
@@ -144,7 +145,7 @@ export default function SubscriberDetailDrawer({ contact, availableLabels, onClo
                 {contact.name || 'Unnamed Subscriber'}
               </h2>
               <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: 2 }}>
-                {contact.phone || contact.external_id || 'No phone / ID'}
+                {contactIdentifier(contact)}
               </div>
               <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
                 {contact.retained && (
@@ -193,9 +194,19 @@ export default function SubscriberDetailDrawer({ contact, availableLabels, onClo
                     <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', textTransform: 'uppercase' }}>Phone:</span>
                     <strong style={{ fontSize: '0.84rem', color: 'var(--text-primary)' }}>{contact.phone || '—'}</strong>
                   </div>
+                  {contact.wa_username && (
+                    <div>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', textTransform: 'uppercase' }}>WhatsApp username:</span>
+                      <span style={{ fontSize: '0.84rem', color: 'var(--text-primary)' }}>@{contact.wa_username}</span>
+                    </div>
+                  )}
                   <div>
                     <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', textTransform: 'uppercase' }}>Email:</span>
                     <span style={{ fontSize: '0.84rem', color: 'var(--text-primary)' }}>{contact.email || '—'}</span>
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', textTransform: 'uppercase' }}>Age:</span>
+                    <span style={{ fontSize: '0.84rem', color: 'var(--text-primary)' }}>{contact.age ?? '—'}</span>
                   </div>
                   <div>
                     <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', textTransform: 'uppercase' }}>External ID:</span>
@@ -233,6 +244,7 @@ export default function SubscriberDetailDrawer({ contact, availableLabels, onClo
                   </div>
                 </div>
               </div>
+              <MergeSubscriberCard contact={contact} onMerged={() => { onMerged?.(); onClose(); }} />
             </div>
           )}
 

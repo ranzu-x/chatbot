@@ -11,6 +11,7 @@
  */
 import express from "express";
 import Stripe from "stripe";
+import { paypalToken } from "../utils/paypalClient.js";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
@@ -142,6 +143,14 @@ router.post("/agency/payment-gateways/:provider/test", async (req, res) => {
         accountId: account.id,
         chargesEnabled: account.charges_enabled,
       });
+    }
+
+    if (provider === "PAYPAL") {
+      // Getting an OAuth token proves the client id / secret (utils/paypalClient.js).
+      const [[gw]] = await pool.query("SELECT mode FROM agency_payment_gateways WHERE agency_id = ? AND provider = 'PAYPAL'", [agencyId]);
+      await paypalToken({ clientId: creds.clientId, clientSecret: creds.clientSecret, mode: gw?.mode || "live" });
+      await pool.query("UPDATE agency_payment_gateways SET last_verified_at = NOW() WHERE agency_id = ? AND provider = ?", [agencyId, provider]);
+      return res.json({ success: true, message: `PayPal credentials are valid (${gw?.mode === "test" ? "sandbox" : "live"}).` });
     }
 
     return res.status(400).json({ success: false, message: `Connection test not yet implemented for ${provider}` });

@@ -32,7 +32,7 @@ function ThreadCard({ thread, announcement }) {
         <h3 className="fm-thread-title">{thread.title}</h3>
         {thread.excerpt && <p className="fm-thread-excerpt">{thread.excerpt}</p>}
         <div className="fm-thread-foot">
-          <Avatar name={thread.authorName} size={22} />
+          <Avatar name={thread.authorName} src={thread.authorAvatar} size={22} />
           <b>{thread.authorName}</b>
           <span>·</span>
           <span>{formatRelativeTime(thread.last_activity_at || thread.created_at)}</span>

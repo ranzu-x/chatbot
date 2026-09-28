@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import UserAvatar from '../../Components/Common/UserAvatar';
 import AppLayout from '../../Layout/AppLayout';
 import { teamAPI, roleAPI, integrationAPI } from '../../services/api';
 import { useAuth } from '../../Provider/AuthContext';
+import { alert } from '../../lib/alerts';
 import {
   Users,
   UserCheck,
@@ -79,10 +81,6 @@ function getRoleInfo(roleKey) {
       description: 'Standard team member access.',
     }
   );
-}
-
-function getInitials(name = '') {
-  return name.trim().split(/\s+/).map((w) => w[0]).join('').toUpperCase().slice(0, 2) || '?';
 }
 
 function formatDate(ts) {
@@ -329,7 +327,7 @@ export default function TeamMembersPage() {
 
   // ─── Delete Member ────────────────────────────────────────────────────────
   const handleDelete = async (member) => {
-    if (!window.confirm(`Are you sure you want to remove team member "${member.name}"? This action cannot be undone.`)) {
+    if (!(await alert.ask(`Are you sure you want to remove team member "${member.name}"? This action cannot be undone.`))) {
       return;
     }
     try {
@@ -846,7 +844,7 @@ export default function TeamMembersPage() {
                                 position: 'relative',
                               }}
                             >
-                              {getInitials(member.name)}
+                              <UserAvatar src={member.avatar} name={member.name} size={38} />
                               {member.is_online ? (
                                 <span
                                   style={{
@@ -1820,7 +1818,7 @@ export default function TeamMembersPage() {
                     justifyContent: 'center',
                   }}
                 >
-                  {getInitials(viewingMember.name)}
+                  <UserAvatar src={viewingMember.avatar} name={viewingMember.name} size={60} />
                 </div>
                 <div>
                   <h4 style={{ margin: '0 0 4px 0', fontSize: '1.2rem', fontWeight: 800, color: 'var(--text-primary)' }}>

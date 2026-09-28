@@ -5,3 +5,6 @@ node_modules
 # User-uploaded media (test/dev fixtures and real uploads alike don't belong in git)
 uploads/*
 !uploads/.gitkeep
+
+# Private files (call recordings) — served only through authenticated routes
+private_uploads/

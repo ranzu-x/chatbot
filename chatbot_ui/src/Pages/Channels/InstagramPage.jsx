@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
+import useUrlState from '../../hooks/useUrlState';
 import AppLayout from '../../Layout/AppLayout';
 import ChannelBreadcrumb from '../../Components/Common/ChannelBreadcrumb';
 import { channelAPI } from '../../services/api';
 import useFacebookSDK from '../../hooks/useFacebookSDK';
-import { handleLimitError } from '../../utils/alerts';
+import { handleLimitError, alert } from '../../utils/alerts';
 import { useAuth } from '../../Provider/AuthContext';
 import {
   Users, CheckCircle2, Instagram, Trash2, AlertTriangle, RefreshCw, Zap, Rocket, Pencil, Info,
@@ -105,7 +106,7 @@ export default function InstagramPage({ embedded = false }) {
   const [toast, setToast]                 = useState(null);
 
   // UI flow: 'list' | 'choose_method' | 'connect'
-  const [view, setView] = useState('list');
+  const [view, setView] = useUrlState('view', 'list', { allowed: ['list','connect'] });
   const [method, setMethod] = useState(null); // 'sync' | 'token' | 'oauth' | 'manual'
 
   // Manual connect fallback
@@ -241,7 +242,7 @@ export default function InstagramPage({ embedded = false }) {
   };
 
   const handleDelete = async (id) => {
-    if (!confirm('Remove this Instagram account?')) return;
+    if (!(await alert.ask('Remove this Instagram account?'))) return;
     try { await channelAPI.deleteInstagram(id); showToast('Account removed'); fetchConnected(); }
     catch { showToast('Failed', 'error'); }
   };

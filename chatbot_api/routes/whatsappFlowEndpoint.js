@@ -11,9 +11,9 @@ import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { encryptSecret, decryptSecret } from "../utils/cryptoVault.js";
 import { generateFlowKeyPair, decryptFlowRequest, encryptFlowResponse, FlowDecryptionError } from "../utils/whatsappFlowCrypto.js";
+import { META_API_VERSION } from "../utils/metaApi.js";
 
 const router = express.Router();
-const META_API_VERSION = process.env.META_API_VERSION || "v21.0";
 
 // ─── PROTECTED: key management (Settings → WhatsApp Flows) ─────────────────
 

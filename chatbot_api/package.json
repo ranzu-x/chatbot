@@ -15,7 +15,17 @@
     "test:broadcast": "node scripts/test-broadcast-workflow.mjs",
     "test:email": "node scripts/test-email.mjs",
     "pretest": "npm run lint:tenant",
-    "test:reconnect-limit": "node scripts/test-reconnect-limit.mjs"
+    "test:reconnect-limit": "node scripts/test-reconnect-limit.mjs",
+    "test:wa-identity": "node scripts/test-wa-identity.mjs",
+    "test:wa-calls": "node scripts/test-wa-calls.mjs",
+    "test:billing": "node scripts/test-billing.mjs",
+    "test:2fa": "node scripts/test-two-factor.mjs",
+    "test:telegram-stars": "node scripts/test-telegram-stars.mjs",
+    "test:woo-plugin": "node scripts/test-woo-plugin.mjs",
+    "test:reseller-payments": "node scripts/test-reseller-payments.mjs",
+    "test:marketing-messages": "node scripts/test-marketing-messages.mjs",
+    "test:telegram-checklists": "node scripts/test-telegram-checklists.mjs",
+    "test:wa-pacing": "node scripts/test-wa-pacing.mjs"
   },
   "keywords": [],
   "author": "",
@@ -28,6 +38,7 @@
     "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
+    "countries-and-timezones": "^3.10.0",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
     "express-rate-limit": "^8.7.0",
@@ -42,6 +53,7 @@
     "node-cron": "^4.2.1",
     "nodemailer": "^10.0.10",
     "pdf-parse": "^2.4.5",
+    "qrcode": "^1.5.4",
     "socket.io": "^4.8.3",
     "stripe": "^22.6.0"
   }

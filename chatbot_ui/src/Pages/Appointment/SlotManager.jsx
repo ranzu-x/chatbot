@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link } from "react-router";
+import useUrlState from "../../hooks/useUrlState";
 import AppLayout from "../../Layout/AppLayout";
-import toast from "react-hot-toast";
+import { toast, alert } from '../../lib/alerts';
 import {
   Calendar,
   Clock,
@@ -145,9 +146,7 @@ function StatCard({ icon: Icon, title, value, sub, color }) {
 }
 
 export default function SlotManager({ defaultTab }) {
-  const [searchParams] = useSearchParams();
-  const initialTab = defaultTab || (searchParams.get("tab") === "campaigns" ? "campaigns" : "slots");
-  const [activeTab, setActiveTab] = useState(initialTab); // 'slots' | 'services' | 'schedule' | 'campaigns'
+  const [activeTab, setActiveTab] = useUrlState("tab", defaultTab || "slots", { allowed: ["slots", "services", "schedule", "campaigns"] });
   const [slots, setSlots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0]);
@@ -285,13 +284,6 @@ export default function SlotManager({ defaultTab }) {
     loadCampaigns();
   }, [loadSlots, loadServices, loadCampaigns]);
 
-  useEffect(() => {
-    const tabParam = searchParams.get("tab");
-    if (tabParam && ["slots", "services", "schedule", "campaigns"].includes(tabParam)) {
-      setActiveTab(tabParam);
-    }
-  }, [searchParams]);
-
   // ── Generate Slots Handler ──────────────────────────────────────────────
   const handleGenerateSlots = async (e) => {
     e.preventDefault();
@@ -325,7 +317,7 @@ export default function SlotManager({ defaultTab }) {
 
   // ── Apply Weekly Schedule ──────────────────────────────────────────────
   const handleApplyWeeklySchedule = async (daysAhead = 30) => {
-    if (!window.confirm(`Generate slots for the next ${daysAhead} days based on your weekly working hours?`)) return;
+    if (!(await alert.ask(`Generate slots for the next ${daysAhead} days based on your weekly working hours?`))) return;
 
     setApplyingSchedule(true);
     try {
@@ -361,7 +353,7 @@ export default function SlotManager({ defaultTab }) {
 
   // ── Slot Actions ────────────────────────────────────────────────────────
   const handleDeleteSlot = async (id) => {
-    if (!window.confirm("Delete this time slot?")) return;
+    if (!(await alert.ask("Delete this time slot?"))) return;
     try {
       await deleteSlot(id);
       toast.success("Slot deleted");
@@ -421,7 +413,7 @@ export default function SlotManager({ defaultTab }) {
   };
 
   const handleBulkDelete = async () => {
-    if (!window.confirm(`Delete ${selectedSlotIds.size} selected slots? (Booked slots will be protected)`)) return;
+    if (!(await alert.ask(`Delete ${selectedSlotIds.size} selected slots? (Booked slots will be protected)`))) return;
     try {
       const res = await bulkDeleteSlots(Array.from(selectedSlotIds));
       toast.success(res.message || "Slots deleted");
@@ -442,7 +434,7 @@ export default function SlotManager({ defaultTab }) {
   };
 
   const handlePurgePast = async () => {
-    if (!window.confirm("Clean up past empty slots before today?")) return;
+    if (!(await alert.ask("Clean up past empty slots before today?"))) return;
     try {
       const res = await purgePastSlots();
       toast.success(res.message || "Cleaned up past slots");
@@ -499,7 +491,7 @@ export default function SlotManager({ defaultTab }) {
   };
 
   const handleDeleteService = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this service?")) return;
+    if (!(await alert.ask("Are you sure you want to delete this service?"))) return;
     try {
       await deleteAppointmentService(id);
       toast.success("Service deleted");
@@ -572,7 +564,7 @@ export default function SlotManager({ defaultTab }) {
   };
 
   const handleDeleteCampaign = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this appointment campaign?")) return;
+    if (!(await alert.ask("Are you sure you want to delete this appointment campaign?"))) return;
     try {
       await appointmentCampaignAPI.delete(id);
       toast.success("Campaign deleted");

@@ -1,14 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import useUrlState from '../../hooks/useUrlState';
 import AppLayout from '../../Layout/AppLayout';
 import { contactAPI, labelAPI, contactListAPI, customFieldAPI, sequenceAPI, integrationAPI } from '../../services/api';
 import { useNavigate } from 'react-router';
 import {
   Users, MessageSquare, CheckCircle2, Download, Upload, RefreshCw, Search, Plus, Edit2, Trash2,
-  Tag, X, ShieldCheck, ShieldOff, Bot, Pause, SlidersHorizontal, Zap, ListChecks, Info,
+  Tag, X, ShieldCheck, ShieldOff, Bot, Pause, SlidersHorizontal, Zap, ListChecks, Info, Braces,
 } from 'lucide-react';
 import {
   getPlatform, PLATFORM_ORDER, PLATFORM_IMPORT_EXPORT, STATUS_OPTIONS,
-  getInitials, resolveMediaUrl, fmtDate, formatSubscriberId, downloadBlob,
+  getInitials, resolveMediaUrl, fmtDate, formatSubscriberId, downloadBlob, contactIdentifier,
 } from './subscriberUtils';
 import SubscriberDetailDrawer from './SubscriberDetailDrawer';
 import ManageModal from './ManageModal';
@@ -81,8 +82,11 @@ export default function ContactsPage() {
 
   // Filters — channel defaults to WhatsApp, per requirement.
   const [search, setSearch] = useState('');
-  const [platformFilter, setPlatformFilter] = useState('WHATSAPP');
-  const [accountFilter, setAccountFilter] = useState('');
+  // Channel + account live in the URL so a refresh keeps them ("All Channels" = ?channel=ALL).
+  const [channelParam, setChannelParam] = useUrlState('channel', 'WHATSAPP');
+  const platformFilter = channelParam === 'ALL' ? '' : channelParam;
+  const setPlatformFilter = useCallback((v) => setChannelParam(v ? v : 'ALL'), [setChannelParam]);
+  const [accountFilter, setAccountFilter] = useUrlState('account', '');
   const [labelFilter, setLabelFilter] = useState('');
   const [listFilter, setListFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -107,6 +111,14 @@ export default function ContactsPage() {
   const [form, setForm] = useState({ name: '', platform: 'WHATSAPP', externalId: '', phone: '', email: '' });
   const [showManageModal, setShowManageModal] = useState(false);
   const [manageTab, setManageTab] = useState('labels');
+  // ?manage=labels|lists|fields opens the Manage window on that tab (Bot Manager links here).
+  const [manageParam, setManageParam] = useUrlState('manage', '', { allowed: ['labels', 'lists', 'fields'] });
+  useEffect(() => {
+    if (!manageParam) return;
+    setManageTab(manageParam);
+    setShowManageModal(true);
+    setManageParam('');
+  }, [manageParam, setManageParam]);
   const [showImportModal, setShowImportModal] = useState(false);
   const [bulkListModal, setBulkListModal] = useState(null); // { mode: 'add' | 'remove' }
   const [bulkSequenceModal, setBulkSequenceModal] = useState(false);
@@ -136,13 +148,18 @@ export default function ContactsPage() {
   useEffect(() => { loadLabels(); loadLists(); loadCustomFields(); loadSequences(); }, [loadLabels, loadLists, loadCustomFields, loadSequences]);
 
   // Integrations for the "Account" filter — reloads per selected channel.
+  // The account is only cleared when the channel really changes — not on the
+  // first run, which would throw away the account a refresh restored.
+  const prevPlatformRef = useRef(platformFilter);
   useEffect(() => {
-    if (!platformFilter) { setIntegrations([]); setAccountFilter(''); return; }
+    const changed = prevPlatformRef.current !== platformFilter;
+    prevPlatformRef.current = platformFilter;
+    if (!platformFilter) { setIntegrations([]); if (changed) setAccountFilter(''); return; }
     integrationAPI.getAll().then((r) => {
       setIntegrations((r.data.integrations || []).filter((i) => i.platform === platformFilter));
     }).catch(() => {});
-    setAccountFilter('');
-  }, [platformFilter]);
+    if (changed) setAccountFilter('');
+  }, [platformFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadContacts = useCallback(() => {
     setLoading(true);
@@ -360,6 +377,11 @@ export default function ContactsPage() {
               <SlidersHorizontal size={13} /> Manage
             </button>
 
+            {/* Subscribers Manager is THE place for custom fields / subscriber variables. */}
+            <button onClick={() => { setManageTab('fields'); setShowManageModal(true); }} className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.82rem', height: 34, padding: '0 12px' }} title="Create and edit the custom fields (variables) every bot and flow can fill and use">
+              <Braces size={13} /> Custom Fields
+            </button>
+
             <button
               onClick={() => canImportCurrentChannel ? setShowImportModal(true) : showToast(importRules?.reason || 'Choose WhatsApp or Telegram to import subscribers', 'error')}
               className="btn btn-secondary"
@@ -503,7 +525,6 @@ export default function ContactsPage() {
                     <th style={{ padding: '12px 16px', fontWeight: 700 }}>Subscriber</th>
                   )}
                   <th style={{ padding: '12px 16px', fontWeight: 700 }}>Channel</th>
-                  <th style={{ padding: '12px 16px', fontWeight: 700 }}>Labels</th>
                   <th style={{ padding: '12px 16px', fontWeight: 700 }}>Status</th>
                   <th style={{ padding: '12px 16px', fontWeight: 700 }}>Bot</th>
                   <th style={{ padding: '12px 16px', fontWeight: 700 }}>Subscribed</th>
@@ -512,11 +533,11 @@ export default function ContactsPage() {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={platformFilter === 'WHATSAPP' ? 10 : 9} style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted)' }}>
+                  <tr><td colSpan={platformFilter === 'WHATSAPP' ? 9 : 8} style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted)' }}>
                     <div className="loading-spinner" style={{ margin: '0 auto 10px' }} /> Loading subscribers...
                   </td></tr>
                 ) : contacts.length === 0 ? (
-                  <tr><td colSpan={platformFilter === 'WHATSAPP' ? 10 : 9} style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted)' }}>
+                  <tr><td colSpan={platformFilter === 'WHATSAPP' ? 9 : 8} style={{ padding: 60, textAlign: 'center', color: 'var(--text-muted)' }}>
                     <Users size={36} color="var(--border-light)" style={{ margin: '0 auto 10px' }} />
                     <h3 style={{ fontSize: '0.96rem', fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 4px 0' }}>No subscribers found</h3>
                     <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>Try a different filter, or import/add a subscriber.</p>
@@ -572,7 +593,7 @@ export default function ContactsPage() {
                           </td>
                           <td style={{ padding: '12px 16px' }}>
                             <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.84rem' }}>
-                              {c.phone || c.external_id || '—'}
+                              {contactIdentifier(c)}
                             </span>
                           </td>
                         </>
@@ -592,7 +613,7 @@ export default function ContactsPage() {
                                 )}
                               </div>
                               <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 1 }}>
-                                {c.phone || c.email || c.external_id || '—'}
+                                {c.phone || c.email || contactIdentifier(c)}
                               </div>
                             </div>
                           </div>
@@ -606,21 +627,9 @@ export default function ContactsPage() {
                         {c.accountLabel && <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 3 }}>{c.accountLabel}</div>}
                       </td>
 
-                      <td style={{ padding: '12px 16px' }} onClick={(e) => e.stopPropagation()}>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxWidth: 200 }}>
-                          {(!c.labels || c.labels.length === 0) ? (
-                            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>—</span>
-                          ) : c.labels.map((lbl) => (
-                            <span
-                              key={lbl.id} onClick={() => { setLabelFilter(String(lbl.id)); resetPage(); }} title={`Filter by: ${lbl.name}`}
-                              style={{ fontSize: '0.7rem', fontWeight: 600, padding: '2px 7px', borderRadius: 10, background: 'var(--bg-base)', color: 'var(--text-secondary)', border: '1px solid var(--border)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                            >
-                              <span style={{ width: 5, height: 5, borderRadius: '50%', background: lbl.color }} /> {lbl.name}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-
+                      {/* Labels are deliberately not shown per row (keeps the list
+                          compact) — filter by label with the "All Labels" picker above;
+                          a subscriber's labels are in their profile drawer. */}
                       <td style={{ padding: '12px 16px' }} onClick={(e) => e.stopPropagation()}>
                         <button
                           onClick={(e) => handleToggleSubscription(c, e)}
@@ -717,6 +726,7 @@ export default function ContactsPage() {
             availableLabels={availableLabels}
             onClose={() => setActiveContact(null)}
             onNavigateInbox={() => navigate('/inbox')}
+            onMerged={loadContacts}
             onContactPatched={(id, patch) => { patchContactLocally(id, patch); setActiveContact((prev) => (prev ? { ...prev, ...patch } : prev)); }}
           />
         )}

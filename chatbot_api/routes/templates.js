@@ -4,11 +4,11 @@ import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { getMetaSampleHandle } from "../utils/metaMediaHandle.js";
+import { META_API_VERSION } from "../utils/metaApi.js";
 
 const router = express.Router();
 router.use(authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
 
-const META_API_VERSION = process.env.META_API_VERSION || "v21.0";
 
 // ─── LIST WHATSAPP TEMPLATES ──────────────────────────────────────────────────
 router.get("/templates/whatsapp", async (req, res) => {
@@ -440,6 +440,14 @@ router.post("/templates/whatsapp", async (req, res) => {
               metaButtons.push({
                 type: "COPY_CODE",
                 example: btn.couponCode || btn.code || "SAVE20",
+              });
+            } else if (type === "VOICE_CALL") {
+              // "Call on WhatsApp" (Calling API): starts a WhatsApp call to this number.
+              const ttl = Number(btn.ttlMinutes);
+              metaButtons.push({
+                type: "voice_call",
+                text: (btn.text || "Call on WhatsApp").substring(0, 25),
+                ...(ttl >= 1 && ttl <= 43200 ? { ttl_minutes: ttl } : {}),
               });
             } else if (type === "FLOW") {
               metaButtons.push({

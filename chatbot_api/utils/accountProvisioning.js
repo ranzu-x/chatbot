@@ -13,6 +13,8 @@
  */
 import pool from "../db.js";
 import { attributeReferral } from "./affiliateCommission.js";
+import { getDefaultPackage } from "./signupPackage.js";
+import { assignPackageLocally } from "../services/stripeService.js";
 
 /**
  * Creates a new DIRECT_CUSTOMER agency + its owning RESELLER-role user +
@@ -59,6 +61,13 @@ export async function createAccount({ fullName, email, passwordHash, businessNam
       "INSERT INTO organization_members (user_id, agency_id, role_id, member_kind, chat_access) VALUES (?,?,?, 'OWNER', 'ALL')",
       [userId, agencyId, ownerRole.id]
     );
+  }
+
+  // Starts on the basic (default End User) package. Guest checkout assigns
+  // the bought package right after, which replaces this one.
+  const starter = await getDefaultPackage("END_USER");
+  if (starter) {
+    await assignPackageLocally({ agencyId, packageId: starter.id, notes: `Starting package (${source})` });
   }
 
   if (affiliateCode) {

@@ -5,9 +5,9 @@ import { authMiddleware } from "../middleware/authmiddleware.js";
 import { requireModule, assertLimit } from "../utils/entitlements.js";
 import { getPublicBackendUrl, resolvePublicImageUrl } from "../utils/platformSender.js";
 import { recordSocialPostUsage, pruneSocialPostHistory, SOCIAL_POST_HISTORY_LIMIT } from "../utils/socialPostHistory.js";
+import { META_API_VERSION } from "../utils/metaApi.js";
 
 const router = express.Router();
-const META_API_VERSION = "v21.0";
 
 router.use("/social-posts", authMiddleware, requireModule("feature_social_posting"));
 

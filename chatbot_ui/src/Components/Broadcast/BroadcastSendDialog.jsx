@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { broadcastAPI } from '../../services/api';
 import { useBroadcastCampaignContext } from './useBroadcastCampaign';
 import { Segmented } from './BroadcastStartNodeProperties';
-import { confirmBroadcastAudience, showSendStarted, showBroadcastError, canScheduleBroadcast } from './broadcastDialogs';
+import { confirmBroadcastAudience, showSendStarted, showBroadcastError, canScheduleBroadcast, isUtilityBroadcast } from './broadcastDialogs';
 import { X, Send, CalendarClock, Zap, Loader2, Lock, Users, FileText, MessagesSquare, AlertTriangle, CircleCheck } from 'lucide-react';
 
 /** Date → value for <input type="datetime-local"> in the viewer's local time. */
@@ -73,10 +73,11 @@ export default function BroadcastSendDialog({ platform, onClose, onDone }) {
     }
     setBusy(true);
     try {
-      const ok = await confirmBroadcastAudience({ audience: check, action: whenIso ? 'schedule' : 'send', accountLabel: bc.accountLabel, scheduledAt: whenIso });
+      const utility = isUtilityBroadcast(platform, bc?.mode);
+      const ok = await confirmBroadcastAudience({ audience: check, action: whenIso ? 'schedule' : 'send', accountLabel: bc.accountLabel, scheduledAt: whenIso, utility });
       if (!ok) return;
-      if (whenIso) await broadcastAPI.schedule(campaign.id, whenIso, { confirmAudience: true });
-      else await broadcastAPI.sendNow(campaign.id, { confirmAudience: true });
+      if (whenIso) await broadcastAPI.schedule(campaign.id, whenIso, { confirmAudience: true, confirmUtility: utility });
+      else await broadcastAPI.sendNow(campaign.id, { confirmAudience: true, confirmUtility: utility });
       await showSendStarted({ scheduledAt: whenIso, rescheduled: Boolean(whenIso) && campaign.status === 'SCHEDULED' });
       onDone();
     } catch (err) {
@@ -112,7 +113,7 @@ export default function BroadcastSendDialog({ platform, onClose, onDone }) {
             <Row icon={<Lock size={14} />} label="Sending from">{bc.accountLabel || 'Account no longer connected'}</Row>
             {platform === 'WHATSAPP' && (
               <Row icon={bc.mode === 'TEMPLATE' ? <FileText size={14} /> : <MessagesSquare size={14} />} label="Type">
-                {bc.mode === 'TEMPLATE' ? 'Anytime (template)' : 'Inside 24 hours'}
+                {bc.mode === 'TEMPLATE' ? (String(platform).toUpperCase() === 'FACEBOOK' ? 'Utility template (anytime)' : 'Anytime (template)') : 'Inside 24 hours'}
               </Row>
             )}
             <Row icon={<Users size={14} />} label="Audience">

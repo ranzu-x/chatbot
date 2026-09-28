@@ -13,6 +13,11 @@
  * 2. sendDueMessages()    every 20s — sends queued rows whose send_at is due
  *    as the campaign's approved WhatsApp template, into the subscriber's
  *    conversation on the campaign's bot account; applies label / sequence.
+ *    A campaign on a Facebook Page sends a Messenger Utility template
+ *    instead (deliverMessenger): the customer must already be a subscriber of
+ *    that Page (a Messenger id can't be made from a phone number) — found by
+ *    the order's email or phone on the subscriber or in their custom fields.
+ *    Abandoned-cart reminders are marketing, so they're WhatsApp-only.
  * 3. handleCommerceButton() — a tap on a COD template's Confirm / Cancel
  *    quick-reply button (payload "CMC:<sendId>:Y|N", routes/webhook.js)
  *    records the answer and updates the order in the store.
@@ -35,16 +40,19 @@ import { assertLimit } from "./entitlements.js";
 import { emitToAgency, emitToConversation } from "./socket.js";
 import { syncContactTagsJson } from "../routes/labels.js";
 import { enrollContactsInSequence } from "../routes/sequences.js";
+import { loadApprovedMessengerTemplate, buildMessengerUtilitySend, describeMessengerTemplate, friendlyMessengerError } from "./messengerUtility.js";
+import { lockedJob } from "./jobLock.js";
 
+// `group` = how the campaign editor groups the trigger picker.
 export const COMMERCE_TRIGGERS = [
-  { id: "ORDER_CREATED", label: "Order created", description: "A new order is placed." },
-  { id: "COD_VERIFICATION", label: "COD verification", description: "A new Cash-on-Delivery order is placed. First quick-reply button = Confirm, second = Cancel." },
-  { id: "ORDER_PAID", label: "Order paid", description: "The order becomes fully paid." },
-  { id: "ORDER_SHIPPED", label: "Order shipped", description: "Shopify: fulfilled. WooCommerce: status Completed." },
-  { id: "ORDER_DELIVERED", label: "Order delivered", description: "Shopify only: a fulfillment is marked delivered by the carrier." },
-  { id: "ORDER_CANCELLED", label: "Order cancelled", description: "The order is cancelled." },
-  { id: "ORDER_REFUNDED", label: "Order refunded", description: "The order is fully or partly refunded." },
-  { id: "ABANDONED_CART", label: "Abandoned cart", description: "A checkout with a phone number is left unfinished for the delay you set." },
+  { id: "ORDER_CREATED", group: "Order created", label: "Order created", description: "A new order is placed." },
+  { id: "ABANDONED_CART", group: "Abandoned cart recovery", label: "Abandoned cart recovery", description: "A checkout with a phone number is left unfinished for the delay you set." },
+  { id: "COD_VERIFICATION", group: "COD verification", label: "COD verification", description: "A new Cash-on-Delivery order is placed. First quick-reply button = Confirm, second = Cancel." },
+  { id: "ORDER_PAID", group: "Order status updates", label: "Order paid", description: "The order becomes fully paid." },
+  { id: "ORDER_SHIPPED", group: "Order status updates", label: "Order shipped", description: "Shopify: fulfilled. WooCommerce: status Completed." },
+  { id: "ORDER_DELIVERED", group: "Order status updates", label: "Order delivered", description: "Shopify only: a fulfillment is marked delivered by the carrier." },
+  { id: "ORDER_CANCELLED", group: "Order status updates", label: "Order cancelled", description: "The order is cancelled." },
+  { id: "ORDER_REFUNDED", group: "Order status updates", label: "Order refunded", description: "The order is fully or partly refunded." },
 ];
 const TRIGGER_IDS = new Set(COMMERCE_TRIGGERS.map((t) => t.id));
 
@@ -130,13 +138,13 @@ async function upsertOrder(connection, o) {
     [connection.id, o.externalId]
   );
   const values = [
-    o.number, o.customerName || null, o.phone || null, o.status || null, o.total, o.currency,
+    o.number, o.customerName || null, o.phone || null, o.email || null, o.status || null, o.total, o.currency,
     o.financialStatus || null, o.fulfillmentStatus || null, o.paymentMethod || null, o.isCod ? 1 : 0,
     o.orderUrl || null, o.createdAt, o.updatedAt, JSON.stringify(o.raw),
   ];
   if (prev) {
     await pool.query(
-      `UPDATE commerce_orders SET order_number = ?, customer_name = ?, customer_phone = ?, status = ?, total = ?, currency = ?,
+      `UPDATE commerce_orders SET order_number = ?, customer_name = ?, customer_phone = ?, customer_email = ?, status = ?, total = ?, currency = ?,
          financial_status = ?, fulfillment_status = ?, payment_method = ?, is_cod = ?, order_url = ?,
          external_created_at = ?, external_updated_at = ?, raw_json = ?, updated_at = NOW()
        WHERE id = ?`,
@@ -145,10 +153,10 @@ async function upsertOrder(connection, o) {
     return { row: { ...prev, id: prev.id }, prev };
   }
   const [ins] = await pool.query(
-    `INSERT INTO commerce_orders (order_number, customer_name, customer_phone, status, total, currency,
+    `INSERT INTO commerce_orders (order_number, customer_name, customer_phone, customer_email, status, total, currency,
        financial_status, fulfillment_status, payment_method, is_cod, order_url,
        external_created_at, external_updated_at, raw_json, connection_id, external_order_id, cod_status, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
     [...values, connection.id, o.externalId, o.isCod && !o.isCancelled ? "PENDING" : null]
   );
   return { row: { id: ins.insertId }, prev: null };
@@ -211,6 +219,38 @@ async function markCartRecovered(connectionId, externalId) {
     "UPDATE commerce_carts SET status = 'RECOVERED' WHERE connection_id = ? AND external_checkout_id = ? AND status = 'OPEN'",
     [connectionId, externalId]
   );
+}
+
+/**
+ * A cart event from the WooCommerce "Chatbot Cart Recovery" plugin
+ * (assets/woo-plugin) — classic-checkout carts the REST API can't see.
+ * Stored as external id "plugin:<cart key>" so it never collides with an order id.
+ */
+export async function ingestPluginCart(connection, payload) {
+  const key = String(payload?.cart_key || "").slice(0, 100);
+  if (!key) return false;
+  const externalId = `plugin:${key}`;
+  if (payload.event === "completed") {
+    await markCartRecovered(connection.id, externalId);
+    return true;
+  }
+  if (payload.event !== "cart" || !payload.phone) return false;
+  const campaigns = await activeCampaignsFor(connection.id);
+  const now = new Date();
+  await processCart(connection, campaigns, {
+    externalId,
+    customerName: String(payload.name || "").slice(0, 150) || null,
+    phone: String(payload.phone).slice(0, 50),
+    total: Number(payload.total) || 0,
+    currency: String(payload.currency || connection.currency || "").slice(0, 10),
+    items: (Array.isArray(payload.items) ? payload.items : []).slice(0, 50).map((i) => ({ title: String(i.name || "").slice(0, 200), quantity: Number(i.quantity) || 1 })),
+    recoveryUrl: /^https?:\/\//i.test(payload.recovery_url || "") ? String(payload.recovery_url).slice(0, 1000) : null,
+    completed: false,
+    createdAt: now,
+    updatedAt: now, // our clock: the abandoned-cart delay counts from when we heard of it
+    raw: { source: "plugin", email: payload.email || null },
+  });
+  return true;
 }
 
 export async function pollConnection(connection) {
@@ -405,10 +445,11 @@ async function deliver(send) {
   }
 
   const [[integration]] = await pool.query(
-    "SELECT * FROM integrations WHERE id = ? AND agency_id = ? AND platform = 'WHATSAPP' AND is_active = 1",
+    "SELECT * FROM integrations WHERE id = ? AND agency_id = ? AND platform IN ('WHATSAPP', 'FACEBOOK') AND is_active = 1",
     [campaign.integration_id, campaign.agency_id]
   );
-  if (!integration) return finish(send.id, "FAILED", { error: "The campaign's WhatsApp account is missing or inactive" });
+  if (!integration) return finish(send.id, "FAILED", { error: "The campaign's bot account is missing or inactive" });
+  if (integration.platform === "FACEBOOK") return deliverMessenger({ send, campaign, connection, order, cart, integration });
 
   const [[tpl]] = await pool.query(
     "SELECT * FROM whatsapp_templates WHERE id = ? AND agency_id = ? AND status = 'APPROVED'",
@@ -485,6 +526,129 @@ async function deliver(send) {
   }
 }
 
+// ─── Messenger (Utility template) ────────────────────────────────────────────
+
+const digitsOf = (v) => String(v || "").replace(/\D/g, "");
+
+/**
+ * The Page subscriber this store customer is. Messenger ids can't be derived
+ * from a phone number, so the customer must already have talked to the Page;
+ * matched by email, or by phone (full international digits, or the last 10
+ * digits), on the subscriber itself or in any of their custom-field values.
+ */
+export async function findMessengerSubscriber(agencyId, integrationId, { phone, email, countryCode }) {
+  const mail = String(email || "").trim().toLowerCase();
+  const intl = toWhatsAppNumber(phone, countryCode) || "";
+  const raw = digitsOf(phone);
+  const last10 = (intl || raw).length >= 10 ? (intl || raw).slice(-10) : "";
+  if (!mail && !intl && !raw) return null;
+  const phoneMatch = (col) => `(? <> '' AND REGEXP_REPLACE(COALESCE(${col}, ''), '[^0-9]', '') IN (?, ?)) OR (? <> '' AND RIGHT(REGEXP_REPLACE(COALESCE(${col}, ''), '[^0-9]', ''), 10) = ?)`;
+  const phoneParams = [intl || raw, intl || raw, raw || intl, last10, last10];
+  const [rows] = await pool.query(
+    `SELECT c.* FROM contacts c
+     WHERE c.agency_id = ? AND c.platform = 'FACEBOOK' AND COALESCE(c.is_blocked, 0) = 0
+       AND EXISTS (SELECT 1 FROM conversations cv WHERE cv.contact_id = c.id AND cv.agency_id = c.agency_id AND cv.integration_id = ?)
+       AND (
+         (? <> '' AND LOWER(TRIM(c.email)) = ?) OR ${phoneMatch("c.phone")}
+         OR EXISTS (
+           SELECT 1 FROM contact_custom_field_values v WHERE v.contact_id = c.id AND (
+             (? <> '' AND LOWER(TRIM(v.value)) = ?) OR ${phoneMatch("v.value")}
+           )
+         )
+       )
+     ORDER BY c.updated_at DESC LIMIT 1`,
+    [agencyId, integrationId, mail, mail, ...phoneParams, mail, mail, ...phoneParams]
+  );
+  return rows[0] || null;
+}
+
+async function deliverMessenger({ send, campaign, connection, order, cart, integration }) {
+  if (campaign.trigger_event === "ABANDONED_CART") {
+    return finish(send.id, "SKIPPED", { error: "Abandoned-cart reminders are marketing — Messenger Utility templates can't be used for them" });
+  }
+  const tpl = await loadApprovedMessengerTemplate(campaign.agency_id, integration.id, campaign.template_id);
+  if (!tpl) return finish(send.id, "FAILED", { error: "The campaign's Utility template is missing or not approved" });
+
+  const src = order || cart || {};
+  const contact = await findMessengerSubscriber(campaign.agency_id, integration.id, {
+    phone: send.phone || src.customer_phone, email: src.customer_email, countryCode: campaign.default_country_code,
+  });
+  if (!contact) {
+    return finish(send.id, "SKIPPED", { error: "No subscriber of this Page matches the customer's email or phone — they must message the Page first" });
+  }
+  if (contact.subscription_status === "UNSUBSCRIBED") return finish(send.id, "SKIPPED", { error: "Subscriber unsubscribed", contactId: contact.id });
+  try {
+    await assertLimit(campaign.agency_id, "max_monthly_messages", 1, null);
+  } catch (err) {
+    return finish(send.id, "FAILED", { error: err.message, contactId: contact.id });
+  }
+
+  const conversation = await findOrCreateConversationForBroadcast(campaign.agency_id, contact.id, integration.id);
+  const fields = buildFieldValues({ connection, order, cart });
+  const map = parseJson(campaign.variable_map, {});
+  const resolve = (source) => {
+    const s = String(source || "");
+    return s.startsWith("text:") ? s.slice(5) : (fields[s] ?? "");
+  };
+  const params = { header: {}, body: {}, buttons: {} };
+  for (const section of ["header", "body", "buttons"]) {
+    for (const [k, v] of Object.entries(map[section] || {})) params[section][k] = resolve(v);
+  }
+  // COD: first routable POSTBACK button = Confirm, second = Cancel.
+  const codButtons = describeMessengerTemplate(tpl).buttons.filter((b) => b.routable).map((b) => b.index);
+  const payloadFor = campaign.trigger_event === "COD_VERIFICATION"
+    ? (i) => (i === codButtons[0] ? `CMC:${send.id}:Y` : i === codButtons[1] ? `CMC:${send.id}:N` : null)
+    : null;
+  const built = buildMessengerUtilitySend(tpl, params, (t) => t, { payloadFor });
+
+  let externalMsgId;
+  try {
+    externalMsgId = await sendPlatformMessage("FACEBOOK", integration, contact.external_id, { type: "TEXT", body: built.bodyText, ...built.extraFields });
+    if (!externalMsgId) throw new Error("Messenger did not return a message id — check the Page's access token");
+  } catch (err) {
+    const meta = err.response?.data?.error;
+    return finish(send.id, "FAILED", { error: meta ? friendlyMessengerError(meta, "FACEBOOK") : err.message, contactId: contact.id, conversationId: conversation.id });
+  }
+
+  const metadata = {
+    senderType: "BOT",
+    senderName: "Store automation",
+    template: tpl.name,
+    messagingType: "UTILITY",
+    ...(built.extraFields.headerType ? { headerType: built.extraFields.headerType } : {}),
+    ...(built.extraFields.headerText ? { headerText: built.extraFields.headerText } : {}),
+    ...(built.extraFields.headerMediaUrl ? { headerMediaUrl: built.extraFields.headerMediaUrl } : {}),
+    ...(built.extraFields.buttons ? { buttons: built.extraFields.buttons } : {}),
+  };
+  const [msg] = await pool.query(
+    `INSERT INTO messages (conversation_id, direction, type, body, metadata, external_msg_id, created_at)
+     VALUES (?, 'OUTBOUND', 'TEMPLATE', ?, ?, ?, NOW())`,
+    [conversation.id, built.bodyText, JSON.stringify(metadata), externalMsgId]
+  );
+  await pool.query("UPDATE conversations SET last_message_at = NOW() WHERE id = ?", [conversation.id]);
+  const [[saved]] = await pool.query("SELECT * FROM messages WHERE id = ?", [msg.insertId]);
+  emitToAgency(campaign.agency_id, "new_message", { conversationId: conversation.id, message: saved });
+  emitToConversation(conversation.id, "new_message", { conversationId: conversation.id, message: saved });
+  await finish(send.id, "SENT", { contactId: contact.id, conversationId: conversation.id, messageId: msg.insertId });
+
+  try {
+    if (campaign.label_id) {
+      const [[label]] = await pool.query("SELECT id FROM labels WHERE id = ? AND agency_id = ?", [campaign.label_id, campaign.agency_id]);
+      if (label) {
+        await pool.query("INSERT IGNORE INTO contact_labels (contact_id, label_id) VALUES (?, ?)", [contact.id, label.id]);
+        await syncContactTagsJson(contact.id);
+      }
+    }
+    if (campaign.sequence_id) {
+      await enrollContactsInSequence(campaign.sequence_id, campaign.agency_id, {
+        contactId: contact.id, targetPlatform: "FACEBOOK", enrolledVia: "COMMERCE", integrationId: campaign.integration_id,
+      });
+    }
+  } catch (err) {
+    console.error(`[Commerce] label/sequence after Messenger send #${send.id} failed:`, err.message);
+  }
+}
+
 let sending = false;
 export async function sendDueMessages() {
   if (sending) return;
@@ -554,7 +718,9 @@ export async function handleCommerceButton({ agencyId, buttonRoute, contact, con
       [confirmed ? "CONFIRMED" : "CANCELLED", order.id]
     );
     try {
-      const note = `Customer ${confirmed ? "confirmed" : "cancelled"} this Cash-on-Delivery order on WhatsApp (+${contact.external_id}).`;
+      const note = integration?.platform === "FACEBOOK"
+        ? `Customer ${confirmed ? "confirmed" : "cancelled"} this Cash-on-Delivery order on Messenger (${contact.name || contact.external_id}).`
+        : `Customer ${confirmed ? "confirmed" : "cancelled"} this Cash-on-Delivery order on WhatsApp (+${contact.external_id}).`;
       if (connection.platform === "SHOPIFY") {
         await shopifyAddOrderTags(connection, order.external_order_id, [confirmed ? "COD Confirmed" : "COD Cancelled"]);
         if (!confirmed && campaign.cod_cancel_action === "CANCEL") await shopifyCancelOrder(connection, order.external_order_id, note);
@@ -587,9 +753,9 @@ export async function handleCommerceButton({ agencyId, buttonRoute, contact, con
 
 export function startCommerceEventScheduler() {
   console.log("🛒 Commerce automation started (store poll every 60s, sends every 20s)");
-  setTimeout(pollAllStores, 15000);
-  setInterval(pollAllStores, 60 * 1000);
-  setInterval(() => { failStuckSends(); sendDueMessages(); }, 20 * 1000);
+  setTimeout(lockedJob("commerce-poll", pollAllStores), 15000);
+  setInterval(lockedJob("commerce-poll", pollAllStores), 60 * 1000);
+  setInterval(lockedJob("commerce-send", async () => { await failStuckSends(); await sendDueMessages(); }), 20 * 1000);
 }
 
 export { TRIGGER_IDS };

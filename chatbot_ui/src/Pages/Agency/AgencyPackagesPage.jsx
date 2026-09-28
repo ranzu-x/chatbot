@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import AppLayout from '../../Layout/AppLayout';
 import { agencyPackageAPI } from '../../services/api';
-import { notify } from '../../utils/alerts';
+import { notify, alert } from '../../utils/alerts';
 import { Package, Plus, Trash2, Pencil, Star } from 'lucide-react';
 
 const EMPTY_FORM = { name: '', description: '', price: 0, billingCycle: 'monthly', maxBotAccounts: '', maxSubscribers: '', maxTeamMembers: '', maxMonthlyMessages: '', isDefault: false, isActive: true };
@@ -78,8 +78,8 @@ export default function AgencyPackagesPage() {
       .finally(() => setSaving(false));
   };
 
-  const handleDelete = (pkg) => {
-    if (!window.confirm(`Delete plan "${pkg.name}"?`)) return;
+  const handleDelete = async (pkg) => {
+    if (!(await alert.ask(`Delete plan "${pkg.name}"?`))) return;
     agencyPackageAPI.delete(pkg.id)
       .then(() => { notify.success('Deleted'); load(); })
       .catch((err) => notify.error(err?.response?.data?.message || 'Failed to delete'));

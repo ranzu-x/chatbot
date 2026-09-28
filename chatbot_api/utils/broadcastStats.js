@@ -23,7 +23,8 @@ export async function recountBroadcastStats(campaignId, conn = pool) {
                  SUM(status IN ('SENT', 'DELIVERED', 'READ')) AS sent,
                  SUM(status IN ('DELIVERED', 'READ')) AS delivered,
                  SUM(status = 'READ') AS read_n,
-                 SUM(status = 'FAILED') AS failed
+                 SUM(status = 'FAILED') AS failed,
+                 SUM(status = 'HELD') AS held
             FROM broadcast_logs
            WHERE campaign_id = ?
            GROUP BY campaign_id
@@ -31,7 +32,8 @@ export async function recountBroadcastStats(campaignId, conn = pool) {
         SET bc.sent_count = COALESCE(s.sent, 0),
             bc.delivered_count = COALESCE(s.delivered, 0),
             bc.read_count = COALESCE(s.read_n, 0),
-            bc.failed_count = COALESCE(s.failed, 0)
+            bc.failed_count = COALESCE(s.failed, 0),
+            bc.held_count = COALESCE(s.held, 0)
       WHERE bc.id = ?`,
     [campaignId, campaignId]
   );
@@ -47,7 +49,7 @@ export async function recountBroadcastStats(campaignId, conn = pool) {
 export async function emitBroadcastUpdate(campaignId) {
   try {
     const [[c]] = await pool.query(
-      `SELECT id, agency_id, status, total_targeted, sent_count, delivered_count, read_count, failed_count,
+      `SELECT id, agency_id, status, total_targeted, sent_count, delivered_count, read_count, failed_count, held_count,
               error_message, scheduled_at, updated_at
          FROM broadcast_campaigns WHERE id = ?`,
       [campaignId]

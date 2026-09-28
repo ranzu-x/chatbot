@@ -10,23 +10,64 @@
  * credentials); team members can run campaigns.
  *
  * Campaigns: one trigger (order created / COD verification / paid / shipped /
- * delivered / cancelled / refunded / abandoned cart) → one approved WhatsApp
- * template on one WhatsApp bot account, sent after a delay. Engine:
- * utils/commerceEvents.js.
+ * delivered / cancelled / refunded / abandoned cart) → one approved template
+ * on one bot account, sent after a delay: a WhatsApp template on a WhatsApp
+ * number, or a Messenger Utility template on a Facebook Page (order triggers
+ * only — an abandoned-cart reminder is marketing). Engine: utils/commerceEvents.js.
  */
 import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { requireModule, assertLimit } from "../utils/entitlements.js";
-import { encryptSecret } from "../utils/cryptoVault.js";
+import crypto from "crypto";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { encryptSecret, decryptSecret } from "../utils/cryptoVault.js";
+import { buildStoredZip } from "../utils/storedZip.js";
 import { verifyShopify, verifyWooCommerce, syncConnection } from "../utils/commerceService.js";
 import {
-  COMMERCE_TRIGGERS, COMMERCE_FIELDS, TRIGGER_IDS, describeTemplate, pollConnection,
+  COMMERCE_TRIGGERS, COMMERCE_FIELDS, TRIGGER_IDS, describeTemplate, pollConnection, ingestPluginCart,
 } from "../utils/commerceEvents.js";
+import { registerStoreWebhooks, removeStoreWebhooks, verifyStoreWebhook, schedulePoll } from "../utils/commerceWebhooks.js";
 import { logAuditEvent } from "../utils/auditLog.js";
+import { describeMessengerTemplate } from "../utils/messengerUtility.js";
+import { suggestedVariableMap, listStorePresets } from "../utils/storeTemplatePresets.js";
 
 const router = express.Router();
+// ─── STORE WEBHOOKS (public — utils/commerceWebhooks.js) ─────────────────────
+// Signed by the store; a valid one only makes us poll that store right away.
+router.post("/store-webhooks/:connectionId", async (req, res) => {
+  const [[connection]] = await pool.query("SELECT * FROM commerce_connections WHERE id = ? AND is_active = 1", [Number(req.params.connectionId) || 0]);
+  // WooCommerce pings a new webhook with a form-encoded "webhook_id" body — just acknowledge it.
+  if (connection && connection.platform === "WOOCOMMERCE" && !req.get("x-wc-webhook-signature")) return res.sendStatus(200);
+  if (!connection || !verifyStoreWebhook(connection, req.headers, req.rawBody)) return res.sendStatus(401);
+  res.sendStatus(200);
+  pool.query("UPDATE commerce_connections SET last_webhook_at = NOW() WHERE id = ?", [connection.id]).catch(() => {});
+  schedulePoll(connection.id, async () => {
+    const [[fresh]] = await pool.query("SELECT * FROM commerce_connections WHERE id = ? AND is_active = 1", [connection.id]);
+    if (fresh) await pollConnection(fresh);
+  });
+});
+
+// Cart events from the generated WooCommerce plugin (assets/woo-plugin), signed with the connection's plugin secret.
+router.post("/store-webhooks/:connectionId/cart", async (req, res) => {
+  const [[connection]] = await pool.query(
+    "SELECT * FROM commerce_connections WHERE id = ? AND platform = 'WOOCOMMERCE' AND is_active = 1",
+    [Number(req.params.connectionId) || 0]
+  );
+  const secret = connection?.plugin_secret ? decryptSecret(connection.plugin_secret) : null;
+  const given = req.get("x-chatbot-signature") || "";
+  const expected = secret && req.rawBody ? crypto.createHmac("sha256", secret).update(req.rawBody).digest("base64") : "";
+  if (!expected || expected.length !== given.length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(given))) {
+    return res.sendStatus(401);
+  }
+  res.sendStatus(200);
+  pool.query("UPDATE commerce_connections SET last_plugin_event_at = NOW() WHERE id = ?", [connection.id]).catch(() => {});
+  ingestPluginCart(connection, req.body || {}).catch((err) => console.error("[commerce] plugin cart:", err.message));
+});
+
 router.use("/commerce", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_whatsapp_commerce"));
 const ownerOnly = roleMiddleware("RESELLER", "ADMIN");
 
@@ -38,7 +79,8 @@ const fail = (res, err, fallback = "Server error") => {
 const badRequest = (message) => Object.assign(new Error(message), { status: 400 });
 
 const CONNECTION_COLUMNS = `c.id, c.platform, c.name, c.store_domain, c.store_name, c.currency, c.auth_mode, c.is_active,
-  c.last_polled_at, c.last_poll_error, c.last_synced_at, c.last_sync_error, c.created_at`;
+  c.last_polled_at, c.last_poll_error, c.last_synced_at, c.last_sync_error, c.created_at,
+  c.webhook_status, c.webhook_error, c.last_webhook_at, c.last_plugin_event_at, (c.plugin_secret IS NOT NULL) AS pluginIssued`;
 
 // ─── Reference data for the editors ──────────────────────────────────────────
 router.get("/commerce/meta", (req, res) => {
@@ -90,6 +132,7 @@ router.post("/commerce/connections", ownerOnly, async (req, res) => {
       [agencyId, platform, verified.storeDomain]
     );
     const profileName = String(name || "").trim().slice(0, 120) || verified.storeName;
+    let connectionId = existing?.id || null;
     if (existing) {
       // Reconnect: new credentials, same cursors (no replay of past orders).
       await pool.query(
@@ -99,19 +142,23 @@ router.post("/commerce/connections", ownerOnly, async (req, res) => {
       );
     } else {
       await assertLimit(agencyId, "max_shopify_woo_stores", 1, req.user.id);
-      await pool.query(
+      const [ins] = await pool.query(
         `INSERT INTO commerce_connections (agency_id, platform, name, store_domain, auth_mode, credentials, access_token_expires_at,
            store_name, currency, is_active, orders_cursor, carts_cursor)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`,
         [agencyId, platform, profileName, verified.storeDomain, verified.authMode, encryptSecret(verified.credentials), verified.expiresAt, verified.storeName, verified.currency]
       );
+      connectionId = ins.insertId;
     }
+    // Instant updates where the store allows it; polling covers the rest.
+    const [[saved]] = await pool.query("SELECT * FROM commerce_connections WHERE id = ?", [connectionId]);
+    const hooks = saved ? await registerStoreWebhooks(saved).catch((e) => ({ ok: false, error: e.message })) : { ok: false };
     logAuditEvent({
       agencyId, actor: req.user, action: existing ? "commerce.store.reconnect" : "commerce.store.connect",
       entityType: "commerce_connection", entityLabel: profileName,
       summary: `${existing ? "Reconnected" : "Connected"} ${platform === "SHOPIFY" ? "Shopify" : "WooCommerce"} store ${verified.storeDomain}`,
     });
-    return res.json({ success: true, message: `${verified.storeName} connected` });
+    return res.json({ success: true, message: `${verified.storeName} connected`, instantUpdates: hooks.ok, instantUpdatesNote: hooks.ok ? null : hooks.error || null });
   } catch (err) {
     return fail(res, err, "Failed to connect the store");
   }
@@ -145,6 +192,42 @@ router.post("/commerce/connections/:id/poll", async (req, res) => {
   }
 });
 
+// (Re)register the store's webhooks for instant updates.
+router.post("/commerce/connections/:id/webhooks", ownerOnly, async (req, res) => {
+  const [[connection]] = await pool.query("SELECT * FROM commerce_connections WHERE id = ? AND agency_id = ?", [req.params.id, agencyOf(req)]);
+  if (!connection) return res.status(404).json({ success: false, message: "Store not found" });
+  const result = await registerStoreWebhooks(connection);
+  if (!result.ok) return res.status(result.error && /public HTTPS|Dev Dashboard/.test(result.error) ? 400 : 502).json({ success: false, message: result.error });
+  return res.json({ success: true, message: "Instant updates are on — new orders arrive within seconds." });
+});
+
+// Download the WooCommerce cart plugin for this store (a .zip ready for Plugins → Add New → Upload).
+router.get("/commerce/connections/:id/woo-plugin", ownerOnly, async (req, res) => {
+  try {
+    const [[connection]] = await pool.query("SELECT * FROM commerce_connections WHERE id = ? AND agency_id = ? AND platform = 'WOOCOMMERCE'", [req.params.id, agencyOf(req)]);
+    if (!connection) return res.status(404).json({ success: false, message: "WooCommerce store not found" });
+    const base = (process.env.BACKEND_URL || process.env.PUBLIC_URL || "").trim().replace(/\/+$/, "");
+    if (!/^https?:\/\//i.test(base) || /localhost|127\.0\.0\.1/i.test(base)) {
+      throw badRequest("The plugin needs this app to be reachable from your store — set BACKEND_URL to the public address of the API first.");
+    }
+    let secret = connection.plugin_secret ? decryptSecret(connection.plugin_secret) : null;
+    if (!secret) {
+      secret = crypto.randomBytes(24).toString("hex");
+      await pool.query("UPDATE commerce_connections SET plugin_secret = ? WHERE id = ?", [encryptSecret(secret), connection.id]);
+    }
+    const template = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../assets/woo-plugin/chatbot-cart-recovery.php"), "utf8");
+    const php = template
+      .replace("{{ENDPOINT}}", `${base}/api/v1/store-webhooks/${connection.id}/cart`)
+      .replace("{{SECRET}}", secret);
+    const zip = buildStoredZip([{ name: "chatbot-cart-recovery/chatbot-cart-recovery.php", data: php }]);
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", 'attachment; filename="chatbot-cart-recovery.zip"');
+    return res.send(zip);
+  } catch (err) {
+    return fail(res, err);
+  }
+});
+
 router.post("/commerce/connections/:id/sync", async (req, res) => {
   const [[connection]] = await pool.query("SELECT * FROM commerce_connections WHERE id = ? AND agency_id = ?", [req.params.id, agencyOf(req)]);
   if (!connection) return res.status(404).json({ success: false, message: "Store not found" });
@@ -161,8 +244,9 @@ router.post("/commerce/connections/:id/sync", async (req, res) => {
 router.delete("/commerce/connections/:id", ownerOnly, async (req, res) => {
   try {
     const agencyId = agencyOf(req);
-    const [[row]] = await pool.query("SELECT store_domain, name FROM commerce_connections WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
+    const [[row]] = await pool.query("SELECT * FROM commerce_connections WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
     if (!row) return res.status(404).json({ success: false, message: "Store not found" });
+    await removeStoreWebhooks(row).catch((e) => console.warn("[commerce] webhook cleanup:", e.message));
     await pool.query("DELETE FROM commerce_connections WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
     logAuditEvent({
       agencyId, actor: req.user, action: "commerce.store.disconnect", entityType: "commerce_connection",
@@ -198,21 +282,65 @@ router.get("/commerce/templates", async (req, res) => {
   try {
     const integrationId = Number(req.query.integrationId);
     if (!integrationId) throw badRequest("integrationId is required");
+    const [[account]] = await pool.query("SELECT id, platform FROM integrations WHERE id = ? AND agency_id = ?", [integrationId, agencyOf(req)]);
+    if (!account) return res.status(404).json({ success: false, message: "Account not found" });
+    if (account.platform === "FACEBOOK") {
+      const [mRows] = await pool.query(
+        "SELECT * FROM messenger_utility_templates WHERE agency_id = ? AND integration_id = ? AND status = 'APPROVED' ORDER BY name",
+        [agencyOf(req), integrationId]
+      );
+      return res.json({
+        success: true,
+        channel: "MESSENGER",
+        templates: mRows.map((t) => {
+          const d = describeMessengerTemplate(t);
+          return {
+            id: t.id, template_name: t.name, language: t.language, category: t.category,
+            header_type: d.headerType, header_text: d.headerText, body_text: d.bodyText,
+            placeholders: messengerPlaceholders(d),
+          };
+        }),
+      });
+    }
     const [rows] = await pool.query(
-      `SELECT id, template_name, language, category, header_type, header_text, body_text, footer_text, buttons_json
+      `SELECT id, template_name, language, category, header_type, header_text, body_text, footer_text, buttons_json, preset_key
        FROM whatsapp_templates
        WHERE agency_id = ? AND status = 'APPROVED' AND (integration_id = ? OR integration_id IS NULL)
        ORDER BY template_name`,
       [agencyOf(req), integrationId]
     );
+    // Named placeholders equal to a store field id ({{order_number}}, …) are mapped for the
+    // campaign automatically; the default store templates (utils/storeTemplatePresets.js) are
+    // listed per trigger with their review status, so the editor can pick / create one.
+    const [[number]] = await pool.query("SELECT * FROM integrations WHERE id = ? AND agency_id = ?", [integrationId, agencyOf(req)]);
+    const fieldIds = COMMERCE_FIELDS.map((f) => f.id);
     return res.json({
       success: true,
-      templates: rows.map((t) => ({ ...t, placeholders: describeTemplate(t) })),
+      channel: "WHATSAPP",
+      templates: rows.map((t) => {
+        const placeholders = describeTemplate(t);
+        return { ...t, placeholders, suggested_map: suggestedVariableMap(placeholders, fieldIds) };
+      }),
+      presets: (await listStorePresets(agencyOf(req), number)).map((p) => ({ key: p.key, trigger: p.trigger, title: p.title, template: p.template })),
     });
   } catch (err) {
     return fail(res, err);
   }
 });
+
+/** The campaign editor's placeholder shape (same as WhatsApp's describeTemplate) for a Messenger template. */
+function messengerPlaceholders(d) {
+  return {
+    header: d.header,
+    body: d.body,
+    headerType: d.headerType,
+    // Only URL endings are mapped from store data; a routable POSTBACK button
+    // is filled by the engine (COD confirm / cancel), others with their text.
+    buttons: d.buttons.map((b) => ({ index: b.index, type: b.type, text: b.text, dynamic: b.type === "URL" && b.dynamic })),
+    quickReplyCount: d.buttons.filter((b) => b.routable).length,
+    hasHeaderSample: d.hasHeaderSample,
+  };
+}
 
 // ─── CAMPAIGNS ───────────────────────────────────────────────────────────────
 const FIELD_IDS = new Set(COMMERCE_FIELDS.map((f) => f.id));
@@ -242,20 +370,37 @@ async function validateCampaign(agencyId, body, existing = null) {
 
   const integrationId = Number(pick("integrationId", existing?.integration_id));
   const [[integration]] = await pool.query(
-    "SELECT id FROM integrations WHERE id = ? AND agency_id = ? AND platform = 'WHATSAPP'",
+    "SELECT id, platform FROM integrations WHERE id = ? AND agency_id = ? AND platform IN ('WHATSAPP', 'FACEBOOK')",
     [integrationId, agencyId]
   );
-  if (!integration) throw badRequest("Choose the WhatsApp account that sends these messages");
+  if (!integration) throw badRequest("Choose the WhatsApp number or Facebook Page that sends these messages");
+  const isMessenger = integration.platform === "FACEBOOK";
+  if (isMessenger && trigger === "ABANDONED_CART") {
+    throw badRequest("Abandoned-cart reminders are marketing — Messenger Utility templates can't be used for them. Use a WhatsApp number.");
+  }
 
   const templateId = Number(pick("templateId", existing?.template_id));
-  const [[tpl]] = await pool.query(
-    "SELECT * FROM whatsapp_templates WHERE id = ? AND agency_id = ? AND status = 'APPROVED' AND (integration_id = ? OR integration_id IS NULL)",
-    [templateId, agencyId, integrationId]
-  );
-  if (!tpl) throw badRequest("Choose an approved template of that WhatsApp account");
-  const desc = describeTemplate(tpl);
-  if (trigger === "COD_VERIFICATION" && desc.quickReplyCount < 2) {
-    throw badRequest("A COD verification template needs two quick-reply buttons (first = Confirm, second = Cancel)");
+  let desc;
+  if (isMessenger) {
+    const [[mtpl]] = await pool.query(
+      "SELECT * FROM messenger_utility_templates WHERE id = ? AND agency_id = ? AND integration_id = ? AND status = 'APPROVED'",
+      [templateId, agencyId, integrationId]
+    );
+    if (!mtpl) throw badRequest("Choose an approved Utility template of that Facebook Page");
+    desc = messengerPlaceholders(describeMessengerTemplate(mtpl));
+    if (trigger === "COD_VERIFICATION" && desc.quickReplyCount < 2) {
+      throw badRequest("A COD verification template needs two reply (POSTBACK) buttons made in this app (first = Confirm, second = Cancel)");
+    }
+  } else {
+    const [[tpl]] = await pool.query(
+      "SELECT * FROM whatsapp_templates WHERE id = ? AND agency_id = ? AND status = 'APPROVED' AND (integration_id = ? OR integration_id IS NULL)",
+      [templateId, agencyId, integrationId]
+    );
+    if (!tpl) throw badRequest("Choose an approved template of that WhatsApp account");
+    desc = describeTemplate(tpl);
+    if (trigger === "COD_VERIFICATION" && desc.quickReplyCount < 2) {
+      throw badRequest("A COD verification template needs two quick-reply buttons (first = Confirm, second = Cancel)");
+    }
   }
 
   const rawMap = pick("variableMap", existing ? (typeof existing.variable_map === "string" ? JSON.parse(existing.variable_map || "{}") : existing.variable_map || {}) : {}) || {};
@@ -288,7 +433,7 @@ async function validateCampaign(agencyId, body, existing = null) {
   if (sequenceId) {
     // Bot scope: a sequence only runs on its own bot account.
     const [[seq]] = await pool.query("SELECT id FROM sequences WHERE id = ? AND agency_id = ? AND integration_id = ?", [sequenceId, agencyId, integrationId]);
-    if (!seq) throw badRequest("Choose a sequence of the same WhatsApp account");
+    if (!seq) throw badRequest("Choose a sequence of the same bot account");
   }
 
   const confirmAction = pick("codConfirmAction", existing?.cod_confirm_action || "NOTE");
@@ -308,14 +453,16 @@ async function validateCampaign(agencyId, body, existing = null) {
 
 const CAMPAIGN_SELECT = `
   SELECT cp.*, cc.name AS store_label, cc.store_domain, cc.platform AS store_platform,
-         i.name AS integration_name, t.template_name,
+         i.name AS integration_name, i.platform AS integration_platform,
+         COALESCE(IF(i.platform = 'FACEBOOK', mt.name, t.template_name), t.template_name) AS template_name,
          (SELECT COUNT(*) FROM commerce_campaign_sends s WHERE s.campaign_id = cp.id AND s.status = 'SENT') AS sentCount,
          (SELECT COUNT(*) FROM commerce_campaign_sends s WHERE s.campaign_id = cp.id AND s.status = 'FAILED') AS failedCount,
          (SELECT COUNT(*) FROM commerce_campaign_sends s WHERE s.campaign_id = cp.id AND s.status = 'SCHEDULED') AS scheduledCount
   FROM commerce_campaigns cp
   JOIN commerce_connections cc ON cc.id = cp.connection_id
   LEFT JOIN integrations i ON i.id = cp.integration_id
-  LEFT JOIN whatsapp_templates t ON t.id = cp.template_id`;
+  LEFT JOIN whatsapp_templates t ON t.id = cp.template_id AND i.platform = 'WHATSAPP'
+  LEFT JOIN messenger_utility_templates mt ON mt.id = cp.template_id AND i.platform = 'FACEBOOK'`;
 
 router.get("/commerce/campaigns", async (req, res) => {
   try {

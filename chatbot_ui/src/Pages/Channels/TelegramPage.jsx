@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
+import useUrlState from '../../hooks/useUrlState';
 import AppLayout from '../../Layout/AppLayout';
 import ChannelBreadcrumb from '../../Components/Common/ChannelBreadcrumb';
 import { channelAPI } from '../../services/api';
-import { handleLimitError } from '../../utils/alerts';
+import { handleLimitError, alert } from '../../utils/alerts';
 import { useAuth } from '../../Provider/AuthContext';
 import { Send, CheckCircle2, AlertTriangle, ClipboardList, Trash2, Plus, RefreshCw, ArrowLeft } from 'lucide-react';
 
@@ -15,7 +16,7 @@ export default function TelegramPage({ embedded = false }) {
   const [saving, setSaving] = useState(false);
   const [token, setToken] = useState('');
   const [toast, setToast] = useState(null);
-  const [view, setView] = useState('list'); // 'list' | 'connect'
+  const [view, setView] = useUrlState('view', 'list', { allowed: ['list','connect'] });
 
   const fetchBots = useCallback(async () => {
     setLoading(true);
@@ -45,7 +46,7 @@ export default function TelegramPage({ embedded = false }) {
   };
 
   const handleDelete = async (id) => {
-    if (!confirm('Remove this Telegram bot?')) return;
+    if (!(await alert.ask('Remove this Telegram bot?'))) return;
     try { await channelAPI.deleteTelegram(id); showToast('Bot removed'); fetchBots(); }
     catch { showToast('Failed', 'error'); }
   };

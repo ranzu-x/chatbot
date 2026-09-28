@@ -109,6 +109,7 @@ export default function MetaAppPage({ embedded = false, forcedPlatformGroup = nu
     systemUserToken: '',
     whatsappConfigId: '',
     whatsappConfigIdCatalog: '',
+    mmConfigId: '',
     verifyToken: generateRandomToken(),
     siteUrl: window.location.origin,
     privacyUrl: `${window.location.origin}/privacy-policy`,
@@ -167,7 +168,7 @@ export default function MetaAppPage({ embedded = false, forcedPlatformGroup = nu
     lastFetchedCreds.current = '';
     setForm(f => ({
       appName: '', appId: '', appSecret: '', systemUserToken: '',
-      whatsappConfigId: '', whatsappConfigIdCatalog: '',
+      whatsappConfigId: '', whatsappConfigIdCatalog: '', mmConfigId: '',
       verifyToken: generateRandomToken(),
       siteUrl: f.siteUrl, privacyUrl: f.privacyUrl, tosUrl: f.tosUrl, isActive: true,
     }));
@@ -191,6 +192,7 @@ export default function MetaAppPage({ embedded = false, forcedPlatformGroup = nu
             systemUserToken:  s.system_user_token  || '',
             whatsappConfigId:        s.whatsapp_config_id         || '',
             whatsappConfigIdCatalog: s.whatsapp_config_id_catalog || '',
+            mmConfigId:       s.mm_config_id       || '',
             verifyToken:      token,
             siteUrl:          s.site_url           || window.location.origin,
             privacyUrl:       s.privacy_url        || `${window.location.origin}/privacy-policy`,
@@ -897,6 +899,25 @@ export default function MetaAppPage({ embedded = false, forcedPlatformGroup = nu
                   </div>
                 </div>
               </div>
+              )}
+
+              {!isWhatsAppTab && (
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ display: 'block', fontSize: '0.76rem', fontWeight: 700, color: '#334155', marginBottom: 5 }}>
+                    Marketing Messages login configuration ID <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>— optional</span>
+                  </label>
+                  <input
+                    className="form-input"
+                    placeholder="Facebook Login for Business → Configurations → your Marketing Messages configuration"
+                    value={form.mmConfigId}
+                    onChange={e => setForm(f => ({ ...f, mmConfigId: e.target.value }))}
+                    autoComplete="off"
+                    spellCheck="false"
+                  />
+                  <p style={{ marginTop: 5, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                    Needed for paid Marketing Messages on Messenger. The app must have passed App Review for ads_management, pages_messaging and paid_marketing_messages; create the configuration with a System-business access token that never expires, Pages + Ad accounts as required assets, and those three permissions.
+                  </p>
+                </div>
               )}
 
               {/* Active Toggle */}

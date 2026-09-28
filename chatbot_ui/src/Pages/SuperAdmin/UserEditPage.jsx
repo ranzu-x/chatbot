@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import UserAvatar from '../../Components/Common/UserAvatar';
 import { useNavigate, useParams, Link } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
 import { adminAPI, packageAPI } from '../../services/api';
@@ -19,7 +20,7 @@ import {
 // the blog has them. The expiry date is stored on the active subscription.
 
 const EMPTY_FORM = {
-  name: '', email: '', phone: '', address: '', role: 'USER',
+  name: '', email: '', phone: '', address: '',
   newPassword: '', confirmPassword: '',
   packageId: '', expiryDate: '', specialCoupon: '', discountPercent: '',
   isActive: true, emailVerified: true, canForumPost: true, canComment: true,
@@ -41,7 +42,6 @@ function formFromUser(u) {
     email: u.email || '',
     phone: u.phone || '',
     address: u.address || '',
-    role: u.role || 'USER',
     newPassword: '',
     confirmPassword: '',
     packageId: u.subscription?.package_id ? String(u.subscription.package_id) : (u.package_id ? String(u.package_id) : ''),
@@ -55,6 +55,30 @@ function formFromUser(u) {
     customDomain: u.workspace?.custom_domain || '',
     subdomain: u.workspace?.subdomain || '',
   };
+}
+
+const PACKAGE_GROUPS = [
+  { type: 'END_USER', label: 'End User plans' },
+  { type: 'AGENCY', label: 'Reseller plans' },
+  { type: 'TEAM_MEMBER', label: 'Team member plans' },
+];
+
+// What kind of account this is — shown, never edited: owners are End Users or
+// Resellers by their package (a Reseller stays one), team members come from
+// Team Members, Super Admins from the platform team.
+function accountKindOf(detail, isNew) {
+  if (isNew || !detail) {
+    return { key: 'END_USER', owner: true, label: 'End User', packageTypes: ['END_USER', 'AGENCY'], hint: 'New users get their own workspace. Give them a Reseller plan to make them a Reseller. Team members are added in Team Members.' };
+  }
+  if (detail.role === 'ADMIN') return { key: 'ADMIN', owner: false, label: 'Super Admin', packageTypes: [], hint: 'Platform staff — managed in the Super Admin team.' };
+  const ws = detail.workspace;
+  const owner = Boolean(ws && Number(ws.owner_id) === Number(detail.id));
+  if (!owner) {
+    return { key: 'TEAM_MEMBER', owner: false, label: ws ? `Team Member · ${ws.name}` : 'Team Member', packageTypes: ['TEAM_MEMBER'], hint: 'Team members are created and managed by their workspace in Team Members.' };
+  }
+  if (ws.account_type === 'RESELLER') return { key: 'RESELLER', owner, label: 'Reseller', packageTypes: ['AGENCY', 'END_USER'], hint: 'A Reseller stays a Reseller, whatever its plan — its customers and their subscribers are always kept.' };
+  if (ws.account_type === 'RESELLER_CUSTOMER') return { key: 'RESELLER_CUSTOMER', owner, label: "Reseller's customer", packageTypes: ['END_USER'], hint: "A Reseller's customer — its plan and account are managed by that Reseller." };
+  return { key: 'END_USER', owner, label: 'End User', packageTypes: ['END_USER', 'AGENCY'], hint: 'Becomes a Reseller when given a Reseller plan (it then stays one).' };
 }
 
 // ─── Small building blocks ───────────────────────────────────────────────────
@@ -216,6 +240,7 @@ export default function UserEditPage() {
   }, [id, isNew]);
 
   const isResellerWorkspace = detail?.workspace?.account_type === 'RESELLER';
+  const accountKind = accountKindOf(detail, isNew);
   const isDirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(initialForm), [form, initialForm]);
   const passwordMismatch = form.confirmPassword !== '' && form.newPassword !== form.confirmPassword;
 
@@ -241,7 +266,6 @@ export default function UserEditPage() {
     if (isNew || changed('email')) p.email = form.email.trim();
     if (isNew || changed('phone')) p.phone = form.phone.trim();
     if (isNew || changed('address')) p.address = form.address.trim();
-    if (!isNew && changed('role')) p.role = form.role;
     if (!isNew && form.newPassword) p.newPassword = form.newPassword;
     if (changed('packageId') && form.packageId) p.packageId = Number(form.packageId);
     if (changed('expiryDate')) p.expiryDate = form.expiryDate ? `${form.expiryDate}T23:59:59` : null;
@@ -268,12 +292,33 @@ export default function UserEditPage() {
       notify.error('Discount must be between 0 and 100'); return;
     }
 
+    // A Reseller package makes the owner a Reseller for good; a Reseller moved to an
+    // End User package stays a Reseller (chatbot_api/utils/accountTypeRules.js).
+    const nextPkg = packages.find((p) => String(p.id) === String(form.packageId));
+    if (form.packageId !== initialForm.packageId && nextPkg && accountKind.owner) {
+      if (nextPkg.type === 'AGENCY' && accountKind.key === 'END_USER') {
+        const ok = await showAlert.confirm({
+          title: 'Make this user a Reseller?',
+          text: `"${nextPkg.name}" is a Reseller plan. The account becomes a Reseller that can create its own customers — a Reseller can't be turned back into an End User.`,
+          confirmButtonText: 'Yes, make Reseller',
+        });
+        if (!ok) return;
+      } else if (nextPkg.type !== 'AGENCY' && accountKind.key === 'RESELLER') {
+        const ok = await showAlert.confirm({
+          title: "Change this Reseller's plan?",
+          text: `"${nextPkg.name}" is an End User plan. Only the plan changes — the account stays a Reseller, and its customers, their users and subscribers are all kept.`,
+          confirmButtonText: 'Change plan',
+        });
+        if (!ok) return;
+      }
+    }
+
     setSaving(true);
     setPackageNote('');
     try {
       let userId = id;
       if (isNew) {
-        const created = await adminAPI.createUser({ name: form.name.trim(), email: form.email.trim(), password: form.newPassword, role: form.role });
+        const created = await adminAPI.createUser({ name: form.name.trim(), email: form.email.trim(), password: form.newPassword });
         userId = created.data?.user?.id;
       }
       const res = await adminAPI.updateUser(userId, buildPayload());
@@ -359,9 +404,7 @@ export default function UserEditPage() {
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
-            <div style={{ width: 52, height: 52, borderRadius: '50%', background: '#e0e7ff', color: '#4f46e5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem', fontWeight: 700, flexShrink: 0 }}>
-              {(form.name || '?').trim().split(/\s+/).map((w) => w[0]).join('').toUpperCase().slice(0, 2) || '?'}
-            </div>
+            <UserAvatar src={detail?.avatar} name={form.name} size={52} />
             <div style={{ minWidth: 0 }}>
               <h1 style={{ margin: 0, fontSize: '1.3rem', fontWeight: 800, color: 'var(--text-primary)' }}>
                 {isNew ? 'New user' : (detail?.name || 'Edit user')}
@@ -372,14 +415,19 @@ export default function UserEditPage() {
                 {!isNew && (detail?.email_verified_at
                   ? <Badge tone="success"><CheckCircle2 size={11} /> Email verified</Badge>
                   : <Badge tone="warning"><AlertCircle size={11} /> Email not verified</Badge>)}
-                {detail?.workspace && <Badge>{detail.workspace.account_type === 'RESELLER' ? 'Reseller' : detail.workspace.account_type === 'DIRECT_CUSTOMER' ? 'End User' : detail.workspace.account_type}</Badge>}
+                {!isNew && <Badge>{accountKind.label}</Badge>}
               </div>
             </div>
           </div>
-          {!isNew && (
+          {!isNew && !detail?.deleteBlockedReason && (
             <button type="button" onClick={handleDelete} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 8, border: '1px solid rgba(239,68,68,0.25)', background: 'rgba(239,68,68,0.06)', color: '#dc2626', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}>
               <Trash2 size={14} /> Delete user
             </button>
+          )}
+          {!isNew && detail?.deleteBlockedReason && (
+            <div style={{ maxWidth: 360, fontSize: '0.74rem', color: 'var(--text-tertiary)', display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+              <ShieldCheck size={14} style={{ flexShrink: 0, marginTop: 1, color: '#7c3aed' }} /> {detail.deleteBlockedReason}
+            </div>
           )}
         </div>
 
@@ -397,12 +445,10 @@ export default function UserEditPage() {
                 <Field label="WhatsApp mobile number" hint="Include the country code, e.g. +8801XXXXXXXXX">
                   <input type="tel" className="form-input w-full" value={form.phone} onChange={setFromEvent('phone')} placeholder="+8801XXXXXXXXX" />
                 </Field>
-                <Field label="Role">
-                  <select className="form-input w-full" value={form.role} onChange={setFromEvent('role')}>
-                    <option value="USER">User</option>
-                    <option value="RESELLER">Reseller</option>
-                    <option value="ADMIN">Super Admin</option>
-                  </select>
+                <Field label="Account type" hint={accountKind.hint}>
+                  <div className="form-input w-full" style={{ background: 'var(--bg-hover)', color: 'var(--text-primary)', fontWeight: 600, display: 'flex', alignItems: 'center', minHeight: 38 }}>
+                    {accountKind.label}
+                  </div>
                 </Field>
                 <Field label="Address" span={2}>
                   <textarea className="form-input w-full" rows={2} value={form.address} onChange={setFromEvent('address')} placeholder="Street, city, country" style={{ resize: 'vertical' }} />
@@ -425,23 +471,28 @@ export default function UserEditPage() {
             <Card icon={CreditCard} title="Subscription" subtitle="Plan, expiry and special pricing">
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 14 }}>
                 <Field label="Subscription package" hint={detail?.subscription ? `Current: ${detail.subscription.package_name || 'Unknown'}` : (isNew ? null : 'No active subscription')}>
-                  <select className="form-input w-full" value={form.packageId} onChange={setFromEvent('packageId')} disabled={form.role === 'ADMIN'}>
+                  <select className="form-input w-full" value={form.packageId} onChange={setFromEvent('packageId')} disabled={accountKind.key === 'ADMIN'}>
                     <option value="">— No package —</option>
-                    {packages.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}{p.type ? ` · ${p.type.replace('_', ' ').toLowerCase()}` : ''}</option>
-                    ))}
+                    {PACKAGE_GROUPS.filter((g) => accountKind.packageTypes.includes(g.type)).map((g) => {
+                      const list = packages.filter((p) => p.type === g.type || (!p.type && g.type === 'END_USER'));
+                      return list.length ? (
+                        <optgroup key={g.type} label={g.label}>
+                          {list.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </optgroup>
+                      ) : null;
+                    })}
                   </select>
                 </Field>
                 <Field
                   label="Expiry date"
-                  hint={expiryPassed ? <span style={{ color: '#b45309' }}>This date is in the past (saved only — expiry is not enforced yet).</span> : 'Saved only — access is not cut off at this date yet. Leave empty for no expiry.'}
+                  hint={expiryPassed ? <span style={{ color: '#b45309' }}>This date is in the past — the workspace is read-only until the plan is renewed.</span> : 'After this date the workspace becomes read-only until renewed (it keeps its plan). Leave empty for no expiry.'}
                 >
                   <input type="date" className="form-input w-full" value={form.expiryDate} onChange={setFromEvent('expiryDate')} disabled={!form.packageId} />
                 </Field>
-                <Field label="Special coupon" hint="Saved on the user — not applied at checkout yet">
+                <Field label="Special coupon" hint="A code from Super Admin → Coupons, applied automatically when this user checks out">
                   <input className="form-input w-full" value={form.specialCoupon} onChange={(e) => set('specialCoupon')(e.target.value.toUpperCase())} placeholder="e.g. VIP2026" maxLength={64} style={{ fontFamily: 'var(--font-mono)', letterSpacing: 0.5 }} />
                 </Field>
-                <Field label="Discount percentage" hint={selectedPackage && form.discountPercent !== '' ? `≈ ${(Number(selectedPackage.price) * (1 - Number(form.discountPercent) / 100)).toFixed(2)} instead of ${Number(selectedPackage.price).toFixed(2)} — saved only, not applied at checkout yet` : 'Between 0 and 100 — saved only, not applied at checkout yet'}>
+                <Field label="Discount percentage" hint={selectedPackage && form.discountPercent !== '' ? `≈ ${(Number(selectedPackage.price) * (1 - Number(form.discountPercent) / 100)).toFixed(2)} instead of ${Number(selectedPackage.price).toFixed(2)} — applied at checkout (replaces a smaller plan discount)` : 'Between 0 and 100 — applied at checkout on every payment'}>
                   <div style={{ position: 'relative' }}>
                     <input type="number" min="0" max="100" step="0.01" className="form-input w-full" value={form.discountPercent} onChange={setFromEvent('discountPercent')} placeholder="0" style={{ paddingRight: 28 }} />
                     <span style={{ position: 'absolute', right: 11, top: '50%', transform: 'translateY(-50%)', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>%</span>

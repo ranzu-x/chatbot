@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router';
-import { blogAPI } from '../../services/api';
+import { blogAPI, assetUrl } from '../../services/api';
 import { MessageSquare, Search, Clock, Eye, ChevronLeft, ChevronRight, Star } from 'lucide-react';
 
 function formatDate(str) {
@@ -14,7 +14,7 @@ function PostCard({ post, featured }) {
     <Link to={`/blog/${post.slug}`} className={`blog-card ${featured ? 'blog-card--featured' : ''}`}>
       <div className="blog-card__image">
         {post.cover_image
-          ? <img src={post.cover_image} alt={post.title} />
+          ? <img src={assetUrl(post.cover_image)} alt={post.title} />
           : <div className="blog-card__image-placeholder"><MessageSquare size={32} /></div>
         }
         <span className="blog-card__category">{post.category}</span>
@@ -26,7 +26,7 @@ function PostCard({ post, featured }) {
         <div className="blog-card__meta">
           <div className="blog-card__author">
             {post.author_avatar
-              ? <img src={post.author_avatar} alt={post.author_name} className="blog-card__avatar" />
+              ? <img src={assetUrl(post.author_avatar)} alt={post.author_name} className="blog-card__avatar" />
               : <div className="blog-card__avatar-placeholder">{(post.author_name || 'A')[0]}</div>
             }
             <span>{post.author_name || 'Admin'}</span>

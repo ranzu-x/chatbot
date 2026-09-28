@@ -43,12 +43,24 @@ export function telegramWebhookUrl(agencyId, integrationId) {
   return `${backendBase}/api/v1/webhook/telegram/${agencyId}/${integrationId}`;
 }
 
+/**
+ * Every update type the app handles. Telegram's default leaves out chat_member
+ * (needed for group management — utils/telegramGroups.js) and reactions, and a
+ * setWebhook / getUpdates call without the list keeps whatever was set before,
+ * so it is always sent explicitly.
+ */
+export const TELEGRAM_ALLOWED_UPDATES = [
+  "message", "edited_message", "callback_query", "pre_checkout_query", "poll_answer",
+  "business_connection", "business_message", "edited_business_message", "deleted_business_messages",
+  "my_chat_member", "chat_member", "chat_join_request",
+];
+
 /** Registers (or re-registers) the bot's webhook with its secret. Returns true on success. */
 export async function registerTelegramWebhook({ agencyId, integrationId, botToken }) {
   const res = await fetch(`https://api.telegram.org/bot${botToken}/setWebhook`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url: telegramWebhookUrl(agencyId, integrationId), secret_token: telegramSecretFor(integrationId, botToken) }),
+    body: JSON.stringify({ url: telegramWebhookUrl(agencyId, integrationId), secret_token: telegramSecretFor(integrationId, botToken), allowed_updates: TELEGRAM_ALLOWED_UPDATES }),
     signal: AbortSignal.timeout(10000),
   });
   const data = await res.json().catch(() => ({}));

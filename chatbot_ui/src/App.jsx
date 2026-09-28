@@ -3,9 +3,11 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { AuthProvider } from './Provider/AuthContext';
 import { LayoutProvider } from './Provider/LayoutContext';
 import { NotificationProvider } from './Provider/NotificationContext';
+import { BrandingProvider } from './Provider/BrandingContext';
 import ProtectedRoute from './Router/ProtectedRoute';
 import PublicRoute from './Router/PublicRoute';
 import RootRedirect from './Router/RootRedirect';
+import IncomingCallManager from './Components/Calls/IncomingCallManager';
 import { captureAffiliateRef } from './utils/affiliateTracking';
 
 function AffiliateTracker() {
@@ -26,6 +28,7 @@ import CheckoutCompletePage from './Pages/Landing/CheckoutCompletePage';
 import TermsOfService from './Pages/Landing/TermsOfService';
 import BlogListPage   from './Pages/Landing/BlogListPage';
 import BlogDetailPage from './Pages/Landing/BlogDetailPage';
+import MainSiteOnly   from './Pages/Landing/MainSiteOnly';
 import VerifyEmailPage from './Pages/Auth/VerifyEmailPage';
 import ForgotPasswordPage from './Pages/Auth/ForgotPasswordPage';
 import ResetPasswordPage from './Pages/Auth/ResetPasswordPage';
@@ -47,19 +50,28 @@ import AgencyDashboard  from './Pages/Dashboard/AgencyDashboard';
 const AgenciesPage         = lazy(() => import('./Pages/SuperAdmin/AgenciesPage'));
 const UsersPage            = lazy(() => import('./Pages/SuperAdmin/UsersPage'));
 const UserEditPage         = lazy(() => import('./Pages/SuperAdmin/UserEditPage'));
+const ConnectStorePage     = lazy(() => import('./Pages/Commerce/ConnectStorePage'));
+const CommerceCampaignPage = lazy(() => import('./Pages/Commerce/CommerceCampaignPage'));
 const AdminTeamPage        = lazy(() => import('./Pages/SuperAdmin/AdminTeamPage'));
 const PlatformSettingsPage = lazy(() => import('./Pages/SuperAdmin/PlatformSettingsPage'));
 const AuditLogPage         = lazy(() => import('./Pages/SuperAdmin/AuditLogPage'));
 const BlogManagerPage      = lazy(() => import('./Pages/SuperAdmin/BlogManagerPage'));
 const BlogEditorPage       = lazy(() => import('./Pages/SuperAdmin/BlogEditorPage'));
+const DocsApp              = lazy(() => import('./Pages/Docs/DocsApp'));
+const DocsManagerPage      = lazy(() => import('./Pages/SuperAdmin/DocsManagerPage'));
+const DocsEditorPage       = lazy(() => import('./Pages/SuperAdmin/DocsEditorPage'));
+const LandingPageEditorPage = lazy(() => import('./Pages/Agency/LandingPageEditorPage'));
 const PackagesPage         = lazy(() => import('./Pages/SuperAdmin/PackagesPage'));
 const PaymentGatewaysPage  = lazy(() => import('./Pages/SuperAdmin/PaymentGatewaysPage'));
+const CouponsPage          = lazy(() => import('./Pages/SuperAdmin/CouponsPage'));
+const InboxInsightsPage    = lazy(() => import('./Pages/Inbox/InboxInsightsPage'));
 const AffiliatesPage       = lazy(() => import('./Pages/SuperAdmin/AffiliatesPage'));
 const AffiliateDashboardPage = lazy(() => import('./Pages/Affiliate/AffiliateDashboardPage'));
 import TeamMembersPage  from './Pages/Team/TeamMembersPage';
 import RolesPage        from './Pages/Roles/RolesPage';
 import ResellerCustomersPage from './Pages/Agency/ResellerCustomersPage';
 import AgencyPackagesPage    from './Pages/Agency/AgencyPackagesPage';
+import ResellerPaymentsPage from './Pages/Agency/ResellerPaymentsPage';
 import IntegrationsPage from './Pages/Agency/IntegrationsPage';
 import DomainSettingsPage from './Pages/Agency/DomainSettingsPage';
 import ApiKeysPage from './Pages/Agency/ApiKeysPage';
@@ -111,7 +123,7 @@ import AppointmentList       from './Pages/Appointment/AppointmentList';
 import SlotManager           from './Pages/Appointment/SlotManager';
 import PublicBookingPage     from './Pages/Appointment/PublicBookingPage';
 
-import AppToaster from './Components/Common/AppToaster';
+import { AlertHost } from './lib/alerts';
 
 const ADMIN_AGENCY = ['ADMIN', 'RESELLER'];
 const ALL_ROLES    = ['ADMIN', 'RESELLER', 'USER'];
@@ -123,7 +135,8 @@ export default function App() {
 
   return (
     <AuthProvider>
-      <AppToaster />
+      <BrandingProvider>
+      <AlertHost />
       <BrowserRouter>
         <AffiliateTracker />
         <LayoutProvider>
@@ -155,7 +168,7 @@ export default function App() {
               <Route path="/admin/platform-settings" element={<ProtectedRoute roles={['ADMIN']}><PlatformSettingsPage /></ProtectedRoute>} />
               <Route path="/admin/affiliates" element={<ProtectedRoute roles={['ADMIN']}><AffiliatesPage /></ProtectedRoute>} />
               <Route path="/roles" element={<ProtectedRoute roles={ADMIN_AGENCY}><RolesPage /></ProtectedRoute>} />
-              <Route path="/admin/audit-log" element={<ProtectedRoute roles={ADMIN_AGENCY}><AuditLogPage /></ProtectedRoute>} />
+              <Route path="/admin/audit-log" element={<ProtectedRoute roles={ADMIN_AGENCY} accountTypes={['RESELLER']}><AuditLogPage /></ProtectedRoute>} />
               <Route path="/reseller/customers" element={<ProtectedRoute roles={['RESELLER']}><ResellerCustomersPage /></ProtectedRoute>} />
               <Route path="/reseller/users" element={<ProtectedRoute roles={['RESELLER']}><UsersPage scope="reseller" /></ProtectedRoute>} />
               {/* "Packages & Modules" for an agency is now package-creation for ITS
@@ -163,6 +176,7 @@ export default function App() {
                   as a working alias, /agency/packages is the primary path now. */}
               <Route path="/reseller/packages" element={<ProtectedRoute roles={['RESELLER']}><AgencyPackagesPage /></ProtectedRoute>} />
               <Route path="/agency/packages" element={<ProtectedRoute roles={['RESELLER']}><AgencyPackagesPage /></ProtectedRoute>} />
+              <Route path="/agency/payments" element={<ProtectedRoute roles={['RESELLER']}><ResellerPaymentsPage /></ProtectedRoute>} />
 
             {/* ── Agency ── */}
             <Route path="/agency" element={<ProtectedRoute roles={['RESELLER', 'USER']}><AgencyDashboard /></ProtectedRoute>} />
@@ -187,6 +201,9 @@ export default function App() {
                 and /settings/whatsapp-flows redirecting to /bots. */}
             <Route path="/agency/commerce" element={<Navigate to="/bots" state={{ activeCategory: 'commerce', activeSubTab: 'storeConnections' }} replace />} />
             <Route path="/commerce" element={<Navigate to="/bots" state={{ activeCategory: 'commerce', activeSubTab: 'storeConnections' }} replace />} />
+            <Route path="/stores/connect" element={<ProtectedRoute roles={ADMIN_AGENCY}><ConnectStorePage /></ProtectedRoute>} />
+            <Route path="/commerce/campaigns/new" element={<ProtectedRoute roles={ALL_ROLES}><CommerceCampaignPage /></ProtectedRoute>} />
+            <Route path="/commerce/campaigns/:id" element={<ProtectedRoute roles={ALL_ROLES}><CommerceCampaignPage /></ProtectedRoute>} />
 
 
             {/* ── Connect Account Central Hub (Admin + Reseller + User) ──
@@ -252,11 +269,13 @@ export default function App() {
             <Route path="/settings/apps" element={<ProtectedRoute roles={ADMIN_AGENCY}><AppSettingsHubPage /></ProtectedRoute>} />
             <Route path="/settings/app-integrations" element={<ProtectedRoute roles={ADMIN_AGENCY}><AppSettingsHubPage /></ProtectedRoute>} />
             <Route path="/agency/integrations" element={<ProtectedRoute roles={ADMIN_AGENCY}><AppSettingsHubPage /></ProtectedRoute>} />
-            <Route path="/settings/whatsapp-app" element={<ProtectedRoute roles={ADMIN_AGENCY}><MetaAppPage forcedPlatformGroup="WHATSAPP" /></ProtectedRoute>} />
-            <Route path="/settings/facebook-app" element={<ProtectedRoute roles={ADMIN_AGENCY}><MetaAppPage forcedPlatformGroup="MESSENGER_INSTAGRAM" /></ProtectedRoute>} />
-            <Route path="/settings/messenger-app" element={<ProtectedRoute roles={ADMIN_AGENCY}><MetaAppPage forcedPlatformGroup="MESSENGER_INSTAGRAM" /></ProtectedRoute>} />
-            <Route path="/settings/meta-app" element={<ProtectedRoute roles={ADMIN_AGENCY}><MetaAppPage /></ProtectedRoute>} />
-            <Route path="/settings/tiktok-app" element={<ProtectedRoute roles={ADMIN_AGENCY}><TikTokAppPage /></ProtectedRoute>} />
+            {/* The workspace's own Meta / TikTok developer apps — Super Admin, Reseller owners, permitted team members. */}
+            <Route path="/settings/developer-apps" element={<ProtectedRoute roles={ALL_ROLES} requires="canManageDeveloperApps"><AppSettingsHubPage section="developer" /></ProtectedRoute>} />
+            <Route path="/settings/whatsapp-app" element={<ProtectedRoute roles={ALL_ROLES} requires="canManageDeveloperApps"><MetaAppPage forcedPlatformGroup="WHATSAPP" /></ProtectedRoute>} />
+            <Route path="/settings/facebook-app" element={<ProtectedRoute roles={ALL_ROLES} requires="canManageDeveloperApps"><MetaAppPage forcedPlatformGroup="MESSENGER_INSTAGRAM" /></ProtectedRoute>} />
+            <Route path="/settings/messenger-app" element={<ProtectedRoute roles={ALL_ROLES} requires="canManageDeveloperApps"><MetaAppPage forcedPlatformGroup="MESSENGER_INSTAGRAM" /></ProtectedRoute>} />
+            <Route path="/settings/meta-app" element={<ProtectedRoute roles={ALL_ROLES} requires="canManageDeveloperApps"><MetaAppPage /></ProtectedRoute>} />
+            <Route path="/settings/tiktok-app" element={<ProtectedRoute roles={ALL_ROLES} requires="canManageDeveloperApps"><TikTokAppPage /></ProtectedRoute>} />
             <Route path="/settings/ai-providers" element={<ProtectedRoute roles={ADMIN_AGENCY}><AIProvidersPage /></ProtectedRoute>} />
             {/* WhatsApp Flows — list lives in Bot Manager → Data Collection now,
                 not a standalone page — same pattern as /user-input-flows and
@@ -283,9 +302,10 @@ export default function App() {
               <Route path="/landing"          element={<LandingPage />} />
               <Route path="/privacy-policy"   element={<PrivacyPolicy />} />
               <Route path="/terms-of-service" element={<TermsOfService />} />
-              <Route path="/blog"             element={<BlogListPage />} />
-              <Route path="/blog/:slug"       element={<BlogDetailPage />} />
-              <Route path="/pricing"          element={<PricingPage />} />
+              {/* The blog is the main domain's; a Reseller's address has its own pricing on its landing page. */}
+              <Route path="/blog"             element={<MainSiteOnly><BlogListPage /></MainSiteOnly>} />
+              <Route path="/blog/:slug"       element={<MainSiteOnly><BlogDetailPage /></MainSiteOnly>} />
+              <Route path="/pricing"          element={<MainSiteOnly redirectTo="/landing#pricing"><PricingPage /></MainSiteOnly>} />
             </Route>
             <Route path="/payments/pay/:orderId" element={<InChatPaymentCheckoutPage />} />
             <Route path="/book/:agencyId" element={<PublicBookingPage />} />
@@ -295,6 +315,8 @@ export default function App() {
                  (own login, own layout, own design — see Forum/ForumApp.jsx).
                  Publicly readable, so it sits outside ProtectedRoute. ── */}
             <Route path="/forum/*" element={<ForumApp />} />
+            {/* ── Documentation — public on every domain (Pages/Docs/DocsApp.jsx). ── */}
+            <Route path="/docs/*" element={<DocsApp />} />
             {/* Where the account-verification email's link lands. Public: the
                 link is often opened on a different device than the signup. */}
             <Route path="/verify-email" element={<VerifyEmailPage />} />
@@ -302,19 +324,32 @@ export default function App() {
 
             {/* ── Admin Payment Gateways ── */}
             <Route path="/admin/payment-gateways" element={<ProtectedRoute roles={['ADMIN']}><PaymentGatewaysPage /></ProtectedRoute>} />
+            <Route path="/inbox/insights" element={<ProtectedRoute roles={ALL_ROLES}><InboxInsightsPage /></ProtectedRoute>} />
+            <Route path="/admin/coupons" element={<ProtectedRoute roles={['ADMIN']}><CouponsPage /></ProtectedRoute>} />
 
             {/* ── Admin Blog Management ── */}
-            <Route path="/admin/blog"           element={<ProtectedRoute roles={['ADMIN']}><BlogManagerPage /></ProtectedRoute>} />
-            <Route path="/admin/blog/new"        element={<ProtectedRoute roles={['ADMIN']}><BlogEditorPage /></ProtectedRoute>} />
-            <Route path="/admin/blog/:id/edit"   element={<ProtectedRoute roles={['ADMIN']}><BlogEditorPage /></ProtectedRoute>} />
+            <Route path="/admin/blog"           element={<ProtectedRoute roles={['ADMIN']} requires="canManageBlog"><BlogManagerPage /></ProtectedRoute>} />
+            <Route path="/admin/blog/new"        element={<ProtectedRoute roles={['ADMIN']} requires="canManageBlog"><BlogEditorPage /></ProtectedRoute>} />
+            <Route path="/admin/blog/:id/edit"   element={<ProtectedRoute roles={['ADMIN']} requires="canManageBlog"><BlogEditorPage /></ProtectedRoute>} />
+
+            {/* ── Admin Documentation Management (admin.docs.manage) ── */}
+            <Route path="/admin/docs"                  element={<ProtectedRoute roles={['ADMIN']} requires="canManageDocs"><DocsManagerPage /></ProtectedRoute>} />
+            <Route path="/admin/docs/articles/new"      element={<ProtectedRoute roles={['ADMIN']} requires="canManageDocs"><DocsEditorPage /></ProtectedRoute>} />
+            <Route path="/admin/docs/articles/:id/edit" element={<ProtectedRoute roles={['ADMIN']} requires="canManageDocs"><DocsEditorPage /></ProtectedRoute>} />
+
+            {/* ── Reseller landing page (the Reseller's own address) ── */}
+            <Route path="/agency/landing-page" element={<ProtectedRoute roles={['RESELLER']} accountTypes={['RESELLER']}><LandingPageEditorPage /></ProtectedRoute>} />
 
             {/* Catch-all */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
             </Suspense>
+            {/* WhatsApp calls from customers — above the routes so a call survives page changes */}
+            <IncomingCallManager />
           </NotificationProvider>
         </LayoutProvider>
       </BrowserRouter>
+      </BrandingProvider>
     </AuthProvider>
   );
 }

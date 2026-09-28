@@ -43,6 +43,9 @@ export function AuthProvider({ children }) {
       .finally(() => setLoading(false));
   }, [fetchEntitlements]);
 
+  // Re-reads the signed-in user (e.g. the plan status after a renewal).
+  const refreshUser = useCallback(() => authAPI.me().then((res) => setUser(res.data.user)).catch(() => {}), []);
+
   // Listen for global 401 responses and cross-tab logout events
   useEffect(() => {
     const handleUnauthorized = () => {
@@ -69,13 +72,33 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  const login = async (email, password) => {
-    const res = await authAPI.login({ email, password });
-    const { user, token } = res.data;
+  const startSession = (data) => {
+    const { user, token } = data;
     if (token) localStorage.setItem("auth_token", token);
     setUser(user);
     fetchEntitlements();
+    // The full profile (permissions, developer-apps access, the Reseller's brand) comes from /auth/me.
+    authAPI.me().then((res) => setUser((current) => (current ? res.data.user : current))).catch(() => {});
     return user;
+  };
+
+  // With two-factor login on, the password step returns { twoFactorRequired, challengeToken }
+  // instead of a session; the Login page then calls completeTwoFactor with the code.
+  const login = async (email, password) => {
+    const res = await authAPI.login({ email, password });
+    if (res.data?.twoFactorRequired) return { twoFactorRequired: true, challengeToken: res.data.challengeToken };
+    return startSession(res.data);
+  };
+
+  const completeTwoFactor = async (challengeToken, { code, backupCode }) => {
+    const res = await authAPI.loginTwoFactor({ challengeToken, code, backupCode });
+    return startSession(res.data);
+  };
+
+  // "Sign out of all devices" — the server hands this browser a fresh token.
+  const signOutEverywhere = async () => {
+    const res = await authAPI.revokeAllSessions();
+    return startSession(res.data);
   };
 
   const logout = async () => {
@@ -102,11 +125,14 @@ export function AuthProvider({ children }) {
       user,
       loading,
       login,
+      completeTwoFactor,
+      signOutEverywhere,
       logout,
       setUser,
       entitlements,
       hasModule,
       refreshEntitlements: fetchEntitlements,
+      refreshUser,
     }}>
       {children}
     </AuthContext.Provider>

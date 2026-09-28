@@ -179,6 +179,22 @@ export default function useBroadcastCampaign({ enabled, flowId, platform, flowNa
     }
   }, [mode, campaign, onSetFirstStep, targeting]);
 
+  /** A/B flow, split, send time — saved right away (chatbot_api routes/broadcasts.js PUT). */
+  const updateSettings = useCallback(async (patch) => {
+    if (!campaign) return false;
+    try {
+      await broadcastAPI.update(campaign.id, { ...patch, ...targeting(audienceRef.current), tagLabelId: audienceRef.current.tagLabelId });
+      dirty.current = false;
+      const res = await broadcastAPI.getByFlow(flowId).catch(() => null);
+      const fresh = res?.data?.campaign;
+      setCampaign((c) => (fresh ? { ...c, ...fresh } : c));
+      return true;
+    } catch (err) {
+      showBroadcastError(err, 'Could not save the setting');
+      return false;
+    }
+  }, [campaign, targeting, flowId]);
+
   const cancelSchedule = useCallback(async () => {
     if (!campaign) return;
     try {
@@ -193,7 +209,7 @@ export default function useBroadcastCampaign({ enabled, flowId, platform, flowNa
     enabled: Boolean(enabled),
     campaign, loading, labels, account, accountLabel: accountLabelOf(account),
     audienceForm, setAudienceForm, previewCount,
-    mode, changeMode, modeBusy,
+    mode, changeMode, modeBusy, updateSettings,
     editable, canSend,
     persist, flush, reload: load, cancelSchedule,
   };

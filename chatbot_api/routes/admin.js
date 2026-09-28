@@ -5,8 +5,12 @@ import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { requirePermission } from "../middleware/permissionMiddleware.js";
 import { assignPackageLocally } from "../services/stripeService.js";
+import { invalidateSubscriptionCache } from "../utils/subscriptionStatus.js";
+import { getDefaultPackage } from "../utils/signupPackage.js";
 import { logAuditEvent, diffFields } from "../utils/auditLog.js";
 import { invalidateTenantCache } from "../middleware/tenant.js";
+import { applyPackageAccountType, accountTypeNote, userDeleteBlocker } from "../utils/accountTypeRules.js";
+import { createAccount } from "../utils/accountProvisioning.js";
 import { getMonthlyUsage } from "../utils/entitlements.js";
 import { sendAdminEmail } from "../utils/emailNotifications.js";
 import { emitToUser } from "../utils/socket.js";
@@ -282,22 +286,13 @@ router.patch("/admin/agencies/:id", requirePermission("admin.agencies.manage"), 
           );
         }
       } else if (!isReseller && currentlyReseller) {
-        const [[{ childCount }]] = await conn.query("SELECT COUNT(*) AS childCount FROM agencies WHERE parent_agency_id = ?", [req.params.id]);
-        if (childCount > 0) {
-          await conn.rollback();
-          return res.status(400).json({ success: false, message: `Can't remove reseller capability — this account still has ${childCount} customer(s) under it` });
-        }
-        await conn.query("UPDATE agencies SET account_type = 'DIRECT_CUSTOMER' WHERE id = ?", [req.params.id]);
-        const [[ownerRole]] = await conn.query("SELECT id FROM roles WHERE scope_type='AGENCY' AND agency_id IS NULL AND slug='owner'");
-        if (ownerRole) {
-          await conn.query(
-            "UPDATE organization_members SET role_id = ? WHERE agency_id = ? AND user_id = ?",
-            [ownerRole.id, req.params.id, agency.owner_id]
-          );
-        }
+        // A Reseller is permanent (utils/accountTypeRules.js) — its customers and their data depend on it.
+        await conn.rollback();
+        return res.status(400).json({ success: false, code: "RESELLER_IS_PERMANENT", message: "A Reseller can't be turned back into an End User. Its customers, their users and their subscribers stay with it." });
       }
     }
 
+    let packageNote = null;
     if (packageId && agency.account_type !== "PLATFORM") {
       await conn.query("UPDATE agencies SET package_id = ? WHERE id = ?", [packageId, req.params.id]);
       await conn.query("UPDATE subscriptions SET status='CANCELLED' WHERE agency_id = ? AND status='ACTIVE'", [req.params.id]);
@@ -305,6 +300,8 @@ router.patch("/admin/agencies/:id", requirePermission("admin.agencies.manage"), 
         "INSERT INTO subscriptions (agency_id, package_id, status, started_at, notes) VALUES (?, ?, 'ACTIVE', NOW(), 'Reassigned by Super Admin')",
         [req.params.id, packageId]
       );
+      const { change } = await applyPackageAccountType({ agencyId: Number(req.params.id), packageId }, conn);
+      packageNote = accountTypeNote(change);
     }
 
     if (ownerName) {
@@ -337,7 +334,7 @@ router.patch("/admin/agencies/:id", requirePermission("admin.agencies.manage"), 
       targetAgencyId: Number(req.params.id),
     });
 
-    return res.json({ success: true, message: "Agency updated" });
+    return res.json({ success: true, message: packageNote ? `Agency updated. ${packageNote}` : "Agency updated", packageNote });
   } catch (err) {
     await conn.rollback();
     console.error("PATCH /admin/agencies/:id error:", err);
@@ -355,12 +352,50 @@ router.delete("/admin/agencies/:id", requirePermission("admin.agencies.manage"),
     if (rows[0].account_type === "PLATFORM") {
       return res.status(400).json({ success: false, message: "The platform account cannot be deleted" });
     }
-    // Guard against silently orphaning reseller customers (agencies.parent_agency_id
-    // has ON DELETE SET NULL, which would otherwise leave them parentless).
-    const [[{ childCount }]] = await pool.query("SELECT COUNT(*) AS childCount FROM agencies WHERE parent_agency_id = ?", [req.params.id]);
-    if (childCount > 0) {
-      return res.status(400).json({ success: false, message: `Cannot delete — this account still has ${childCount} customer(s) under it` });
+    // A Reseller's users (its own team, its customers and theirs) are removed only
+    // together with the Reseller — never one by one, never by a plan change
+    // (decided with the user). It's irreversible, so the name must be typed back.
+    if (rows[0].account_type === "RESELLER") {
+      const [customers] = await pool.query("SELECT id FROM agencies WHERE parent_agency_id = ?", [req.params.id]);
+      const confirmName = String(req.body?.confirmName ?? req.query.confirmName ?? "").trim();
+      if (confirmName !== String(rows[0].name).trim()) {
+        return res.status(400).json({
+          success: false, code: "CONFIRM_NAME_REQUIRED", customerCount: customers.length,
+          message: `Type the reseller's name to delete it together with its ${customers.length} customer(s) and all their users and data.`,
+        });
+      }
+      const workspaceIds = [...customers.map((c) => c.id), Number(req.params.id)];
+      const conn = await pool.getConnection();
+      try {
+        await conn.beginTransaction();
+        const [userRows] = await conn.query(
+          `SELECT DISTINCT u.id FROM users u
+            WHERE u.role <> 'ADMIN' AND (u.home_agency_id IN (?) OR u.id IN (SELECT owner_id FROM agencies WHERE id IN (?)))`,
+          [workspaceIds, workspaceIds]
+        );
+        // Customers first, then the Reseller (conversations -> contacts is NO ACTION,
+        // so each workspace's chats go before the workspace).
+        for (const wsId of workspaceIds) {
+          await conn.query("DELETE FROM conversations WHERE agency_id = ?", [wsId]);
+          await conn.query("DELETE FROM agencies WHERE id = ?", [wsId]);
+        }
+        if (userRows.length) await conn.query("DELETE FROM users WHERE id IN (?) AND role <> 'ADMIN'", [userRows.map((u) => u.id)]);
+        await conn.commit();
+        invalidateTenantCache();
+        logAuditEvent({
+          agencyId: req.user.agencyId, actor: req.user, action: "agency.delete",
+          entityType: "agency", entityId: Number(req.params.id), entityLabel: rows[0].name,
+          summary: `Deleted reseller "${rows[0].name}" with ${customers.length} customer(s) and ${userRows.length} user(s)`,
+        });
+        return res.json({ success: true, message: `Reseller deleted with ${customers.length} customer(s) and ${userRows.length} user(s)` });
+      } catch (err) {
+        await conn.rollback();
+        throw err;
+      } finally {
+        conn.release();
+      }
     }
+
     // Conversations first (conversations -> contacts is NO ACTION, so the
     // workspace cascade fails once it has any chats).
     await pool.query("DELETE FROM conversations WHERE agency_id = ?", [req.params.id]);
@@ -424,20 +459,52 @@ router.get("/admin/users", requirePermission("admin.users.view", "admin.users.ma
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    const [users] = await pool.query(
+    const [rows] = await pool.query(
       `SELECT u.id, u.name, u.email, u.phone, u.role, u.is_active, u.avatar, u.package_id, u.created_at, u.updated_at,
               om.agency_id, om.member_kind, r.slug AS roleSlug, r.name AS roleName,
               a.name AS agencyName, a.account_type AS accountType, a.parent_agency_id AS parentAgencyId,
-              pa.name AS resellerName
+              pa.name AS resellerName,
+              (SELECT p.name FROM subscriptions s JOIN packages p ON p.id = s.package_id
+                 WHERE s.agency_id = a.id AND s.status = 'ACTIVE' ORDER BY s.id DESC LIMIT 1) AS agencySubPackage,
+              (SELECT COALESCE(s.expires_at, s.current_period_end) FROM subscriptions s
+                 WHERE s.agency_id = a.id AND s.status = 'ACTIVE' ORDER BY s.id DESC LIMIT 1) AS agencySubExpires,
+              (SELECT p.name FROM subscriptions s JOIN packages p ON p.id = s.package_id
+                 WHERE s.user_id = u.id AND s.status = 'ACTIVE' ORDER BY s.id DESC LIMIT 1) AS userSubPackage,
+              (SELECT COALESCE(s.expires_at, s.current_period_end) FROM subscriptions s
+                 WHERE s.user_id = u.id AND s.status = 'ACTIVE' ORDER BY s.id DESC LIMIT 1) AS userSubExpires,
+              ap.name AS agencyPackage, up.name AS userPackage
        FROM users u
        LEFT JOIN organization_members om ON om.user_id = u.id
        LEFT JOIN roles r ON r.id = om.role_id
        LEFT JOIN agencies a ON a.id = om.agency_id
        LEFT JOIN agencies pa ON pa.id = a.parent_agency_id
+       LEFT JOIN packages ap ON ap.id = a.package_id
+       LEFT JOIN packages up ON up.id = u.package_id
        ${where}
        ORDER BY u.created_at DESC`,
       params
     );
+    // What the person really is, and the package they're really on — the
+    // screen used to derive both from users.role (every workspace owner has
+    // role RESELLER, so End Users showed as "Reseller" / "Reseller Pro").
+    const [endUserDefault, agencyDefault] = await Promise.all([getDefaultPackage("END_USER"), getDefaultPackage("AGENCY")]);
+    const users = rows.map(({ agencySubPackage, agencySubExpires, userSubPackage, userSubExpires, agencyPackage, userPackage, ...u }) => {
+      const accountKind = u.role === "ADMIN" ? "SUPER_ADMIN"
+        : u.member_kind === "TEAM_MEMBER" || u.role === "USER" ? "TEAM_MEMBER"
+        : u.accountType === "RESELLER" ? "RESELLER"
+        : u.accountType === "RESELLER_CUSTOMER" ? "RESELLER_CUSTOMER"
+        : "END_USER";
+      let packageName = null;
+      let packageIsDefault = false;
+      if (accountKind === "RESELLER" || accountKind === "END_USER") {
+        packageName = agencySubPackage || agencyPackage || userSubPackage || userPackage || null;
+        if (!packageName) {
+          packageName = (accountKind === "RESELLER" ? agencyDefault : endUserDefault)?.name || null;
+          packageIsDefault = Boolean(packageName);
+        }
+      }
+      return { ...u, accountKind, packageName, packageIsDefault, packageExpiresAt: agencySubExpires || userSubExpires || null };
+    });
     return res.json({ success: true, users });
   } catch (err) {
     console.error(err);
@@ -472,30 +539,34 @@ router.patch("/admin/users/:id/toggle", requirePermission("admin.users.manage"),
 //      compatibility with existing callers) ───────────────────────────────
 router.post("/admin/users", requirePermission("admin.users.manage"), async (req, res) => {
   try {
-    const { name, email, password, role = "USER" } = req.body;
+    // The User Manager creates workspace owners only: an End User, who becomes a
+    // Reseller by getting a Reseller package. Team members are added by their
+    // workspace in Team Members; platform staff in the Super Admin's own team.
+    const { name, email, password } = req.body;
     if (!name || !email || !password) {
       return res.status(400).json({ success: false, message: "Name, email, and password are required" });
     }
+    if (String(password).length < 6) {
+      return res.status(400).json({ success: false, message: "Password must be at least 6 characters" });
+    }
 
-    const [existing] = await pool.query("SELECT id FROM users WHERE email = ?", [email]);
+    const [existing] = await pool.query("SELECT id FROM users WHERE email = ?", [String(email).toLowerCase().trim()]);
     if (existing.length) {
       return res.status(400).json({ success: false, message: "Email is already in use" });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    // Same workspace as a self sign-up (starts on the default End User package).
+    const { userId } = await createAccount({ fullName: String(name).trim(), email, passwordHash: hashedPassword, source: "Super Admin" });
+    // Created by an admin, who vouches for the address — marked verified directly.
+    await pool.query("UPDATE users SET email_verified_at = NOW() WHERE id = ?", [userId]);
 
-    const [result] = await pool.query(
-      // Created by an admin, who vouches for the address — marked verified directly.
-      "INSERT INTO users (name, email, password, role, is_active, created_at, email_verified_at) VALUES (?, ?, ?, ?, 1, NOW(), NOW())",
-      [name, email, hashedPassword, role]
-    );
-
-    const [created] = await pool.query("SELECT id, name, email, role, is_active, created_at FROM users WHERE id = ?", [result.insertId]);
+    const [created] = await pool.query("SELECT id, name, email, role, is_active, created_at FROM users WHERE id = ?", [userId]);
 
     logAuditEvent({
       agencyId: req.user.agencyId, actor: req.user, action: "user.create",
-      entityType: "user", entityId: result.insertId, entityLabel: name,
-      summary: `Created user "${name}" (${email}, role ${role})`,
+      entityType: "user", entityId: userId, entityLabel: name,
+      summary: `Created user "${name}" (${email}) with their own workspace`,
     });
 
     return res.status(201).json({ success: true, user: created[0] });
@@ -512,7 +583,7 @@ router.post("/admin/users", requirePermission("admin.users.manage"), async (req,
 // this month's usage.
 async function loadUserDetail(userId) {
   const [[user]] = await pool.query(
-    `SELECT id, name, email, phone, address, role, package_id, is_active, email_verified_at,
+    `SELECT id, name, email, phone, address, role, package_id, is_active, email_verified_at, avatar,
             special_coupon, discount_percent, can_forum_post, can_comment, home_agency_id, created_at, updated_at
      FROM users WHERE id = ?`,
     [userId]
@@ -532,6 +603,8 @@ async function loadUserDetail(userId) {
     workspace,
     subscription,
     usage,
+    // Why this user can't be deleted on their own (a Reseller's users), or null.
+    deleteBlockedReason: await userDeleteBlocker(user.id),
   };
 }
 
@@ -595,6 +668,14 @@ router.put("/admin/users/:id", requirePermission("admin.users.manage"), async (r
     const existing = existingRows[0];
 
     // ── Validation (before anything is written) ──
+    // The kind of user is never edited here: owners are End Users or Resellers by
+    // their package, team members come from Team Members (utils/accountTypeRules.js).
+    if (role !== undefined && role !== existing.role) {
+      return res.status(400).json({
+        success: false, code: "USER_TYPE_LOCKED",
+        message: "The user type can't be changed. An End User becomes a Reseller by getting a Reseller package; team members are added in Team Members.",
+      });
+    }
     const cleanEmail = email !== undefined ? String(email).trim().toLowerCase() : undefined;
     if (cleanEmail !== undefined) {
       if (!cleanEmail) return res.status(400).json({ success: false, message: "Email is required" });
@@ -662,7 +743,6 @@ router.put("/admin/users/:id", requirePermission("admin.users.manage"), async (r
     const values = [];
     if (name !== undefined) { fields.push("name = ?"); values.push(String(name).trim()); }
     if (cleanEmail !== undefined) { fields.push("email = ?"); values.push(cleanEmail); }
-    if (role !== undefined) { fields.push("role = ?"); values.push(role); }
     if (phone !== undefined) { fields.push("phone = ?"); values.push(phone || null); }
     if (address !== undefined) { fields.push("address = ?"); values.push(address || null); }
     if (typeof isActive === "boolean") { fields.push("is_active = ?"); values.push(isActive ? 1 : 0); }
@@ -685,10 +765,20 @@ router.put("/admin/users/:id", requirePermission("admin.users.manage"), async (r
 
     let packageChange = null;
     if (targetPkg) {
-      await assignPackageLocally({ userId: req.params.id, packageId, notes: "Reassigned by Super Admin" });
+      // An owner's plan goes on their workspace too — the workspace's subscription is the
+      // one that counts (utils/entitlements.js), so a user-only one was silently ignored.
+      const ownedWorkspace = workspace && Number(workspace.owner_id) === Number(existing.id) && ["DIRECT_CUSTOMER", "RESELLER"].includes(workspace.account_type)
+        ? workspace : null;
+      const result = await assignPackageLocally({
+        agencyId: ownedWorkspace?.id || null, userId: req.params.id, packageId, notes: "Reassigned by Super Admin", periodEnd: null, // the Super Admin sets the expiry date here
+      });
       packageChange = {
         toPackage: targetPkg.name,
-        note: "Existing data is always kept. If this plan's limits are lower than what the user already has, they simply can't add more of that resource until they're back under the limit or upgraded — nothing is deleted automatically.",
+        accountType: result?.change || "NONE",
+        note: [
+          accountTypeNote(result?.change),
+          "Existing data is always kept. If this plan's limits are lower than what the user already has, they simply can't add more of that resource until they're back under the limit or upgraded — nothing is deleted automatically.",
+        ].filter(Boolean).join(" "),
       };
     }
 
@@ -707,6 +797,7 @@ router.put("/admin/users/:id", requirePermission("admin.users.manage"), async (r
       }
       if (sub) {
         await pool.query("UPDATE subscriptions SET expires_at = ?, current_period_end = ? WHERE id = ?", [cleanExpiry, cleanExpiry, sub.id]);
+        invalidateSubscriptionCache(); // a past date makes the workspace read-only, a future one lifts it
       }
     }
 
@@ -872,6 +963,11 @@ router.post("/admin/users/:id/reset-usage", requirePermission("admin.users.manag
 router.delete("/admin/users/:id", requirePermission("admin.users.manage"), async (req, res) => {
   try {
     const [[user]] = await pool.query("SELECT name, email FROM users WHERE id = ?", [req.params.id]);
+    // A Reseller's owner, its team and its customers' users go only with the Reseller
+    // (DELETE /admin/agencies/:id). Deleting an owner here would also cascade-delete
+    // their whole workspace (agencies.owner_id is ON DELETE CASCADE).
+    const blocker = await userDeleteBlocker(req.params.id);
+    if (blocker) return res.status(400).json({ success: false, code: "RESELLER_USER", message: blocker });
     await pool.query("DELETE FROM users WHERE id = ?", [req.params.id]);
 
     if (user) {

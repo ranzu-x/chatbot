@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import useUrlState from '../../hooks/useUrlState';
 import AppLayout from '../../Layout/AppLayout';
 import ChannelBreadcrumb from '../../Components/Common/ChannelBreadcrumb';
 import { channelAPI, metaAppAPI } from '../../services/api';
@@ -194,12 +195,15 @@ export default function WhatsAppPage({ embedded = false }) {
 
   // UI flow state
   // 'list' | 'choose_method' | 'manual' | 'embedded_catalog_select' | 'embedded_connecting'
-  const [view, setView] = useState('list');
+  const [view, setView] = useUrlState('view', 'list', { allowed: ['list','manual'] });
   const [connecting, setConnecting] = useState(false);
 
   // Embedded signup state
   const [withCatalog, setWithCatalog] = useState(false);
   const [onboardingType, setOnboardingType] = useState('new_number'); // 'new_number' | 'coexistence'
+  // The Meta message listener is registered once — it reads the current choice through this ref.
+  const onboardingTypeRef = useRef(onboardingType);
+  useEffect(() => { onboardingTypeRef.current = onboardingType; }, [onboardingType]);
   const metaSessionRef = useRef({ phoneNumberId: null, wabaId: null, code: null });
 
   // Per Meta's own Embedded Signup guidance, catalog access should come
@@ -301,7 +305,10 @@ export default function WhatsAppPage({ embedded = false }) {
   // ── Listen for Meta Embedded Signup postMessage ─────────────────────────────
   useEffect(() => {
     const handleMetaMessage = async (event) => {
-      if (!event.origin.includes('facebook.com')) return;
+      // Only Meta's own pages (a lookalike such as evil-facebook.com must not pass).
+      let host = '';
+      try { host = new URL(event.origin).hostname; } catch { return; }
+      if (host !== 'facebook.com' && !host.endsWith('.facebook.com')) return;
       try {
         const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
         if (!data) return;
@@ -334,8 +341,11 @@ export default function WhatsAppPage({ embedded = false }) {
                 wabaId: metaSessionRef.current.wabaId,
                 name: withCatalog ? 'WhatsApp Commerce Account' : 'WhatsApp Business Number',
                 withCatalog,
+                coexistence: onboardingTypeRef.current === 'coexistence' || ev === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING',
               });
-              notify.success('WhatsApp connected and activated successfully!');
+              notify.success(onboardingTypeRef.current === 'coexistence' || ev === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING'
+                ? 'WhatsApp connected — it keeps working in the WhatsApp Business app, and past chats are being imported.'
+                : 'WhatsApp connected and activated successfully!');
               setView('list');
               fetchAccounts();
             } catch (err) {
@@ -395,6 +405,7 @@ export default function WhatsAppPage({ embedded = false }) {
               wabaId: metaSessionRef.current.wabaId || undefined,
               name: withCatalog ? 'WhatsApp Commerce Account' : 'WhatsApp Business Number',
               withCatalog,
+              coexistence: onboardingType === 'coexistence',
             })
               .then(() => {
                 notify.success('WhatsApp connected and activated successfully!');
@@ -424,7 +435,8 @@ export default function WhatsAppPage({ embedded = false }) {
           extras: {
             sessionInfoVersion: 3,
             // Coexistence mode keeps existing WhatsApp app active
-            ...(onboardingType === 'coexistence' ? { featureType: 'coexistence' } : {}),
+            // Coexistence (keep using the WhatsApp Business app): Meta's documented feature type.
+            ...(onboardingType === 'coexistence' ? { featureType: 'whatsapp_business_app_onboarding' } : {}),
           },
         }
       );

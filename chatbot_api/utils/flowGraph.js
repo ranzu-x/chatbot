@@ -15,7 +15,7 @@
 export function resolveNextNodeId(edges, sourceId, sourceHandle = null) {
   if (sourceHandle) {
     const matchedEdge = edges.find((e) => e.source === sourceId && e.sourceHandle === sourceHandle);
-    return matchedEdge ? matchedEdge.target : null;
+    if (matchedEdge) return matchedEdge.target;
   }
   let matchedEdge = edges.find((e) => e.source === sourceId && (!e.sourceHandle || e.sourceHandle === "next-step" || e.sourceHandle === "default"));
   if (!matchedEdge) {

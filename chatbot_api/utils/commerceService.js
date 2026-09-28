@@ -169,7 +169,7 @@ async function shopifyGraphql(shopDomain, token, query, variables = {}) {
   return data;
 }
 
-async function shopifyQuery(connection, query, variables) {
+export async function shopifyQuery(connection, query, variables) {
   const token = await getShopifyToken(connection);
   return shopifyGraphql(connection.store_domain, token, query, variables);
 }
@@ -246,6 +246,7 @@ function normalizeShopifyOrder(o, shopDomain) {
     number: o.name || null,
     customerName: name,
     phone: o.phone || o.customer?.phone || o.shippingAddress?.phone || o.billingAddress?.phone || null,
+    email: o.email || null,
     total: o.totalPriceSet?.shopMoney?.amount ?? null,
     currency: o.totalPriceSet?.shopMoney?.currencyCode || null,
     financialStatus: fin, // PAID, PENDING, AUTHORIZED, REFUNDED, PARTIALLY_REFUNDED, VOIDED...
@@ -370,7 +371,7 @@ export async function shopifyCancelOrder(connection, externalOrderId, staffNote)
 
 // ─── WooCommerce ────────────────────────────────────────────────────────────
 
-function wooClient(storeUrl, creds) {
+export function wooClient(storeUrl, creds) {
   return axios.create({
     baseURL: `${storeUrl}/wp-json/wc/v3`,
     params: { consumer_key: creds.consumerKey, consumer_secret: creds.consumerSecret },
@@ -394,18 +395,45 @@ export async function verifyWooCommerce({ storeUrl, consumerKey, consumerSecret 
     throw err;
   }
   const credentials = { consumerKey: consumerKey.trim(), consumerSecret: consumerSecret.trim() };
-  const client = wooClient(base, credentials);
-  try {
-    const res = await client.get("/orders", { params: { per_page: 1 } });
-    if (!Array.isArray(res.data)) throw new Error("That URL did not answer like a WooCommerce store.");
-  } catch (err) {
-    const e = new Error(err.response ? describeHttpError(err, "WOOCOMMERCE") : err.message);
-    e.status = 400;
-    throw e;
+  // People often paste a page link (".../shop/"); WordPress's REST API lives at the site root,
+  // so when the path doesn't answer, the origin is tried too.
+  const origin = new URL(base).origin;
+  const candidates = base === origin ? [base] : [base, origin];
+  let storeBase = null;
+  let lastError = null;
+  for (const candidate of candidates) {
+    try {
+      const res = await wooClient(candidate, credentials).get("/orders", { params: { per_page: 1 } });
+      if (Array.isArray(res.data)) {
+        storeBase = candidate;
+        break;
+      }
+      lastError = new Error(
+        isBotChallengePage(res.data)
+          ? "Your web host blocks apps from reaching the store (it answers with a browser-only security check). Free hosts such as InfinityFree do this on every request and can't be switched off — the store needs hosting that allows the WooCommerce REST API."
+          : "That URL did not answer like a WooCommerce store."
+      );
+    } catch (err) {
+      lastError = new Error(err.response ? describeHttpError(err, "WOOCOMMERCE") : err.message);
+      // Wrong keys are wrong at every address; don't mask them with a later 404.
+      if ([401, 403].includes(err.response?.status)) break;
+    }
   }
+  if (!storeBase) {
+    lastError.status = 400;
+    throw lastError;
+  }
+  const client = wooClient(storeBase, credentials);
   const currency = await client.get("/data/currencies/current").then((r) => r.data?.code || null).catch(() => null);
-  const storeName = await axios.get(`${base}/wp-json/`, { timeout: 8000 }).then((r) => r.data?.name || null).catch(() => null);
-  return { storeDomain: base, authMode: "WOO_KEYS", credentials, expiresAt: null, storeName: storeName || new URL(base).hostname, currency };
+  const storeName = await axios.get(`${storeBase}/wp-json/`, { timeout: 8000 }).then((r) => r.data?.name || null).catch(() => null);
+  return { storeDomain: storeBase, authMode: "WOO_KEYS", credentials, expiresAt: null, storeName: storeName || new URL(storeBase).hostname, currency };
+}
+
+// Anti-bot interstitials (InfinityFree's aes.js "__test" cookie, generic "enable JavaScript" walls)
+// answer 200 with HTML instead of the API's JSON.
+function isBotChallengePage(body) {
+  if (typeof body !== "string") return false;
+  return /aes\.js|__test=|requires javascript|enable javascript|cf-challenge|challenge-platform/i.test(body);
 }
 
 const WOO_CART_STATUSES = new Set(["checkout-draft", "pending", "failed"]);
@@ -425,6 +453,7 @@ function normalizeWooOrder(o, storeUrl) {
     number: o.number ? `#${o.number}` : `#${o.id}`,
     customerName: name,
     phone: o.billing?.phone || o.shipping?.phone || null,
+    email: o.billing?.email || null,
     total: o.total ?? null,
     currency: o.currency || null,
     financialStatus: o.date_paid ? "PAID" : status.toUpperCase(),

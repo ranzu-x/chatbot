@@ -1,15 +1,13 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import UserAvatar from '../../Components/Common/UserAvatar';
 import { useNavigate } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
 import { adminAPI, packageAPI, resellerUserAPI, agencyPackageAPI } from '../../services/api';
 import { BulkEmailModal, BulkNotifyModal } from './BulkUserActions';
 import { downloadCsv } from '../../utils/csv';
+import { alert } from '../../lib/alerts';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-function getInitials(name = '') {
-  return name.trim().split(/\s+/).map((w) => w[0]).join('').toUpperCase().slice(0, 2) || '?';
-}
 
 function formatDate(dateStr) {
   if (!dateStr) return '—';
@@ -35,28 +33,22 @@ function formatUserId(id) {
 }
 
 // Pseudo IP generator based on user id for BotSailor realistic look
-function getPseudoIP(id) {
-  const seeds = [
-    '154.120.95.188',
-    '114.129.13.175',
-    '188.160.147.242',
-    '114.129.13.175',
-    '2a02:ba0:10a9:275:c5a8:63',
-    '148.69.40.103',
-    '94.205.35.241',
-    '190.102.77.71',
-    '2001:1530:1050:7eac:f466',
-    '2001:8f8:1c3d:1808:1192:9',
-  ];
-  return seeds[(Number(id) || 0) % seeds.length];
+// Login IPs aren't recorded, so none is shown (this used to print made-up addresses).
+function getPseudoIP() {
+  return '—';
 }
 
-function getPackageForRole(role, id) {
-  if (role === 'ADMIN') return 'Enterprise';
-  if (role === 'RESELLER') return 'Reseller Pro';
-  if ((Number(id) || 0) % 7 === 0) return 'Premium 1K';
-  return 'Basic';
+// The package the server says the person is on (GET /admin/users → packageName),
+// "(default)" when nothing is assigned and the type's default package applies.
+// Team members have none of their own; the Super Admin is unlimited.
+function packageLabelOf(u) {
+  if (u.accountKind === 'SUPER_ADMIN') return 'Unlimited';
+  if (!u.packageName) return '—';
+  return u.packageIsDefault ? `${u.packageName} (default)` : u.packageName;
 }
+
+const KIND_LABELS = { SUPER_ADMIN: 'Super Admin', RESELLER: 'Reseller', END_USER: 'End User', RESELLER_CUSTOMER: 'End User', TEAM_MEMBER: 'Team Member' };
+const kindLabel = (u) => KIND_LABELS[u.accountKind] || (u.role === 'ADMIN' ? 'Super Admin' : 'Team Member');
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
@@ -68,7 +60,7 @@ export default function UsersPage({ scope = 'admin' }) {
   const isReseller = scope === 'reseller';
   const navigate = useNavigate();
   // Reseller rows carry the real plan name; the admin screen derives its label.
-  const pkgLabel = (u) => (isReseller ? (u.packageName || 'No plan') : getPackageForRole(u.role, u.id));
+  const pkgLabel = (u) => (isReseller ? (u.packageName || 'No plan') : packageLabelOf(u));
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -182,7 +174,8 @@ export default function UsersPage({ scope = 'admin' }) {
           };
           const res = isReseller
             ? await resellerUserAPI.update(editingUser.id, payload)
-            : await adminAPI.updateUser(editingUser.id, { ...payload, role: form.role });
+            // The user type is never edited — it follows the package (chatbot_api/utils/accountTypeRules.js).
+            : await adminAPI.updateUser(editingUser.id, payload);
           if (res.data?.packageChange) {
             setPackageChangeNote(res.data.packageChange.note);
             showToast(`User updated — plan changed to ${res.data.packageChange.toPackage}`);
@@ -221,7 +214,7 @@ export default function UsersPage({ scope = 'admin' }) {
     const confirmText = isReseller
       ? `Delete ${user.name}? This also deletes their workspace and everything in it. This cannot be undone.`
       : `Are you sure you want to delete user ${user.name}?`;
-    if (!window.confirm(confirmText)) return;
+    if (!(await alert.ask(confirmText))) return;
     try {
       if (isReseller) {
         await resellerUserAPI.remove(user.id);
@@ -247,13 +240,14 @@ export default function UsersPage({ scope = 'admin' }) {
         formatUserId(u.id).includes(q);
 
       const pkg = pkgLabel(u);
-      const matchesPkg = !packageFilter || pkg.toLowerCase() === packageFilter.toLowerCase();
+      const matchesPkg = !packageFilter || pkg.toLowerCase().replace(/ \(default\)$/, '') === packageFilter.toLowerCase();
 
       const matchesType =
         !userTypeFilter ||
-        (userTypeFilter === 'MEMBER' && u.role === 'USER') ||
-        (userTypeFilter === 'RESELLER' && u.role === 'RESELLER') ||
-        (userTypeFilter === 'ADMIN' && u.role === 'ADMIN');
+        (userTypeFilter === 'MEMBER' && u.accountKind === 'TEAM_MEMBER') ||
+        (userTypeFilter === 'END_USER' && (u.accountKind === 'END_USER' || u.accountKind === 'RESELLER_CUSTOMER')) ||
+        (userTypeFilter === 'RESELLER' && u.accountKind === 'RESELLER') ||
+        (userTypeFilter === 'ADMIN' && u.accountKind === 'SUPER_ADMIN');
 
       const matchesStatus =
         !statusFilter ||
@@ -296,7 +290,7 @@ export default function UsersPage({ scope = 'admin' }) {
   const selectedUsers = useMemo(() => users.filter((u) => selectedIds.has(u.id)), [users, selectedIds]);
 
   const handleDownloadSelectedCsv = () => {
-    const pkgName = (u) => (isReseller ? pkgLabel(u) : (packages.find((p) => String(p.id) === String(u.package_id))?.name || ''));
+    const pkgName = (u) => pkgLabel(u);
     const rows = [
       ['User ID', 'Name', 'Email', 'Phone', 'Role', 'Account Type', 'Workspace', 'Package', 'Status', 'Created At'],
       ...selectedUsers.map((u) => [
@@ -304,7 +298,7 @@ export default function UsersPage({ scope = 'admin' }) {
         u.name || '',
         u.email || '',
         u.phone || '',
-        isReseller ? 'User' : (u.role || ''),
+        isReseller ? 'User' : kindLabel(u),
         u.accountType || '',
         u.agencyName || '',
         pkgName(u),
@@ -342,7 +336,7 @@ export default function UsersPage({ scope = 'admin' }) {
       formatUserId(u.id),
       `"${(u.name || '').replace(/"/g, '""')}"`,
       `"${u.email || ''}"`,
-      isReseller ? 'User' : (u.role || 'Member'),
+      isReseller ? 'User' : kindLabel(u),
       pkgLabel(u),
       u.is_active ? 'Active' : 'Inactive',
       u.created_at || '',
@@ -551,10 +545,7 @@ export default function UsersPage({ scope = 'admin' }) {
               </>
             ) : (
               <>
-                <option value="Basic">Basic</option>
-                <option value="Premium 1K">Premium 1K</option>
-                <option value="Agency Pro">Agency Pro</option>
-                <option value="Enterprise">Enterprise</option>
+                {[...new Set(packages.map((p) => p.name))].map((name) => <option key={name} value={name}>{name}</option>)}
               </>
             )}
           </select>
@@ -587,8 +578,9 @@ export default function UsersPage({ scope = 'admin' }) {
             }}
           >
             <option value="">Any User Type</option>
-            <option value="MEMBER">User</option>
+            <option value="END_USER">End User</option>
             <option value="RESELLER">Reseller</option>
+            <option value="MEMBER">Team Member</option>
             <option value="ADMIN">Super Admin</option>
           </select>
           <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--text-muted)', fontSize: '0.7rem' }}>
@@ -872,30 +864,7 @@ export default function UsersPage({ scope = 'admin' }) {
 
                       {/* AVATAR */}
                       <td>
-                        <div
-                          style={{
-                            width: 32,
-                            height: 32,
-                            borderRadius: '50%',
-                            background: '#e0e7ff',
-                            color: '#4f46e5',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontSize: '0.85rem',
-                            fontWeight: 700,
-                          }}
-                        >
-                          {u.avatar ? (
-                            <img
-                              src={u.avatar}
-                              alt=""
-                              style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
-                            />
-                          ) : (
-                            <span style={{ fontSize: '0.9rem' }}>👤</span>
-                          )}
-                        </div>
+                        <UserAvatar src={u.avatar} name={u.name} size={32} />
                       </td>
 
                       {/* NAME */}
@@ -938,7 +907,7 @@ export default function UsersPage({ scope = 'admin' }) {
 
                       {/* ROLE */}
                       <td style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
-                        {isReseller ? 'User' : (u.role === 'ADMIN' ? 'Admin' : u.role === 'RESELLER' ? 'Reseller' : 'User')}
+                        {isReseller ? 'User' : kindLabel(u)}
                       </td>
 
                       {/* ACTIONS */}
@@ -1019,7 +988,7 @@ export default function UsersPage({ scope = 'admin' }) {
 
                       {/* EXPIRY DATE */}
                       <td style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>
-                        {isReseller ? '—' : (u.role === 'ADMIN' ? 'Never' : formatDate(u.created_at ? new Date(new Date(u.created_at).getTime() + 365 * 86400000) : null))}
+                        {isReseller ? '—' : (u.accountKind === 'SUPER_ADMIN' ? 'Never' : (u.packageExpiresAt ? formatDate(u.packageExpiresAt) : '—'))}
                       </td>
 
                       {/* CREATED AT */}
@@ -1241,22 +1210,6 @@ export default function UsersPage({ scope = 'admin' }) {
                 </div>
               )}
 
-              {!isReseller && (
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>
-                  Role & Access
-                </label>
-                <select
-                  className="form-input w-full"
-                  value={form.role}
-                  onChange={(e) => setForm({ ...form, role: e.target.value })}
-                >
-                  <option value="USER">User</option>
-                  <option value="RESELLER">Reseller</option>
-                  <option value="ADMIN">Super Admin</option>
-                </select>
-              </div>
-              )}
               {isReseller && !editingUser && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   <div>
@@ -1412,7 +1365,7 @@ export default function UsersPage({ scope = 'admin' }) {
                   fontWeight: 700,
                 }}
               >
-                {getInitials(viewingUser.name)}
+                <UserAvatar src={viewingUser.avatar} name={viewingUser.name} size={52} />
               </div>
               <div>
                 <h4 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>{viewingUser.name}</h4>

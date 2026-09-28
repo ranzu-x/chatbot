@@ -1,6 +1,8 @@
 import pool from "../db.js";
+import { openAppSecret } from "./appSecrets.js";
 import { testMetaAppCredentials } from "./metaAppHealth.js";
 import { failoverAgencyPlatformGroup } from "./metaAppFailover.js";
+import { lockedJob } from "./jobLock.js";
 
 // Periodically probes every agency's ACTIVE Meta app (WhatsApp and
 // Messenger+Instagram slots independently) and auto-fails-over to a healthy
@@ -15,7 +17,7 @@ export async function processMetaAppHealthChecks() {
 
   for (const row of activeRows) {
     try {
-      const result = await testMetaAppCredentials(row.app_id, row.app_secret);
+      const result = await testMetaAppCredentials(row.app_id, openAppSecret(row.app_secret));
       const newStatus = result.healthy ? "HEALTHY" : (result.isDisabled ? "DISABLED" : "DEGRADED");
       await pool.query(
         "UPDATE meta_app_pool SET health_status = ?, last_health_check_at = NOW(), last_health_error = ? WHERE id = ?",
@@ -37,6 +39,6 @@ export function startMetaAppHealthScheduler() {
     ? `${Math.round(intervalMs / 3600000)} hour(s)`
     : `${Math.round(intervalMs / 60000)} minutes`;
   console.log(`🩺 Meta App Health Scheduler started (runs every ${label})`);
-  processMetaAppHealthChecks();
-  setInterval(processMetaAppHealthChecks, intervalMs);
+  lockedJob("meta-app-health", processMetaAppHealthChecks)();
+  setInterval(lockedJob("meta-app-health", processMetaAppHealthChecks), intervalMs);
 }

@@ -3,15 +3,20 @@ import { flowAPI, templateAPI, whatsappFlowRefAPI, conversationAPI, uploadAPI } 
 import {
   X, Bot, FileText, Workflow, Search, ChevronLeft, Send, Layers, MessageCircle, Plus,
   Upload, Image, Video, File, MapPin, CheckCircle2, AlertTriangle, ExternalLink, Copy, Eye,
-  Sparkles, Info, Loader2
+  Sparkles, Info, Loader2, Phone
 } from 'lucide-react';
 import { describeTemplateForElement } from '../Templates/messageTemplateUtils';
 import CreateCannedModal from './CreateCannedModal';
+import MessengerTemplateSender from './MessengerTemplateSender';
+import CallButtonSender from './CallButtonSender';
+import ProductSender from './ProductSender';
+import { toast } from '../../lib/alerts';
 
 const BACK_TARGET = {
   flowsTemplates: 'menu',
   flow: 'flowsTemplates',
   template: 'flowsTemplates',
+  utilityTemplate: 'flowsTemplates',
   whatsappFlow: 'flowsTemplates',
   cannedResponse: 'menu',
 };
@@ -21,7 +26,10 @@ const SECTION_TITLE = {
   flowsTemplates: 'Flows & Templates',
   flow: 'Bot Flow',
   template: 'Message Template',
+  utilityTemplate: 'Utility Template',
   whatsappFlow: 'WhatsApp Flow',
+  callButton: 'Call Button',
+  products: 'Products',
   cannedResponse: 'Canned Response',
 };
 
@@ -66,6 +74,7 @@ export default function SendMenuPanel({
   const cardFileInputRef = useRef(null);
 
   const isWhatsApp = (platform || '').toUpperCase() === 'WHATSAPP';
+  const isMessenger = (platform || '').toUpperCase() === 'FACEBOOK';
 
   useEffect(() => {
     if (open && initialSection) {
@@ -83,7 +92,7 @@ export default function SendMenuPanel({
   }, [open, initialSection]);
 
   useEffect(() => {
-    if (!open || section === 'menu' || section === 'flowsTemplates') return;
+    if (!open || section === 'menu' || section === 'flowsTemplates' || section === 'utilityTemplate' || section === 'callButton' || section === 'products') return;
     setLoading(true);
     if (section === 'flow') {
       flowAPI.getAll({ integrationId })
@@ -222,7 +231,7 @@ export default function SendMenuPanel({
       }
     } catch (err) {
       console.error('Failed to upload media', err);
-      alert('Failed to upload media file.');
+      toast.error('Failed to upload media file.');
     } finally {
       setUploadingMedia(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -924,11 +933,28 @@ export default function SendMenuPanel({
             <MessageCircle size={18} color="#0ea5e9" /> <span>Canned Response</span>
           </button>
         </div>
+      ) : section === 'products' ? (
+        <ProductSender conversationId={conversationId} integrationId={integrationId} onSent={onSent} onClose={onClose} />
+      ) : section === 'callButton' ? (
+        <CallButtonSender conversationId={conversationId} onSent={onSent} onClose={onClose} />
+      ) : section === 'utilityTemplate' ? (
+        <MessengerTemplateSender
+          conversationId={conversationId}
+          integrationId={integrationId}
+          contactName={contactName}
+          onSent={onSent}
+          onClose={onClose}
+        />
       ) : section === 'flowsTemplates' ? (
         <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
           <button onClick={() => setSection('flow')} style={menuItemStyle}>
             <Bot size={18} color="#6366f1" /> <span>Bot Flow</span>
           </button>
+          {isMessenger && (
+            <button onClick={() => setSection('utilityTemplate')} style={menuItemStyle}>
+              <FileText size={18} color="#0866ff" /> <span>Utility Template</span>
+            </button>
+          )}
           {isWhatsApp && (
             <button onClick={() => setSection('template')} style={menuItemStyle}>
               <FileText size={18} color="#10b981" /> <span>Message Template</span>
@@ -937,6 +963,16 @@ export default function SendMenuPanel({
           {isWhatsApp && (
             <button onClick={() => setSection('whatsappFlow')} style={menuItemStyle}>
               <Workflow size={18} color="#f59e0b" /> <span>WhatsApp Flow</span>
+            </button>
+          )}
+          {isWhatsApp && (
+            <button onClick={() => setSection('callButton')} style={menuItemStyle}>
+              <Phone size={18} color="#16a34a" /> <span>Call Button</span>
+            </button>
+          )}
+          {isWhatsApp && (
+            <button onClick={() => setSection('products')} style={menuItemStyle}>
+              <Layers size={18} color="#7c3aed" /> <span>Products</span>
             </button>
           )}
         </div>

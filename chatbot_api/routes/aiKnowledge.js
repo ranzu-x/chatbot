@@ -7,7 +7,6 @@
  * what actually gets chunked and searched).
  */
 import express from "express";
-import axios from "axios";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -15,6 +14,7 @@ import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { indexKnowledgeSource } from "../utils/aiKnowledge.js";
+import { safeGet, htmlToText, pageTitle, crawlSite, assertPublicUrl } from "../utils/webCrawler.js";
 import { extractTextFromFile } from "../utils/fileTextExtractor.js";
 import { readSheetValues } from "../utils/googleSheets.js";
 import { resolveCapability } from "../utils/aiProviders/registry.js";
@@ -147,9 +147,13 @@ router.post("/ai/agents/:id/knowledge/url", async (req, res) => {
     if (!url || !/^https?:\/\//i.test(url)) return res.status(400).json({ success: false, message: "A valid URL is required" });
 
     let pageText = "";
+    let fetchedTitle = "";
     try {
-      const resp = await axios.get(url, { headers: { "User-Agent": "Mozilla/5.0 (AI Knowledge Indexer)" }, timeout: 15000 });
-      pageText = stripHtml(resp.data);
+      // utils/webCrawler.js: public addresses only (every redirect re-checked), keeps headings/paragraphs.
+      const page = await safeGet(url);
+      if (page.status !== 200) throw new Error(`the page answered HTTP ${page.status}`);
+      pageText = htmlToText(page.body);
+      fetchedTitle = pageTitle(page.body);
     } catch (fetchErr) {
       return res.status(400).json({ success: false, message: `Failed to fetch that URL: ${fetchErr.message}` });
     }
@@ -157,7 +161,7 @@ router.post("/ai/agents/:id/knowledge/url", async (req, res) => {
 
     const [ins] = await pool.query(
       "INSERT INTO ai_agent_knowledge_sources (agent_id, type, title, source_ref, status) VALUES (?, 'url', ?, ?, 'pending')",
-      [req.params.id, req.body?.title || url.replace(/^https?:\/\//, ""), url]
+      [req.params.id, req.body?.title || fetchedTitle || url.replace(/^https?:\/\//, ""), url]
     );
     const result = await indexKnowledgeSource({ sourceId: ins.insertId, agentId: req.params.id, agencyId, text: pageText });
     return res.status(201).json({ success: true, sourceId: ins.insertId, ...result });
@@ -165,6 +169,49 @@ router.post("/ai/agents/:id/knowledge/url", async (req, res) => {
     const status = err.status || 500;
     console.error("Add AI knowledge URL error:", err);
     return res.status(status).json({ success: false, message: status === 500 ? "Server error" : err.message });
+  }
+});
+
+// ─── ADD a whole website (crawl) ───────────────────────────────────────────
+// Reads up to maxPages pages of one site (its sitemap, else its links) in the
+// background; each page becomes its own source (re-indexable / deletable).
+const crawlsRunning = new Set();
+router.post("/ai/agents/:id/knowledge/website", async (req, res) => {
+  try {
+    const agencyId = getAgencyId(req);
+    await assertOwnsAgent(agencyId, req.params.id);
+    const url = String(req.body?.url || "").trim();
+    const maxPages = Math.min(100, Math.max(1, Math.round(Number(req.body?.maxPages) || 25)));
+    await assertPublicUrl(url);
+    const key = `${req.params.id}`;
+    if (crawlsRunning.has(key)) return res.status(409).json({ success: false, message: "This agent is already reading a website — wait for it to finish." });
+    crawlsRunning.add(key);
+    res.status(202).json({ success: true, message: `Reading up to ${maxPages} pages of ${new URL(url).hostname}. Pages appear in the list as they are indexed.` });
+
+    const agentId = Number(req.params.id);
+    crawlSite(url, {
+      maxPages,
+      onPage: async (page) => {
+        // Re-crawling the same page replaces its old source instead of duplicating it.
+        const [[existing]] = await pool.query("SELECT id FROM ai_agent_knowledge_sources WHERE agent_id = ? AND type = 'url' AND source_ref = ?", [agentId, page.url]);
+        let sourceId = existing?.id;
+        if (!sourceId) {
+          const [ins] = await pool.query(
+            "INSERT INTO ai_agent_knowledge_sources (agent_id, type, title, source_ref, status) VALUES (?, 'url', ?, ?, 'pending')",
+            [agentId, page.title.slice(0, 250), page.url]
+          );
+          sourceId = ins.insertId;
+        }
+        await indexKnowledgeSource({ sourceId, agentId, agencyId, text: page.text }).catch((e) => console.error("[AI crawl] index failed:", page.url, e.message));
+      },
+    })
+      .then((pages) => console.log(`[AI crawl] agent #${agentId}: indexed ${pages.length} page(s) of ${url}`))
+      .catch((err) => console.error(`[AI crawl] agent #${agentId} crawl of ${url} failed:`, err.message))
+      .finally(() => crawlsRunning.delete(key));
+  } catch (err) {
+    const status = err.status || 500;
+    if (status === 500) console.error("Add AI knowledge website error:", err);
+    if (!res.headersSent) return res.status(status).json({ success: false, message: status === 500 ? "Server error" : err.message });
   }
 });
 
@@ -280,8 +327,9 @@ router.post("/ai/agents/:id/knowledge/:sourceId/reindex", async (req, res) => {
         text = "";
       }
     } else if (source.type === "url") {
-      const resp = await axios.get(source.source_ref, { headers: { "User-Agent": "Mozilla/5.0 (AI Knowledge Indexer)" }, timeout: 15000 });
-      text = stripHtml(resp.data);
+      const page = await safeGet(source.source_ref);
+      if (page.status !== 200) throw Object.assign(new Error(`The page answered HTTP ${page.status}`), { status: 400 });
+      text = htmlToText(page.body);
     } else if (source.type === "google_sheet") {
       const { spreadsheetId, sheetName } = JSON.parse(source.source_ref);
       const rows = await readSheetValues(agencyId, spreadsheetId, sheetName);

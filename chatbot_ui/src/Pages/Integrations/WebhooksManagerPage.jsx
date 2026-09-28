@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import useUrlState from '../../hooks/useUrlState';
 import AppLayout from '../../Layout/AppLayout';
 import { flowAPI } from '../../services/api';
 import api from '../../services/api';
@@ -25,7 +26,7 @@ export default function WebhooksManagerPage() {
   const [flows, setFlows] = useState([]);
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('INBOUND'); // 'INBOUND' | 'LOGS'
+  const [activeTab, setActiveTab] = useUrlState('tab', 'INBOUND', { allowed: ['INBOUND', 'LOGS'] });
   const [copiedId, setCopiedId] = useState(null);
   const [selectedFlowForTest, setSelectedFlowForTest] = useState(null);
   // The test really starts the flow and messages this person — no default number.

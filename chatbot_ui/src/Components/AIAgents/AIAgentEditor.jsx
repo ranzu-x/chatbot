@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import useUrlState from '../../hooks/useUrlState';
 import { aiAgentAPI, aiProviderAPI, labelAPI, flowAPI, sequenceAPI, googleSheetsAPI } from '../../services/api';
 import { notify } from '../../utils/alerts';
 import {
   ArrowLeft, MessageSquare, Compass, BookOpen, Zap, Send, RotateCcw,
   Loader2, Trash2, Star, X, Plus, Quote, FileText, Link2, Upload,
   CheckCircle2, AlertTriangle, Clock, RefreshCw, Tag, GitBranch, Repeat, UserCheck,
-  Image as ImageIcon, Sheet,
+  Image as ImageIcon, Sheet, ClipboardCheck, Globe,
 } from 'lucide-react';
-import Swal from 'sweetalert2';
+import AnswerReviewSection from './AnswerReviewSection';
+import { alert } from '../../lib/alerts';
 
 const AVATAR_COLORS = ['#2563eb', '#0891b2', '#7c3aed', '#c2410c', '#be185d', '#16a34a'];
 function colorFor(name) {
@@ -24,13 +26,14 @@ const SECTIONS = [
   { id: 'routing', label: 'Routing Rules', desc: 'When this Agent should answer', Icon: Compass, ready: true },
   { id: 'knowledge', label: 'Knowledge Base', desc: "Docs, sheets & links it reads", Icon: BookOpen, ready: true },
   { id: 'actions', label: 'Actions', desc: "What it's allowed to do", Icon: Zap, ready: true },
+  { id: 'review', label: 'Answer Review', desc: 'Check answers, fix wrong ones', Icon: ClipboardCheck, ready: true },
 ];
 
 export default function AIAgentEditor({ agentId, onBack, onDeleted }) {
   const [agent, setAgent] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [section, setSection] = useState('instructions');
+  const [section, setSection] = useUrlState('asec', 'instructions', { allowed: ['instructions', 'routing', 'knowledge', 'actions', 'review'] });
   const [providers, setProviders] = useState([]);
 
   // Local editable form state, seeded once the agent loads.
@@ -40,6 +43,8 @@ export default function AIAgentEditor({ agentId, onBack, onDeleted }) {
   const [isActive, setIsActive] = useState(true);
   const [isDefault, setIsDefault] = useState(false);
   const [preferredProvider, setPreferredProvider] = useState('');
+  const [handoffWhenUnsure, setHandoffWhenUnsure] = useState(false);
+  const [handoffMessage, setHandoffMessage] = useState('');
 
   const load = useCallback(() => {
     setLoading(true);
@@ -53,6 +58,8 @@ export default function AIAgentEditor({ agentId, onBack, onDeleted }) {
         setIsActive(!!a?.is_active);
         setIsDefault(!!a?.is_default);
         setPreferredProvider(a?.preferred_provider || '');
+        setHandoffWhenUnsure(!!a?.handoff_when_unsure);
+        setHandoffMessage(a?.handoff_message || '');
         setProviders((provRes.data?.providers || []).filter((p) => p.connected && p.enabled));
       })
       .catch(() => notify.error('Failed to load Agent'))
@@ -67,7 +74,9 @@ export default function AIAgentEditor({ agentId, onBack, onDeleted }) {
     systemPrompt !== (agent.system_prompt || '') ||
     isActive !== !!agent.is_active ||
     isDefault !== !!agent.is_default ||
-    (preferredProvider || '') !== (agent.preferred_provider || '')
+    (preferredProvider || '') !== (agent.preferred_provider || '') ||
+    handoffWhenUnsure !== !!agent.handoff_when_unsure ||
+    (handoffMessage || '') !== (agent.handoff_message || '')
   );
 
   const handleSave = async () => {
@@ -81,6 +90,8 @@ export default function AIAgentEditor({ agentId, onBack, onDeleted }) {
         isActive,
         isDefault,
         preferredProvider: preferredProvider || null,
+        handoffWhenUnsure,
+        handoffMessage,
       });
       setAgent(res.data?.agent);
       notify.success('Saved');
@@ -92,12 +103,12 @@ export default function AIAgentEditor({ agentId, onBack, onDeleted }) {
   };
 
   const handleDelete = async () => {
-    const ok = await Swal.fire({
+    const ok = await alert.confirm({
       title: `Delete "${agent?.name}"?`,
       text: 'This cannot be undone.',
-      icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete',
+      confirm: 'Delete',
     });
-    if (!ok.isConfirmed) return;
+    if (!ok) return;
     try {
       await aiAgentAPI.delete(agentId);
       notify.success('Agent deleted');
@@ -164,6 +175,8 @@ export default function AIAgentEditor({ agentId, onBack, onDeleted }) {
           <KnowledgeBaseSection agentId={agentId} />
         ) : section === 'actions' ? (
           <ActionsSection agentId={agentId} />
+        ) : section === 'review' ? (
+          <AnswerReviewSection agentId={agentId} />
         ) : (
         <>
           <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text-primary)' }}>Instructions</div>
@@ -202,6 +215,19 @@ export default function AIAgentEditor({ agentId, onBack, onDeleted }) {
             </select>
             {providers.length === 0 && (
               <span style={{ fontSize: 11, color: 'var(--warning)' }}>No AI provider connected yet — add one in Settings → AI Providers before this Agent can reply.</span>
+            )}
+          </div>
+
+          <div className="form-group" style={{ marginBottom: 14, padding: 14, borderRadius: 10, border: '1px solid var(--border)', background: 'var(--bg-base, #f8fafc)' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12.5, fontWeight: 700, color: 'var(--text-primary)' }}>
+              <input type="checkbox" checked={handoffWhenUnsure} onChange={(e) => setHandoffWhenUnsure(e.target.checked)} />
+              <UserCheck size={13} /> Hand over to a person when unsure
+            </label>
+            <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', margin: '4px 0 8px 22px' }}>
+              When the answer isn't in its instructions or knowledge, or the customer asks for a person or is upset, the Agent stops, sends the message below and puts the chat in the team's queue (automation pauses for that chat).
+            </span>
+            {handoffWhenUnsure && (
+              <input className="form-input" maxLength={500} value={handoffMessage} onChange={(e) => setHandoffMessage(e.target.value)} placeholder="Let me get a person from our team to help you with this — they'll reply here shortly." />
             )}
           </div>
 
@@ -631,6 +657,8 @@ function KnowledgeBaseSection({ agentId }) {
   const [textTitle, setTextTitle] = useState('');
   const [textContent, setTextContent] = useState('');
   const [urlValue, setUrlValue] = useState('');
+  const [wholeSite, setWholeSite] = useState(false);
+  const [maxPages, setMaxPages] = useState(25);
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
 
@@ -671,8 +699,15 @@ function KnowledgeBaseSection({ agentId }) {
     if (!urlValue.trim()) return;
     setSubmitting(true);
     try {
-      await aiAgentAPI.addUrlKnowledge(agentId, { url: urlValue.trim() });
-      notify.success('Added');
+      if (wholeSite) {
+        const res = await aiAgentAPI.addWebsiteKnowledge(agentId, { url: urlValue.trim(), maxPages });
+        notify.success(res.data?.message || 'Reading the website…');
+        // Pages are indexed in the background — refresh the list a few times.
+        [5000, 15000, 40000].forEach((ms) => setTimeout(load, ms));
+      } else {
+        await aiAgentAPI.addUrlKnowledge(agentId, { url: urlValue.trim() });
+        notify.success('Added');
+      }
       setUrlValue(''); setAddMode(null);
       load();
     } catch (err) {
@@ -763,7 +798,7 @@ function KnowledgeBaseSection({ agentId }) {
   };
 
   const handleDelete = async (source) => {
-    if (!window.confirm(`Remove "${source.title}"?`)) return;
+    if (!(await alert.ask(`Remove "${source.title}"?`))) return;
     try {
       await aiAgentAPI.deleteKnowledge(agentId, source.id);
       setSources((prev) => prev.filter((s) => s.id !== source.id));
@@ -827,6 +862,17 @@ function KnowledgeBaseSection({ agentId }) {
           <div className="form-group" style={{ marginBottom: 10 }}>
             <label className="form-label">Website or page URL</label>
             <input className="form-input" value={urlValue} onChange={(e) => setUrlValue(e.target.value)} placeholder="https://example.com/faq" />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10, fontSize: 12.5 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontWeight: 600 }}>
+              <input type="checkbox" checked={wholeSite} onChange={(e) => setWholeSite(e.target.checked)} /> <Globe size={13} /> Read the whole website
+            </label>
+            {wholeSite && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                up to <input type="number" min={1} max={100} className="form-input" style={{ width: 72 }} value={maxPages} onChange={(e) => setMaxPages(Math.min(100, Math.max(1, Number(e.target.value) || 1)))} /> pages
+              </label>
+            )}
+            {wholeSite && <span style={{ fontSize: 11, color: 'var(--text-muted)', flexBasis: '100%' }}>Uses the site's sitemap if it has one, otherwise follows its links. Each page becomes its own source; pages blocked by robots.txt are skipped.</span>}
           </div>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button type="button" className="btn btn-secondary btn-sm" onClick={() => setAddMode(null)}>Cancel</button>

@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import useUrlState from '../../hooks/useUrlState';
 import AppLayout from '../../Layout/AppLayout';
 import DataTable from '../../Components/Common/DataTable';
 import { adminAffiliateAPI } from '../../services/api';
-import { notify } from '../../utils/alerts';
+import { notify, alert } from '../../utils/alerts';
 import {
   Gift,
   Users,
@@ -54,7 +55,7 @@ export default function AffiliatesPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
-  const [selectedId, setSelectedId] = useState(null);
+  const [selectedId, setSelectedId] = useUrlState('affiliate', null, { type: 'number' });
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
@@ -147,7 +148,7 @@ export default function AffiliatesPage() {
   };
 
   const handleVoidCommission = async (commissionId) => {
-    if (!window.confirm('Are you sure you want to VOID this pending commission? This cannot be undone.')) {
+    if (!(await alert.ask('Are you sure you want to VOID this pending commission? This cannot be undone.'))) {
       return;
     }
     try {

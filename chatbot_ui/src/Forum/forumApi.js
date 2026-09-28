@@ -47,6 +47,7 @@ export const clearForumToken = () => localStorage.removeItem(TOKEN_KEY);
 
 export const forumAuthAPI = {
   login: (data) => client.post("/auth/login", data),
+  loginTwoFactor: (data) => client.post("/auth/login/2fa", data),
   me: () => client.get("/auth/me"),
   // Email verification is account-level (routes/auth.js), shared with the dashboard.
   verifyEmail: (token) => client.post("/auth/verify-email", { token }),

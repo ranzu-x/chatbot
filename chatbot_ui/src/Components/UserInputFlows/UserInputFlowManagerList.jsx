@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router';
 import { userInputFlowAPI, integrationAPI } from '../../services/api';
 import PlatformIcon, { getPlatformMeta } from '../Common/PlatformIcon';
 import { ChevronDown, ChevronRight, RefreshCw, Plus, Pencil, Trash2, ExternalLink } from 'lucide-react';
-import Swal from 'sweetalert2';
+import { alert } from '../../lib/alerts';
 
 const PLATFORM_OPTIONS = ['WHATSAPP', 'FACEBOOK', 'INSTAGRAM', 'TELEGRAM', 'TIKTOK', 'WEBCHAT'];
 
@@ -110,7 +110,7 @@ export default function UserInputFlowManagerList({ integrationId = null }) {
   const handleCreate = async () => {
     if (!newName.trim() || creating) return;
     if (!createIntegrationId) {
-      Swal.fire({ icon: 'info', title: 'Choose a bot account', text: 'A form belongs to one bot account and can only be used by that bot.' });
+      alert.info('Choose a bot account', 'A form belongs to one bot account and can only be used by that bot.');
       return;
     }
     try {
@@ -122,7 +122,7 @@ export default function UserInputFlowManagerList({ integrationId = null }) {
       if (id) navigate(`/user-input-flows/${id}/edit`, { state: { from: '/bots', label: 'Bot Manager' } });
       else load();
     } catch (err) {
-      Swal.fire({ icon: 'error', title: 'Could not create form', text: err?.response?.data?.message || 'Please try again.' });
+      alert.error('Could not create form', err?.response?.data?.message || 'Please try again.');
     } finally {
       setCreating(false);
     }
@@ -135,25 +135,25 @@ export default function UserInputFlowManagerList({ integrationId = null }) {
       await userInputFlowAPI.update(flow.id, { name });
       setFlows((prev) => prev.map((f) => (f.id === flow.id ? { ...f, name } : f)));
     } catch (err) {
-      Swal.fire({ icon: 'error', title: 'Could not rename', text: err?.response?.data?.message || 'Please try again.' });
+      alert.error('Could not rename', err?.response?.data?.message || 'Please try again.');
     } finally {
       setRenamingId(null);
     }
   };
 
   const handleDelete = async (flow) => {
-    const ok = await Swal.fire({
+    const ok = await alert.confirm({
       title: `Delete "${flow.name}"?`,
       text: 'Any saved responses for this form are removed too. This cannot be undone.',
-      icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete',
+      confirm: 'Delete',
     });
-    if (!ok.isConfirmed) return;
+    if (!ok) return;
     try {
       await userInputFlowAPI.delete(flow.id);
       setFlows((prev) => prev.filter((f) => f.id !== flow.id));
     } catch (err) {
       // Refused while a bot Flow's "Run User Input Flow" node still points here.
-      Swal.fire({ icon: 'info', title: 'Still in use', text: err?.response?.data?.message || 'Could not delete this form.' });
+      alert.info('Still in use', err?.response?.data?.message || 'Could not delete this form.');
     }
   };
 
@@ -237,7 +237,7 @@ export default function UserInputFlowManagerList({ integrationId = null }) {
                               onChange={async (e) => {
                                 if (!e.target.value) return;
                                 try { await userInputFlowAPI.update(f.id, { integrationId: e.target.value }); load(); }
-                                catch (err) { Swal.fire({ icon: 'error', title: 'Could not assign', text: err?.response?.data?.message || 'Please try again.' }); }
+                                catch (err) { alert.error('Could not assign', err?.response?.data?.message || 'Please try again.'); }
                               }}
                               title="No bot account yet — no bot can use this form until you assign one. This can't be changed later."
                               style={{ fontSize: '0.72rem', padding: '3px 6px', borderRadius: 6, border: '1px solid #fca5a5', background: '#fef2f2', color: '#dc2626' }}

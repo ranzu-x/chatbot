@@ -50,7 +50,10 @@ export function splitSystemMessages(messages) {
 
 export function buildGenerateRequest({ apiKey, model, messages, tools, maxTokens }) {
   const { system, messages: rest } = splitSystemMessages(messages);
-  const body = { model, max_tokens: maxTokens || 1024, messages: rest };
+  // Opus 5.5 and Fable 5.1 always think before answering, and thinking counts
+  // toward max_tokens — a small cap would leave the visible reply empty.
+  const alwaysThinks = /^claude-(opus-5-5|fable-5)/.test(model || "");
+  const body = { model, max_tokens: Math.max(maxTokens || 1024, alwaysThinks ? 8000 : 0), messages: rest };
   if (system) body.system = system;
   if (tools && tools.length > 0) {
     // Anthropic's tool shape: { name, description, input_schema } — translate
@@ -71,6 +74,10 @@ export function buildGenerateRequest({ apiKey, model, messages, tools, maxTokens
 }
 
 export function parseGenerateResponse(data) {
+  // A safety decline answers HTTP 200 with stop_reason "refusal" and no usable text.
+  if (data?.stop_reason === "refusal") {
+    throw new ProviderCallError("anthropic", `The model declined to answer${data.stop_details?.category ? ` (${data.stop_details.category})` : ""}`, { status: 200 });
+  }
   const blocks = data?.content || [];
   const text = blocks.filter((b) => b.type === "text").map((b) => b.text).join("");
   const toolCalls = blocks

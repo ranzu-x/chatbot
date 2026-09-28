@@ -1,16 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import UserAvatar from '../Common/UserAvatar';
 import { UserCheck, Users, X, Search, Check, Shield, CircleDot, AlertCircle } from 'lucide-react';
-
-function getInitials(name = '') {
-  if (!name) return '?';
-  return name
-    .trim()
-    .split(/\s+/)
-    .map((w) => w[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2) || '?';
-}
 
 /**
  * AssignTeamModal - Prompts the user to select which team member should be assigned
@@ -237,7 +227,6 @@ export default function AssignTeamModal({
                 const isSelected = String(selectedAgentId) === pid;
                 const isAdm = ag.isAdmin || ag.role === 'ADMIN' || ag.name === 'Admin';
                 const displayName = isAdm ? 'Admin' : (ag.name || ag.email || 'Team Member');
-                const initials = getInitials(displayName);
 
                 return (
                   <div
@@ -283,7 +272,7 @@ export default function AssignTeamModal({
                         flexShrink: 0,
                       }}
                     >
-                      {initials}
+                      <UserAvatar src={ag.avatar} name={displayName} size={34} />
                     </div>
 
                     {/* Info */}

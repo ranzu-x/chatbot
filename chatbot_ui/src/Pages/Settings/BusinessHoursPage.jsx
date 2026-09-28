@@ -3,6 +3,10 @@ import { useNavigate, useLocation, useSearchParams } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
 import { businessHoursAPI, flowAPI, integrationAPI } from '../../services/api';
 import { notify } from '../../utils/alerts';
+import NoMatchSettingsCard from '../../Components/Bots/NoMatchSettingsCard';
+import { ChatHumanEmailCard, InboxSessionSettings } from '../../Components/Bots/BotSettingsPanels';
+import AutoRespondersPanel from '../../Components/Bots/AutoRespondersPanel';
+import useUrlState from '../../hooks/useUrlState';
 import {
   Clock,
   Globe2,
@@ -28,7 +32,20 @@ import {
   HelpCircle,
   Check,
   ChevronRight,
+  Settings2,
+  Inbox,
+  MailPlus,
 } from 'lucide-react';
+
+// Bot Settings tabs (?tab=). Business Hours keeps its own Save / Discard bar;
+// the other tabs save card by card.
+const SETTINGS_TABS = [
+  { id: 'general', label: 'General', icon: Settings2 },
+  { id: 'hours', label: 'Business Hours', icon: Clock },
+  { id: 'inbox', label: 'Inbox', icon: Inbox },
+  { id: 'autoresponder', label: 'Auto Responder', icon: MailPlus },
+];
+const SETTINGS_TAB_IDS = SETTINGS_TABS.map((t) => t.id);
 
 // ── Curated Comprehensive Timezone List Grouped by Region ────────────────────
 const TIMEZONE_REGIONS = [
@@ -229,6 +246,8 @@ export default function BusinessHoursPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useUrlState('tab', 'general', { allowed: SETTINGS_TAB_IDS });
+  const activeTabMeta = SETTINGS_TABS.find((t) => t.id === activeTab) || SETTINGS_TABS[0];
 
   // State
   const [loadingIntegrations, setLoadingIntegrations] = useState(true);
@@ -260,16 +279,17 @@ export default function BusinessHoursPage() {
         const list = res.data?.integrations || [];
         setIntegrations(list);
 
-        // Determine pre-selected account from state, search params, or first in list
+        // The bot is the one this page was opened for (Bot Manager → Bot Settings):
+        // ?bot=<id>, or an older caller's state. There is no picker and no fallback
+        // to another bot — a missing / foreign id shows the "open it from a bot" card.
         const paramId = searchParams.get('bot');
         const stateId = location.state?.selectedAccountId;
-        const initial =
-          list.find((i) => String(i.id) === String(paramId || stateId)) ||
-          list[0] ||
-          null;
+        const initial = list.find((i) => String(i.id) === String(paramId || stateId)) || null;
 
         if (initial) {
           setSelectedBotId(initial.id);
+          // Keep it in the URL so a refresh stays on the same bot.
+          if (!paramId) setSearchParams({ bot: String(initial.id) }, { replace: true, state: location.state });
         }
       })
       .catch((err) => {
@@ -277,13 +297,7 @@ export default function BusinessHoursPage() {
         notify.error('Could not load bot accounts');
       })
       .finally(() => setLoadingIntegrations(false));
-  }, []);
-
-  // Sync selected bot to searchParams
-  const handleSelectBot = (id) => {
-    setSelectedBotId(id);
-    setSearchParams({ bot: id });
-  };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once, for the bot this page was opened for
 
   // Load business hours & flows for the selected bot
   const loadScheduleForBot = useCallback(async (botId) => {
@@ -368,7 +382,7 @@ export default function BusinessHoursPage() {
         const dowMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
         setCurrentDayIndexInZone(dowMap[wStr] ?? 1);
         setCurrentMinutesInZone(h * 60 + m);
-      } catch (e) {
+      } catch {
         setCurrentTimeInZone(new Date().toLocaleTimeString());
       }
     };
@@ -560,6 +574,31 @@ export default function BusinessHoursPage() {
   const sameEveryDay = !!settings?.sameEveryDay;
   const sharedDay = days.find((d) => !d.isOff) || days[0] || {};
 
+  const goBack = () => navigate(location.state?.from || (selectedBotId ? `/bots?account=${selectedBotId}` : '/bots'));
+
+  if (loadingIntegrations || !currentBot) {
+    return (
+      <AppLayout>
+        <div style={{ maxWidth: 560, margin: '60px auto', padding: '0 20px', textAlign: 'center' }}>
+          {loadingIntegrations ? (
+            <p style={{ fontSize: '0.86rem', color: '#94a3b8' }}>Loading…</p>
+          ) : (
+            <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 14, padding: '28px 24px' }}>
+              <Clock size={28} color="#2563eb" style={{ display: 'block', margin: '0 auto' }} />
+              <h2 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0f172a', margin: '10px 0 6px' }}>Open Bot Settings from a bot</h2>
+              <p style={{ fontSize: '0.84rem', color: '#64748b', margin: '0 0 18px' }}>
+                Bot settings belong to one bot account. In the Bot Manager, choose the bot and click <b>Bot Settings</b>.
+              </p>
+              <button type="button" className="btn btn-primary" onClick={() => navigate('/bots')}>
+                <ArrowLeft size={14} /> Go to Bot Manager
+              </button>
+            </div>
+          )}
+        </div>
+      </AppLayout>
+    );
+  }
+
   return (
     <AppLayout>
       <div style={{ maxWidth: 1160, margin: '0 auto', padding: '24px 20px 80px' }}>
@@ -567,7 +606,7 @@ export default function BusinessHoursPage() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.82rem', color: '#64748b' }}>
             <button
-              onClick={() => navigate('/bots')}
+              onClick={goBack}
               style={{
                 background: 'transparent',
                 border: 'none',
@@ -586,13 +625,13 @@ export default function BusinessHoursPage() {
               <ArrowLeft size={14} /> Back to Bot Manager
             </button>
             <ChevronRight size={13} color="#cbd5e1" />
-            <span>Automation</span>
+            <span>Bot Settings</span>
             <ChevronRight size={13} color="#cbd5e1" />
-            <span style={{ color: '#0f172a', fontWeight: 700 }}>Business Hours</span>
+            <span style={{ color: '#0f172a', fontWeight: 700 }}>{activeTabMeta.label}</span>
           </div>
 
-          {/* Action Buttons */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* Action Buttons (Business Hours tab only — the other tabs save per card) */}
+          <div style={{ display: activeTab === 'hours' ? 'flex' : 'none', alignItems: 'center', gap: 10 }}>
             {isDirty && (
               <button
                 type="button"
@@ -658,117 +697,88 @@ export default function BusinessHoursPage() {
                   justifyContent: 'center',
                 }}
               >
-                <Clock size={20} />
+                <Settings2 size={20} />
               </div>
               <h1 style={{ fontSize: '1.45rem', fontWeight: 800, color: '#0f172a', margin: 0, letterSpacing: '-0.02em' }}>
-                Business Hours & Availability Schedule
+                Bot Settings
               </h1>
             </div>
             <p style={{ fontSize: '0.82rem', color: '#64748b', margin: '4px 0 0 48px' }}>
-              Define when your bot channels are active, gate automated flow replies, and trigger specialized off-hours responses.
+              Hand-over notifications, business hours, chat sessions and auto responders for this bot account.
             </p>
           </div>
         </div>
 
-        {/* ── BOT ACCOUNT PICKER BAR ── */}
-        <div
-          style={{
-            background: '#ffffff',
-            border: '1px solid #e2e8f0',
-            borderRadius: 14,
-            padding: '16px 20px',
-            marginBottom: 20,
-            boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
-            <div>
-              <span style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#94a3b8' }}>
-                Target Bot Account
-              </span>
-              <div style={{ fontSize: '0.92rem', fontWeight: 700, color: '#0f172a' }}>
-                Select which bot channel schedule you are configuring
-              </div>
-            </div>
-
-            <button
-              onClick={() => navigate('/connect-accounts')}
+        {/* ── THE BOT BEING CONFIGURED (fixed — chosen where Bot Settings was clicked) ── */}
+        {currentBot && (() => {
+          const meta = getPlatformMeta(currentBot.platform);
+          const Icon = meta.icon;
+          const botName = currentBot.name || currentBot.phone_number || currentBot.page_name || `${meta.name} Bot`;
+          return (
+            <div
               style={{
-                background: 'transparent',
-                border: 'none',
-                color: '#2563eb',
-                fontSize: '0.76rem',
-                fontWeight: 600,
-                cursor: 'pointer',
+                background: '#ffffff',
+                border: '1px solid #e2e8f0',
+                borderRadius: 14,
+                padding: '14px 20px',
+                marginBottom: 20,
+                boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
                 display: 'flex',
                 alignItems: 'center',
-                gap: 4,
+                gap: 12,
               }}
             >
-              Manage Connected Channels <ExternalLink size={12} />
-            </button>
-          </div>
-
-          {loadingIntegrations ? (
-            <div style={{ padding: '14px 0', fontSize: '0.84rem', color: '#94a3b8' }}>Loading bot channels...</div>
-          ) : integrations.length === 0 ? (
-            <div style={{ padding: '16px', background: '#f8fafc', borderRadius: 10, textAlign: 'center' }}>
-              <p style={{ fontSize: '0.84rem', color: '#64748b', margin: 0 }}>
-                No active bot channels found. Connect a WhatsApp, Facebook, Instagram, Telegram, or Webchat channel first.
-              </p>
+              <div style={{ width: 34, height: 34, borderRadius: 9, background: meta.bg, color: meta.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Icon size={17} />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <span style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#94a3b8' }}>
+                  Bot account
+                </span>
+                <div style={{ fontSize: '0.92rem', fontWeight: 700, color: '#0f172a' }}>
+                  {botName} <span style={{ fontSize: '0.74rem', fontWeight: 600, color: '#64748b' }}>· {meta.name}</span>
+                </div>
+              </div>
             </div>
-          ) : (
-            <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 4 }}>
-              {integrations.map((bot) => {
-                const isSelected = selectedBotId === bot.id;
-                const meta = getPlatformMeta(bot.platform);
-                const Icon = meta.icon;
-                const botName = bot.name || bot.phone_number || bot.page_name || `${meta.name} Bot`;
+          );
+        })()}
 
-                return (
-                  <button
-                    key={bot.id}
-                    type="button"
-                    onClick={() => handleSelectBot(bot.id)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 10,
-                      padding: '8px 14px',
-                      borderRadius: 10,
-                      border: isSelected ? `2px solid ${meta.color}` : '1px solid #e2e8f0',
-                      background: isSelected ? meta.bg : '#ffffff',
-                      cursor: 'pointer',
-                      transition: 'all 0.15s ease',
-                      flexShrink: 0,
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: 26,
-                        height: 26,
-                        borderRadius: 7,
-                        background: meta.bg,
-                        color: meta.color,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                    >
-                      <Icon size={14} />
-                    </div>
-                    <div style={{ textAlign: 'left' }}>
-                      <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#0f172a' }}>{botName}</div>
-                      <div style={{ fontSize: '0.68rem', color: '#64748b' }}>{meta.name}</div>
-                    </div>
-                    {isSelected && <Check size={14} color={meta.color} style={{ marginLeft: 4 }} />}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+        {/* ── TABS ── */}
+        <div role="tablist" aria-label="Bot settings" style={{ display: 'flex', gap: 4, borderBottom: '1px solid #e2e8f0', marginBottom: 20, overflowX: 'auto' }}>
+          {SETTINGS_TABS.map((t) => {
+            const Icon = t.icon;
+            const active = t.id === activeTab;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setActiveTab(t.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px', fontSize: '0.84rem', whiteSpace: 'nowrap',
+                  fontWeight: active ? 700 : 600, border: 'none', background: 'none', cursor: 'pointer',
+                  color: active ? '#2563eb' : '#64748b', borderBottom: active ? '2px solid #2563eb' : '2px solid transparent', marginBottom: -1,
+                }}
+              >
+                <Icon size={15} /> {t.label}
+                {t.id === 'hours' && isDirty && <span title="Unsaved changes" style={{ width: 6, height: 6, borderRadius: '50%', background: '#f59e0b' }} />}
+              </button>
+            );
+          })}
         </div>
 
+        {activeTab === 'general' && currentBot && (
+          <>
+            <ChatHumanEmailCard integrationId={currentBot.id} />
+            {/* No match reply (on/off + per-subscriber frequency; saves on change) */}
+            <NoMatchSettingsCard integrationId={currentBot.id} />
+          </>
+        )}
+        {activeTab === 'inbox' && currentBot && <InboxSessionSettings integrationId={currentBot.id} />}
+        {activeTab === 'autoresponder' && <AutoRespondersPanel />}
+
+        {activeTab === 'hours' && (<>
         {/* ── REAL-TIME OPERATING STATUS BANNER ── */}
         <div
           style={{
@@ -1552,6 +1562,7 @@ export default function BusinessHoursPage() {
             </div>
           </div>
         )}
+        </>)}
       </div>
     </AppLayout>
   );

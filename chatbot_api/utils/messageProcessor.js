@@ -170,7 +170,17 @@ export async function isDuplicateMessage(externalMsgId) {
 /**
  * Save incoming/outgoing message in DB
  */
+// messages.type is a fixed ENUM; channel-specific kinds are stored as the nearest one.
+const STORED_TYPES = new Set(["TEXT", "IMAGE", "AUDIO", "VIDEO", "DOCUMENT", "TEMPLATE"]);
+const TYPE_ALIASES = { VOICE: "AUDIO", STICKER: "IMAGE", FILE: "DOCUMENT", GIF: "VIDEO" };
+export function storedMessageType(type) {
+  const upper = String(type || "TEXT").toUpperCase();
+  if (STORED_TYPES.has(upper)) return upper;
+  return TYPE_ALIASES[upper] || "TEXT";
+}
+
 export async function saveMessage(conversationId, direction, type, body, externalMsgId, mediaUrl = null, metadata = null) {
+  type = storedMessageType(type);
   const metadataJson = metadata ? (typeof metadata === "string" ? metadata : JSON.stringify(metadata)) : null;
   const [msgResult] = await pool.query(
     `INSERT INTO messages (conversation_id, direction, type, body, media_url, metadata, external_msg_id, is_read, created_at)

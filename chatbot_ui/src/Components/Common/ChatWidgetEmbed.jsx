@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react';
 
 const WIDGET_SCRIPT_ID_PREFIX = 'nexa-chat-widget-';
-const WIDGET_SRC = '/widget.js';
+const WIDGET_SRC = 'https://basics-cash-wimp.ngrok-free.dev/widget.js';
 
-// Default fallback keys if API is unreachable
+// Default active landing page widget key
 const DEFAULT_WIDGET_KEYS = [
-  'wc_fa74e1d5f95e028437623732041faf945c79b6a8e129d8fe', // Chat Widget 1
-  'wc_0ff0addfc14234516bfc12257325bb266dc77ef5ba57684f', // The River Chat
+  'wc_fa74e1d5f95e028437623732041faf945c79b6a8e129d8fe',
 ];
 
 /**
@@ -44,6 +43,13 @@ export default function ChatWidgetEmbed() {
         script.src = WIDGET_SRC;
         script.setAttribute('data-key', key);
         script.async = true;
+        script.onerror = () => {
+          // If ngrok tunnel is temporarily unreachable, fall back to relative /widget.js
+          if (!script.src.endsWith('/widget.js')) {
+            console.warn('Falling back to /widget.js for key:', key);
+            script.src = '/widget.js';
+          }
+        };
         document.body.appendChild(script);
       } else if (window.initChatSaaSWidget) {
         window.initChatSaaSWidget(key);

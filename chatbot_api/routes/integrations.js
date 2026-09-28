@@ -4,6 +4,7 @@ import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { resolveMetaAppSettings } from "../utils/appCredentials.js";
 import { deleteIntegrationCascade } from "../utils/integrationCascade.js";
+import { META_API_VERSION } from "../utils/metaApi.js";
 
 const router = express.Router();
 
@@ -77,7 +78,7 @@ router.get("/integrations", async (req, res) => {
             : systemToken;
           if (!token) return;
 
-          const url = `https://graph.facebook.com/v21.0/${acc.wa_phone_number_id}?fields=display_phone_number,verified_name&access_token=${token}`;
+          const url = `https://graph.facebook.com/${META_API_VERSION}/${acc.wa_phone_number_id}?fields=display_phone_number,verified_name&access_token=${token}`;
           const r = await fetch(url);
           const d = await r.json();
           if (d.display_phone_number) {
@@ -94,7 +95,7 @@ router.get("/integrations", async (req, res) => {
     const enriched = integrations.map(item => {
       if (!item.profile_picture_url) {
         if (item.platform === 'FACEBOOK' && item.fb_page_id) {
-          item.profile_picture_url = `https://graph.facebook.com/v21.0/${item.fb_page_id}/picture?type=large`;
+          item.profile_picture_url = `https://graph.facebook.com/${META_API_VERSION}/${item.fb_page_id}/picture?type=large`;
         }
       }
       return item;

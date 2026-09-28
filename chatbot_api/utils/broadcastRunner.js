@@ -35,10 +35,16 @@
 import pool from "../db.js";
 import { sendMsg, replaceVariables, encodeButtonRoute, normalizeButtonType } from "./flowEngine.js";
 import { canSendNow } from "./messagingWindow.js";
+import { warmWorkspaceVariables } from "./workspaceVariables.js";
+import { attachContactFields } from "./contactFields.js";
 import { syncContactTagsJson } from "../routes/labels.js";
 import { expandMessageBlocks, isOptionHandle } from "./flowGraph.js";
 import { recountBroadcastStats, emitBroadcastUpdate } from "./broadcastStats.js";
 import { loadApprovedTemplate, buildTemplateSend, missingTemplateParams, TEMPLATE_NODE_TYPE } from "./templateMessage.js";
+import {
+  loadApprovedMessengerTemplate, buildMessengerUtilitySend, missingMessengerParams, describeMessengerTemplate,
+  MESSENGER_TEMPLATE_NODE_TYPE,
+} from "./messengerUtility.js";
 
 /**
  * Finds or creates the conversation a broadcast send goes into. Deliberately
@@ -137,6 +143,13 @@ function nodeToSendArgs(node, flow, contact) {
     case TEMPLATE_NODE_TYPE: {
       if (!node._template) return null;
       const send = buildTemplateSend(node._template, data.params, (t) => replaceVariables(t, vars, contact), {
+        routeFor: flow?.id ? (idx) => encodeButtonRoute(flow.id, node.id, idx) : null,
+      });
+      return { type: "TEXT", bodyText: send.bodyText, extraFields: send.extraFields };
+    }
+    case MESSENGER_TEMPLATE_NODE_TYPE: {
+      if (!node._template) return null;
+      const send = buildMessengerUtilitySend(node._template, data.params, (t) => replaceVariables(t, vars, contact), {
         routeFor: flow?.id ? (idx) => encodeButtonRoute(flow.id, node.id, idx) : null,
       });
       return { type: "TEXT", bodyText: send.bodyText, extraFields: send.extraFields };
@@ -286,7 +299,7 @@ export async function inspectCampaign(campaign) {
     );
     if (!integration) errors.push("The bot account this campaign sends from is no longer connected.");
   }
-  if (campaign.mode === "TEMPLATE" && campaign.platform !== "WHATSAPP") errors.push("Anytime (template) sending is only available on WhatsApp.");
+  if (campaign.mode === "TEMPLATE" && !["WHATSAPP", "FACEBOOK"].includes(campaign.platform)) errors.push("Anytime (template) sending is only available on WhatsApp and Messenger.");
 
   if (!errors.length) {
     const content = await loadCampaignContent(campaign, integration);
@@ -317,6 +330,38 @@ async function loadCampaignContent(campaign, integration) {
     ({ nodes, edges } = expandMessageBlocks(nodes, edges));
   }
 
+  if (campaign.mode === "TEMPLATE" && campaign.platform === "FACEBOOK") {
+    const first = out.flow ? firstStepNode(nodes, edges) : null;
+    if (first?.type !== MESSENGER_TEMPLATE_NODE_TYPE) {
+      out.error = "Utility sending needs a Utility Template element connected right after the Broadcast element.";
+      return out;
+    }
+    let tpl = null;
+    try {
+      tpl = integration ? await loadApprovedMessengerTemplate(campaign.agency_id, integration.id, first.data?.messengerTemplateId) : null;
+    } catch (err) {
+      out.error = err.message;
+      return out;
+    }
+    if (!tpl) { out.error = "Choose an approved Utility template of this Page in the Utility Template element."; return out; }
+    const missing = missingMessengerParams(tpl, first.data?.params);
+    if (missing.length) { out.error = `Fill in the Utility Template's parameters: ${missing.join(", ")}.`; return out; }
+    // Personal to each subscriber (decided with the user): at least one value
+    // must come from the subscriber's own data, e.g. {{contact.name}} or a custom field.
+    const d = describeMessengerTemplate(tpl);
+    const values = [
+      ...d.header.map((ph) => first.data?.params?.header?.[ph]),
+      ...d.body.map((ph) => first.data?.params?.body?.[ph]),
+      ...d.buttons.filter((b) => b.dynamic && !b.routable).map((b) => first.data?.params?.buttons?.[b.index]),
+    ];
+    if (!values.some((v) => /{{\s*[^{}]+\s*}}/.test(String(v || "")))) {
+      out.error = "A Utility broadcast must be personal to each subscriber — fill at least one template variable from subscriber data (e.g. {{contact.name}} or a custom field).";
+      return out;
+    }
+    out.templateNode = { ...first, _template: tpl };
+    return out;
+  }
+
   if (campaign.mode === "TEMPLATE") {
     const first = out.flow ? firstStepNode(nodes, edges) : null;
     if (first?.type === TEMPLATE_NODE_TYPE) {
@@ -340,6 +385,17 @@ async function loadCampaignContent(campaign, integration) {
       if (!tpl) { out.error = "A Message Template element has no approved template of this WhatsApp account."; return out; }
       node._template = tpl;
     }
+    if (node.type === MESSENGER_TEMPLATE_NODE_TYPE) {
+      let tpl = null;
+      try {
+        tpl = integration ? await loadApprovedMessengerTemplate(campaign.agency_id, integration.id, node.data?.messengerTemplateId) : null;
+      } catch (err) {
+        out.error = err.message;
+        return out;
+      }
+      if (!tpl) { out.error = "A Utility Template element has no approved template of this Page."; return out; }
+      node._template = tpl;
+    }
   }
   if (!sendable.some((n) => nodeToSendArgs(n, out.flow, {}) !== null)) {
     out.error = "Add a message after the Broadcast element — nothing would be sent yet.";
@@ -354,8 +410,21 @@ async function loadCampaignContent(campaign, integration) {
  * answer, without needing to store a random seed anywhere. Only meaningful
  * when the campaign actually has a variant_b_template_id set; callers that
  * don't check that first will just always get 'A'. */
-function assignVariant(campaign, contactId) {
-  if (!campaign.variant_b_template_id) return null;
+/** Meta paused (132015) or disabled (132016) the template being sent. */
+export function isTemplateStoppedError(message) {
+  return /\b13201[56]\b|template (is )?(paused|disabled)/i.test(String(message || ""));
+}
+
+export function templateStoppedMessage(message) {
+  return /\b132016\b|disabled/i.test(String(message || ""))
+    ? "Meta disabled this template after repeated poor feedback — the rest of the campaign was not sent. Create a new template."
+    : "Meta paused this template because early recipients gave negative feedback — the rest of the campaign was not sent. Edit the template or wait for the pause to end, then send the campaign again.";
+}
+
+export function assignVariant(campaign, contactId) {
+  // Template A/B (two templates) or, for a normal-message campaign, two flows.
+  const isAb = campaign.variant_b_template_id || (campaign.mode === "WINDOW" && campaign.variant_b_flow_id);
+  if (!isAb) return null;
   const splitPercent = campaign.ab_split_percent ?? 50;
   // A simple, fast, well-distributed hash of the contact id — no need for
   // cryptographic quality, just an even A/B split that's stable per contact.
@@ -363,8 +432,50 @@ function assignVariant(campaign, contactId) {
   return hash < splitPercent ? "A" : "B";
 }
 
+/**
+ * Each subscriber's usual hour (DB clock, like every other timestamp): the hour
+ * of day they wrote to us most in the last 90 days. Returns Map(contactId → 0-23).
+ */
+export async function bestHoursFor(agencyId, contactIds) {
+  const best = new Map();
+  for (let i = 0; i < contactIds.length; i += 1000) {
+    const ids = contactIds.slice(i, i + 1000);
+    if (!ids.length) continue;
+    const [rows] = await pool.query(
+      `SELECT cv.contact_id, HOUR(m.created_at) AS h, COUNT(*) AS n
+       FROM messages m JOIN conversations cv ON cv.id = m.conversation_id
+       WHERE cv.agency_id = ? AND cv.contact_id IN (?) AND m.direction = 'INBOUND' AND m.created_at > NOW() - INTERVAL 90 DAY
+       GROUP BY cv.contact_id, h`,
+      [agencyId, ids]
+    );
+    const top = new Map();
+    for (const r of rows) {
+      const cur = top.get(r.contact_id);
+      if (!cur || Number(r.n) > cur.n) top.set(r.contact_id, { h: Number(r.h), n: Number(r.n) });
+    }
+    for (const [id, v] of top) best.set(id, v.h);
+  }
+  return best;
+}
+
 async function sendToContact(campaign, contact, flow, sendableNodes, integration, variant, templateNode = null) {
+  await warmWorkspaceVariables(campaign.agency_id); // {{var.key}} (utils/workspaceVariables.js)
+  await attachContactFields(campaign.agency_id, contact); // {{field.key}} (utils/contactFields.js)
   const conversation = await findOrCreateConversationForBroadcast(campaign.agency_id, contact.id, integration.id);
+
+  if (campaign.mode === "TEMPLATE" && templateNode?.type === MESSENGER_TEMPLATE_NODE_TYPE) {
+    const send = buildMessengerUtilitySend(templateNode._template, templateNode.data?.params, (t) => replaceVariables(t, {}, contact), {
+      routeFor: flow?.id ? (idx) => encodeButtonRoute(flow.id, templateNode.id, idx) : null,
+    });
+    const message = await sendMsg(campaign.agency_id, conversation, send.bodyText, "TEXT", integration, {
+      ...send.extraFields,
+      flowId: flow?.id || null,
+      nodeId: templateNode.id,
+      contactIdentifier: contact.external_id,
+    });
+    if (!message.external_msg_id) throw new Error(message.sendError || "Messenger did not accept the Utility template");
+    return message;
+  }
 
   if (campaign.mode === "TEMPLATE" && templateNode) {
     const send = buildTemplateSend(templateNode._template, templateNode.data?.params, (t) => replaceVariables(t, {}, contact), {
@@ -376,7 +487,7 @@ async function sendToContact(campaign, contact, flow, sendableNodes, integration
       nodeId: templateNode.id,
       contactIdentifier: contact.external_id,
     });
-    if (!message.external_msg_id) throw new Error("Template send did not return a message id — check the integration's credentials");
+    if (!message.external_msg_id) throw new Error(message.sendError || "Template send did not return a message id — check the integration's credentials");
     return message;
   }
 
@@ -394,7 +505,7 @@ async function sendToContact(campaign, contact, flow, sendableNodes, integration
       flowId: null,
       contactIdentifier: contact.external_id,
     });
-    if (!message.external_msg_id) throw new Error("Template send did not return a message id — check the integration's credentials");
+    if (!message.external_msg_id) throw new Error(message.sendError || "Template send did not return a message id — check the integration's credentials");
     return message;
   }
 
@@ -452,7 +563,12 @@ export async function executeBroadcast(campaignId) {
 
     const content = await loadCampaignContent(campaign, integration);
     if (content.error) throw new Error(content.error);
-    const { flow, sendableNodes, templateNode } = content;
+    // A/B between two flows (normal messages): variant B contacts get flow B's opening messages.
+    let contentB = null;
+    if (campaign.mode === "WINDOW" && campaign.variant_b_flow_id) {
+      contentB = await loadCampaignContent({ ...campaign, flow_id: campaign.variant_b_flow_id }, integration);
+      if (contentB.error) throw new Error(`Variant B: ${contentB.error}`);
+    }
 
     const audience = await computeAudience(campaign.agency_id, campaign.platform, parseTargeting(campaign));
 
@@ -460,7 +576,25 @@ export async function executeBroadcast(campaignId) {
     // touches contacts that don't already have a terminal log for this campaign.
     const [existingLogs] = await pool.query("SELECT contact_id, status FROM broadcast_logs WHERE campaign_id = ?", [campaignId]);
     const alreadyDone = new Set(existingLogs.filter((l) => l.status !== "PENDING").map((l) => l.contact_id));
-    const pendingTargets = audience.filter((c) => !alreadyDone.has(c.id));
+    let pendingTargets = audience.filter((c) => !alreadyDone.has(c.id));
+
+    // "Best time": each subscriber gets it at the hour they usually write to us
+    // (over up to 24 hours); anyone without history goes in the first run.
+    let deferred = 0;
+    if (campaign.send_time_mode === "BEST_HOUR") {
+      if (!campaign.best_hour_started_at) {
+        await pool.query("UPDATE broadcast_campaigns SET best_hour_started_at = NOW() WHERE id = ? AND best_hour_started_at IS NULL", [campaignId]);
+      }
+      const [[clock]] = await pool.query(
+        "SELECT HOUR(NOW()) AS hourNow, TIMESTAMPDIFF(MINUTE, COALESCE(?, NOW()), NOW()) AS elapsedMin",
+        [campaign.best_hour_started_at]
+      );
+      const bestHours = await bestHoursFor(campaign.agency_id, pendingTargets.map((c) => c.id));
+      const lastRound = Number(clock.elapsedMin) >= 23 * 60;
+      const due = pendingTargets.filter((c) => lastRound || !bestHours.has(c.id) || bestHours.get(c.id) === Number(clock.hourNow));
+      deferred = pendingTargets.length - due.length;
+      pendingTargets = due;
+    }
 
     if (!existingLogs.length) {
       const logRows = audience.map((c) => [campaignId, c.id, "PENDING", assignVariant(campaign, c.id)]);
@@ -479,10 +613,14 @@ export async function executeBroadcast(campaignId) {
     for (const contact of pendingTargets) {
       try {
         const variant = assignVariant(campaign, contact.id);
-        const message = await sendToContact(campaign, contact, flow, sendableNodes, integration, variant, templateNode);
+        const c = variant === "B" && contentB ? contentB : content;
+        const message = await sendToContact(campaign, contact, c.flow, c.sendableNodes, integration, variant, c.templateNode);
+        // WhatsApp pacing: Meta may hold a template message for a quality check
+        // (message_status held_for_quality_assessment) — sent later or dropped (132015).
+        const held = Boolean(message.metadata?.heldByMeta);
         await pool.query(
-          "UPDATE broadcast_logs SET status = 'SENT', external_msg_id = ?, sent_at = NOW() WHERE campaign_id = ? AND contact_id = ?",
-          [message.external_msg_id, campaignId, contact.id]
+          "UPDATE broadcast_logs SET status = ?, external_msg_id = ?, sent_at = NOW() WHERE campaign_id = ? AND contact_id = ?",
+          [held ? "HELD" : "SENT", message.external_msg_id, campaignId, contact.id]
         );
         sentCount++;
 
@@ -501,6 +639,17 @@ export async function executeBroadcast(campaignId) {
           [sendErr.message, campaignId, contact.id]
         );
         failedCount++;
+        // Meta paused (132015) or disabled (132016) the template: every other send
+        // would fail the same way — stop here and say why.
+        if (isTemplateStoppedError(sendErr.message)) {
+          const reason = templateStoppedMessage(sendErr.message);
+          await pool.query(
+            "UPDATE broadcast_logs SET status = 'FAILED', error_message = ? WHERE campaign_id = ? AND status = 'PENDING'",
+            [reason, campaignId]
+          );
+          await recountBroadcastStats(campaignId);
+          throw new Error(reason);
+        }
       }
 
       await recountBroadcastStats(campaignId);
@@ -510,6 +659,16 @@ export async function executeBroadcast(campaignId) {
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
 
+    if (deferred > 0) {
+      // Best-time sending: the rest go out at their own hour — come back next hour.
+      await pool.query(
+        "UPDATE broadcast_campaigns SET status = 'SCHEDULED', scheduled_at = DATE_FORMAT(NOW() + INTERVAL 1 HOUR, '%Y-%m-%d %H:00:30') WHERE id = ?",
+        [campaignId]
+      );
+      await emitBroadcastUpdate(campaignId);
+      console.log(`⏰ Broadcast #${campaignId}: sent ${sentCount} now, ${deferred} waiting for their best hour`);
+      return;
+    }
     await pool.query("UPDATE broadcast_campaigns SET status = 'COMPLETED' WHERE id = ?", [campaignId]);
     await emitBroadcastUpdate(campaignId);
     console.log(`✅ Broadcast #${campaignId} "${campaign.name}" completed! Sent: ${sentCount}, Failed: ${failedCount}`);

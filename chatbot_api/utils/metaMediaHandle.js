@@ -1,4 +1,5 @@
 import axios from "axios";
+import { META_API_VERSION } from "./metaApi.js";
 
 // Standard valid sample binary buffers
 const SAMPLE_MEDIA = {
@@ -38,7 +39,7 @@ export async function getMetaSampleHandle(accessToken, type = "IMAGE", customUrl
     }
 
     // Step 1: Create Resumable Upload Session
-    const sessRes = await axios.post("https://graph.facebook.com/v21.0/app/uploads", null, {
+    const sessRes = await axios.post(`https://graph.facebook.com/${META_API_VERSION}/app/uploads`, null, {
       params: {
         file_length: fileBuffer.length,
         file_type: mimeType,
@@ -50,7 +51,7 @@ export async function getMetaSampleHandle(accessToken, type = "IMAGE", customUrl
     const uploadId = sessRes.data.id;
 
     // Step 2: Upload binary bytes to get the 'h' handle
-    const uploadRes = await axios.post(`https://graph.facebook.com/v21.0/${uploadId}`, fileBuffer, {
+    const uploadRes = await axios.post(`https://graph.facebook.com/${META_API_VERSION}/${uploadId}`, fileBuffer, {
       headers: {
         Authorization: `OAuth ${accessToken}`,
         file_offset: 0,

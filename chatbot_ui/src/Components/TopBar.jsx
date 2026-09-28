@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import UserAvatar from './Common/UserAvatar';
 import { useNavigate, Link } from 'react-router';
 import { useAuth } from '../Provider/AuthContext';
 import { useLayout } from '../Provider/LayoutContext';
@@ -7,7 +8,7 @@ import { Menu, PanelLeft, PanelLeftClose, Sun, Moon, Plug, LogOut, UserCircle, P
 
 // Internal role identifiers (ADMIN/RESELLER/USER) now match the human-facing
 // label, consistent with Sidebar.jsx's ROLE_SUBTITLES.
-const ROLE_LABELS = { ADMIN: 'Super Admin', RESELLER: 'Reseller', USER: 'User' };
+import { accountLabel } from '../utils/accountLabel';
 const ROLE_ICONS = { ADMIN: ShieldCheck, RESELLER: Building2, USER: UserCircle };
 
 export default function TopBar() {
@@ -41,10 +42,6 @@ export default function TopBar() {
     navigate('/login');
   };
 
-  const getInitials = (name = '') => {
-    return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) || 'U';
-  };
-
   const toggleTheme = () => {
     setTheme(prev => (prev === 'light' ? 'dark' : 'light'));
   };
@@ -68,7 +65,7 @@ export default function TopBar() {
 
 
   return (
-    <header className="top-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', height: 56, borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+    <header className="top-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', height: 'var(--topbar-height)', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
       <div className="top-bar-left" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <button
           onClick={handleMenuClick}
@@ -102,7 +99,7 @@ export default function TopBar() {
           onClick={() => setMenuOpen(!menuOpen)}
           style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '4px 8px', borderRadius: 8 }}
         >
-          <div className="avatar avatar-sm avatar-glow">{getInitials(user?.name)}</div>
+          <UserAvatar src={user?.avatar} name={user?.name} size={30} />
           <span className="user-trigger-name" style={{ fontSize: '0.85rem', fontWeight: 600 }}>{user?.name || 'My Account'}</span>
           <span className={`trigger-arrow ${menuOpen ? 'open' : ''}`} style={{ fontSize: '0.7rem' }}>▼</span>
         </div>
@@ -110,13 +107,13 @@ export default function TopBar() {
         {menuOpen && (
           <div className="top-bar-dropdown">
             <div className="dropdown-header">
-              <div className="avatar avatar-lg">{getInitials(user?.name)}</div>
+              <UserAvatar src={user?.avatar} name={user?.name} size={48} />
               <div className="dropdown-header-text">
                 <div className="dropdown-user-name" title={user?.name}>{user?.name || 'Account'}</div>
                 <div className="dropdown-user-email" title={user?.email}>{user?.email || ''}</div>
                 <span className="role-badge">
                   <RoleIcon size={10} />
-                  {ROLE_LABELS[user?.role] || 'User'}
+                  {accountLabel(user)}
                 </span>
               </div>
             </div>

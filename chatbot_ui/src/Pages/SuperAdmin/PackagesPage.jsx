@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import AppLayout from '../../Layout/AppLayout';
 import { packageAPI, adminAPI } from '../../services/api';
+import { alert } from '../../lib/alerts';
 import {
   PACKAGE_FEATURE_ROWS,
   PACKAGE_CHANNEL_BLOCKS,
@@ -305,7 +306,7 @@ export default function PackagesPage() {
       showToast('Cannot delete the default package', 'error');
       return;
     }
-    if (!window.confirm('Are you sure you want to delete this package?')) return;
+    if (!(await alert.ask('Are you sure you want to delete this package?'))) return;
     try {
       const res = await packageAPI.delete(id);
       showToast(res.data?.message || 'Package deleted');
@@ -879,7 +880,7 @@ export default function PackagesPage() {
             <div style={sectionStyle}>
               <h4 style={{ ...sectionTitleStyle, flexWrap: 'wrap' }}>
                 <Percent size={15} color="#64748b" /> Discount
-                <NotEnforcedTag>Saved only — not applied at checkout yet</NotEnforcedTag>
+                <span style={{ fontSize: '0.7rem', fontWeight: 600, color: '#64748b' }}>Applied at checkout while active (a customer's larger personal discount replaces it; coupons come on top)</span>
               </h4>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
                 <div>

@@ -41,7 +41,7 @@ export default function ForumShell({ children }) {
 
           {user ? (
             <div className="fm-userchip" title={`${user.name} · ${isStaff(user) ? "Staff" : user.email}`}>
-              <Avatar name={user.name} size={32} />
+              <Avatar name={user.name} src={user.avatar} size={32} />
               <button type="button" className="fm-iconbtn" onClick={logout} title="Sign out" aria-label="Sign out"><LogOut size={15} /></button>
             </div>
           ) : (

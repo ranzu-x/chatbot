@@ -4,7 +4,8 @@ import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { assertLimit } from "../utils/entitlements.js";
-import { unavailableEarnings, getDailyGain, getAutomationStats } from "../utils/dashboardStats.js";
+import { getDailyGain, getAutomationStats } from "../utils/dashboardStats.js";
+import { resellerEarnings } from "../utils/resellerBilling.js";
 import { countCustomers } from "../utils/resellerScope.js";
 
 const router = express.Router();
@@ -92,7 +93,7 @@ router.get("/agency/dashboard", async (req, res) => {
       dashboard: {
         scope: isReseller ? "RESELLER" : "WORKSPACE",
         users: customers,
-        earnings: isReseller ? unavailableEarnings("Your customers can't pay you through the platform yet, so there are no earnings to show.") : null,
+        earnings: isReseller ? await resellerEarnings(agencyId) : null, // payments from its customers (utils/resellerBilling.js)
         dailyGain,
         automation,
       },

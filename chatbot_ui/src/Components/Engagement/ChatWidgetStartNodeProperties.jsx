@@ -2,7 +2,8 @@ import { useState, useRef, useEffect } from 'react';
 import {
   Palette, Upload, Loader2, Copy, Check, ExternalLink,
   MessageCircle, Globe, Facebook, Instagram, Send,
-  Plus, MessageSquare, Sparkles, Image, Video, Mail, Layers, MousePointerClick
+  Plus, MessageSquare, Sparkles, Image, Video, Mail, Layers, MousePointerClick,
+  Calendar, Play, BookOpen, HelpCircle, ShoppingBag, RotateCcw, ChevronDown, ChevronUp, Bot, Trash2
 } from 'lucide-react';
 import { uploadAPI, integrationAPI } from '../../services/api';
 import { getBackendOrigin, resolveAssetUrl } from '../../utils/assetUrl';
@@ -83,13 +84,29 @@ const PLATFORM_ICONS = {
   INSTAGRAM: { icon: Instagram, color: '#E1306C', label: 'Instagram' },
 };
 
+const DEFAULT_CHATBOT_CARDS = [
+  { id: 'chatbot-1', title: 'Book a demo', subtitle: 'Schedule a personalized demo', icon: 'calendar', trigger: 'Book a demo' },
+  { id: 'chatbot-2', title: 'Product tour', subtitle: 'See how it works', icon: 'play', trigger: 'Product tour' },
+  { id: 'chatbot-3', title: 'Documentation', subtitle: 'Browse our guides', icon: 'book', trigger: 'Documentation' },
+];
+
+const CARD_ICON_OPTIONS = [
+  { value: 'calendar', label: 'Calendar / Demo' },
+  { value: 'play', label: 'Play / Tour' },
+  { value: 'book', label: 'Book / Docs' },
+  { value: 'sparkles', label: 'Sparkles / AI' },
+  { value: 'help', label: 'Help / Support' },
+  { value: 'shopping', label: 'Shopping / Sales' },
+  { value: 'message', label: 'Chat / Support' },
+];
+
 /**
  * ChatWidgetStartNodeProperties
- * Replaces the regular Start node's keyword-trigger panel when a flow
- * represents a Chat Widget (WhatsApp, Webchat, Messenger, Telegram, Instagram).
- *
- * Provides all widget configuration options (appearance, branding, prefill,
- * offsets, domains, and 1-click embed code), and quick bot-reply add buttons.
+ * Configures the website floating chat widget on the Flow Builder canvas.
+ * For WEBCHAT, provides configuration for:
+ * 1. The 3 Chatbots on the landing page home screen (titles, descriptions, icons, handles)
+ * 2. The Home Screen greeting, reply time, and "Start a conversation" button
+ * 3. Appearance, colors, logo, and embed snippet
  */
 export default function ChatWidgetStartNodeProperties({
   form,
@@ -103,11 +120,18 @@ export default function ChatWidgetStartNodeProperties({
   const [uploading, setUploading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [integrations, setIntegrations] = useState([]);
+  const [expandedCardIdx, setExpandedCardIdx] = useState(0);
   const fileInputRef = useRef(null);
 
   const currentPlatform = (form?.targetPlatform || platform || 'WHATSAPP').toUpperCase();
   const platformMeta = PLATFORM_ICONS[currentPlatform] || PLATFORM_ICONS.WHATSAPP;
   const PlatformIcon = platformMeta.icon;
+  const isWebchat = currentPlatform === 'WEBCHAT';
+
+  const rawCards = form?.chatbotCards;
+  const cardsList = Array.isArray(rawCards) && rawCards.length > 0
+    ? rawCards
+    : (typeof rawCards === 'string' ? (() => { try { return JSON.parse(rawCards); } catch { return DEFAULT_CHATBOT_CARDS; } })() : DEFAULT_CHATBOT_CARDS);
 
   useEffect(() => {
     integrationAPI.getAll().then((res) => {
@@ -120,6 +144,15 @@ export default function ChatWidgetStartNodeProperties({
 
   const set = (field) => (value) => {
     onChange({ ...form, [field]: value });
+  };
+
+  const updateCard = (idx, patch) => {
+    const updated = cardsList.map((c, i) => (i === idx ? { ...c, ...patch } : c));
+    set('chatbotCards')(updated);
+  };
+
+  const handleResetDefaultCards = () => {
+    set('chatbotCards')(DEFAULT_CHATBOT_CARDS);
   };
 
   const handleLogoUpload = async (e) => {
@@ -168,7 +201,9 @@ export default function ChatWidgetStartNodeProperties({
             <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a' }}>
               {platformMeta.label} Chat Widget
             </div>
-            <div style={{ fontSize: 10.5, color: '#64748b' }}>Website Floating Chat Bubble & Popup</div>
+            <div style={{ fontSize: 10.5, color: '#64748b' }}>
+              {isWebchat ? 'Landing Page 3-Chatbots & General Chat Hub' : 'Website Floating Chat Bubble & Popup'}
+            </div>
           </div>
         </div>
         <span style={{
@@ -179,6 +214,193 @@ export default function ChatWidgetStartNodeProperties({
         </span>
       </div>
 
+      {/* ── Webchat 3-Chatbots & General Chat Configuration ── */}
+      {isWebchat && (
+        <div style={{
+          padding: '12px 14px', background: '#f8fafc', border: '1.5px solid #e2e8f0', borderRadius: 12,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Bot size={15} color="#4f46e5" />
+              <span style={{ fontSize: 12, fontWeight: 800, color: '#1e293b' }}>
+                Landing Page 3 Chatbots
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleResetDefaultCards}
+              title="Reset to default 3 bots"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4, background: '#fff',
+                border: '1px solid #cbd5e1', borderRadius: 6, padding: '2px 7px', fontSize: 10,
+                color: '#64748b', cursor: 'pointer', fontWeight: 600,
+              }}
+            >
+              <RotateCcw size={10} /> Reset
+            </button>
+          </div>
+          <p style={{ fontSize: 11, color: '#64748b', margin: '0 0 10px 0', lineHeight: 1.4 }}>
+            Visitors see these 3 chatbot cards on the widget home screen. Each card routes directly through its specific start node handle:
+          </p>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {cardsList.map((card, idx) => {
+              const isExpanded = expandedCardIdx === idx;
+              const handleId = card.id || `chatbot-${idx + 1}`;
+              return (
+                <div
+                  key={handleId}
+                  style={{
+                    background: '#ffffff', border: isExpanded ? '1.5px solid #6366f1' : '1px solid #e2e8f0',
+                    borderRadius: 9, overflow: 'hidden', transition: 'all 0.15s ease',
+                  }}
+                >
+                  <div
+                    onClick={() => setExpandedCardIdx(isExpanded ? -1 : idx)}
+                    style={{
+                      padding: '8px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      cursor: 'pointer', background: isExpanded ? '#f5f3ff' : '#ffffff',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                      <span style={{
+                        fontSize: 10, fontWeight: 800, background: '#6366f1', color: '#fff',
+                        padding: '1px 6px', borderRadius: 999, flexShrink: 0,
+                      }}>
+                        Bot {idx + 1}
+                      </span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {card.title || `Chatbot ${idx + 1}`}
+                      </span>
+                      <span style={{ fontSize: 9.5, color: '#94a3b8', fontFamily: 'monospace' }}>
+                        [{handleId}]
+                      </span>
+                    </div>
+                    {isExpanded ? <ChevronUp size={13} color="#6366f1" /> : <ChevronDown size={13} color="#94a3b8" />}
+                  </div>
+
+                  {isExpanded && (
+                    <div style={{ padding: '10px 12px', borderTop: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <div className="fb-field" style={{ margin: 0 }}>
+                        <label style={{ fontSize: 10.5, fontWeight: 700, color: '#475569' }}>Card Title</label>
+                        <input
+                          type="text"
+                          value={card.title || ''}
+                          onChange={(e) => updateCard(idx, { title: e.target.value })}
+                          placeholder="e.g. Book a demo"
+                          style={{ height: 30, fontSize: 11.5 }}
+                        />
+                      </div>
+                      <div className="fb-field" style={{ margin: 0 }}>
+                        <label style={{ fontSize: 10.5, fontWeight: 700, color: '#475569' }}>Card Description</label>
+                        <input
+                          type="text"
+                          value={card.subtitle || ''}
+                          onChange={(e) => updateCard(idx, { subtitle: e.target.value })}
+                          placeholder="e.g. Schedule a 15-min call with our team"
+                          style={{ height: 30, fontSize: 11.5 }}
+                        />
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        <div className="fb-field" style={{ margin: 0 }}>
+                          <label style={{ fontSize: 10.5, fontWeight: 700, color: '#475569' }}>Card Icon</label>
+                          <select
+                            value={card.icon || 'calendar'}
+                            onChange={(e) => updateCard(idx, { icon: e.target.value })}
+                            style={{ height: 30, fontSize: 11.5, borderRadius: 6, border: '1px solid #e2e8f0', background: '#f8fafc', padding: '0 6px' }}
+                          >
+                            {CARD_ICON_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="fb-field" style={{ margin: 0 }}>
+                          <label style={{ fontSize: 10.5, fontWeight: 700, color: '#475569' }}>Trigger Text</label>
+                          <input
+                            type="text"
+                            value={card.trigger || ''}
+                            onChange={(e) => updateCard(idx, { trigger: e.target.value })}
+                            placeholder={card.title || 'Keyword'}
+                            style={{ height: 30, fontSize: 11.5 }}
+                          />
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 2 }}>
+                        <span style={{ fontSize: 10, color: '#6366f1', fontWeight: 600 }}>
+                          Canvas handle: <strong>{handleId}</strong>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => onAddReplyNode?.('text', handleId)}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 3, padding: '3px 8px',
+                            borderRadius: 6, background: '#ede9fe', color: '#4f46e5', border: '1px solid #c7d2fe',
+                            fontSize: 10.5, fontWeight: 700, cursor: 'pointer',
+                          }}
+                        >
+                          <Plus size={11} /> Connect Reply Node
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Home View Header & Texts */}
+          <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px dashed #cbd5e1' }}>
+            <span style={{ fontSize: 11, fontWeight: 800, color: '#334155', display: 'block', marginBottom: 6 }}>
+              Home Screen Texts
+            </span>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+              <div className="fb-field" style={{ margin: 0 }}>
+                <label style={{ fontSize: 10.5, fontWeight: 700, color: '#475569' }}>Home Greeting Title</label>
+                <input
+                  type="text"
+                  value={form.homeTitle || ''}
+                  onChange={(e) => set('homeTitle')(e.target.value)}
+                  placeholder="Hi there 👋"
+                  style={{ height: 30, fontSize: 11.5 }}
+                />
+              </div>
+              <div className="fb-field" style={{ margin: 0 }}>
+                <label style={{ fontSize: 10.5, fontWeight: 700, color: '#475569' }}>Home Subtitle</label>
+                <input
+                  type="text"
+                  value={form.homeSubtitle || ''}
+                  onChange={(e) => set('homeSubtitle')(e.target.value)}
+                  placeholder="How can we help you today?"
+                  style={{ height: 30, fontSize: 11.5 }}
+                />
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <div className="fb-field" style={{ margin: 0 }}>
+                <label style={{ fontSize: 10.5, fontWeight: 700, color: '#475569' }}>Reply Time Badge</label>
+                <input
+                  type="text"
+                  value={form.replyTimeText || ''}
+                  onChange={(e) => set('replyTimeText')(e.target.value)}
+                  placeholder="We typically reply within a few minutes"
+                  style={{ height: 30, fontSize: 11.5 }}
+                />
+              </div>
+              <div className="fb-field" style={{ margin: 0 }}>
+                <label style={{ fontSize: 10.5, fontWeight: 700, color: '#475569' }}>Start Chat Button Text</label>
+                <input
+                  type="text"
+                  value={form.startConversationText || ''}
+                  onChange={(e) => set('startConversationText')(e.target.value)}
+                  placeholder="Start a conversation"
+                  style={{ height: 30, fontSize: 11.5 }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Bot Replies Quick Add Section */}
       <div style={{
         padding: '12px 14px', background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)',
@@ -186,55 +408,84 @@ export default function ChatWidgetStartNodeProperties({
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6 }}>
           <Sparkles size={14} color="#16a34a" />
-          <span style={{ fontSize: 12, fontWeight: 800, color: '#15803d' }}>Bot Replies Options</span>
+          <span style={{ fontSize: 12, fontWeight: 800, color: '#15803d' }}>
+            {isWebchat ? 'Quick Add Reply Branches' : 'Bot Replies Options'}
+          </span>
         </div>
         <p style={{ fontSize: 11, color: '#166534', margin: '0 0 10px 0', lineHeight: 1.4 }}>
-          Connect reply nodes to this start element to automatically respond when visitors start a chat:
+          {isWebchat
+            ? 'Add replies connected directly to any of your chatbot cards or the general chat handle:'
+            : 'Connect reply nodes to this start element to automatically respond when visitors start a chat:'}
         </p>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {currentPlatform === 'WHATSAPP' && (
+
+        {isWebchat ? (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {cardsList.map((card, idx) => (
+              <button
+                key={card.id || idx}
+                type="button"
+                onClick={() => onAddReplyNode?.('text', card.id || `chatbot-${idx + 1}`)}
+                className="fb-add-btn"
+                style={{ fontSize: 10.5, padding: '5px 9px', display: 'inline-flex', alignItems: 'center', gap: 4, background: '#fff', borderColor: '#86efac', color: '#15803d' }}
+              >
+                <Bot size={11} /> + Bot {idx + 1} ({card.title || 'Reply'})
+              </button>
+            ))}
             <button
               type="button"
-              onClick={() => onAddReplyNode?.('interactive')}
+              onClick={() => onAddReplyNode?.('text', 'next-step')}
+              className="fb-add-btn"
+              style={{ fontSize: 10.5, padding: '5px 9px', display: 'inline-flex', alignItems: 'center', gap: 4, background: '#fff', borderColor: '#86efac', color: '#15803d' }}
+            >
+              <MessageSquare size={11} /> + General Chat Reply
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {currentPlatform === 'WHATSAPP' && (
+              <button
+                type="button"
+                onClick={() => onAddReplyNode?.('interactive')}
+                className="fb-add-btn"
+                style={{ fontSize: 11, padding: '5px 9px', display: 'inline-flex', alignItems: 'center', gap: 4, background: '#fff', borderColor: '#86efac', color: '#15803d' }}
+              >
+                <Sparkles size={11} /> + Interactive Reply
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onAddReplyNode?.('buttons')}
               className="fb-add-btn"
               style={{ fontSize: 11, padding: '5px 9px', display: 'inline-flex', alignItems: 'center', gap: 4, background: '#fff', borderColor: '#86efac', color: '#15803d' }}
             >
-              <Sparkles size={11} /> + Interactive Reply
+              <MessageSquare size={11} /> + Text Message
             </button>
-          )}
-          <button
-            type="button"
-            onClick={() => onAddReplyNode?.('buttons')}
-            className="fb-add-btn"
-            style={{ fontSize: 11, padding: '5px 9px', display: 'inline-flex', alignItems: 'center', gap: 4, background: '#fff', borderColor: '#86efac', color: '#15803d' }}
-          >
-            <MessageSquare size={11} /> + Text Message
-          </button>
-          <button
-            type="button"
-            onClick={() => onAddReplyNode?.('quickReplies')}
-            className="fb-add-btn"
-            style={{ fontSize: 11, padding: '5px 9px', display: 'inline-flex', alignItems: 'center', gap: 4, background: '#fff', borderColor: '#86efac', color: '#15803d' }}
-          >
-            <MousePointerClick size={11} /> + Quick Replies
-          </button>
-          <button
-            type="button"
-            onClick={() => onAddReplyNode?.('image')}
-            className="fb-add-btn"
-            style={{ fontSize: 11, padding: '5px 9px', display: 'inline-flex', alignItems: 'center', gap: 4, background: '#fff', borderColor: '#86efac', color: '#15803d' }}
-          >
-            <Image size={11} /> + Image
-          </button>
-          <button
-            type="button"
-            onClick={() => onAddReplyNode?.('collectInput')}
-            className="fb-add-btn"
-            style={{ fontSize: 11, padding: '5px 9px', display: 'inline-flex', alignItems: 'center', gap: 4, background: '#fff', borderColor: '#86efac', color: '#15803d' }}
-          >
-            <Mail size={11} /> + Collect Input
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={() => onAddReplyNode?.('quickReplies')}
+              className="fb-add-btn"
+              style={{ fontSize: 11, padding: '5px 9px', display: 'inline-flex', alignItems: 'center', gap: 4, background: '#fff', borderColor: '#86efac', color: '#15803d' }}
+            >
+              <MousePointerClick size={11} /> + Quick Replies
+            </button>
+            <button
+              type="button"
+              onClick={() => onAddReplyNode?.('image')}
+              className="fb-add-btn"
+              style={{ fontSize: 11, padding: '5px 9px', display: 'inline-flex', alignItems: 'center', gap: 4, background: '#fff', borderColor: '#86efac', color: '#15803d' }}
+            >
+              <Image size={11} /> + Image
+            </button>
+            <button
+              type="button"
+              onClick={() => onAddReplyNode?.('collectInput')}
+              className="fb-add-btn"
+              style={{ fontSize: 11, padding: '5px 9px', display: 'inline-flex', alignItems: 'center', gap: 4, background: '#fff', borderColor: '#86efac', color: '#15803d' }}
+            >
+              <Mail size={11} /> + Collect Input
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── 1. General & Account Settings ── */}

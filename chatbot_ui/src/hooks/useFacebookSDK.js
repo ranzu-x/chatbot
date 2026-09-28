@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { metaAppAPI } from '../services/api';
 
+// Same Graph API version as the server (chatbot_api/utils/metaApi.js).
+export const META_API_VERSION = import.meta.env.VITE_META_API_VERSION || 'v26.0';
+
 /**
  * Loads the Facebook JS SDK dynamically and initialises it with the
  * agency's App ID fetched from the backend.
@@ -57,7 +60,7 @@ export default function useFacebookSDK(platformGroup) {
               appId: id,
               cookie: true,
               xfbml: false,
-              version: 'v21.0',
+              version: META_API_VERSION,
             });
             if (!cancelled) setFbReady(true);
           }
@@ -69,7 +72,7 @@ export default function useFacebookSDK(platformGroup) {
             appId: id,
             cookie: true,
             xfbml: false,
-            version: 'v21.0',
+            version: META_API_VERSION,
           });
           if (!cancelled) setFbReady(true);
           return;
@@ -88,7 +91,7 @@ export default function useFacebookSDK(platformGroup) {
                 appId: id,
                 cookie: true,
                 xfbml: false,
-                version: 'v21.0',
+                version: META_API_VERSION,
               });
               if (!cancelled) setFbReady(true);
             }

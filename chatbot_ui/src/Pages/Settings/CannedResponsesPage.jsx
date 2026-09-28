@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import AppLayout from '../../Layout/AppLayout';
 import { cannedResponseAPI } from '../../services/api';
-import { notify } from '../../utils/alerts';
+import { notify, alert } from '../../utils/alerts';
 import { MessageSquareText, Plus, Trash2, Edit3 } from 'lucide-react';
 
 const EMPTY_FORM = { title: '', shortcut: '', body: '' };
@@ -38,8 +38,8 @@ export default function CannedResponsesPage() {
       .finally(() => setSaving(false));
   };
 
-  const handleDelete = (item) => {
-    if (!window.confirm(`Delete "${item.title}"?`)) return;
+  const handleDelete = async (item) => {
+    if (!(await alert.ask(`Delete "${item.title}"?`))) return;
     cannedResponseAPI.delete(item.id).then(() => load()).catch(() => notify.error('Failed to delete'));
   };
 

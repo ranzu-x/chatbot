@@ -4,6 +4,8 @@ import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { resolveAgencyId } from "./metaapp.js";
 import { testMetaAppCredentials } from "../utils/metaAppHealth.js";
+import { requireDeveloperApps } from "../middleware/developerAppsAccess.js";
+import { maskAppRow, sealAppSecret, openAppSecret, isMaskedInput } from "../utils/appSecrets.js";
 
 const router = express.Router();
 // Owner-only, same gate as /settings/meta-app in metaapp.js — this is the
@@ -11,7 +13,7 @@ const router = express.Router();
 // apps, view health, toggle the WhatsApp new-onboarding redirect). The
 // ACTIVE slot itself is still managed via metaapp.js's existing
 // GET/POST /settings/meta-app for backward compatibility.
-router.use("/settings/meta-app-pool", authMiddleware, roleMiddleware("RESELLER", "ADMIN"));
+router.use("/settings/meta-app-pool", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireDeveloperApps);
 
 function normalizePlatformGroup(value) {
   return value === "WHATSAPP" ? "WHATSAPP" : "MESSENGER_INSTAGRAM";
@@ -27,7 +29,8 @@ router.get("/settings/meta-app-pool", async (req, res) => {
        ORDER BY (slot_role = 'ACTIVE') DESC, id ASC`,
       [agencyId, platformGroup]
     );
-    return res.json({ success: true, slots: rows });
+    // Secrets never leave the server (utils/appSecrets.js).
+    return res.json({ success: true, slots: rows.map(maskAppRow) });
   } catch (err) {
     console.error("List meta-app-pool error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -64,7 +67,7 @@ router.post("/settings/meta-app-pool", async (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)`,
       [
         agencyId, platformGroup, slotRole, label?.trim() || null, businessManagerLabel?.trim() || null,
-        appId, appSecret, systemUserToken?.trim() || null, whatsappConfigId?.trim() || null,
+        appId, sealAppSecret(appSecret), sealAppSecret(systemUserToken?.trim() || null), whatsappConfigId?.trim() || null,
         whatsappConfigIdCatalog?.trim() || null, verifyToken?.trim() || null,
         appName || null, siteUrl || null, privacyUrl || null, tosUrl || null,
       ]
@@ -98,8 +101,9 @@ router.patch("/settings/meta-app-pool/:id", async (req, res) => {
          tos_url = COALESCE(?, tos_url), is_active = COALESCE(?, is_active), is_configured = 1
        WHERE id = ?`,
       [
-        label?.trim() || null, businessManagerLabel?.trim() || null, appId || null, appSecret || null,
-        systemUserToken?.trim() || null, whatsappConfigId?.trim() || null, whatsappConfigIdCatalog?.trim() || null,
+        label?.trim() || null, businessManagerLabel?.trim() || null, appId || null,
+        appSecret && !isMaskedInput(appSecret) ? sealAppSecret(appSecret) : null,
+        systemUserToken?.trim() && !isMaskedInput(systemUserToken) ? sealAppSecret(systemUserToken.trim()) : null, whatsappConfigId?.trim() || null, whatsappConfigIdCatalog?.trim() || null,
         verifyToken?.trim() || null, appName || null, siteUrl || null, privacyUrl || null, tosUrl || null,
         typeof isActive === "boolean" ? (isActive ? 1 : 0) : null, req.params.id,
       ]
@@ -167,7 +171,7 @@ router.post("/settings/meta-app-pool/:id/test", async (req, res) => {
     const agencyId = await resolveAgencyId(req);
     const [[slot]] = await pool.query("SELECT app_id, app_secret FROM meta_app_pool WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
     if (!slot) return res.status(404).json({ success: false, message: "Slot not found" });
-    const result = await testMetaAppCredentials(slot.app_id, slot.app_secret);
+    const result = await testMetaAppCredentials(slot.app_id, openAppSecret(slot.app_secret));
     if (!result.healthy) return res.status(400).json({ success: false, message: result.error?.message || "Connection failed" });
     return res.json({ success: true, message: "Meta App connection successful", appName: result.appName });
   } catch (err) {

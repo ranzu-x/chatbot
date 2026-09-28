@@ -3,6 +3,7 @@ import AppLayout from '../../Layout/AppLayout';
 import DataTable from '../../Components/Common/DataTable';
 import { adminAPI, packageAPI } from '../../services/api';
 import { notify } from '../../utils/alerts';
+import { alert } from '../../lib/alerts';
 import { Building2, Plus, Globe, Trash2, Pencil, Users, UserCog, ArrowLeft, Shield } from 'lucide-react';
 
 const EMPTY_FORM = { name: '', ownerName: '', ownerEmail: '', ownerPassword: '', website: '', isReseller: false, packageId: '' };
@@ -93,10 +94,27 @@ export default function AgenciesPage() {
 
   const handleDelete = async (agency, e) => {
     if (e) e.stopPropagation();
-    if (!window.confirm(`Delete "${agency.name}"? This cannot be undone.`)) return;
+    let confirmName = null;
+    if (agency.account_type === 'RESELLER') {
+      // A Reseller's users (its customers and theirs) are removed only this way, all together.
+      const count = Number(agency.customerCount) || 0;
+      const ok = await alert.confirm({
+        title: `Delete the Reseller "${agency.name}"?`,
+        content: (
+          <>This permanently deletes the Reseller <b>together with its {count} customer{count === 1 ? '' : 's'}</b>, all of their users, bots, subscribers and conversations. It can&apos;t be undone.</>
+        ),
+        typeToConfirm: agency.name,
+        confirm: 'Delete everything',
+      });
+      if (!ok) return;
+      confirmName = agency.name;
+    } else if (!(await alert.confirm({ title: `Delete "${agency.name}"?`, text: 'This cannot be undone.', confirm: 'Delete' }))) {
+      return;
+    }
     try {
-      await adminAPI.deleteAgency(agency.id);
+      const res = await adminAPI.deleteAgency(agency.id, confirmName);
       setAgencies((prev) => prev.filter((a) => a.id !== agency.id));
+      notify.success(res.data?.message || 'Deleted');
     } catch (err) {
       notify.error(err?.response?.data?.message || 'Failed to delete reseller');
     }
@@ -521,13 +539,13 @@ export default function AgenciesPage() {
                   name="isReseller"
                   checked={editForm.isReseller}
                   onChange={handleEditChange}
-                  disabled={editingAgency.account_type === 'RESELLER' && editingAgency.customerCount > 0}
+                  disabled={editingAgency.account_type === 'RESELLER'}
                 />
                 <Shield size={13} color="#7c3aed" /> Reseller (can create its own customers under a shared plan)
               </label>
-              {editingAgency.account_type === 'RESELLER' && editingAgency.customerCount > 0 && (
+              {editingAgency.account_type === 'RESELLER' && (
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: -6 }}>
-                  Can't remove — this reseller still has {editingAgency.customerCount} customer{editingAgency.customerCount === 1 ? '' : 's'}.
+                  A Reseller stays a Reseller, whatever its plan — its customers, their users and subscribers are always kept.
                 </div>
               )}
 

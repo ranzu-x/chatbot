@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useParams, useSearchParams, Link } from "react-router";
-import toast from "react-hot-toast";
+import { toast } from "../../lib/alerts";
 import {
   Calendar,
   Clock,

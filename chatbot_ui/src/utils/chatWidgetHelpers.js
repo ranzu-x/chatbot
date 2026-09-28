@@ -68,6 +68,86 @@ export function buildDefaultWidgetFlowGraph(widgetName, platform = 'WHATSAPP', e
   const greeting = extra.greetingMessage || (isWebchat ? 'Hello! How can we help you today?' : `Hi! Thanks for reaching out to us on ${normPlat} 👋 How can we help?`);
   const btnText = extra.buttonText || 'Chat with us';
 
+  if (isWebchat) {
+    const cards = extra.chatbotCards || [
+      { id: 'chatbot-1', title: 'Book a demo', subtitle: 'Schedule a personalized demo', icon: 'calendar', trigger: 'Book a demo' },
+      { id: 'chatbot-2', title: 'Product tour', subtitle: 'See how it works', icon: 'play', trigger: 'Product tour' },
+      { id: 'chatbot-3', title: 'Documentation', subtitle: 'Browse our guides', icon: 'book', trigger: 'Documentation' },
+    ];
+    const nodes = [
+      {
+        id: 'start_1',
+        type: 'start',
+        position: { x: 80, y: 160 },
+        data: {
+          label: 'Chat Widget',
+          chatWidgetStart: true,
+          targetPlatform: 'WEBCHAT',
+          widgetName: widgetName || 'Live Webchat Widget',
+          displayName: extra.displayName || widgetName || 'Support Chat',
+          greetingMessage: greeting,
+          placeholderText: extra.placeholderText || 'Type a message…',
+          prefillMessage: extra.prefillMessage || '',
+          buttonText: btnText,
+          buttonBgColor: platColor,
+          homeTitle: extra.homeTitle || 'Welcome!',
+          homeSubtitle: extra.homeSubtitle || 'How can we help?',
+          replyTimeText: extra.replyTimeText || 'We typically reply within a few minutes',
+          startConversationText: extra.startConversationText || 'Start a conversation',
+          chatbotCards: cards,
+        },
+      },
+      {
+        id: 'bot_1',
+        type: 'text',
+        position: { x: 440, y: 40 },
+        data: {
+          label: 'Book a Demo Bot',
+          message: "📅 We'd love to show you around Nexa AI Chat! Let us know your preferred date/time or what specific features you want to see.",
+          buttons: [],
+        },
+      },
+      {
+        id: 'bot_2',
+        type: 'text',
+        position: { x: 440, y: 200 },
+        data: {
+          label: 'Product Tour Bot',
+          message: "🚀 Welcome to the Product Tour!\n\n✨ Omnichannel Inbox (WhatsApp, Webchat, IG, Messenger, Telegram)\n🤖 Visual Flow Builder with Drag-and-Drop\n📅 Automated Appointment Scheduling\n⚡ AI Replies and Lead Qualification\n\nAsk any question to learn more!",
+          buttons: [],
+        },
+      },
+      {
+        id: 'bot_3',
+        type: 'text',
+        position: { x: 440, y: 380 },
+        data: {
+          label: 'Documentation Bot',
+          message: "📚 Here are quick guides to help you get the most out of our platform:\n\n📖 Getting Started: Connect your Webchat & Channels\n🤖 Flow Builder: Build visual bot conversations\n📅 Appointments: Set availability and booking rules\n\nWhat can we help you look up?",
+          buttons: [],
+        },
+      },
+      {
+        id: 'bot_chat',
+        type: 'text',
+        position: { x: 440, y: 560 },
+        data: {
+          label: 'General Chatbot',
+          message: greeting,
+          buttons: [],
+        },
+      },
+    ];
+
+    const edges = [
+      { id: 'e1', source: 'start_1', sourceHandle: 'chatbot-1', target: 'bot_1', targetHandle: 'target', type: 'default', animated: false },
+      { id: 'e2', source: 'start_1', sourceHandle: 'chatbot-2', target: 'bot_2', targetHandle: 'target', type: 'default', animated: false },
+      { id: 'e3', source: 'start_1', sourceHandle: 'chatbot-3', target: 'bot_3', targetHandle: 'target', type: 'default', animated: false },
+      { id: 'e4', source: 'start_1', sourceHandle: 'next-step', target: 'bot_chat', targetHandle: 'target', type: 'default', animated: false },
+    ];
+    return { nodes, edges };
+  }
+
   const nodes = [
     {
       id: 'start_1',
@@ -77,7 +157,7 @@ export function buildDefaultWidgetFlowGraph(widgetName, platform = 'WHATSAPP', e
         label: 'Chat Widget',
         chatWidgetStart: true,
         targetPlatform: normPlat,
-        widgetName: widgetName || (isWebchat ? 'Live Webchat Widget' : `${normPlat} Chat Widget`),
+        widgetName: widgetName || `${normPlat} Chat Widget`,
         displayName: extra.displayName || widgetName || 'Support Chat',
         greetingMessage: greeting,
         placeholderText: extra.placeholderText || 'Type a message…',

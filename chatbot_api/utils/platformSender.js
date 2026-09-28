@@ -1,14 +1,22 @@
 import axios from "axios";
+import { waRecipient } from "./whatsappIdentity.js";
+import { buildCtaUrlInteractive } from "./whatsappCtaUrl.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 import pool from "../db.js";
+import { META_API_VERSION } from "./metaApi.js";
+import { isWorkspaceExpired, EXPIRED_MESSAGE } from "./subscriptionStatus.js";
+import { reserveInstagramSlot } from "./igRateLimit.js";
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
-const META_API_VERSION = process.env.META_API_VERSION || "v21.0";
+const MESSENGER_UTILITY_API_VERSION = process.env.MESSENGER_UTILITY_API_VERSION || META_API_VERSION;
+// The only message tag Meta still accepts (27 Apr 2026: ACCOUNT_UPDATE,
+// POST_PURCHASE_UPDATE and CONFIRMED_EVENT_UPDATE answer error 100).
+const ALLOWED_MESSAGE_TAGS = new Set(["HUMAN_AGENT"]);
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -315,7 +323,31 @@ async function recordFlowSession(integration, contactExternalId, flowToken, meta
   );
 }
 
+const TELEGRAM_BUTTON_STYLES = new Set(["primary", "success", "danger"]);
+
+/** "bc:<business connection id>:<chat id>" (a Telegram Business chat) or a plain chat id. */
+export function parseTelegramChatId(externalId) {
+  const m = /^bc:(.+):(-?\d+)$/.exec(String(externalId || ""));
+  return m ? { businessConnectionId: m[1], chatId: m[2] } : { businessConnectionId: null, chatId: externalId };
+}
+
+/**
+ * WhatsApp send response → message id. Also reports Meta's `message_status`
+ * (`accepted`, or `held_for_quality_assessment` when template / portfolio
+ * pacing holds the message) through messageData.onSendMeta.
+ */
+function waResult(response, messageData) {
+  const m = response.data?.messages?.[0] || {};
+  try { messageData?.onSendMeta?.({ messageStatus: m.message_status || null }); } catch { /* reporting only */ }
+  return m.id || null;
+}
+
 export async function sendPlatformMessage(platform, integration, contactExternalId, messageData) {
+  if (integration?.agency_id && await isWorkspaceExpired(integration.agency_id)) {
+    const err = new Error(EXPIRED_MESSAGE);
+    err.code = "SUBSCRIPTION_EXPIRED";
+    throw err;
+  }
   const {
     type = "TEXT",
     body = "",
@@ -332,6 +364,14 @@ export async function sendPlatformMessage(platform, integration, contactExternal
     footerText,
     whatsappTemplate,
     whatsappFlow,
+    messengerTemplate,
+    messageTag,
+    requestContactInfo,
+    ctaUrl,
+    telegramInvoice,
+    telegramPoll,
+    telegramChecklist,
+    buttonLabel,
   } = messageData;
   const accessToken = integration.access_token;
   const backendUrl = await getPublicBackendUrl();
@@ -347,7 +387,7 @@ export async function sendPlatformMessage(platform, integration, contactExternal
       let payload = {
         messaging_product: "whatsapp",
         recipient_type: "individual",
-        to: contactExternalId,
+        ...waRecipient(contactExternalId),
       };
 
       // Outside the 24h customer-service window, WhatsApp only accepts a
@@ -447,7 +487,7 @@ export async function sendPlatformMessage(platform, integration, contactExternal
         const response = await axios.post(url, payload, {
           headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
         });
-        return response.data?.messages?.[0]?.id || null;
+        return waResult(response, messageData);
       }
 
       // Send Menu's "WhatsApp Flow" option — references an already-published
@@ -455,6 +495,37 @@ export async function sendPlatformMessage(platform, integration, contactExternal
       // this app does not author/publish Flow JSON itself. Meta's real-time
       // interactive Flow message, only usable within the 24h customer-service
       // window (unlike a Flow referenced from an approved Template's button).
+      // "Share your phone number" button (WhatsApp usernames): the user's tap
+      // shares their number in the chat; webhook.js links it to the subscriber.
+      // Meta renamed the type contact_request → request_contact_info (28 May 2026).
+      // CTA URL Button element (utils/whatsappCtaUrl.js): one link button that opens
+      // in the browser. Built from final values and validated again here —
+      // buildCtaUrlInteractive throws instead of producing an invalid payload.
+      if (ctaUrl) {
+        payload.type = "interactive";
+        payload.interactive = buildCtaUrlInteractive({
+          ...ctaUrl,
+          headerMediaUrl: ctaUrl.headerMediaUrl ? resolvePublicImageUrl(ctaUrl.headerMediaUrl, backendUrl) : null,
+        });
+        const response = await axios.post(url, payload, {
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        });
+        return waResult(response, messageData);
+      }
+
+      if (requestContactInfo) {
+        payload.type = "interactive";
+        payload.interactive = {
+          type: "request_contact_info",
+          body: { text: (body && body.trim()) || "Please share your phone number so we can help you better." },
+          action: { name: "request_contact_info" },
+        };
+        const response = await axios.post(url, payload, {
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        });
+        return waResult(response, messageData);
+      }
+
       if (whatsappFlow?.flowId) {
         const flowToken = `inbox_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
         payload.type = "interactive";
@@ -484,7 +555,7 @@ export async function sendPlatformMessage(platform, integration, contactExternal
         recordFlowSession(integration, contactExternalId, flowToken, whatsappFlow.flowId).catch((err) => {
           console.error("[WA Flow] Failed to record flow session:", err.message);
         });
-        return response.data?.messages?.[0]?.id || null;
+        return waResult(response, messageData);
       }
 
       const hasButtons = Array.isArray(buttons) && buttons.length > 0;
@@ -531,7 +602,7 @@ export async function sendPlatformMessage(platform, integration, contactExternal
         const response = await axios.post(url, payload, {
           headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
         });
-        return response.data?.messages?.[0]?.id || null;
+        return waResult(response, messageData);
       } else if (hasButtons) {
         // WhatsApp interactive buttons (Max 3)
         const interactiveBodyText = (body && body.trim()) || (caption && caption.trim()) || (upperType === "IMAGE" ? "\u200B" : "Please select an option:");
@@ -780,14 +851,63 @@ export async function sendPlatformMessage(platform, integration, contactExternal
       const response = await axios.post(url, payload, {
         headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
       });
-      return response.data?.messages?.[0]?.id || null;
+      return waResult(response, messageData);
     }
 
     if (platform === "FACEBOOK" || platform === "INSTAGRAM") {
+      // Instagram: automated DMs have an hourly budget (utils/igRateLimit.js); a person replying from the Inbox (fromAgent) doesn't count.
+      if (platform === "INSTAGRAM" && !messageData.fromAgent) await reserveInstagramSlot(integration.id);
+      // Messenger Utility template (utils/messengerUtility.js) — the only
+      // automated message a Page may send outside the 24-hour window.
+      if (messengerTemplate?.name) {
+        if (platform !== "FACEBOOK") throw new Error("Utility templates are a Messenger (Facebook Page) feature");
+        // An uploaded header image (/uploads/…) must reach Meta as a public link.
+        const components = (Array.isArray(messengerTemplate.components) ? messengerTemplate.components : []).map((c) => (
+          c.type === "header" && c.parameters?.[0]?.type === "image"
+            ? { ...c, parameters: [{ type: "image", image: { link: resolvePublicImageUrl(c.parameters[0].image?.link, backendUrl) } }] }
+            : c
+        ));
+        const response = await axios.post(
+          `https://graph.facebook.com/${MESSENGER_UTILITY_API_VERSION}/${integration.fb_page_id || "me"}/messages`,
+          {
+            recipient: { id: contactExternalId },
+            messaging_type: "UTILITY",
+            message: {
+              template: {
+                name: messengerTemplate.name,
+                language: { code: messengerTemplate.language || "en" },
+                components,
+              },
+            },
+          },
+          { params: { access_token: accessToken }, timeout: 30000 }
+        );
+        return response.data?.message_id || null;
+      }
+      // Marketing Messages opt-in request (utils/messengerMarketing.js) — Messenger only.
+      if (messageData.marketingOptIn) {
+        if (platform !== "FACEBOOK") throw new Error("Marketing Messages opt-in requests are a Messenger (Facebook Page) feature");
+        const { buildOptInRequest } = await import("./messengerMarketing.js");
+        const optIn = { ...messageData.marketingOptIn };
+        if (optIn.imageUrl) optIn.imageUrl = resolvePublicImageUrl(optIn.imageUrl, backendUrl);
+        const response = await axios.post(
+          `https://graph.facebook.com/${META_API_VERSION}/${integration.fb_page_id || "me"}/messages`,
+          { recipient: { id: contactExternalId }, messaging_type: "RESPONSE", message: buildOptInRequest(optIn) },
+          { params: { access_token: accessToken }, timeout: 30000 }
+        );
+        return response.data?.message_id || null;
+      }
+      if (messageTag && !ALLOWED_MESSAGE_TAGS.has(messageTag)) {
+        throw new Error(`Message tag ${messageTag} is no longer supported by Meta — only HUMAN_AGENT is`);
+      }
+      // HUMAN_AGENT: a person's reply 24 h – 7 days after the customer's last
+      // message (routes/conversations.js decides; automation never sets it).
+      const messagingType = messageTag ? "MESSAGE_TAG" : "RESPONSE";
       const url = `https://graph.facebook.com/${META_API_VERSION}/me/messages?access_token=${accessToken}`;
       let payload = {
         recipient: { id: contactExternalId },
-        messaging_type: "RESPONSE",
+        messaging_type: messagingType,
+        ...(messageTag ? { tag: messageTag } : {}),
         message: {},
       };
 
@@ -1006,7 +1126,8 @@ export async function sendPlatformMessage(platform, integration, contactExternal
           try {
             const formData = new FormData();
             formData.append("recipient", JSON.stringify({ id: contactExternalId }));
-            formData.append("messaging_type", "RESPONSE");
+            formData.append("messaging_type", messagingType);
+            if (messageTag) formData.append("tag", messageTag);
             formData.append("message", JSON.stringify({
               attachment: {
                 type: attachmentType,
@@ -1172,7 +1293,33 @@ export async function sendPlatformMessage(platform, integration, contactExternal
 
     if (platform === "TELEGRAM") {
       let endpoint = "sendMessage";
-      let payload = { chat_id: contactExternalId };
+      // A Telegram Business chat (utils/telegramBusiness.js) is stored as
+      // "bc:<connection id>:<chat id>"; replies go out on behalf of the business.
+      const tgTarget = parseTelegramChatId(contactExternalId);
+      let payload = { chat_id: tgTarget.chatId };
+      if (tgTarget.businessConnectionId) payload.business_connection_id = tgTarget.businessConnectionId;
+
+      if (telegramChecklist) {
+        // Interactive checklist — Telegram Business chats only (utils/telegramChecklists.js).
+        const { sendTelegramChecklist } = await import("./telegramChecklists.js");
+        return await sendTelegramChecklist({ integration, externalId: contactExternalId, checklist: telegramChecklist });
+      }
+
+      if (telegramPoll) {
+        // Native poll (utils/telegramPolls.js); the poll id is handed back so the answer can be matched later.
+        const { sendTelegramPoll } = await import("./telegramPolls.js");
+        const sent = await sendTelegramPoll({ integration, externalId: contactExternalId, poll: telegramPoll.poll });
+        telegramPoll.onSent?.(sent);
+        return sent.messageId;
+      }
+
+      if (telegramInvoice) {
+        // Native invoice (Telegram Stars) — services/chatPaymentService.js buildStarsInvoice.
+        const invoicePayload = { chat_id: tgTarget.chatId, ...telegramInvoice };
+        if (buttonLabel) invoicePayload.reply_markup = { inline_keyboard: [[{ text: String(buttonLabel).slice(0, 40), pay: true }]] };
+        const response = await axios.post(`https://api.telegram.org/bot${accessToken}/sendInvoice`, invoicePayload);
+        return response.data?.result?.message_id?.toString() || null;
+      }
       const formattedTgText = ((headerText ? `*${headerText}*\n\n` : '') + (body || "") + (footerText ? `\n\n_${footerText}_` : '')).trim();
 
       if (type === "IMAGE" && fullMediaUrl) {
@@ -1192,12 +1339,13 @@ export async function sendPlatformMessage(platform, integration, contactExternal
           inline_keyboard: buttons.map((btn, index) => {
             const btnTitle = typeof btn === "string" ? btn : (btn.title || btn.label || `Option ${index + 1}`);
             const btnPayload = typeof btn === "string" ? btn : (btn.payload || btn.id || `btn_${index}`);
-            return [
-              {
-                text: btnTitle,
-                callback_data: String(btnPayload).slice(0, 64),
-              },
-            ];
+            const tgButton = { text: btnTitle };
+            // A link button opens the page (it sends nothing back to the bot).
+            if (typeof btn === "object" && btn.type === "URL" && /^https?:\/\//i.test(btn.url || "")) tgButton.url = btn.url;
+            else tgButton.callback_data = String(btnPayload).slice(0, 64);
+            // Bot API 10.x button colours.
+            if (typeof btn === "object" && TELEGRAM_BUTTON_STYLES.has(btn.style)) tgButton.style = btn.style;
+            return [tgButton];
           }),
         };
       } else if (quickReplies && quickReplies.length > 0) {
@@ -1280,25 +1428,12 @@ export async function sendPlatformMessage(platform, integration, contactExternal
     }
 
     if (platform === "TIKTOK") {
-      if (accessToken) {
-        try {
-          const url = `https://business-api.tiktok.com/open_api/v1.3/im/message/send/`;
-          const payload = {
-            from_user_id: integration.tiktok_open_id,
-            to_user_id: contactExternalId,
-            msg_type: type === "IMAGE" ? "image" : "text",
-            content: { text: body },
-          };
-          const response = await axios.post(url, payload, {
-            headers: { 'Access-Token': accessToken, 'Content-Type': 'application/json' }
-          });
-          return response.data?.data?.message_id || `tt_out_${Date.now()}`;
-        } catch (e) {
-          console.warn("[TikTok outbound API notice]:", e.response?.data || e.message);
-          return `tt_out_${Date.now()}`;
-        }
-      }
-      return `tt_out_${Date.now()}`;
+      // Business Messaging API (utils/tiktokBusiness.js): the recipient is the
+      // TikTok conversation id (the subscriber's external id). Images need a
+      // TikTok media upload, so a picture goes out as its link for now.
+      const { sendTikTokMessage } = await import("./tiktokBusiness.js");
+      const text = isMedia && fullMediaUrl ? [body || caption, fullMediaUrl].filter(Boolean).join("\n") : body;
+      return await sendTikTokMessage(integration, contactExternalId, { body: text, buttons });
     }
 
     if (platform === "WEBCHAT") {
@@ -1351,12 +1486,17 @@ export async function sendTypingIndicator(platform, integration, contactExternal
         { recipient: { id: contactExternalId }, sender_action: "typing_on" }
       );
     } else if (platform === "TELEGRAM") {
+      const tgTarget = parseTelegramChatId(contactExternalId);
       await axios.post(`https://api.telegram.org/bot${accessToken}/sendChatAction`, {
-        chat_id: contactExternalId,
+        chat_id: tgTarget.chatId,
+        ...(tgTarget.businessConnectionId ? { business_connection_id: tgTarget.businessConnectionId } : {}),
         action: "typing",
       });
+    } else if (platform === "TIKTOK") {
+      const { tiktokCall, buildTikTokSend } = await import("./tiktokBusiness.js");
+      await tiktokCall(integration, "POST", "business/message/send/", buildTikTokSend(integration, contactExternalId, { senderAction: "TYPING" }));
     }
-    // WEBCHAT / TIKTOK: no native typing action available — no-op.
+    // WEBCHAT: no native typing action available — no-op.
   } catch (err) {
     console.warn(`[Typing Indicator] ${platform} notice:`, err.response?.data || err.message);
   }

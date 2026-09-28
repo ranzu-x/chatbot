@@ -1,18 +1,16 @@
 import { useState, useEffect, useMemo } from 'react';
+import UserAvatar from '../../Components/Common/UserAvatar';
 import AppLayout from '../../Layout/AppLayout';
 import DataTable from '../../Components/Common/DataTable';
 import { agencyAPI } from '../../services/api';
 import { UserCheck, Plus, Trash2, Mail, Shield, CheckCircle2 } from 'lucide-react';
+import { alert } from '../../lib/alerts';
 
 const EMPTY_FORM = { name: '', email: '', password: '' };
 
 function formatDate(ts) {
   if (!ts) return '—';
   return new Date(ts).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
-}
-
-function getInitials(name = '') {
-  return name.trim().split(/\s+/).map((w) => w[0]).join('').toUpperCase().slice(0, 2) || '?';
 }
 
 export default function AgentsPage() {
@@ -71,7 +69,7 @@ export default function AgentsPage() {
   const handleDelete = async (agent, e) => {
     if (e) e.stopPropagation();
     const userId = agent.userId || agent._id || agent.id;
-    if (!window.confirm(`Delete agent "${agent.name}"?`)) return;
+    if (!(await alert.ask(`Delete agent "${agent.name}"?`))) return;
     try {
       await agencyAPI.deleteAgent(userId);
       setAgents((prev) => prev.filter((a) => (a.userId || a._id || a.id) !== userId));
@@ -118,7 +116,7 @@ export default function AgentsPage() {
               fontSize: '0.85rem',
             }}
           >
-            {getInitials(row.name)}
+            <UserAvatar src={row.avatar} name={row.name} size={36} />
           </div>
           <div>
             <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.86rem' }}>{row.name}</div>

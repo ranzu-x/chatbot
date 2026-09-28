@@ -16,6 +16,7 @@
  */
 import pool from "../db.js";
 import { emitToUser } from "./socket.js";
+import { lockedJob } from "./jobLock.js";
 
 const TICK_MS = 30000;
 
@@ -59,11 +60,11 @@ export async function processDueFollowUps({ emit = emitToUser } = {}) {
 
 export function startFollowUpScheduler() {
   console.log("⏰ Follow-up reminder scheduler started (runs every 30 seconds)");
-  setInterval(async () => {
+  setInterval(lockedJob("follow-ups", async () => {
     try {
       await processDueFollowUps();
     } catch (err) {
       console.error("[Follow-up scheduler] tick failed:", err.message);
     }
-  }, TICK_MS);
+  }), TICK_MS);
 }

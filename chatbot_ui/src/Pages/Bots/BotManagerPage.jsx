@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router';
+import useUrlState, { useClearUrlParams } from '../../hooks/useUrlState';
 import AppLayout from '../../Layout/AppLayout';
 import { useAuth } from '../../Provider/AuthContext';
 import { flowAPI, integrationAPI, botAPI, templateAPI } from '../../services/api';
@@ -11,13 +12,30 @@ import UserInputFlowManagerList from '../../Components/UserInputFlows/UserInputF
 import HttpApiCampaignManagerList from '../../Components/HttpApi/HttpApiCampaignManagerList';
 import WhatsAppFlowManagerList from '../../Components/WhatsAppFlows/WhatsAppFlowManagerList';
 import StoreConnectionsManager from '../../Components/Commerce/StoreConnectionsManager';
+import WhatsAppCallingTab from '../../Components/Calls/WhatsAppCallingTab';
+import BotProfileManager from '../../Components/Engagement/BotProfileManager';
+import TelegramBusinessPanel from '../../Components/Engagement/TelegramBusinessPanel';
+import TikTokAutoMessagesPanel from '../../Components/Engagement/TikTokAutoMessagesPanel';
+import QuickActionsPanel from '../../Components/Bots/QuickActionsPanel';
+import TelegramGroupsPanel from '../../Components/Bots/TelegramGroups/TelegramGroupsPanel';
+import { TG_GROUP_URL_KEYS } from '../../Components/Bots/TelegramGroups/groupUi';
+import MarketingMessagesPanel from '../../Components/Engagement/MarketingMessagesPanel';
+import OptOutSettings from '../../Components/Engagement/OptOutSettings';
+import StoryRepliesPanel from '../../Components/Engagement/StoryRepliesPanel';
+import WhatsAppNumberPanel from '../../Components/Bots/WhatsAppNumberPanel';
+import WhatsAppGroupsPanel from '../../Components/Bots/WhatsAppGroupsPanel';
+import WhatsAppCatalogPanel from '../../Components/Bots/WhatsAppCatalogPanel';
 import CommerceCampaignsManager from '../../Components/Commerce/CommerceCampaignsManager';
 import CommerceActivity from '../../Components/Commerce/CommerceActivity';
 import { humanizeBotError, cleanRawMessage } from '../../utils/humanizeBotError';
 import AIAgentManagerList from '../../Components/AIAgents/AIAgentManagerList';
 import AIReplySettingsPanel from '../../Components/AIAgents/AIReplySettingsPanel';
-import Swal from 'sweetalert2';
+import ImportFlowDialog from '../../Components/Bots/ImportFlowDialog';
+import { downloadFlowExport } from '../../utils/flowFile';
+import { alert } from '../../lib/alerts';
 import {
+  Download,
+  Upload,
   Bot,
   AlertCircle,
   AlertTriangle,
@@ -100,15 +118,18 @@ const SUB_TABS = {
   automation: [
     { id: 'keywordReplies',   label: 'Keyword Replies' },
     { id: 'messageTemplates', label: 'Message Templates' },
-    { id: 'clickAds',         label: 'Click Ads' },
+    { id: 'tgGroups',         label: 'Group Management' },
     { id: 'httpApiCampaigns', label: 'HTTP API Campaigns' },
     { id: 'quickActions',     label: 'Quick Actions' },
-    { id: 'outboundActions',  label: 'Outbound Actions' },
     { id: 'webhookWorkflows', label: 'Webhook Workflows' },
     { id: 'whatsappCalling',  label: 'WhatsApp Calling' },
+    { id: 'optOut',           label: 'Opt-out Keywords' },
+    { id: 'numberProfile',    label: 'Number & Username' },
+    { id: 'waGroups',         label: 'Groups' },
+    { id: 'telegramBusiness', label: 'Telegram Business' },
+    { id: 'marketingMessages', label: 'Marketing Messages' },
   ],
   dataCollection: [
-    { id: 'customFields',   label: 'Custom Variables' },
     { id: 'contactLabels',  label: 'Contact Labels' },
     { id: 'segments',       label: 'Subscriber Segments' },
     { id: 'userInputFlows', label: 'User Input Flows' },
@@ -142,6 +163,40 @@ const SUB_TABS = {
     { id: 'crmConnectors',    label: 'CRM Connectors' },
     { id: 'zapierMake',       label: 'Zapier / Make' },
   ],
+};
+
+const ALL_SUB_TAB_IDS = Object.values(SUB_TABS).flat().map((t) => t.id);
+
+/* Which sub-tabs a bot account's channel has (one rule, used by the pill row,
+   the category switch and the "is the current tab still valid" check). */
+function isSubTabAvailable(subId, platform, role) {
+  // Message Templates: WhatsApp (HSM) and Facebook (Utility Templates)
+  if (subId === 'messageTemplates') return ['WHATSAPP', 'FACEBOOK'].includes(platform);
+  // WhatsApp-only tools
+  if (['whatsappCalling', 'numberProfile', 'waGroups', 'catalogSync', 'productMessages', 'paymentLinks'].includes(subId)) return platform === 'WHATSAPP';
+  // Human Agent (HUMAN_AGENT tag) is switched from the Inbox composer now
+  // (Components/Inbox/HumanAgentToggle.jsx), not here.
+  // Story mentions: Facebook / Instagram
+  if (subId === 'storyMentions') return ['FACEBOOK', 'INSTAGRAM'].includes(platform);
+  // Telegram-only features.
+  if (subId === 'tgGroups' || subId === 'telegramBusiness') return platform === 'TELEGRAM';
+  // WhatsApp Flows management (incl. encryption keys) is ADMIN/RESELLER only
+  // server-side (routes/whatsappFlowRefs.js, routes/whatsappFlowEndpoint.js)
+  // — hidden from USER team members rather than show a form whose every
+  // mutating call 403s.
+  if (subId === 'whatsappFlows') return role !== 'USER';
+  return true;
+}
+
+/* Tabs whose feature already exists on its own page — the tab explains it and links there. */
+const LINKED_TABS = {
+  contactLabels:    { title: 'Contact Labels',     to: '/contacts?manage=labels', cta: 'Manage labels',          text: 'Labels are shared by every bot in this workspace. Create and rename them in Subscribers → Manage; add or remove them from flows, buttons and the Inbox.' },
+  segments:         { title: 'Subscriber Segments', to: '/contacts?manage=lists', cta: 'Manage subscriber lists', text: 'Group subscribers into lists in Subscribers → Manage, then target a list (or labels, fields and sequences) as a Broadcast audience.' },
+  webhookWorkflows: { title: 'Webhook Workflows',  to: '/webhooks?tab=INBOUND',  cta: 'Open inbound webhooks',  text: 'Start a flow from outside — Zapier, Make, Shopify or any app that can POST to a URL. Each flow gets its own secure inbound URL.' },
+  webhooksOutbound: { title: 'Webhooks Outbound',  to: '/webhooks',              cta: 'Open Webhooks & Zapier', text: 'Send subscriber data out of a flow with the HTTP API / webhook step. Delivery logs for every call are on the Webhooks page.' },
+  zapierMake:       { title: 'Zapier / Make',      to: '/webhooks',              cta: 'Open Webhooks & Zapier', text: 'Connect Zapier or Make with the inbound webhook URL of a flow (trigger) and the HTTP step (action).' },
+  googleSheets:     { title: 'Google Sheets Sync', to: '/settings/google-sheets', cta: 'Open Google Sheets',    text: 'Connect a Google account, then send each User Input Flow’s answers to a sheet, or import subscribers from a sheet.' },
+  paymentLinks:     { title: 'Payment Links & Cart', to: '/orders',              cta: 'Open In-Chat Orders',    text: 'Add the Catalog / Payment element to a flow: a checkout link on WhatsApp, Messenger and Instagram, a Telegram Stars invoice on Telegram. Once paid, the confirmation is sent and the flow continues. Orders, payment status and Stars refunds are on the In-Chat Orders page.' },
 };
 
 /* ─── Starter Templates ─── */
@@ -279,33 +334,51 @@ export default function BotManagerPage() {
   const [loading, setLoading] = useState(true);
 
   // Selected State
+  // Where the user is (account, section, tab, table filters) lives in the URL
+  // (?account=&cat=&tab=…), so a refresh or a shared link lands on the same place.
   const [selectedAccount, setSelectedAccount] = useState(null); // null = "All Accounts" or specific integration object
+  const [, setAccountParam] = useUrlState('account', '');
   const [accountSearch, setAccountSearch] = useState('');
-  const [channelFilter, setChannelFilter] = useState(() => location.state?.channelFilter || 'ALL');
+  const [channelFilter, setChannelFilter] = useUrlState('channel', 'ALL');
 
   // Category & SubTab Navigation
-  const [activeCategory, setActiveCategory] = useState(() => location.state?.activeCategory || 'automation');
-  const [activeSubTab, setActiveSubTab] = useState(() => location.state?.activeSubTab || 'keywordReplies');
+  const [activeCategory, setActiveCategory] = useUrlState('cat', 'automation');
+  // A removed tab's id (an old link, e.g. ?tab=outboundActions) reads as the default.
+  const [activeSubTab, setActiveSubTab] = useUrlState('tab', 'keywordReplies', { allowed: ALL_SUB_TAB_IDS });
 
   // Table Filter & Search
-  const [folderFilter, setFolderFilter] = useState(() => location.state?.folderFilter || 'All Folders');
-  const [tableSearch, setTableSearch] = useState(() => location.state?.tableSearch || '');
-  const [currentPage, setCurrentPage] = useState(() => location.state?.currentPage || 1);
+  const [folderFilter, setFolderFilter] = useUrlState('folder', 'All Folders');
+  const [tableSearch, setTableSearch] = useUrlState('q', '');
+  const [currentPage, setCurrentPage] = useUrlState('page', 1, { type: 'number' });
   const [pageSize, setPageSize] = useState(10);
 
-  // Restore selectedAccount from previous navigation state if available
-  const restoredAccountRef = useRef(false);
+  // Panels inside a tab keep their own place in the URL (template tab, commerce
+  // view, open AI agent); switching to another tab or account clears them.
+  const clearUrlParams = useClearUrlParams();
+  const prevPlaceRef = useRef(null);
   useEffect(() => {
-    if (!restoredAccountRef.current && location.state?.selectedAccountId && integrations.length > 0) {
-      const found = integrations.find((i) => String(i.id) === String(location.state.selectedAccountId));
-      if (found) {
-        setSelectedAccount(found);
-        restoredAccountRef.current = true;
-      }
+    const place = `${selectedAccount?.id || ''}|${activeCategory}|${activeSubTab}`;
+    if (prevPlaceRef.current !== null && prevPlaceRef.current !== place && selectedAccount) {
+      clearUrlParams(['mtab', 'cview', 'agent', 'asec', ...TG_GROUP_URL_KEYS]);
     }
-  }, [integrations, location.state]);
+    if (selectedAccount) prevPlaceRef.current = place;
+  }, [selectedAccount, activeCategory, activeSubTab, clearUrlParams]);
+
+  // Keep the chosen account in the URL.
+  useEffect(() => {
+    if (!selectedAccount) return;
+    setAccountParam(selectedAccount.id === 'all' ? '' : String(selectedAccount.id));
+  }, [selectedAccount, setAccountParam]);
 
   // Navigate to flow builder while retaining page origin state
+  // Bot Settings = this bot's Business Hours page (the bot is fixed there, from ?bot=).
+  const openBotSettings = useCallback(() => {
+    if (!selectedAccount || selectedAccount.id === 'all') return;
+    navigate(`/settings/business-hours?bot=${selectedAccount.id}`, {
+      state: { from: location.pathname + location.search },
+    });
+  }, [selectedAccount, navigate, location.pathname, location.search]);
+
   const openFlowBuilder = useCallback((flowId) => {
     navigate(`/flows/${flowId}`, {
       state: {
@@ -324,13 +397,15 @@ export default function BotManagerPage() {
 
   // Modals
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [settingsModalTab, setSettingsModalTab] = useState('general');
   const [selectedTemplate, setSelectedTemplate] = useState('blank');
   const [newFlowName, setNewFlowName] = useState('');
   const [newFlowPlatform] = useState('WHATSAPP');
   const [creating, setCreating] = useState(false);
   const [showOptionsDropdown, setShowOptionsDropdown] = useState(false);
+
+  // Import / export (chatbot_api/routes/flowTransfer.js)
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [exportingFlowId, setExportingFlowId] = useState(null);
 
   // Clone Flow Modal State
   const [showCloneModal, setShowCloneModal] = useState(false);
@@ -406,16 +481,12 @@ export default function BotManagerPage() {
     // errors when an account is selected, everything when "All Accounts" is.
     const scopedToAccount = selectedAccount?.id && selectedAccount.id !== 'all';
     const scopeLabel = scopedToAccount ? (selectedAccount.name || getPlatformInfo(selectedAccount.platform).label) : 'All Accounts';
-    const result = await Swal.fire({
+    const confirmed = await alert.confirm({
       title: `Clear Errors for ${scopeLabel}?`,
       text: `Are you sure you want to clear the error log for ${scopeLabel}? This cannot be undone.`,
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonColor: '#ef4444',
-      cancelButtonColor: 'var(--text-tertiary)',
-      confirmButtonText: 'Yes, Clear',
+      confirm: 'Yes, Clear',
     });
-    if (result.isConfirmed) {
+    if (confirmed) {
       try {
         const params = {};
         if (scopedToAccount) params.integrationId = selectedAccount.id;
@@ -513,8 +584,13 @@ export default function BotManagerPage() {
       // fires on mount and again whenever this setSelectedAccount call lands,
       // so a call here would just be a second, near-simultaneous request for
       // the exact same (still-unscoped) data.
+      // The account in the URL (?account=) wins — a refresh stays on it; an older
+      // "back from the Flow Builder" link may still carry it in router state.
+      const wantedId = new URLSearchParams(window.location.search).get('account') || window.history.state?.usr?.selectedAccountId;
       setSelectedAccount((prev) => {
         if (prev) return prev;
+        const wanted = wantedId ? integs.find((i) => String(i.id) === String(wantedId)) : null;
+        if (wanted) return wanted;
         if (integs.length > 0) return integs[0];
         return { id: 'all', name: 'All Connected Channels', platform: 'WHATSAPP', is_active: 1 };
       });
@@ -548,50 +624,38 @@ export default function BotManagerPage() {
     (selectedAccount.platform || '').toUpperCase() === 'WHATSAPP'
   );
 
-  // The Commerce menu is available under WhatsApp bot account only in automation
+  // Store automation also runs on a Facebook Page (Messenger Utility templates).
+  const isMessengerSelected = Boolean(
+    selectedAccount &&
+    selectedAccount.id !== 'all' &&
+    (selectedAccount.platform || '').toUpperCase() === 'FACEBOOK'
+  );
+  const commerceAvailable = isWhatsAppSelected || isMessengerSelected;
+
+  // The Commerce menu is available under a WhatsApp number or Facebook Page
   const visibleCategories = useMemo(() => {
     return MAIN_CATEGORIES.filter((cat) => {
       if (cat.id === 'commerce') {
-        return isWhatsAppSelected;
+        return commerceAvailable;
       }
       return true;
     });
-  }, [isWhatsAppSelected]);
+  }, [commerceAvailable]);
 
-  // Fallback to automation if currently on commerce and WhatsApp bot is deselected
+  // Fallback to automation if currently on commerce and no such bot is selected
   useEffect(() => {
-    if (!isWhatsAppSelected && activeCategory === 'commerce') {
+    // Only once the account is known — on a refresh it is still loading.
+    if (selectedAccount && !commerceAvailable && activeCategory === 'commerce') {
       setActiveCategory('automation');
       setActiveSubTab('keywordReplies');
     }
-  }, [isWhatsAppSelected, activeCategory]);
+  }, [selectedAccount, commerceAvailable, activeCategory]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Filter sub-tabs dynamically per channel platform (Message Templates for WhatsApp & Facebook)
   const currentSubTabs = useMemo(() => {
     const list = SUB_TABS[activeCategory] || [];
     const platform = (selectedAccount?.platform || 'WHATSAPP').toUpperCase();
-    return list.filter((sub) => {
-      // Message Templates available for WhatsApp (HSM) and Facebook (Utility Templates)
-      if (sub.id === 'messageTemplates') {
-        return ['WHATSAPP', 'FACEBOOK'].includes(platform);
-      }
-      // WhatsApp specific tools ONLY for WhatsApp
-      if (['whatsappCalling', 'catalogSync', 'productMessages'].includes(sub.id)) {
-        return platform === 'WHATSAPP';
-      }
-      // Story mentions ONLY for Facebook / Instagram
-      if (sub.id === 'storyMentions') {
-        return ['FACEBOOK', 'INSTAGRAM'].includes(platform);
-      }
-      // WhatsApp Flows management (incl. encryption keys) is ADMIN/RESELLER
-      // only server-side (routes/whatsappFlowRefs.js, routes/whatsappFlowEndpoint.js)
-      // — hide the tab from USER team members rather than show a form whose
-      // every mutating call 403s.
-      if (sub.id === 'whatsappFlows') {
-        return user?.role !== 'USER';
-      }
-      return true;
-    });
+    return list.filter((sub) => isSubTabAvailable(sub.id, platform, user?.role));
   }, [activeCategory, selectedAccount, user?.role]);
 
   // Sync category change to reset subtab
@@ -599,38 +663,11 @@ export default function BotManagerPage() {
     setActiveCategory(catId);
     const list = SUB_TABS[catId] || [];
     const platform = (selectedAccount?.platform || 'WHATSAPP').toUpperCase();
-    const available = list.filter((sub) => {
-      if (sub.id === 'messageTemplates') {
-        return ['WHATSAPP', 'FACEBOOK'].includes(platform);
-      }
-      if (['whatsappCalling', 'catalogSync', 'productMessages'].includes(sub.id)) {
-        return platform === 'WHATSAPP';
-      }
-      if (sub.id === 'storyMentions') {
-        return ['FACEBOOK', 'INSTAGRAM'].includes(platform);
-      }
-      if (sub.id === 'whatsappFlows') {
-        return user?.role !== 'USER';
-      }
-      return true;
-    });
+    const available = list.filter((sub) => isSubTabAvailable(sub.id, platform, user?.role));
     if (available.length > 0) {
       setActiveSubTab(available[0].id);
     }
   };
-
-  // Track previous selected account ID to reset tab to default Automation tab when switching bot accounts
-  const prevAccountIdRef = useRef(selectedAccount?.id);
-  useEffect(() => {
-    if (prevAccountIdRef.current !== undefined && selectedAccount?.id && prevAccountIdRef.current !== selectedAccount.id) {
-      setActiveCategory('automation');
-      setActiveSubTab('keywordReplies');
-      setCurrentPage(1);
-      setFolderFilter('All Folders');
-      setTableSearch('');
-    }
-    prevAccountIdRef.current = selectedAccount?.id;
-  }, [selectedAccount?.id]);
 
   const handleSelectAccount = (acc) => {
     setSelectedAccount(acc);
@@ -659,29 +696,16 @@ export default function BotManagerPage() {
   // When platform changes within activeCategory, ensure activeSubTab is valid
   const currentAccountPlatform = selectedAccount?.platform;
   useEffect(() => {
+    if (!selectedAccount) return;
     const list = SUB_TABS[activeCategory] || [];
     const platform = (currentAccountPlatform || 'WHATSAPP').toUpperCase();
-    const available = list.filter((sub) => {
-      if (sub.id === 'messageTemplates') {
-        return ['WHATSAPP', 'FACEBOOK'].includes(platform);
-      }
-      if (['whatsappCalling', 'catalogSync', 'productMessages'].includes(sub.id)) {
-        return platform === 'WHATSAPP';
-      }
-      if (sub.id === 'storyMentions') {
-        return ['FACEBOOK', 'INSTAGRAM'].includes(platform);
-      }
-      if (sub.id === 'whatsappFlows') {
-        return user?.role !== 'USER';
-      }
-      return true;
-    });
+    const available = list.filter((sub) => isSubTabAvailable(sub.id, platform, user?.role));
 
     const isCurrentValid = available.some((sub) => sub.id === activeSubTab);
     if (!isCurrentValid && available.length > 0) {
       setActiveSubTab(available[0].id);
     }
-  }, [currentAccountPlatform, activeCategory, activeSubTab, user?.role]);
+  }, [selectedAccount, currentAccountPlatform, activeCategory, activeSubTab, user?.role]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
 
@@ -792,6 +816,19 @@ export default function BotManagerPage() {
     }
   };
 
+  /* ─── Export a bot as a file ─── */
+  const handleExportFlow = async (flow) => {
+    setExportingFlowId(flow.id);
+    try {
+      const warnings = await downloadFlowExport(flow);
+      showToast(warnings.length ? `Exported — ${warnings.join(' ')}` : 'Bot exported');
+    } catch (err) {
+      showToast(err?.response?.data?.message || 'Export failed', 'error');
+    } finally {
+      setExportingFlowId(null);
+    }
+  };
+
   /* ─── Clone / Copy Flow to Bot Account ─── */
   const openCloneModal = (flow) => {
     setFlowToClone(flow);
@@ -836,7 +873,7 @@ export default function BotManagerPage() {
   /* ─── Delete Flow ─── */
   const handleDeleteFlow = async (flowId, flowName, e) => {
     if (e) e.stopPropagation();
-    if (!window.confirm(`Delete flow "${flowName}"?`)) return;
+    if (!(await alert.ask(`Delete flow "${flowName}"?`))) return;
     try {
       await flowAPI.delete(flowId);
       setFlows((prev) => prev.filter((f) => f.id !== flowId));
@@ -866,7 +903,7 @@ export default function BotManagerPage() {
   const currentPlatformInfo = getPlatformInfo(selectedAccount?.platform);
 
   return (
-    <AppLayout>
+    <AppLayout hasSubmenu>
       <style>{`
         .bm-root {
           display: flex;
@@ -1116,7 +1153,11 @@ export default function BotManagerPage() {
           border: 1px solid var(--border);
           border-radius: 14px;
           box-shadow: 0 1px 4px rgba(0,0,0,0.03);
-          flex: 1;
+          /* Fill the free space, but never shrink below the content: with
+             "flex: 1" + overflow hidden a tall tab (Marketing Messages editor,
+             Quick Actions, Opt-out…) was squeezed to the window height and its
+             bottom clipped. .bm-main-content is the one scroller. */
+          flex: 1 0 auto;
           display: flex;
           flex-direction: column;
           overflow: hidden;
@@ -1384,26 +1425,9 @@ export default function BotManagerPage() {
               </button>
 
               <button
-                onClick={() => navigate('/settings/business-hours', { state: { selectedAccountId: selectedAccount?.id && selectedAccount.id !== 'all' ? selectedAccount.id : null } })}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '7px 14px',
-                  borderRadius: 8,
-                  border: '1px solid var(--border)',
-                  background: 'var(--bg-surface)',
-                  color: 'var(--text-primary)',
-                  fontSize: '0.82rem',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                <Clock size={14} color="var(--primary)" /> Business Hours
-              </button>
-
-              <button
-                onClick={() => setShowSettingsModal(true)}
+                onClick={openBotSettings}
+                disabled={!selectedAccount || selectedAccount.id === 'all'}
+                title={!selectedAccount || selectedAccount.id === 'all' ? 'Choose a bot account first' : 'Business hours of this bot'}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -1602,6 +1626,26 @@ export default function BotManagerPage() {
                   </button>
 
                   <button
+                    onClick={() => setShowImportDialog(true)}
+                    title="Import a bot from an export file"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '7px 14px',
+                      borderRadius: 8,
+                      background: 'var(--bg-surface)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border)',
+                      fontWeight: 600,
+                      fontSize: '0.84rem',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <Upload size={14} /> Import
+                  </button>
+
+                  <button
                     onClick={() => setShowCreateModal(true)}
                     style={{
                       display: 'flex',
@@ -1777,6 +1821,17 @@ export default function BotManagerPage() {
                               </button>
                               <button
                                 className="bm-row-action"
+                                title="Export as a file"
+                                disabled={exportingFlowId === flow.id}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleExportFlow(flow);
+                                }}
+                              >
+                                <Download size={13} />
+                              </button>
+                              <button
+                                className="bm-row-action"
                                 title="Test in Inbox"
                                 onClick={() => navigate('/inbox')}
                               >
@@ -1917,6 +1972,7 @@ export default function BotManagerPage() {
               ═════════════════════════════════════════════════════════════════ */}
           {activeCategory === 'automation' && activeSubTab === 'messageTemplates' && (selectedAccount?.platform || '').toUpperCase() === 'FACEBOOK' && (
             <FacebookUtilityTemplateManager
+              key={selectedAccount.id}
               selectedAccount={selectedAccount}
               showToast={showToast}
             />
@@ -2059,7 +2115,97 @@ export default function BotManagerPage() {
             </div>
           )}
 
-          {!['keywordReplies', 'messageTemplates'].includes(activeSubTab) && !(activeCategory === 'dataCollection' && activeSubTab === 'userInputFlows') && !(activeCategory === 'automation' && activeSubTab === 'httpApiCampaigns') && !(activeCategory === 'engagement' && activeSubTab === 'followUpSequences') && !(activeCategory === 'dataCollection' && activeSubTab === 'whatsappFlows') && !(activeCategory === 'commerce' && ['storeConnections', 'commerceCampaigns', 'commerceActivity'].includes(activeSubTab)) && !(activeCategory === 'engagement' && activeSubTab === 'chatWidget') && activeCategory !== 'ai' && (
+          {activeCategory === 'engagement' && ['iceBreakers', 'actionMenus'].includes(activeSubTab) && ['FACEBOOK', 'INSTAGRAM', 'WHATSAPP', 'TELEGRAM'].includes((selectedAccount?.platform || '').toUpperCase()) && (
+            <BotProfileManager key={`${selectedAccount.id}-${activeSubTab}`} account={selectedAccount} mode={activeSubTab === 'actionMenus' ? 'menu' : 'welcome'} />
+          )}
+
+          {activeCategory === 'commerce' && ['catalogSync', 'productMessages'].includes(activeSubTab) && (selectedAccount?.platform || '').toUpperCase() === 'WHATSAPP' && (
+            <WhatsAppCatalogPanel key={`${selectedAccount.id}-${activeSubTab}`} account={selectedAccount} mode={activeSubTab === 'productMessages' ? 'messages' : 'sync'} />
+          )}
+
+          {activeCategory === 'automation' && activeSubTab === 'waGroups' && (selectedAccount?.platform || '').toUpperCase() === 'WHATSAPP' && (
+            <WhatsAppGroupsPanel key={selectedAccount.id} account={selectedAccount} />
+          )}
+
+          {activeCategory === 'engagement' && activeSubTab === 'iceBreakers' && (selectedAccount?.platform || '').toUpperCase() === 'TIKTOK' && (
+            <TikTokAutoMessagesPanel key={selectedAccount.id} account={selectedAccount} />
+          )}
+
+          {activeCategory === 'automation' && activeSubTab === 'marketingMessages' && (selectedAccount?.platform || '').toUpperCase() === 'FACEBOOK' && (
+            <MarketingMessagesPanel key={selectedAccount.id} account={selectedAccount} />
+          )}
+          {activeCategory === 'automation' && activeSubTab === 'marketingMessages' && selectedAccount && (selectedAccount.platform || '').toUpperCase() !== 'FACEBOOK' && (
+            <div className="bm-content-card">
+              <div className="bm-card-header">
+                <h3 className="bm-card-title">Marketing Messages</h3>
+                <p className="bm-card-sub">Marketing Messages are for Facebook Pages (Messenger). For WhatsApp, use marketing templates in Broadcasting.</p>
+              </div>
+            </div>
+          )}
+
+          {activeCategory === 'automation' && activeSubTab === 'tgGroups' && (selectedAccount?.platform || '').toUpperCase() === 'TELEGRAM' && (
+            <TelegramGroupsPanel key={selectedAccount.id} account={selectedAccount} />
+          )}
+
+          {activeCategory === 'automation' && activeSubTab === 'quickActions' && selectedAccount && selectedAccount.id !== 'all' && (
+            <QuickActionsPanel key={selectedAccount.id} account={selectedAccount} onOpenFlow={openFlowBuilder} onOpenTab={setActiveSubTab} />
+          )}
+          {activeCategory === 'automation' && activeSubTab === 'quickActions' && (!selectedAccount || selectedAccount.id === 'all') && (
+            <div className="bm-content-card">
+              <div className="bm-card-header">
+                <h3 className="bm-card-title">Quick Actions</h3>
+                <p className="bm-card-sub">Quick Actions belong to one bot account — choose an account on the left.</p>
+              </div>
+            </div>
+          )}
+
+          {activeCategory === 'automation' && activeSubTab === 'telegramBusiness' && (selectedAccount?.platform || '').toUpperCase() === 'TELEGRAM' && (
+            <TelegramBusinessPanel key={selectedAccount.id} account={selectedAccount} />
+          )}
+
+          {activeCategory === 'automation' && activeSubTab === 'numberProfile' && (selectedAccount?.platform || '').toUpperCase() === 'WHATSAPP' && (
+            <WhatsAppNumberPanel key={selectedAccount.id} account={selectedAccount} />
+          )}
+
+          {activeCategory === 'automation' && activeSubTab === 'optOut' && selectedAccount && (selectedAccount.platform || '').toUpperCase() !== 'WEBCHAT' && (
+            <OptOutSettings key={selectedAccount.id} account={selectedAccount} />
+          )}
+          {activeCategory === 'automation' && activeSubTab === 'optOut' && (selectedAccount?.platform || '').toUpperCase() === 'WEBCHAT' && (
+            <div className="bm-content-card">
+              <div className="bm-card-header">
+                <h3 className="bm-card-title">Opt-out Keywords</h3>
+                <p className="bm-card-sub">Not needed for the website chat — visitors only get messages while they are chatting, never broadcasts or sequences.</p>
+              </div>
+            </div>
+          )}
+
+          {activeCategory === 'engagement' && activeSubTab === 'storyMentions' && ['FACEBOOK', 'INSTAGRAM'].includes((selectedAccount?.platform || '').toUpperCase()) && (
+            <StoryRepliesPanel key={selectedAccount.id} account={selectedAccount} />
+          )}
+
+          {activeCategory === 'automation' && activeSubTab === 'whatsappCalling' && (
+            <WhatsAppCallingTab account={selectedAccount} />
+          )}
+
+          {LINKED_TABS[activeSubTab] && (
+            <div className="bm-content-card">
+              <div className="bm-card-header">
+                <h3 className="bm-card-title">{LINKED_TABS[activeSubTab].title}</h3>
+                <p className="bm-card-sub">{LINKED_TABS[activeSubTab].text}</p>
+              </div>
+              <div style={{ padding: '28px 20px', textAlign: 'center' }}>
+                <button
+                  type="button"
+                  onClick={() => navigate(LINKED_TABS[activeSubTab].to)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '9px 18px', borderRadius: 8, background: 'var(--primary)', color: '#fff', border: 'none', fontWeight: 700, fontSize: '0.84rem', cursor: 'pointer' }}
+                >
+                  {LINKED_TABS[activeSubTab].cta} <ArrowRight size={14} />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!LINKED_TABS[activeSubTab] && activeSubTab !== 'whatsappCalling' && activeSubTab !== 'optOut' && activeSubTab !== 'numberProfile' && activeSubTab !== 'waGroups' && activeSubTab !== 'telegramBusiness' && activeSubTab !== 'tgGroups' && activeSubTab !== 'quickActions' && activeSubTab !== 'marketingMessages' && activeSubTab !== 'storyMentions' && !['catalogSync', 'productMessages'].includes(activeSubTab) && !(['iceBreakers', 'actionMenus'].includes(activeSubTab) && ['FACEBOOK', 'INSTAGRAM', 'WHATSAPP', 'TELEGRAM'].includes((selectedAccount?.platform || '').toUpperCase())) && !(activeSubTab === 'iceBreakers' && (selectedAccount?.platform || '').toUpperCase() === 'TIKTOK') && !['keywordReplies', 'messageTemplates'].includes(activeSubTab) && !(activeCategory === 'dataCollection' && activeSubTab === 'userInputFlows') && !(activeCategory === 'automation' && activeSubTab === 'httpApiCampaigns') && !(activeCategory === 'engagement' && activeSubTab === 'followUpSequences') && !(activeCategory === 'dataCollection' && activeSubTab === 'whatsappFlows') && !(activeCategory === 'commerce' && ['storeConnections', 'commerceCampaigns', 'commerceActivity'].includes(activeSubTab)) && !(activeCategory === 'engagement' && activeSubTab === 'chatWidget') && activeCategory !== 'ai' && (
             <div className="bm-content-card">
               <div className="bm-card-header">
                 <h3 className="bm-card-title">{activeSubTab.replace(/([A-Z])/g, ' $1').trim()}</h3>
@@ -2071,10 +2217,10 @@ export default function BotManagerPage() {
               <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-tertiary)' }}>
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10, color: 'var(--text-muted)' }}><Zap size={40} strokeWidth={1.5} /></div>
                 <h4 style={{ fontSize: '1.05rem', fontWeight: 800, margin: '0 0 6px 0', color: 'var(--text-primary)' }}>
-                  {activeSubTab.replace(/([A-Z])/g, ' $1').trim()} Module
+                  {activeSubTab.replace(/([A-Z])/g, ' $1').trim()} — in development
                 </h4>
-                <p style={{ fontSize: '0.84rem', maxWidth: 400, margin: '0 auto 16px' }}>
-                  This automation feature is enabled for {currentPlatformInfo.label}. Create visual flow triggers or integrate endpoints.
+                <p style={{ fontSize: '0.84rem', maxWidth: 420, margin: '0 auto 16px' }}>
+                  This feature for {currentPlatformInfo.label} is being built and isn't available yet. Until then you can build the same behaviour with a flow.
                 </p>
                 <button
                   onClick={() => setShowCreateModal(true)}
@@ -2232,6 +2378,16 @@ export default function BotManagerPage() {
       )}
 
       {/* ── Clone Flow Modal ── */}
+      {showImportDialog && (
+        <ImportFlowDialog
+          integrations={integrations}
+          defaultIntegrationId={selectedAccount?.id}
+          onClose={() => setShowImportDialog(false)}
+          onImported={() => loadAllData()}
+          onOpenBuilder={(flowId) => { setShowImportDialog(false); openFlowBuilder(flowId); }}
+        />
+      )}
+
       {showCloneModal && flowToClone && (
         <div
           style={{
@@ -2353,176 +2509,6 @@ export default function BotManagerPage() {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* ── Bot Settings Modal ── */}
-      {showSettingsModal && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.5)',
-            zIndex: 9999,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <div
-            style={{
-              width: settingsModalTab === 'businessHours' ? 620 : 500,
-              maxWidth: '92vw',
-              maxHeight: '88vh',
-              display: 'flex',
-              flexDirection: 'column',
-              background: 'var(--bg-surface)',
-              borderRadius: 16,
-              padding: 24,
-              boxShadow: '0 16px 40px rgba(0,0,0,0.15)',
-              border: '1px solid var(--border)',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-              <h3 style={{ fontSize: '1.15rem', fontWeight: 800, margin: 0, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Settings size={18} color="var(--primary)" /> Bot Settings
-              </h3>
-              <button
-                onClick={() => setShowSettingsModal(false)}
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: '50%',
-                  border: '1px solid var(--border)',
-                  background: 'var(--bg-input)',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: 'var(--text-tertiary)',
-                }}
-              >
-                <X size={14} />
-              </button>
-            </div>
-
-            {/* Tabs — General is the original (mock) bot-config form, left as-is;
-                Business Hours is the real, wired-up feature. */}
-            <div style={{ display: 'flex', gap: 4, padding: 4, background: 'var(--bg-hover)', borderRadius: 10, marginBottom: 16, flexShrink: 0 }}>
-              {[{ id: 'general', label: 'General' }, { id: 'businessHours', label: 'Business Hours' }].map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => setSettingsModalTab(t.id)}
-                  style={{
-                    flex: 1, padding: '7px 10px', borderRadius: 7, border: 'none', cursor: 'pointer',
-                    fontSize: '0.8rem', fontWeight: 700,
-                    background: settingsModalTab === t.id ? 'var(--bg-surface)' : 'transparent',
-                    color: settingsModalTab === t.id ? 'var(--text-primary)' : 'var(--text-tertiary)',
-                    boxShadow: settingsModalTab === t.id ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
-                  }}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-
-            <div style={{ overflowY: 'auto', paddingRight: 2 }}>
-              {settingsModalTab === 'general' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 5 }}>
-                      Welcome Greeting Message
-                    </label>
-                    <textarea
-                      rows={2}
-                      className="form-input w-full"
-                      defaultValue="Hello! Welcome to our official support. How can we help you today?"
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: 5 }}>
-                      Away / Offline Auto-reply
-                    </label>
-                    <textarea
-                      rows={2}
-                      className="form-input w-full"
-                      defaultValue="We are currently away. Our team will get back to you during business hours."
-                    />
-                  </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
-                    <button
-                      type="button"
-                      onClick={() => setShowSettingsModal(false)}
-                      style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-surface)', cursor: 'pointer', fontSize: '0.85rem' }}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowSettingsModal(false);
-                        showToast('Bot settings updated!');
-                      }}
-                      style={{
-                        padding: '8px 20px',
-                        borderRadius: 8,
-                        background: 'var(--primary)',
-                        color: '#ffffff',
-                        border: 'none',
-                        cursor: 'pointer',
-                        fontSize: '0.85rem',
-                        fontWeight: 700,
-                      }}
-                    >
-                      Save Settings
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {settingsModalTab === 'businessHours' && (
-                <div style={{ textAlign: 'center', padding: '28px 16px' }}>
-                  <div
-                    style={{
-                      width: 52,
-                      height: 52,
-                      borderRadius: 14,
-                      background: 'rgba(24, 24, 27, 0.06)',
-                      color: 'var(--primary)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      margin: '0 auto 14px auto',
-                    }}
-                  >
-                    <Clock size={26} />
-                  </div>
-                  <h4 style={{ fontSize: '1.05rem', fontWeight: 800, margin: '0 0 6px 0', color: 'var(--text-primary)' }}>
-                    Business Hours & Availability
-                  </h4>
-                  <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', maxWidth: 380, margin: '0 auto 18px auto', lineHeight: 1.5 }}>
-                    Business Hours configuration has moved to a dedicated full page with timezone detection, live operating status, multi-channel bot switching, and off-hours automation.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowSettingsModal(false);
-                      navigate('/settings/business-hours', {
-                        state: { selectedAccountId: selectedAccount?.id && selectedAccount.id !== 'all' ? selectedAccount.id : null },
-                      });
-                    }}
-                    className="btn btn-primary"
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 20px', fontSize: '0.85rem' }}
-                  >
-                    Open Business Hours Page <ExternalLink size={14} />
-                  </button>
-                </div>
-              )}
-            </div>
           </div>
         </div>
       )}

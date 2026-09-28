@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import AppLayout from '../../Layout/AppLayout';
 import { integrationAPI } from '../../services/api';
 import { useAuth } from '../../Provider/AuthContext';
+import { alert } from '../../lib/alerts';
 
 const PLATFORMS = ['WHATSAPP', 'FACEBOOK', 'INSTAGRAM'];
 
@@ -72,7 +73,7 @@ export default function IntegrationsPage() {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Delete this integration?')) return;
+    if (!(await alert.ask('Delete this integration?'))) return;
     try {
       await integrationAPI.delete(id);
       setIntegrations((prev) => prev.filter((i) => (i._id || i.id) !== id));

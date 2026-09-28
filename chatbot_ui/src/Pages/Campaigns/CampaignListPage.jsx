@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import useUrlState from '../../hooks/useUrlState';
 import { useNavigate, useLocation } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
 import { broadcastAPI } from '../../services/api';
@@ -6,7 +7,8 @@ import { io } from 'socket.io-client';
 import { getSocketUrl, socketAuth } from '../../utils/socketAuth';
 import AudienceForm from '../../Components/Broadcast/AudienceForm';
 import { resolveContacts } from '../../Components/Broadcast/useBroadcastCampaign';
-import { confirmBroadcastAudience, showBroadcastError, canScheduleBroadcast } from '../../Components/Broadcast/broadcastDialogs';
+import { confirmBroadcastAudience, showBroadcastError, canScheduleBroadcast, isUtilityBroadcast } from '../../Components/Broadcast/broadcastDialogs';
+import { alert } from '../../lib/alerts';
 import {
   Megaphone, MessageCircle, Facebook, Send, Video, BarChart3, Trash2, X, ArrowRight,
   Plus, Clock, Tag, Workflow, FileText, CheckCircle2, AlertTriangle, Loader2,
@@ -22,7 +24,7 @@ const CHANNELS = [
 
 const WINDOW_NOTE = {
   WHATSAPP: 'Two broadcast types, chosen when you create one (and changeable in the Broadcast element): Anytime (an approved template, which reaches subscribers outside the 24-hour window) or Inside 24 hours (free-form messages to anyone who messaged you in the last 24 hours).',
-  FACEBOOK: 'Messenger only allows automated sends to subscribers inside their 24-hour window — Meta retired the old outside-window broadcast tools in Feb 2026, and the replacement is not yet open to new integrations.',
+  FACEBOOK: 'Two types: Inside 24 hours (free-form messages to subscribers who wrote in the last 24 hours) or Utility template (an approved Messenger Utility template, any time — only for a personal order, account, appointment or event update, never announcements or offers). Meta removed the old message tags on 27 April 2026.',
   TELEGRAM: 'No time window — reaches anyone who has ever started a chat with your bot.',
   TIKTOK: "TikTok's Business Messaging API is reply-only: a business can never start a conversation, only reply within 48 hours of the subscriber's last message. This is a platform policy, not a limitation of this app.",
 };
@@ -197,7 +199,7 @@ export default function CampaignListPage() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [activeTab, setActiveTab] = useState('WHATSAPP');
+  const [activeTab, setActiveTab] = useUrlState('channel', 'WHATSAPP', { allowed: CHANNELS.map((c) => c.id) });
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [labels, setLabels] = useState([]);
@@ -330,8 +332,10 @@ export default function CampaignListPage() {
   const handleCreateClick = () => {
     setCreateName('');
     setCreateIntegrationId(integrations.length === 1 ? String(integrations[0].id) : '');
-    // Most WhatsApp audiences are outside the 24-hour window, so Anytime is the default.
-    setCreateMode('TEMPLATE');
+    // Most WhatsApp audiences are outside the 24-hour window, so Anytime is the
+    // default there. Messenger's template type is for transactional updates only,
+    // so Inside 24 hours stays its default.
+    setCreateMode(activeTab === 'FACEBOOK' ? 'WINDOW' : 'TEMPLATE');
     setShowCreateModal(true);
   };
 
@@ -367,10 +371,10 @@ export default function CampaignListPage() {
     try {
       // Every broadcast is built in the Flow Builder, which opens with the
       // element this type needs already connected to the Broadcast element.
-      // Only WhatsApp has the Anytime (template) type.
+      // WhatsApp (Anytime) and Messenger (Utility template) have a template type.
       const res = await broadcastAPI.startWithFlow({
         name: createName, platform: activeTab, integrationId: createIntegrationId,
-        mode: activeTab === 'WHATSAPP' ? createMode : 'WINDOW',
+        mode: activeTab === 'WHATSAPP' || activeTab === 'FACEBOOK' ? createMode : 'WINDOW',
       });
       setShowCreateModal(false);
       navigate(`/flows/${res.data.flowId}/edit`, {
@@ -400,7 +404,8 @@ export default function CampaignListPage() {
         includeContactIds: audienceForm.includeContacts.map((c) => c.id),
         excludeContactIds: audienceForm.excludeContacts.map((c) => c.id),
         tagLabelId: audienceForm.tagLabelId,
-        ...(configuring.mode === 'TEMPLATE' ? {
+        // A/B variants are WhatsApp templates only.
+        ...(configuring.mode === 'TEMPLATE' && configuring.platform === 'WHATSAPP' ? {
           variantBTemplateId: abEnabled && variantBTemplateId ? variantBTemplateId : null,
           abSplitPercent: abEnabled ? abSplitPercent : null,
         } : {}),
@@ -416,7 +421,9 @@ export default function CampaignListPage() {
         return;
       }
       const whenIso = sendMode === 'schedule' ? new Date(scheduleAt).toISOString() : null;
+      const utility = isUtilityBroadcast(configuring.platform, configuring.mode);
       const ok = await confirmBroadcastAudience({
+        utility,
         audience: saved.data,
         action: whenIso ? 'schedule' : 'send',
         accountLabel: configuring.wa_display_phone || configuring.integration_name,
@@ -424,10 +431,10 @@ export default function CampaignListPage() {
       });
       if (!ok) return;
       if (whenIso) {
-        const res = await broadcastAPI.schedule(configuring.id, whenIso, { confirmAudience: true });
+        const res = await broadcastAPI.schedule(configuring.id, whenIso, { confirmAudience: true, confirmUtility: utility });
         showToast(res.data.rescheduled ? 'Broadcast rescheduled' : 'Broadcast scheduled');
       } else {
-        await broadcastAPI.sendNow(configuring.id, { confirmAudience: true });
+        await broadcastAPI.sendNow(configuring.id, { confirmAudience: true, confirmUtility: utility });
         showToast('Broadcast started');
       }
       setConfiguring(null);
@@ -461,12 +468,12 @@ export default function CampaignListPage() {
 
   // The row's button for a scheduled broadcast — cancelling puts it back to Draft (nothing is sent).
   const confirmCancelSchedule = async (camp) => {
-    if (!window.confirm(`Cancel the schedule of "${camp.name}"? It goes back to Draft and won't be sent.`)) return;
+    if (!(await alert.ask(`Cancel the schedule of "${camp.name}"? It goes back to Draft and won't be sent.`))) return;
     await handleCancelSchedule(camp);
   };
 
   const handleDelete = async (camp) => {
-    if (!window.confirm(`Delete campaign "${camp.name}"?`)) return;
+    if (!(await alert.ask(`Delete campaign "${camp.name}"?`))) return;
     try {
       await broadcastAPI.delete(camp.id);
       showToast('Campaign deleted');
@@ -517,7 +524,9 @@ export default function CampaignListPage() {
             <div style={{ fontSize: '.85rem', fontWeight: 700, marginBottom: 3 }}>
               {activeTab === 'WHATSAPP'
                 ? 'Inside 24 hours or Anytime (template)'
-                : `${channel.label} · ${channel.hint}`}
+                : activeTab === 'FACEBOOK'
+                  ? 'Inside 24 hours or Utility template'
+                  : `${channel.label} · ${channel.hint}`}
             </div>
             <p style={{ fontSize: '.8rem', color: 'var(--text-secondary)', lineHeight: 1.55, maxWidth: 680 }}>{contextNote}</p>
           </div>
@@ -713,13 +722,18 @@ export default function CampaignListPage() {
                   </div>
                 ))}
               </div>
+              {selectedCampaign.held_count > 0 && (
+                <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.3)', borderRadius: 'var(--radius-sm)', fontSize: '.78rem', color: '#92400e', lineHeight: 1.5 }}>
+                  <b>{nf(selectedCampaign.held_count)} held by WhatsApp</b> for a quality check (template pacing). WhatsApp sends them once early recipients react well — usually within an hour — or drops them if the feedback is negative (they then show as Failed with code 132015).
+                </div>
+              )}
               {selectedCampaign.error_message && (
                 <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(239,68,68,.07)', border: '1px solid rgba(239,68,68,.2)', borderRadius: 'var(--radius-sm)', fontSize: '.78rem', color: 'var(--danger)' }}>
                   {selectedCampaign.error_message}
                 </div>
               )}
 
-              {selectedCampaign.variant_b_template_id && (
+              {(selectedCampaign.variant_b_template_id || selectedCampaign.variant_b_flow_id) && (
                 <div style={{ marginTop: 14 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '.8rem', fontWeight: 700, marginBottom: 8 }}>
                     <Zap size={13} /> A/B Results
@@ -730,7 +744,9 @@ export default function CampaignListPage() {
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                       {['A', 'B'].map((v) => {
                         const stat = variantStats.find((s) => s.variant === v) || { targeted: 0, sent: 0, delivered: 0, read_count: 0, failed: 0 };
-                        const label = v === 'A' ? selectedCampaign.template_name : selectedCampaign.variant_b_template_name;
+                        const label = selectedCampaign.variant_b_flow_id
+                          ? (v === 'A' ? selectedCampaign.flow_name || 'Main flow' : 'Second flow')
+                          : (v === 'A' ? selectedCampaign.template_name : selectedCampaign.variant_b_template_name);
                         return (
                           <div key={v} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '10px 12px' }}>
                             <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>
@@ -740,6 +756,7 @@ export default function CampaignListPage() {
                               <span>Sent <strong>{nf(stat.sent)}</strong></span>
                               <span>Delivered <strong>{nf(stat.delivered)}</strong> ({pctOf(stat.delivered, stat.sent)}%)</span>
                               <span>Read <strong>{nf(stat.read_count)}</strong> ({pctOf(stat.read_count, stat.sent)}%)</span>
+                              <span title="Wrote back within 3 days">Replied <strong>{nf(stat.replied || 0)}</strong> ({pctOf(stat.replied || 0, stat.sent)}%)</span>
                             </div>
                           </div>
                         );
@@ -764,7 +781,8 @@ export default function CampaignListPage() {
                 const c = log.status === 'DELIVERED' ? M.delivered
                   : log.status === 'READ' ? M.read
                   : log.status === 'FAILED' ? M.failed
-                  : log.status === 'SENT' ? M.sent : 'var(--text-secondary)';
+                  : log.status === 'SENT' ? M.sent
+                  : log.status === 'HELD' ? '#b45309' : 'var(--text-secondary)';
                 return (
                   <div key={log.id} style={{ padding: '10px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
@@ -773,7 +791,7 @@ export default function CampaignListPage() {
                       </span>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '.72rem', fontWeight: 700, color: c, flexShrink: 0 }}>
                         <span style={{ width: 6, height: 6, borderRadius: 99, background: c }} />
-                        {log.status}
+                        {log.status === 'HELD' ? 'HELD BY WHATSAPP' : log.status}
                       </span>
                     </div>
                     {log.error_message && <div style={{ color: 'var(--danger)', fontSize: '.72rem', marginTop: 4 }}>{log.error_message}</div>}
@@ -820,14 +838,17 @@ export default function CampaignListPage() {
                 )}
               </div>
 
-              {activeTab === 'WHATSAPP' && (
+              {(activeTab === 'WHATSAPP' || activeTab === 'FACEBOOK') && (
                 <div className="form-group">
                   <label className="form-label">Broadcast type</label>
                   <div className="bc-types" role="radiogroup" aria-label="Broadcast type">
-                    {[
+                    {(activeTab === 'FACEBOOK' ? [
+                      { value: 'WINDOW', Icon: MessageCircle, title: 'Inside 24 hours', desc: 'Free-form messages, only to subscribers who wrote to you in the last 24 hours.' },
+                      { value: 'TEMPLATE', Icon: FileText, title: 'Utility template', desc: 'An approved Utility template, any time — only a personal order, account, appointment or event update for each subscriber. Never announcements or offers.' },
+                    ] : [
                       { value: 'TEMPLATE', Icon: FileText, title: 'Anytime', desc: 'An approved message template. Reaches subscribers even if they haven’t written in the last 24 hours.' },
                       { value: 'WINDOW', Icon: MessageCircle, title: 'Inside 24 hours', desc: 'Free-form messages, only to subscribers who wrote to you in the last 24 hours.' },
-                    ].map((t) => (
+                    ]).map((t) => (
                       <button
                         key={t.value}
                         type="button"
@@ -897,7 +918,7 @@ export default function CampaignListPage() {
 
             <AudienceForm platform={configuring.platform} integrationId={configuring.integration_id || configIntegrationId || null} labels={labels} value={audienceForm} onChange={setAudienceForm} previewCount={previewCount} />
 
-            {configuring.mode === 'TEMPLATE' && (
+            {configuring.mode === 'TEMPLATE' && configuring.platform === 'WHATSAPP' && (
               <>
                 <div style={{ height: 1, background: 'var(--border)' }} />
                 <div>

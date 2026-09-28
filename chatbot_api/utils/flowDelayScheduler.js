@@ -1,5 +1,7 @@
 import pool from "../db.js";
 import { processFlow } from "./flowEngine.js";
+import { isWorkspaceExpired } from "./subscriptionStatus.js";
+import { lockedJob } from "./jobLock.js";
 
 /**
  * Per-node "Delay before this step" resume poller (Flow Builder — see
@@ -102,6 +104,11 @@ export async function processDueFlowDelays() {
     );
     for (const session of dueSessions) {
       try {
+        // Expired plan → the flow waits (checked again in 15 min) until the plan is renewed.
+        if (await isWorkspaceExpired(session.agency_id)) {
+          await pool.query("UPDATE flow_sessions SET delay_next_run_at = NOW() + INTERVAL 15 MINUTE WHERE id = ?", [session.id]);
+          continue;
+        }
         const claimed = await claimSession(session.id);
         if (!claimed) continue; // another tick or timer already grabbed this one
         await resumeOneSession(session);
@@ -117,6 +124,6 @@ export async function processDueFlowDelays() {
 export function startFlowDelayScheduler() {
   console.log("⏱️  Flow Delay scheduler started (runs every 5 seconds)");
   // Run an immediate check on startup for any overdue sessions
-  processDueFlowDelays().catch(() => {});
-  setInterval(processDueFlowDelays, 5000);
+  lockedJob("flow-delays", processDueFlowDelays)();
+  setInterval(lockedJob("flow-delays", processDueFlowDelays), 5000);
 }

@@ -1,5 +1,6 @@
 import axios from "axios";
 import pool from "../db.js";
+import { META_API_VERSION } from "./metaApi.js";
 
 /**
  * Comment Automation: which post a campaign runs on (comment_rule_posts —
@@ -73,7 +74,7 @@ export function samePost(a, b, { loose = false } = {}) {
  * whose media ids carry no owner) Meta is asked who owns the post, using the
  * campaign account's own token. Any doubt (Meta error, no id) = not allowed.
  */
-export async function postBelongsToAccount(integration, postId, apiVersion = process.env.META_API_VERSION || "v21.0") {
+export async function postBelongsToAccount(integration, postId, apiVersion = META_API_VERSION) {
   if (!integration || !postId) return false;
   const id = String(postId);
   const isInstagram = String(integration.platform || "").toUpperCase() === "INSTAGRAM";

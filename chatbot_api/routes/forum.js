@@ -108,7 +108,7 @@ router.get("/forum/threads", async (req, res) => {
     const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total FROM forum_threads ft ${where}`, params);
     const [rows] = await pool.query(
       `SELECT ft.id, ft.category, ft.title, LEFT(ft.body, 240) AS excerpt, ft.status, ft.is_pinned, ft.upvote_count, ft.reply_count,
-              ft.last_activity_at, ft.created_at, u.name AS authorName
+              ft.last_activity_at, ft.created_at, u.name AS authorName, u.avatar AS authorAvatar
        FROM forum_threads ft
        JOIN users u ON u.id = ft.author_user_id
        ${where}
@@ -129,7 +129,7 @@ router.get("/forum/threads/:id", async (req, res) => {
     if (blockIneligibleViewer(req, res)) return;
     const viewer = getOptionalUser(req);
     const [[thread]] = await pool.query(
-      `SELECT ft.*, u.name AS authorName, a.name AS authorAgencyName
+      `SELECT ft.*, u.name AS authorName, u.avatar AS authorAvatar, a.name AS authorAgencyName
        FROM forum_threads ft
        JOIN users u ON u.id = ft.author_user_id
        JOIN agencies a ON a.id = ft.author_agency_id
@@ -144,7 +144,7 @@ router.get("/forum/threads/:id", async (req, res) => {
     }
 
     const [replies] = await pool.query(
-      `SELECT fr.*, u.name AS authorName
+      `SELECT fr.*, u.name AS authorName, u.avatar AS authorAvatar
        FROM forum_replies fr
        JOIN users u ON u.id = fr.author_user_id
        WHERE fr.thread_id = ?
@@ -331,7 +331,7 @@ router.get("/admin/forum/pending", async (req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT ft.id, ft.category, ft.title, ft.body, ft.created_at,
-              u.name AS authorName, u.email AS authorEmail, a.name AS authorAgencyName
+              u.name AS authorName, u.avatar AS authorAvatar, u.email AS authorEmail, a.name AS authorAgencyName
        FROM forum_threads ft
        JOIN users u ON u.id = ft.author_user_id
        JOIN agencies a ON a.id = ft.author_agency_id

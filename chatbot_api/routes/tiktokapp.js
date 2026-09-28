@@ -4,6 +4,8 @@ import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { resolveTikTokAppSettings } from "../utils/appCredentials.js";
+import { requireDeveloperApps } from "../middleware/developerAppsAccess.js";
+import { maskAppRow, keepOrSeal, openAppRow } from "../utils/appSecrets.js";
 
 const router = express.Router();
 
@@ -26,9 +28,11 @@ router.get("/settings/tiktok-app/client-key", authMiddleware, roleMiddleware("RE
   }
 });
 
-router.use("/settings/tiktok-app", authMiddleware, roleMiddleware("RESELLER", "ADMIN"));
+// Credentials: only workspaces that run their own apps (Platform, Resellers) — middleware/developerAppsAccess.js.
+router.use("/settings/tiktok-app", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireDeveloperApps);
 
 async function resolveAgencyId(req) {
+  if (req.tenant?.agencyId) return Number(req.tenant.agencyId);
   if (req.user?.agencyId) return Number(req.user.agencyId);
   const userId = req.user?.id;
   if (!userId) return 1;
@@ -78,7 +82,7 @@ router.get("/settings/tiktok-app", async (req, res) => {
     return res.json({
       success: true,
       agencyId,
-      settings: settings ? { ...settings, verify_token: verifyToken } : null,
+      settings: settings ? { ...maskAppRow(settings), verify_token: verifyToken } : null,
       generatedVerifyToken: verifyToken,
     });
   } catch (err) {
@@ -90,11 +94,13 @@ router.get("/settings/tiktok-app", async (req, res) => {
 // ─── SAVE TIKTOK APP SETTINGS ─────────────────────────────────────
 router.post("/settings/tiktok-app", async (req, res) => {
   const { clientKey, clientSecret, appName, verifyToken, redirectUri, customWebhookUrl, isActive } = req.body;
-  if (!clientKey || !clientSecret || !verifyToken) {
+  const agencyId = await resolveAgencyId(req);
+  // Stored encrypted; the masked value the screen shows keeps the stored one (utils/appSecrets.js).
+  const [[stored]] = await pool.query("SELECT client_secret FROM tiktok_app_settings WHERE agency_id = ?", [agencyId]);
+  const sealedSecret = keepOrSeal(clientSecret, stored?.client_secret);
+  if (!clientKey || !sealedSecret || !verifyToken) {
     return res.status(400).json({ success: false, message: "Client Key (App ID), Client Secret and Verify Token are required" });
   }
-
-  const agencyId = await resolveAgencyId(req);
   const backendBase = process.env.BACKEND_URL || process.env.PUBLIC_URL || "http://localhost:5000";
   const webhookUrl = customWebhookUrl || `${backendBase}/api/v1/webhook/tiktok/${agencyId}`;
   const defaultRedirect = redirectUri || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/auth/tiktok/callback`;
@@ -108,14 +114,14 @@ router.post("/settings/tiktok-app", async (req, res) => {
           redirect_uri = ?, webhook_url = ?, verify_token = ?,
           is_configured = 1, is_active = ?, updated_at = NOW()
         WHERE agency_id = ?`,
-        [appName || 'My TikTok App', clientKey.trim(), clientSecret.trim(), defaultRedirect, webhookUrl, verifyToken, isActive ? 1 : 0, agencyId]
+        [appName || 'My TikTok App', clientKey.trim(), sealedSecret, defaultRedirect, webhookUrl, verifyToken, isActive ? 1 : 0, agencyId]
       );
     } else {
       await pool.query(
         `INSERT INTO tiktok_app_settings
           (agency_id, app_name, client_key, client_secret, redirect_uri, webhook_url, verify_token, is_configured, is_active)
         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-        [agencyId, appName || 'My TikTok App', clientKey.trim(), clientSecret.trim(), defaultRedirect, webhookUrl, verifyToken, isActive ? 1 : 0]
+        [agencyId, appName || 'My TikTok App', clientKey.trim(), sealedSecret, defaultRedirect, webhookUrl, verifyToken, isActive ? 1 : 0]
       );
     }
 
@@ -143,7 +149,7 @@ router.post("/settings/tiktok-app/test", async (req, res) => {
   const agencyId = await resolveAgencyId(req);
   try {
     const [rows] = await pool.query("SELECT * FROM tiktok_app_settings WHERE agency_id = ?", [agencyId]);
-    const settings = rows[0];
+    const settings = openAppRow(rows[0]);
     if (!settings || !settings.client_key || !settings.client_secret) {
       return res.status(400).json({ success: false, message: "Please save Client Key and Client Secret first." });
     }

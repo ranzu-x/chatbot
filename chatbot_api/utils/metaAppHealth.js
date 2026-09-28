@@ -1,3 +1,5 @@
+import { META_API_VERSION } from "./metaApi.js";
+
 /** Validates a Meta app's credentials against the Graph API — shared by the
  * manual "Test Connection" button (routes/metaapp.js, routes/metaapppool.js)
  * and the periodic health-check scheduler (utils/metaAppHealthScheduler.js). */
@@ -7,7 +9,7 @@ export async function testMetaAppCredentials(appId, appSecret) {
   }
   try {
     const res = await fetch(
-      `https://graph.facebook.com/v21.0/${appId}?access_token=${appId}|${appSecret}`,
+      `https://graph.facebook.com/${META_API_VERSION}/${appId}?access_token=${appId}|${appSecret}`,
       { signal: AbortSignal.timeout(8000) }
     );
     const data = await res.json();

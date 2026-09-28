@@ -2,7 +2,8 @@ import express from "express";
 import crypto from "crypto";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
-import { createChatPaymentLink, markOrderPaid } from "../services/chatPaymentService.js";
+import { createChatPaymentLink, markOrderPaid, refundStarsOrder } from "../services/chatPaymentService.js";
+import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { stripe } from "../services/stripeService.js";
 
 const router = express.Router();
@@ -78,7 +79,7 @@ router.post("/payments/order/:orderId/simulate-pay", async (req, res) => {
 // ─── CREATE IN-CHAT PAYMENT LINK ─────────────────────────────────────────────
 router.post("/payments/create-link", authMiddleware, async (req, res) => {
   try {
-    const agencyId = req.user?.agencyId || 1;
+    const agencyId = req.tenant?.agencyId ?? req.user?.agencyId;
     const {
       productName,
       amount,
@@ -122,12 +123,12 @@ router.post("/payments/create-link", authMiddleware, async (req, res) => {
 // ─── GET RECENT IN-CHAT ORDERS & REVENUE STATS ───────────────────────────────
 router.get("/payments/orders", authMiddleware, async (req, res) => {
   try {
-    const agencyId = req.user?.agencyId || 1;
+    const agencyId = req.tenant?.agencyId ?? req.user?.agencyId;
 
     const [orders] = await pool.query(
-      `SELECT co.*, b.name as flow_name
+      `SELECT co.*, f.name as flow_name
        FROM chat_orders co
-       LEFT JOIN bots b ON b.id = co.flow_id
+       LEFT JOIN flows f ON f.id = co.flow_id AND f.agency_id = co.agency_id
        WHERE co.agency_id = ?
        ORDER BY co.created_at DESC
        LIMIT 100`,
@@ -135,13 +136,17 @@ router.get("/payments/orders", authMiddleware, async (req, res) => {
     );
 
     // Calculate Summary Metrics
+    // Telegram Stars (XTR) are counted apart — they aren't money in the order's currency.
     let totalRevenue = 0;
+    let starsRevenue = 0;
     let paidOrdersCount = 0;
     let pendingOrdersCount = 0;
 
     for (const o of orders) {
+      delete o.access_token;
       if (o.status === "PAID") {
-        totalRevenue += Number(o.amount);
+        if (o.currency === "XTR") starsRevenue += Number(o.amount);
+        else totalRevenue += Number(o.amount);
         paidOrdersCount++;
       } else if (o.status === "PENDING") {
         pendingOrdersCount++;
@@ -153,6 +158,7 @@ router.get("/payments/orders", authMiddleware, async (req, res) => {
       orders,
       metrics: {
         totalRevenue: Number(totalRevenue.toFixed(2)),
+        starsRevenue: Math.round(starsRevenue),
         totalOrders: orders.length,
         paidOrdersCount,
         pendingOrdersCount,
@@ -160,6 +166,17 @@ router.get("/payments/orders", authMiddleware, async (req, res) => {
     });
   } catch (err) {
     console.error("Get chat orders error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── REFUND A TELEGRAM STARS ORDER (owner only) ──────────────────────────────
+router.post("/payments/orders/:orderId/refund", authMiddleware, roleMiddleware("RESELLER", "ADMIN"), async (req, res) => {
+  try {
+    const result = await refundStarsOrder(req.tenant?.agencyId ?? req.user?.agencyId, Number(req.params.orderId));
+    return res.status(result.status).json({ success: result.status === 200, message: result.message });
+  } catch (err) {
+    console.error("Refund chat order error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });

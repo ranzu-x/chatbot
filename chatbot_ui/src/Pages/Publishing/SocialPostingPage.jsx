@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
+import useUrlState from '../../hooks/useUrlState';
 import AppLayout from '../../Layout/AppLayout';
 import { socialPostAPI, integrationAPI, uploadAPI } from '../../services/api';
 import { resolveMediaUrl } from '../Contacts/subscriberUtils';
+import { alert } from '../../lib/alerts';
 import {
   Send,
   Calendar,
@@ -43,7 +45,7 @@ const IMAGE_ACCEPT = 'image/jpeg,image/png,image/gif,image/webp';
 const VIDEO_ACCEPT = 'video/mp4,video/webm';
 
 export default function SocialPostingPage() {
-  const [activeTab, setActiveTab] = useState('create'); // 'create' | 'history'
+  const [activeTab, setActiveTab] = useUrlState('tab', 'create', { allowed: ['create', 'history'] });
   const [integrations, setIntegrations] = useState([]);
   const [selectedIntegrationIds, setSelectedIntegrationIds] = useState([]);
   const [loadingIntegrations, setLoadingIntegrations] = useState(true);
@@ -280,7 +282,7 @@ export default function SocialPostingPage() {
   };
 
   const handleDeleteHistoryPost = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this post record?')) return;
+    if (!(await alert.ask('Are you sure you want to delete this post record?'))) return;
     try {
       await socialPostAPI.delete(id);
       showToast('Post record deleted');

@@ -1,5 +1,6 @@
 import pool from "../db.js";
 import { syncConnection } from "./commerceService.js";
+import { lockedJob } from "./jobLock.js";
 
 // ─── SYNC ALL ACTIVE STORE CONNECTIONS ───────────────────────────────────────
 export async function processCommerceSyncs() {
@@ -27,6 +28,6 @@ export async function processCommerceSyncs() {
 // posts use, and hammering a store's REST API that often risks rate limits) ──
 export function startCommerceSyncScheduler() {
   console.log("🛒 Commerce Sync Scheduler started (runs every 15 minutes)");
-  processCommerceSyncs();
-  setInterval(processCommerceSyncs, 15 * 60 * 1000);
+  lockedJob("commerce-sync", processCommerceSyncs)();
+  setInterval(lockedJob("commerce-sync", processCommerceSyncs), 15 * 60 * 1000);
 }

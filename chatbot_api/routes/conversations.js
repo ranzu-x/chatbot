@@ -10,7 +10,13 @@ import { requireModule, assertLimit } from "../utils/entitlements.js";
 import { translateText } from "../utils/translateMessage.js";
 import { buildSearch } from "../utils/searchQuery.js";
 import { buildTemplateSend } from "../utils/templateMessage.js";
+import { sendCsatRequest, getInboxSettings, saveInboxSettings, inboxMetrics } from "../utils/inboxQuality.js";
+import { transcribeMessage } from "../utils/transcribe.js";
+import {
+  loadApprovedMessengerTemplate, buildMessengerUtilitySend, missingMessengerParams, conversationWindow, friendlyMessengerError,
+} from "../utils/messengerUtility.js";
 
+import { resolveSubscriberLocale } from "../utils/subscriberLocale.js";
 const router = express.Router();
 
 router.use("/conversations", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_live_chat"));
@@ -84,7 +90,7 @@ router.get("/conversations", async (req, res) => {
       SELECT cv.*,
              cv.last_inbound_at as lastInboundAt,
              i.platform as platform, i.platform as integrationPlatform, i.name as integrationName,
-             c.name as contactName, c.phone as contactPhone, c.email as contactEmail,
+             c.name as contactName, c.phone as contactPhone, c.email as contactEmail, c.wa_username as contactUsername,
              c.avatar as contactAvatar, c.platform as contactPlatform, c.external_id as contactExternalId,
              c.tags as contactTags, c.bot_paused as contactBotPaused, c.is_blocked as contactIsBlocked,
              CASE
@@ -256,10 +262,11 @@ router.get("/conversations/:id", async (req, res) => {
       SELECT cv.*,
              cv.last_inbound_at as lastInboundAt,
              i.platform as platform, i.platform as integrationPlatform, i.name as integrationName,
-             c.name as contactName, c.phone as contactPhone, c.email as contactEmail,
+             c.name as contactName, c.phone as contactPhone, c.email as contactEmail, c.wa_username as contactUsername,
              c.avatar as contactAvatar, c.platform as contactPlatform, c.external_id as contactExternalId,
              c.tags as contactTags, c.bot_paused as contactBotPaused, c.platform_profile as contactPlatformProfile,
              c.is_blocked as contactIsBlocked, c.blocked_reason as contactBlockedReason,
+             c.age as contactAge, c.created_at as contactCreatedAt,
              CASE
                WHEN u.role = 'ADMIN' OR ap.team_role = 'OWNER' OR ap.user_type = 'OWNER_USER' OR u.id = a.owner_id THEN 'Admin'
                ELSE u.name
@@ -275,6 +282,11 @@ router.get("/conversations/:id", async (req, res) => {
 
     if (!rows.length) return res.status(404).json({ success: false, message: "Conversation not found" });
     const conversation = rows[0];
+
+    // Country + timezone for the Inbox's subscriber banner (utils/subscriberLocale.js).
+    const localePhone = conversation.contactPhone
+      || (conversation.contactPlatform === "WHATSAPP" && /^d{6,}$/.test(conversation.contactExternalId || "") ? conversation.contactExternalId : null);
+    conversation.subscriberLocale = resolveSubscriberLocale({ phone: localePhone, platformProfile: conversation.contactPlatformProfile });
 
     // Parse contact tags
     try {
@@ -474,9 +486,13 @@ router.patch("/conversations/:id/status", async (req, res) => {
       return res.json({ success: true, message: "Status updated", ...payload });
     } else {
       await pool.query(
-        "UPDATE conversations SET status = ? WHERE id = ? AND agency_id = ?",
+        status === "RESOLVED"
+          ? "UPDATE conversations SET status = ?, awaiting_reply_since = NULL WHERE id = ? AND agency_id = ?"
+          : "UPDATE conversations SET status = ? WHERE id = ? AND agency_id = ?",
         [status, req.params.id, req.user.agencyId]
       );
+      // Resolved → rating question when CSAT is on (utils/inboxQuality.js). Never blocks the answer.
+      if (status === "RESOLVED") sendCsatRequest({ agencyId: req.user.agencyId, conversationId: Number(req.params.id) });
       const payload = {
         conversationId: parseInt(req.params.id),
         status,
@@ -659,9 +675,14 @@ router.patch("/conversations/bulk-status", async (req, res) => {
     await pool.query(
       status === "OPEN"
         ? "UPDATE conversations SET status = ?, assigned_to_id = NULL WHERE id IN (?) AND agency_id = ?"
-        : "UPDATE conversations SET status = ? WHERE id IN (?) AND agency_id = ?",
+        : status === "RESOLVED"
+          ? "UPDATE conversations SET status = ?, awaiting_reply_since = NULL WHERE id IN (?) AND agency_id = ?"
+          : "UPDATE conversations SET status = ? WHERE id IN (?) AND agency_id = ?",
       [status, conversationIds, agencyId]
     );
+    if (status === "RESOLVED") {
+      for (const id of conversationIds) sendCsatRequest({ agencyId, conversationId: Number(id) });
+    }
     for (const id of conversationIds) {
       emitToAgency(agencyId, "conversation_updated", {
         conversationId: Number(id),
@@ -679,17 +700,23 @@ router.patch("/conversations/bulk-status", async (req, res) => {
 // ─── SEND MESSAGE (Outbound) ──────────────────────────────────────────────────
 router.post("/conversations/:id/messages", async (req, res) => {
   try {
-    const { body, type = "TEXT", mediaUrl, templateId, templateParams, variableValues, whatsappFlowRefId } = req.body;
+    const { type = "TEXT", mediaUrl, templateId, templateParams, variableValues, whatsappFlowRefId, messengerTemplateId, messengerTemplateParams } = req.body;
+    // WhatsApp "Share your phone number" button (usernames / BSUID) — see platformSender.
+    const requestContactInfo = req.body.requestContactInfo === true;
+    const body = req.body.body || (requestContactInfo ? "Please share your phone number so we can help you better." : req.body.body);
     const agencyId = req.user.agencyId;
 
-    if (!body && !mediaUrl && !templateId && !whatsappFlowRefId) {
+    if (!body && !mediaUrl && !templateId && !whatsappFlowRefId && !messengerTemplateId && !requestContactInfo) {
       return res.status(400).json({ success: false, message: "Message body or media is required" });
     }
 
     // Get conversation + integration details
     const [rows] = await pool.query(`
-      SELECT cv.*, i.platform, i.access_token, i.wa_phone_number_id, i.fb_page_id, i.ig_account_id,
-             c.external_id as contactExternalId, c.first_name, c.last_name, c.name as contact_name, c.phone_number
+      SELECT cv.*, i.platform, i.access_token, i.wa_phone_number_id, i.fb_page_id, i.ig_account_id, i.human_agent_enabled,
+             c.external_id as contactExternalId, c.name as contact_name, c.phone as phone_number,
+             -- contacts has one name column; first / last are derived for the template variables
+             SUBSTRING_INDEX(c.name, ' ', 1) AS first_name,
+             NULLIF(TRIM(SUBSTRING(c.name, CHAR_LENGTH(SUBSTRING_INDEX(c.name, ' ', 1)) + 1)), '') AS last_name
       FROM conversations cv
       JOIN integrations i ON i.id = cv.integration_id
       JOIN contacts c ON c.id = cv.contact_id
@@ -698,6 +725,9 @@ router.post("/conversations/:id/messages", async (req, res) => {
 
     if (!rows.length) return res.status(404).json({ success: false, message: "Conversation not found" });
     const conv = rows[0];
+    if (requestContactInfo && conv.platform !== "WHATSAPP") {
+      return res.status(400).json({ success: false, message: "Asking for a phone number is only available on WhatsApp" });
+    }
 
     // Sender attribution metadata (built up front so it's available whether the send succeeds or fails)
     let agentName = req.user?.name;
@@ -721,7 +751,10 @@ router.post("/conversations/:id/messages", async (req, res) => {
       type,
       body: body || "",
       mediaUrl: mediaUrl || null,
+      requestContactInfo,
+      fromAgent: senderType !== "AI", // a person replying — not counted as an automated Instagram DM
     };
+    if (requestContactInfo) metadata.requestContactInfo = true;
 
     // Send Menu → Message Template: builds complete Meta components array supporting
     // all header types (TEXT with {{1}}, IMAGE/VIDEO/DOCUMENT with binary upload, LOCATION),
@@ -773,6 +806,63 @@ router.post("/conversations/:id/messages", async (req, res) => {
       messagePayload.whatsappFlow = { flowId: flowRef.flow_id, cta: "Open" };
     }
 
+    // Send Menu → Utility Template (Messenger): an approved template of this
+    // conversation's own Page — the only message allowed after the 24h window
+    // when Human Agent isn't available. utils/messengerUtility.js.
+    const platformUpper = String(conv.platform || "").toUpperCase();
+    if (messengerTemplateId) {
+      if (platformUpper !== "FACEBOOK") return res.status(400).json({ success: false, message: "Utility templates are a Messenger feature" });
+      let tpl;
+      try {
+        tpl = await loadApprovedMessengerTemplate(agencyId, conv.integration_id, messengerTemplateId);
+      } catch (err) {
+        return res.status(err.status || 500).json({ success: false, message: err.message, code: err.code });
+      }
+      if (!tpl) return res.status(404).json({ success: false, message: "Utility template not found or not approved for this Page" });
+      const params = messengerTemplateParams || {};
+      const missing = missingMessengerParams(tpl, params);
+      if (missing.length) return res.status(400).json({ success: false, code: "TEMPLATE_PARAMS_MISSING", message: `Fill in: ${missing.join(", ")}` });
+      const subscriberName = conv.contact_name || [conv.first_name, conv.last_name].filter(Boolean).join(" ") || "Customer";
+      const render = (text) => String(text || "")
+        .replace(/{{\s*(contact\.)?name\s*}}/gi, subscriberName)
+        .replace(/{{\s*(contact\.)?first_name\s*}}/gi, conv.first_name || subscriberName)
+        .replace(/{{\s*(contact\.)?last_name\s*}}/gi, conv.last_name || "");
+      const send = buildMessengerUtilitySend(tpl, params, render);
+      messagePayload.type = "TEMPLATE";
+      messagePayload.body = send.bodyText;
+      messagePayload.messengerTemplate = send.extraFields.messengerTemplate;
+      Object.assign(metadata, {
+        template: tpl.name,
+        messagingType: "UTILITY",
+        ...(send.extraFields.buttons ? { buttons: send.extraFields.buttons } : {}),
+        ...(send.extraFields.headerType ? { headerType: send.extraFields.headerType } : {}),
+        ...(send.extraFields.headerText ? { headerText: send.extraFields.headerText } : {}),
+        ...(send.extraFields.headerMediaUrl ? { headerMediaUrl: send.extraFields.headerMediaUrl } : {}),
+      });
+    }
+
+    // ─── Messenger / Instagram window + HUMAN_AGENT ───
+    // Inside 24h: normal reply. 24h – 7 days: a PERSON's reply goes out with
+    // tag HUMAN_AGENT when the account has Meta's Human Agent feature (never
+    // an AI / automated reply). After that: Messenger → Utility template only.
+    if ((platformUpper === "FACEBOOK" || platformUpper === "INSTAGRAM") && !messagePayload.messengerTemplate) {
+      const win = await conversationWindow(conv.id, conv);
+      if (win.state === "HUMAN_AGENT" && senderType === "AGENT") {
+        messagePayload.messageTag = "HUMAN_AGENT";
+        metadata.messagingType = "MESSAGE_TAG";
+        metadata.messageTag = "HUMAN_AGENT";
+      } else if (win.state !== "OPEN") {
+        const channel = platformUpper === "FACEBOOK" ? "Messenger" : "Instagram";
+        let message;
+        if (win.state === "HUMAN_AGENT") message = `Outside ${channel}'s 24-hour window — only a person's reply may be sent now (Human Agent), not an automated one.`;
+        else if (win.humanAgentAvailable && !conv.human_agent_enabled) message = `Outside ${channel}'s 24-hour window. Turn on Human Agent for this account to reply for up to 7 days${platformUpper === "FACEBOOK" ? ", or send a Utility template" : ""}.`;
+        else message = platformUpper === "FACEBOOK"
+          ? "This person hasn't written in the last 7 days — only a Utility template can be sent now."
+          : "Instagram's messaging window is closed — wait for this person to write again.";
+        return res.status(400).json({ success: false, code: "MESSENGER_WINDOW_CLOSED", message, window: win });
+      }
+    }
+
     // ─── Message Credit Limit ───
     try {
       await assertLimit(req.user.agencyId, "max_monthly_messages", 1, req.user?.id);
@@ -817,7 +907,9 @@ router.post("/conversations/:id/messages", async (req, res) => {
       // Extract Meta's real error message if available
       const metaError = apiErr?.response?.data?.error;
       let friendlyMsg = "Failed to deliver message via platform API.";
-      if (metaError) {
+      if (metaError && (platformUpper === "FACEBOOK" || platformUpper === "INSTAGRAM")) {
+        friendlyMsg = friendlyMessengerError(metaError, platformUpper) || friendlyMsg;
+      } else if (metaError) {
         if (metaError.error_subcode === 2388094 || metaError.code === 131056) {
           friendlyMsg = "WhatsApp message not delivered: 24-hour messaging window expired. Send a Template message to re-open the window.";
         } else if (metaError.code === 190 || metaError.error_subcode === 460) {
@@ -888,6 +980,34 @@ router.post("/conversations/:id/messages", async (req, res) => {
     });
 
     return res.status(201).json({ success: true, message });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── MESSAGING WINDOW (Messenger / Instagram composer banner) ───────────────
+// { platform, state: OPEN | HUMAN_AGENT | CLOSED, windowEndsAt, humanAgentEndsAt,
+//   humanAgentEnabled, humanAgentAvailable, utilityAvailable }. Other channels: state OPEN.
+router.get("/conversations/:id/messaging-window", async (req, res) => {
+  try {
+    const [[conv]] = await pool.query(
+      `SELECT cv.id, i.platform, i.human_agent_enabled FROM conversations cv
+       JOIN integrations i ON i.id = cv.integration_id
+       WHERE cv.id = ? AND cv.agency_id = ?`,
+      [req.params.id, req.user.agencyId]
+    );
+    if (!conv) return res.status(404).json({ success: false, message: "Conversation not found" });
+    const platform = String(conv.platform || "").toUpperCase();
+    if (platform !== "FACEBOOK" && platform !== "INSTAGRAM") return res.json({ success: true, platform, state: "OPEN" });
+    const win = await conversationWindow(conv.id, conv);
+    return res.json({
+      success: true,
+      platform,
+      ...win,
+      humanAgentEnabled: Boolean(conv.human_agent_enabled),
+      utilityAvailable: platform === "FACEBOOK",
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -1227,7 +1347,7 @@ router.post("/conversations/:id/trigger-flow", async (req, res) => {
     // Verify conversation exists
     const [convs] = await pool.query(`
       SELECT cv.*, i.platform as integrationPlatform, i.access_token, i.wa_phone_number_id, i.fb_page_id, i.ig_account_id,
-             c.id as contactId, c.name as contactName, c.phone as contactPhone, c.email as contactEmail, c.external_id as contactExternalId
+             c.id as contactId, c.name as contactName, c.phone as contactPhone, c.email as contactEmail, c.wa_username as contactUsername, c.external_id as contactExternalId
       FROM conversations cv
       JOIN integrations i ON i.id = cv.integration_id
       JOIN contacts c ON c.id = cv.contact_id
@@ -1270,6 +1390,53 @@ router.post("/conversations/:id/trigger-flow", async (req, res) => {
   } catch (err) {
     console.error("Trigger flow error:", err);
     return res.status(500).json({ success: false, message: "Failed to trigger flow" });
+  }
+});
+
+// ─── TRANSCRIBE A VOICE MESSAGE (utils/transcribe.js) ─────────────────────────
+router.post("/conversations/:id/messages/:messageId/transcribe", async (req, res) => {
+  try {
+    const agencyId = req.tenant?.agencyId ?? req.user.agencyId;
+    const [[conv]] = await pool.query("SELECT id FROM conversations WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
+    if (!conv) return res.status(404).json({ success: false, message: "Conversation not found" });
+    const transcript = await transcribeMessage(agencyId, Number(req.params.messageId));
+    return res.json({ success: true, transcript });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ success: false, message: err.message });
+    console.error("Transcribe error:", err);
+    return res.status(500).json({ success: false, message: "Transcription failed" });
+  }
+});
+
+// ─── INBOX QUALITY: SLA target, CSAT, automatic assignment (utils/inboxQuality.js) ──
+router.use("/inbox-quality", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_live_chat"));
+
+router.get("/inbox-quality/settings", async (req, res) => {
+  try {
+    return res.json({ success: true, settings: await getInboxSettings(req.tenant?.agencyId ?? req.user.agencyId) });
+  } catch (err) {
+    console.error("Inbox settings error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+router.put("/inbox-quality/settings", async (req, res) => {
+  try {
+    await saveInboxSettings(req.tenant?.agencyId ?? req.user.agencyId, req.body || {});
+    return res.json({ success: true, message: "Inbox settings saved" });
+  } catch (err) {
+    console.error("Save inbox settings error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+router.get("/inbox-quality/metrics", async (req, res) => {
+  try {
+    const days = Math.min(365, Math.max(1, Number(req.query.days) || 30));
+    return res.json({ success: true, metrics: await inboxMetrics(req.tenant?.agencyId ?? req.user.agencyId, days) });
+  } catch (err) {
+    console.error("Inbox metrics error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 

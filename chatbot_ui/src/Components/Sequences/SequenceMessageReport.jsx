@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router';
 import { sequenceAPI, integrationAPI } from '../../services/api';
 import PlatformIcon, { getPlatformMeta } from '../Common/PlatformIcon';
 import { ChevronDown, ChevronRight, RefreshCw, Plus, Pencil, Trash2, ExternalLink, Send } from 'lucide-react';
-import Swal from 'sweetalert2';
+import { alert } from '../../lib/alerts';
 
 function integrationLabel(i) {
   return i.wa_display_phone || i.fb_page_name || i.name || `Account #${i.id}`;
@@ -150,7 +150,7 @@ export default function SequenceMessageReport({ integrationId = null }) {
   const handleCreate = async () => {
     if (!newName.trim() || creating) return;
     if (!createIntegrationId) {
-      Swal.fire({ icon: 'info', title: 'Choose an account', text: `Pick which connected ${getPlatformMeta(newPlatform).label} account this sequence sends from.` });
+      alert.info('Choose an account', `Pick which connected ${getPlatformMeta(newPlatform).label} account this sequence sends from.`);
       return;
     }
     try {
@@ -162,7 +162,7 @@ export default function SequenceMessageReport({ integrationId = null }) {
       if (id) navigate(`/sequences/${id}/edit`, { state: { from: '/bots', label: 'Bot Manager' } });
       else load();
     } catch (err) {
-      Swal.fire({ icon: 'error', title: 'Could not create sequence', text: err?.response?.data?.message || 'Please try again.' });
+      alert.error('Could not create sequence', err?.response?.data?.message || 'Please try again.');
     } finally {
       setCreating(false);
     }
@@ -181,7 +181,7 @@ export default function SequenceMessageReport({ integrationId = null }) {
       load();
       setAccountPickerFor(null);
     } catch (err) {
-      Swal.fire({ icon: 'error', title: 'Could not change account', text: err?.response?.data?.message || 'Please try again.' });
+      alert.error('Could not change account', err?.response?.data?.message || 'Please try again.');
     } finally {
       setSavingAccount(false);
     }
@@ -194,25 +194,25 @@ export default function SequenceMessageReport({ integrationId = null }) {
       await sequenceAPI.update(seq.id, { name });
       setSequences((prev) => prev.map((s) => (s.id === seq.id ? { ...s, name } : s)));
     } catch (err) {
-      Swal.fire({ icon: 'error', title: 'Could not rename', text: err?.response?.data?.message || 'Please try again.' });
+      alert.error('Could not rename', err?.response?.data?.message || 'Please try again.');
     } finally {
       setRenamingId(null);
     }
   };
 
   const handleDelete = async (seq) => {
-    const ok = await Swal.fire({
+    const ok = await alert.confirm({
       title: `Delete "${seq.name}"?`,
       text: 'Enrolled subscribers stop receiving further messages. This cannot be undone.',
-      icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete',
+      confirm: 'Delete',
     });
-    if (!ok.isConfirmed) return;
+    if (!ok) return;
     try {
       await sequenceAPI.delete(seq.id);
       setSequences((prev) => prev.filter((s) => s.id !== seq.id));
     } catch (err) {
       // Refused while a bot Flow's Start/Stop Sequence node still points here.
-      Swal.fire({ icon: 'info', title: 'Still in use', text: err?.response?.data?.message || 'Could not delete this sequence.' });
+      alert.info('Still in use', err?.response?.data?.message || 'Could not delete this sequence.');
     }
   };
 

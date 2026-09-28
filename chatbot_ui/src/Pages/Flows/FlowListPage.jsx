@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import useUrlState from '../../hooks/useUrlState';
 import AppLayout from '../../Layout/AppLayout';
 import { flowAPI } from '../../services/api';
 import { useNavigate, useLocation } from 'react-router';
@@ -572,7 +573,7 @@ export default function FlowListPage() {
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [searchTerm, setSearchTerm] = useState(() => location.state?.searchTerm || '');
-  const [filterPlatform, setFilterPlatform] = useState(() => location.state?.filterPlatform || 'ALL');
+  const [filterPlatform, setFilterPlatform] = useUrlState('channel', 'ALL');
 
   /* inject keyframes */
   useEffect(() => { injectKeyframes(); }, []);

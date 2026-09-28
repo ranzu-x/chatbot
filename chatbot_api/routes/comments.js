@@ -6,11 +6,11 @@ import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { getPostsPage, POSTS_PAGE_SIZE } from "../utils/metaPosts.js";
 import { loadRuleLinks, findRuleForPost, postBelongsToAccount, copyCampaign, SAVED_CAMPAIGN } from "../utils/commentRulePosts.js";
 import { requireModule, requireLimit, assertLimit } from "../utils/entitlements.js";
+import { META_API_VERSION } from "../utils/metaApi.js";
 
 const router = express.Router();
 router.use("/comments", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_comment_automation"));
 
-const META_API_VERSION = process.env.META_API_VERSION || "v21.0";
 
 // ─── GET POSTS & REELS FROM META (FB Page or Instagram) ─────────────────────
 // Posts & Reels list: newest first, never more than 12 per page (decided with
