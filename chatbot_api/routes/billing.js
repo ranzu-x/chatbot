@@ -489,6 +489,22 @@ router.post("/billing/webhook", express.raw({ type: "application/json" }), async
         break;
       }
 
+      // In-chat orders (appointment fees included) whose checkout will not be
+      // paid, or whose delayed payment method settled later.
+      case "checkout.session.expired":
+      case "checkout.session.async_payment_failed":
+      case "checkout.session.async_payment_succeeded": {
+        const chatOrderId = Number(dataObject.metadata?.chatOrderId);
+        if (!chatOrderId) break;
+        const { markOrderPaid, markOrderUnpaid } = await import("../services/chatPaymentService.js");
+        if (eventType === "checkout.session.async_payment_succeeded") {
+          await markOrderPaid(chatOrderId, { sessionId: dataObject.id });
+        } else {
+          await markOrderUnpaid(chatOrderId, eventType === "checkout.session.expired" ? "EXPIRED" : "FAILED", { sessionId: dataObject.id });
+        }
+        break;
+      }
+
       case "customer.subscription.deleted": {
         // The Stripe subscription ended (cancelled at period end, or unpaid).
         // Decided with the user: the workspace KEEPS its plan and becomes

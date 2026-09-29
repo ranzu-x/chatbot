@@ -260,7 +260,7 @@ export default function AIReplySettingsPanel({ integrationId, view }) {
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4, minHeight: 30, overflow: 'hidden' }}>{a.description || 'No description'}</div>
                 {a.is_default && (
                   <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9.5, fontWeight: 800, color: 'var(--warning)', width: 'fit-content' }}>
-                    <Star size={9} /> Agency Default
+                    <Star size={9} /> Workspace Default
                   </div>
                 )}
               </div>

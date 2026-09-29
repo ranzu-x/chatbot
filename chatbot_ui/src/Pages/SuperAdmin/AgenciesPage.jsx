@@ -76,7 +76,7 @@ export default function AgenciesPage() {
       await loadAgencies();
       closeModal();
     } catch (err) {
-      setFormError(err?.response?.data?.message || 'Failed to create agency.');
+      setFormError(err?.response?.data?.message || 'Failed to create workspace.');
     } finally {
       setSaving(false);
     }
@@ -165,7 +165,7 @@ export default function AgenciesPage() {
       setEditingAgency(null);
       loadAgencies();
     } catch (err) {
-      setEditError(err?.response?.data?.message || 'Failed to update agency');
+      setEditError(err?.response?.data?.message || 'Failed to update workspace');
     } finally {
       setEditSaving(false);
     }

@@ -18,6 +18,7 @@ import {
   Check,
   AlertCircle,
 } from 'lucide-react';
+import { toastByType } from '../../utils/alerts';
 
 /**
  * My Account → Billing. The plan THIS agency is subscribed to (assigned by
@@ -38,12 +39,8 @@ function PlatformBillingTab() {
   const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
   const subscribingId = null; // purchases now go through CheckoutDialog
   const [portalLoading, setPortalLoading] = useState(false);
-  const [toast, setToast] = useState(null);
 
-  const showToast = (msg, type = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
-  };
+  const showToast = (msg, type = 'success') => toastByType(msg, type);
 
   useEffect(() => {
     loadData();
@@ -110,30 +107,6 @@ function PlatformBillingTab() {
 
   return (
     <div className="my-plan-page" style={{ width: '100%' }}>
-      {/* Toast Notification */}
-      {toast && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 20,
-            right: 20,
-            zIndex: 99999,
-            padding: '12px 20px',
-            borderRadius: 10,
-            background: toast.type === 'error' ? '#ef4444' : '#10b981',
-            color: '#ffffff',
-            fontWeight: 700,
-            fontSize: '0.84rem',
-            boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-          }}
-        >
-          {toast.type === 'error' ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
-          {toast.msg}
-        </div>
-      )}
 
       {/* Section Header */}
       <div style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>

@@ -85,7 +85,7 @@ export async function findOrCreateConversationForBroadcast(agencyId, contactId, 
 }
 
 const STOP_NODE_TYPES = new Set([
-  "condition", "collectInput", "delay", "wait", "question", "webhook",
+  "condition", "randomizer", "collectInput", "delay", "wait", "question", "webhook",
   "handoff", "payment", "runUserInputFlow", "startSequenceAction",
   "stopSequenceAction", "end", "finalAnswer", "start",
 ]);

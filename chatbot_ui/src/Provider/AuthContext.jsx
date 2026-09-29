@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { authAPI, packageAPI } from "../services/api";
+import { syncPushSubscription, forgetPushSubscription } from "../utils/browserPush";
 
 const AuthContext = createContext(null);
 
@@ -101,7 +102,19 @@ export function AuthProvider({ children }) {
     return startSession(res.data);
   };
 
+  // Changing the password signs out every other session; this browser gets a fresh token.
+  const changePassword = async (data) => {
+    const res = await authAPI.changePassword(data);
+    return startSession(res.data);
+  };
+
+  // Browser notifications belong to whoever is signed in on this browser (utils/browserPush.js).
+  useEffect(() => {
+    if (user?.id) syncPushSubscription();
+  }, [user?.id]);
+
   const logout = async () => {
+    await forgetPushSubscription();
     try {
       await authAPI.logout();
     } catch {
@@ -127,6 +140,7 @@ export function AuthProvider({ children }) {
       login,
       completeTwoFactor,
       signOutEverywhere,
+      changePassword,
       logout,
       setUser,
       entitlements,

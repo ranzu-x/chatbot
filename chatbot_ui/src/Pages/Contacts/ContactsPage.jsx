@@ -15,6 +15,7 @@ import SubscriberDetailDrawer from './SubscriberDetailDrawer';
 import ManageModal from './ManageModal';
 import ImportModal from './ImportModal';
 import { BulkListModal, BulkSequenceModal, DeleteConfirmModal } from './BulkActionModals';
+import { toastByType } from '../../utils/alerts';
 
 // ─── Small shared bits ──────────────────────────────────────────────────────
 
@@ -125,11 +126,7 @@ export default function ContactsPage() {
   const [deleteConfirm, setDeleteConfirm] = useState(null); // { ids, singleName }
   const [syncingAvatars, setSyncingAvatars] = useState(false);
 
-  const [toast, setToast] = useState(null);
-  const showToast = (msg, type = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
-  };
+  const showToast = (msg, type = 'success') => toastByType(msg, type);
 
   // ── Loaders ──
   const loadLabels = useCallback(() => {
@@ -851,16 +848,6 @@ export default function ContactsPage() {
           <DeleteConfirmModal count={deleteConfirm.ids.length} singleName={deleteConfirm.singleName} onClose={() => setDeleteConfirm(null)} onConfirm={confirmDelete} />
         )}
 
-        {/* Toast */}
-        {toast && (
-          <div style={{
-            position: 'fixed', bottom: 24, right: 24, zIndex: 9999, padding: '12px 20px', borderRadius: 8,
-            background: toast.type === 'error' ? '#b91c1c' : 'var(--text-primary)', color: 'var(--bg-surface)',
-            fontWeight: 600, fontSize: '0.85rem', boxShadow: 'var(--shadow-md)',
-          }}>
-            {toast.msg}
-          </div>
-        )}
       </div>
     </AppLayout>
   );

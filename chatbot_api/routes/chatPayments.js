@@ -69,6 +69,10 @@ router.post("/payments/order/:orderId/simulate-pay", async (req, res) => {
     }
     const updated = await markOrderPaid(req.params.orderId);
     if (!updated) return res.status(404).json({ success: false, message: "Order not found" });
+    // Expired / cancelled (e.g. an appointment hold that ran out) — nothing was paid.
+    if (updated.status !== "PAID") {
+      return res.status(409).json({ success: false, code: "ORDER_CLOSED", message: "This checkout is no longer available." });
+    }
     return res.json({ success: true, message: "Payment processed successfully!", order: updated });
   } catch (err) {
     console.error("Simulate pay error:", err);

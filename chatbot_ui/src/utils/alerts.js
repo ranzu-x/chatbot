@@ -100,6 +100,9 @@ export const handleLimitError = (err, { userRole, onUpgrade } = {}) => {
   return false;
 };
 
+/** Older pages' `showToast(message, 'success'|'error'|'warning'|'info')` → the standard toaster. */
+export const toastByType = (msg, type = 'success') => (toast[type] || toast.success)(msg);
+
 export const notify = {
   success: (msg, opts) => toast.success(msg, opts),
   error: (msg, opts) => toast.error(msg, opts),

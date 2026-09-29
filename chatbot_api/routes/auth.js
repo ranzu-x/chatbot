@@ -16,6 +16,9 @@ const frontendHost = () => { try { return new URL(process.env.FRONTEND_URL).host
 import { requestPasswordReset, resetPassword } from "../utils/passwordReset.js";
 import { getSubscriptionState } from "../utils/subscriptionStatus.js";
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
+import multer from "multer";
 import QRCode from "qrcode";
 import { generateSecret, verifyTotp, otpauthUri, generateBackupCodes, hashBackupCode } from "../utils/totp.js";
 import { encryptSecret, decryptSecret } from "../utils/cryptoVault.js";
@@ -637,6 +640,180 @@ router.post("/auth/sessions/revoke-all", authMiddleware, requireLiveSession, asy
     return finishLogin(res, rows[0]);
   } catch (err) {
     console.error("Revoke sessions error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── MY PROFILE (My Account → Profile) ───────────────────────────────────────
+// Every signed-in person edits their own login here — Super Admin, Reseller,
+// End User and team member alike. Under /auth/, so an expired plan's read-only
+// mode (subscriptionGuard) never stops someone fixing their own profile;
+// requireLiveSession guards against revoked sessions instead.
+const PROFILE_FIELDS = "id, name, email, phone, address, avatar, email_verified_at, created_at";
+const MIN_PASSWORD = 6; // same rule as sign-up and password reset
+const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
+const AVATAR_DIR = path.resolve("uploads", "avatars");
+
+/** Real image type from the file's first bytes (never the name / mime). No SVG: it can carry script. */
+function sniffAvatar(buf) {
+  if (buf.length > 8 && buf[0] === 0x89 && buf.toString("ascii", 1, 4) === "PNG") return "png";
+  if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "jpg";
+  if (buf.length > 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "webp";
+  return null;
+}
+
+/** Deletes a replaced picture — only this user's own uploads. */
+function removeOwnAvatar(url, userId) {
+  const m = /^\/uploads\/avatars\/([\w.-]+)$/.exec(url || "");
+  if (!m || !m[1].startsWith(`${userId}-`)) return;
+  fs.promises.unlink(path.join(AVATAR_DIR, m[1])).catch(() => {});
+}
+
+function profileOut(u) {
+  return {
+    id: u.id, name: u.name, email: u.email, phone: u.phone || "", address: u.address || "",
+    avatar: u.avatar || null, emailVerified: Boolean(u.email_verified_at), createdAt: u.created_at,
+  };
+}
+
+async function loadProfile(userId) {
+  const [[u]] = await pool.query(`SELECT ${PROFILE_FIELDS} FROM users WHERE id = ?`, [userId]);
+  return u ? profileOut(u) : null;
+}
+
+router.get("/auth/profile", authMiddleware, requireLiveSession, async (req, res) => {
+  try {
+    const profile = await loadProfile(req.user.id);
+    if (!profile) return res.status(404).json({ success: false, message: "Account not found" });
+    return res.json({ success: true, profile });
+  } catch (err) {
+    console.error("Get profile error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Name / phone / address. Only the fields sent change.
+router.put("/auth/profile", authMiddleware, requireLiveSession, async (req, res) => {
+  try {
+    const fields = [];
+    const values = [];
+    if (req.body.name !== undefined) {
+      const name = String(req.body.name || "").trim();
+      if (!name) return res.status(400).json({ success: false, message: "Your name can't be empty" });
+      if (name.length > 150) return res.status(400).json({ success: false, message: "Your name is too long (150 characters at most)" });
+      fields.push("name = ?"); values.push(name);
+    }
+    if (req.body.phone !== undefined) {
+      const phone = String(req.body.phone || "").trim();
+      if (phone.length > 30 || (phone && !/^[+\d\s().-]{5,30}$/.test(phone))) {
+        return res.status(400).json({ success: false, message: "Enter a valid phone number" });
+      }
+      fields.push("phone = ?"); values.push(phone || null);
+    }
+    if (req.body.address !== undefined) {
+      const address = String(req.body.address || "").trim();
+      if (address.length > 500) return res.status(400).json({ success: false, message: "The address is too long (500 characters at most)" });
+      fields.push("address = ?"); values.push(address || null);
+    }
+    if (fields.length) {
+      values.push(req.user.id);
+      await pool.query(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`, values);
+    }
+    return res.json({ success: true, message: "Profile updated", profile: await loadProfile(req.user.id) });
+  } catch (err) {
+    console.error("Update profile error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+router.post("/auth/profile/avatar", authMiddleware, requireLiveSession, (req, res, next) => {
+  avatarUpload.single("file")(req, res, (err) => {
+    if (err) return res.status(400).json({ success: false, message: err.code === "LIMIT_FILE_SIZE" ? "The picture must be 2 MB or smaller" : err.message });
+    return next();
+  });
+}, async (req, res) => {
+  try {
+    if (!req.file?.buffer?.length) return res.status(400).json({ success: false, message: "Choose a picture to upload" });
+    const ext = sniffAvatar(req.file.buffer);
+    if (!ext) return res.status(400).json({ success: false, message: "Use a PNG, JPG or WEBP picture" });
+    fs.mkdirSync(AVATAR_DIR, { recursive: true });
+    const name = `${req.user.id}-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.${ext}`;
+    fs.writeFileSync(path.join(AVATAR_DIR, name), req.file.buffer);
+    const [[before]] = await pool.query("SELECT avatar FROM users WHERE id = ?", [req.user.id]);
+    await pool.query("UPDATE users SET avatar = ? WHERE id = ?", [`/uploads/avatars/${name}`, req.user.id]);
+    removeOwnAvatar(before?.avatar, req.user.id);
+    return res.json({ success: true, message: "Profile picture updated", profile: await loadProfile(req.user.id) });
+  } catch (err) {
+    console.error("Avatar upload error:", err);
+    return res.status(500).json({ success: false, message: "Upload failed" });
+  }
+});
+
+router.delete("/auth/profile/avatar", authMiddleware, requireLiveSession, async (req, res) => {
+  try {
+    const [[before]] = await pool.query("SELECT avatar FROM users WHERE id = ?", [req.user.id]);
+    await pool.query("UPDATE users SET avatar = NULL WHERE id = ?", [req.user.id]);
+    removeOwnAvatar(before?.avatar, req.user.id);
+    return res.json({ success: true, message: "Profile picture removed", profile: await loadProfile(req.user.id) });
+  } catch (err) {
+    console.error("Avatar remove error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+/** The current password must be right before email or password can change. */
+async function checkCurrentPassword(userId, currentPassword) {
+  const [[u]] = await pool.query("SELECT password FROM users WHERE id = ?", [userId]);
+  if (!u?.password) return "Your account has no password yet — use “Forgot password” on the sign-in page to set one.";
+  if (!currentPassword || !(await bcrypt.compare(String(currentPassword), u.password))) return "Your current password is incorrect";
+  return null;
+}
+
+// New sign-in email: needs the current password; the new address must be
+// confirmed again (a verification link is sent to it).
+router.put("/auth/profile/email", authMiddleware, requireLiveSession, async (req, res) => {
+  try {
+    const email = String(req.body.email || "").toLowerCase().trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 190) {
+      return res.status(400).json({ success: false, message: "Enter a valid email address" });
+    }
+    const wrong = await checkCurrentPassword(req.user.id, req.body.currentPassword);
+    if (wrong) return res.status(400).json({ success: false, code: "WRONG_PASSWORD", message: wrong });
+    const [[me]] = await pool.query("SELECT email, name FROM users WHERE id = ?", [req.user.id]);
+    if (me.email === email) return res.json({ success: true, message: "That's already your email", profile: await loadProfile(req.user.id) });
+    const [[clash]] = await pool.query("SELECT id FROM users WHERE email = ? AND id <> ?", [email, req.user.id]);
+    // Neutral wording: never reveal that an address belongs to someone else.
+    if (clash) return res.status(400).json({ success: false, message: "This email address can't be used. Please try a different one." });
+    await pool.query("UPDATE users SET email = ?, email_verified_at = NULL WHERE id = ?", [email, req.user.id]);
+    sendVerificationEmail({ userId: req.user.id, to: email, name: me.name }).catch(() => {});
+    return res.json({ success: true, message: "Email updated — check your inbox to confirm the new address", profile: await loadProfile(req.user.id) });
+  } catch (err) {
+    console.error("Change email error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// New password: needs the current one. Every other session is signed out
+// (token_version bump); this browser gets a fresh token.
+router.post("/auth/profile/password", authMiddleware, requireLiveSession, async (req, res) => {
+  try {
+    const newPassword = String(req.body.newPassword || "");
+    if (newPassword.length < MIN_PASSWORD) {
+      return res.status(400).json({ success: false, message: `The new password must be at least ${MIN_PASSWORD} characters` });
+    }
+    const wrong = await checkCurrentPassword(req.user.id, req.body.currentPassword);
+    if (wrong) return res.status(400).json({ success: false, code: "WRONG_PASSWORD", message: wrong });
+    if (String(req.body.currentPassword) === newPassword) {
+      return res.status(400).json({ success: false, message: "Choose a password different from your current one" });
+    }
+    const hashed = await bcrypt.hash(newPassword, 10);
+    await pool.query("UPDATE users SET password = ?, token_version = token_version + 1 WHERE id = ?", [hashed, req.user.id]);
+    invalidateTenantCache();
+    const [rows] = await pool.query(LOGIN_USER_SQL.replace("%WHERE%", "u.id = ?"), [req.user.id]);
+    if (!rows[0]) return res.status(401).json({ success: false, message: "Please sign in again" });
+    return finishLogin(res, rows[0]);
+  } catch (err) {
+    console.error("Change password error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });

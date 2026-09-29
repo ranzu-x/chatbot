@@ -1,6 +1,7 @@
 import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
+import { getVapidKeys, saveSubscription, removeSubscription, sendPushToUser } from "../utils/webPush.js";
 
 // The signed-in user's own in-app notifications (top-bar bell,
 // chatbot_ui/src/Components/NotificationBell.jsx). Every query is anchored on
@@ -51,6 +52,51 @@ router.post("/me/notifications/:id/read", async (req, res) => {
     return res.json({ success: true });
   } catch (err) {
     console.error("POST /me/notifications/:id/read error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ── Browser push (utils/webPush.js) — per browser, always the signed-in user's own ──
+router.use("/me/push", authMiddleware);
+
+router.get("/me/push/key", async (req, res) => {
+  try {
+    const { publicKey } = await getVapidKeys();
+    return res.json({ success: true, publicKey });
+  } catch (err) {
+    console.error("GET /me/push/key error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+router.post("/me/push/subscribe", async (req, res) => {
+  try {
+    const ok = await saveSubscription(req.user.id, req.body?.subscription, req.get("user-agent"));
+    if (!ok) return res.status(400).json({ success: false, code: "INVALID_SUBSCRIPTION", message: "This browser sent an invalid push subscription." });
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("POST /me/push/subscribe error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+router.post("/me/push/unsubscribe", async (req, res) => {
+  try {
+    await removeSubscription(req.user.id, req.body?.endpoint);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("POST /me/push/unsubscribe error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Sends a test notification to this person's browsers (even with the tab open).
+router.post("/me/push/test", async (req, res) => {
+  try {
+    const r = await sendPushToUser(req.user.id, { title: "Notifications are on", body: "You'll get alerts here when the dashboard is closed.", url: "/inbox", tag: "test" }, { force: true });
+    return res.json({ success: true, sent: r.sent });
+  } catch (err) {
+    console.error("POST /me/push/test error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });

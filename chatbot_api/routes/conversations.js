@@ -17,6 +17,8 @@ import {
 } from "../utils/messengerUtility.js";
 
 import { resolveSubscriberLocale } from "../utils/subscriberLocale.js";
+import { RETENTION_DAYS } from "../utils/messageRetention.js";
+import { suggestReplies, summarize, AssistError } from "../utils/inboxAssist.js";
 const router = express.Router();
 
 router.use("/conversations", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_live_chat"));
@@ -351,7 +353,7 @@ router.get("/conversations/:id", async (req, res) => {
       [req.params.id]
     );
     await pool.query(
-      "UPDATE messages SET is_read = 1 WHERE conversation_id = ? AND direction = 'INBOUND'",
+      "UPDATE messages SET is_read = 1 WHERE conversation_id = ? AND direction = 'INBOUND' AND is_read = 0",
       [req.params.id]
     );
 
@@ -360,6 +362,9 @@ router.get("/conversations/:id", async (req, res) => {
       conversation,
       messages,
       hasMoreMessages,
+      // Messages older than this many days are deleted (utils/messageRetention.js); 0 = kept forever.
+      retentionDays: RETENTION_DAYS,
+      historyPrunedAt: conversation.history_pruned_at || null,
       notes: notes || [],
       activeFlow: flowSessions[0] || null,
     });
@@ -369,47 +374,229 @@ router.get("/conversations/:id", async (req, res) => {
   }
 });
 
-// ─── LOAD OLDER MESSAGES (cursor pagination, scroll-up) ──────────────────────
+function prepareMessagesForClient(messages) {
+  for (const m of messages) {
+    if (m.metadata && typeof m.metadata === "string") {
+      try { m.metadata = JSON.parse(m.metadata); } catch (_) {}
+    }
+    if (m.media_url && m.media_url.includes("lookaside.fbsbx.com")) {
+      m.media_url = `/api/v1/media/whatsapp/${m.id}`;
+    }
+  }
+  return messages;
+}
+
+/** The (created_at, id) position of a message IN this conversation, or null. */
+async function messageCursor(conversationId, messageId) {
+  if (!messageId) return null;
+  const [[row]] = await pool.query(
+    "SELECT id, created_at FROM messages WHERE id = ? AND conversation_id = ?",
+    [messageId, conversationId]
+  );
+  return row || null;
+}
+
+// Cursor pages on (created_at, id), never OFFSET, via the
+// messages(conversation_id, created_at) index (InnoDB appends the id), so any
+// page of a 100k-message chat costs the same. (created_at, id) rather than
+// created_at alone: a customer's message and the bot's instant reply routinely
+// share a second, and a strict "<" on the timestamp skipped every sibling.
+const OLDER_THAN = "(created_at < ? OR (created_at = ? AND id < ?))";
+const NEWER_THAN = "(created_at > ? OR (created_at = ? AND id > ?))";
+
+async function pageOlder(conversationId, cursor, limit) {
+  const [rows] = await pool.query(
+    `SELECT * FROM messages WHERE conversation_id = ?${cursor ? ` AND ${OLDER_THAN}` : ""}
+      ORDER BY created_at DESC, id DESC LIMIT ?`,
+    cursor ? [conversationId, cursor.created_at, cursor.created_at, cursor.id, limit + 1] : [conversationId, limit + 1]
+  );
+  return { messages: rows.slice(0, limit).reverse(), hasMore: rows.length > limit };
+}
+
+async function pageNewer(conversationId, cursor, limit) {
+  const [rows] = await pool.query(
+    `SELECT * FROM messages WHERE conversation_id = ? AND ${NEWER_THAN}
+      ORDER BY created_at ASC, id ASC LIMIT ?`,
+    [conversationId, cursor.created_at, cursor.created_at, cursor.id, limit + 1]
+  );
+  return { messages: rows.slice(0, limit), hasNewer: rows.length > limit };
+}
+
+// ─── MESSAGE HISTORY PAGES (cursor pagination) ───────────────────────────────
+//   ?before=<id>   older page (scroll-up / "Load more messages")
+//   ?after=<id>    newer page (after jumping back into the history)
+//   ?around=<id>   a window centred on one message (jump to a search result)
 router.get("/conversations/:id/messages", async (req, res) => {
   try {
     const agencyId = req.user.agencyId;
+    const conversationId = req.params.id;
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
-    const before = req.query.before ? parseInt(req.query.before) : null;
 
-    const [[owned]] = await pool.query("SELECT id FROM conversations WHERE id = ? AND agency_id = ?", [req.params.id, agencyId]);
+    const [[owned]] = await pool.query("SELECT id FROM conversations WHERE id = ? AND agency_id = ?", [conversationId, agencyId]);
     if (!owned) return res.status(404).json({ success: false, message: "Conversation not found" });
 
-    let query = "SELECT * FROM messages WHERE conversation_id = ?";
-    const params = [req.params.id];
-    if (before) {
-      // Cursor is the oldest message id currently loaded on the client —
-      // page further back in time from its created_at.
-      // (created_at, id) pair, not created_at alone: messages routinely share
-      // a second (a customer's message and the bot's instant reply), and a
-      // strict "<" on the timestamp skipped every sibling of the cursor row.
-      query += " AND (created_at < (SELECT created_at FROM messages WHERE id = ?) OR (created_at = (SELECT created_at FROM messages WHERE id = ?) AND id < ?))";
-      params.push(before, before, before);
-    }
-    query += " ORDER BY created_at DESC, id DESC LIMIT ?";
-    params.push(limit + 1);
-
-    const [rows] = await pool.query(query, params);
-    const hasMore = rows.length > limit;
-    const messages = rows.slice(0, limit).reverse();
-
-    for (const m of messages) {
-      if (m.metadata && typeof m.metadata === "string") {
-        try { m.metadata = JSON.parse(m.metadata); } catch (_) {}
-      }
-      if (m.media_url && m.media_url.includes("lookaside.fbsbx.com")) {
-        m.media_url = `/api/v1/media/whatsapp/${m.id}`;
-      }
+    if (req.query.around) {
+      const target = await messageCursor(conversationId, parseInt(req.query.around));
+      // Deleted (e.g. by message retention) or not in this chat.
+      if (!target) return res.status(404).json({ success: false, code: "MESSAGE_GONE", message: "This message is no longer available." });
+      const half = Math.floor(limit / 2);
+      const older = await pageOlder(conversationId, target, half);
+      const newer = await pageNewer(conversationId, target, limit - half - 1);
+      const [[targetRow]] = await pool.query("SELECT * FROM messages WHERE id = ?", [target.id]);
+      return res.json({
+        success: true,
+        messages: prepareMessagesForClient([...older.messages, targetRow, ...newer.messages]),
+        hasMore: older.hasMore,
+        hasNewer: newer.hasNewer,
+        targetId: target.id,
+      });
     }
 
-    return res.json({ success: true, messages, hasMore });
+    if (req.query.after) {
+      const cursor = await messageCursor(conversationId, parseInt(req.query.after));
+      if (!cursor) return res.status(404).json({ success: false, code: "MESSAGE_GONE", message: "This message is no longer available." });
+      const page = await pageNewer(conversationId, cursor, limit);
+      return res.json({ success: true, messages: prepareMessagesForClient(page.messages), hasNewer: page.hasNewer });
+    }
+
+    // Cursor is the oldest message id currently loaded on the client.
+    let cursor = null;
+    if (req.query.before) {
+      cursor = await messageCursor(conversationId, parseInt(req.query.before));
+      // The cursor message itself was deleted (retention / clear history):
+      // nothing older than it is left either.
+      if (!cursor) return res.json({ success: true, messages: [], hasMore: false });
+    }
+    const page = await pageOlder(conversationId, cursor, limit);
+    return res.json({ success: true, messages: prepareMessagesForClient(page.messages), hasMore: page.hasMore });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── SEARCH INSIDE ONE CONVERSATION'S MESSAGES ───────────────────────────────
+// Server-side, scoped to this one chat, so it reads only that chat's rows via
+// the (conversation_id, created_at) index — never the whole messages table,
+// and never the browser's loaded page. A global FULLTEXT index would be the
+// wrong tool here: MySQL would match the word across every workspace's
+// messages first and filter by chat afterwards. Every word must appear (in
+// the text, caption, voice transcript or translation); newest first, paged by
+// ?before=<id>. Messages removed by retention are simply gone from the table.
+const SEARCH_MAX_TOKENS = 6;
+const escapeLike = (s) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+
+export function messageSearchTokens(q) {
+  const phrases = [];
+  const rest = String(q || "").replace(/"([^"]+)"/g, (_, p) => { if (p.trim()) phrases.push(p.trim()); return " "; });
+  const words = rest.split(/\s+/).map((w) => w.trim()).filter(Boolean);
+  return [...phrases, ...words].slice(0, SEARCH_MAX_TOKENS);
+}
+
+function snippetAround(text, tokens, width = 140) {
+  const body = String(text || "").replace(/\s+/g, " ").trim();
+  if (body.length <= width) return body;
+  const lower = body.toLowerCase();
+  let at = -1;
+  for (const t of tokens) {
+    at = lower.indexOf(t.toLowerCase());
+    if (at >= 0) break;
+  }
+  const start = Math.max(0, (at < 0 ? 0 : at) - Math.floor(width / 3));
+  const piece = body.slice(start, start + width);
+  return `${start > 0 ? "…" : ""}${piece}${start + width < body.length ? "…" : ""}`;
+}
+
+router.get("/conversations/:id/messages/search", async (req, res) => {
+  try {
+    const agencyId = req.user.agencyId;
+    const conversationId = req.params.id;
+    const q = String(req.query.q || "").trim().slice(0, 200);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
+    const tokens = messageSearchTokens(q);
+    if (!tokens.length || q.replace(/"/g, "").trim().length < 2) {
+      return res.json({ success: true, results: [], hasMore: false });
+    }
+
+    const [[owned]] = await pool.query("SELECT id FROM conversations WHERE id = ? AND agency_id = ?", [conversationId, agencyId]);
+    if (!owned) return res.status(404).json({ success: false, message: "Conversation not found" });
+
+    const where = ["conversation_id = ?"];
+    const params = [conversationId];
+    for (const t of tokens) {
+      const like = `%${escapeLike(t)}%`;
+      where.push("(body LIKE ? OR media_caption LIKE ? OR transcript LIKE ? OR translated_text LIKE ?)");
+      params.push(like, like, like, like);
+    }
+    if (req.query.before) {
+      const cursor = await messageCursor(conversationId, parseInt(req.query.before));
+      if (!cursor) return res.json({ success: true, results: [], hasMore: false });
+      where.push(OLDER_THAN);
+      params.push(cursor.created_at, cursor.created_at, cursor.id);
+    }
+    params.push(limit + 1);
+
+    const [rows] = await pool.query(
+      `SELECT id, direction, type, body, media_caption, transcript, translated_text, created_at,
+              JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.senderType')) AS senderType
+         FROM messages WHERE ${where.join(" AND ")}
+        ORDER BY created_at DESC, id DESC LIMIT ?`,
+      params
+    );
+    const results = rows.slice(0, limit).map((m) => {
+      const lowerTokens = tokens.map((t) => t.toLowerCase());
+      const source = [m.body, m.media_caption, m.transcript, m.translated_text]
+        .find((txt) => txt && lowerTokens.some((t) => txt.toLowerCase().includes(t))) || m.body || m.media_caption || "";
+      return {
+        id: m.id,
+        direction: m.direction,
+        type: m.type,
+        senderType: m.senderType || null,
+        created_at: m.created_at,
+        snippet: snippetAround(source, tokens),
+      };
+    });
+    return res.json({ success: true, results, hasMore: rows.length > limit, tokens });
+  } catch (err) {
+    console.error("Message search error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ─── AI ASSIST (suggested replies / summary — utils/inboxAssist.js) ──────────
+// Only ever returns text to the person; never sends. The :id param check at the
+// top of this file already limits it to chats the caller may see.
+async function assistConversation(req) {
+  const [[conversation]] = await pool.query(
+    "SELECT id, agency_id, integration_id FROM conversations WHERE id = ? AND agency_id = ?",
+    [req.params.id, req.user.agencyId]
+  );
+  return conversation || null;
+}
+
+router.post("/conversations/:id/ai/suggest-replies", requireModule("feature_ai_assistant"), async (req, res) => {
+  try {
+    const conversation = await assistConversation(req);
+    if (!conversation) return res.status(404).json({ success: false, message: "Conversation not found" });
+    const result = await suggestReplies({ agencyId: req.user.agencyId, userId: req.user.id, conversation });
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    if (err instanceof AssistError) return res.status(err.status).json({ success: false, message: err.message, code: err.code });
+    console.error("AI suggest replies error:", err);
+    return res.status(502).json({ success: false, message: "The AI provider didn't answer. Please try again." });
+  }
+});
+
+router.post("/conversations/:id/ai/summary", requireModule("feature_ai_assistant"), async (req, res) => {
+  try {
+    const conversation = await assistConversation(req);
+    if (!conversation) return res.status(404).json({ success: false, message: "Conversation not found" });
+    const result = await summarize({ agencyId: req.user.agencyId, userId: req.user.id, conversation });
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    if (err instanceof AssistError) return res.status(err.status).json({ success: false, message: err.message, code: err.code });
+    console.error("AI summary error:", err);
+    return res.status(502).json({ success: false, message: "The AI provider didn't answer. Please try again." });
   }
 });
 

@@ -6,6 +6,7 @@ import { channelAPI } from '../../services/api';
 import { handleLimitError, alert } from '../../utils/alerts';
 import { useAuth } from '../../Provider/AuthContext';
 import { Send, CheckCircle2, AlertTriangle, ClipboardList, Trash2, Plus, RefreshCw, ArrowLeft } from 'lucide-react';
+import { toastByType } from '../../utils/alerts';
 
 const EmbeddedWrapper = ({ children }) => <div>{children}</div>;
 
@@ -15,7 +16,6 @@ export default function TelegramPage({ embedded = false }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [token, setToken] = useState('');
-  const [toast, setToast] = useState(null);
   const [view, setView] = useUrlState('view', 'list', { allowed: ['list','connect'] });
 
   const fetchBots = useCallback(async () => {
@@ -26,7 +26,7 @@ export default function TelegramPage({ embedded = false }) {
 
   useEffect(() => { fetchBots(); }, [fetchBots]);
 
-  const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 4000); };
+  const showToast = (msg, type = 'success') => toastByType(msg, type);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -250,7 +250,6 @@ export default function TelegramPage({ embedded = false }) {
   return (
     <LayoutWrapper>
       <div style={{ width: '100%', padding: embedded ? '0' : '16px 20px' }}>
-        {toast && <div className="toast-container"><div className={`toast ${toast.type}`}>{toast.msg}</div></div>}
         {!embedded && <ChannelBreadcrumb current="Telegram Bot" />}
         {view === 'list' ? ListView() : ConnectView()}
       </div>

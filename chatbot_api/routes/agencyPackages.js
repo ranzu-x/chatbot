@@ -13,14 +13,13 @@ import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { requirePermission } from "../middleware/permissionMiddleware.js";
 import { logAuditEvent, diffFields } from "../utils/auditLog.js";
-
 const router = express.Router();
 router.use(authMiddleware);
 
 async function requireCallerIsAgency(req, res) {
   const [[agency]] = await pool.query("SELECT id, account_type FROM agencies WHERE id = ?", [req.user.agencyId]);
   if (!agency || !["DIRECT_CUSTOMER", "RESELLER"].includes(agency.account_type)) {
-    res.status(403).json({ success: false, message: "Only an agency account can manage its own packages" });
+    res.status(403).json({ success: false, message: "Only an End User or Reseller account can manage its own packages" });
     return null;
   }
   return agency;

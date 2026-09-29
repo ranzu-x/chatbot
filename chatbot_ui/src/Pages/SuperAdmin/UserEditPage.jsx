@@ -2,22 +2,59 @@ import { useState, useEffect, useMemo } from 'react';
 import UserAvatar from '../../Components/Common/UserAvatar';
 import { useNavigate, useParams, Link } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
-import { adminAPI, packageAPI } from '../../services/api';
+import { adminAPI, packageAPI, resellerUserAPI, agencyPackageAPI } from '../../services/api';
 import { notify, showAlert } from '../../utils/alerts';
 import {
   ArrowLeft, User, Lock, CreditCard, Globe, ShieldCheck, MessagesSquare, BarChart3,
   Eye, EyeOff, RotateCcw, CheckCircle2, AlertCircle, Save, Trash2,
 } from 'lucide-react';
 
-// Super Admin → User Manager → full-page create / edit (replaces the old
-// modal in UsersPage.jsx). Everything comes from GET /admin/users/:id and is
-// saved with one PUT /admin/users/:id (routes/admin.js). Creating a user is
-// POST /admin/users (name/email/password/role) followed by that same PUT for
-// the remaining fields.
+// User Manager → full-page create / edit, shared by two scopes:
+//   admin     Super Admin (/admin/users/new, /admin/users/:id/edit) — GET/PUT
+//             /admin/users/:id (routes/admin.js); creating = POST /admin/users
+//             then that same PUT for the remaining fields.
+//   reseller  a Reseller's own customers (/reseller/users/new, /:id/edit) — GET/PUT
+//             /reseller/users/:id (routes/resellerCustomers.js → utils/resellerScope.js).
+// Same design; SCOPES[scope].sections decides which parts appear.
 //
-// Special coupon + discount % are stored and shown only — they aren't applied
-// at checkout yet. "Comments" covers forum replies now and blog comments once
-// the blog has them. The expiry date is stored on the active subscription.
+// "Comments" covers forum replies now and blog comments once the blog has
+// them. The expiry date is stored on the active subscription.
+
+const SCOPES = {
+  admin: {
+    listPath: '/admin/users',
+    editPath: (userId) => `/admin/users/${userId}/edit`,
+    api: {
+      get: (id) => adminAPI.getUser(id),
+      create: (data) => adminAPI.createUser(data),
+      update: (id, data) => adminAPI.updateUser(id, data),
+      remove: (id) => adminAPI.deleteUser(id),
+    },
+    loadPackages: () => packageAPI.getAll(),
+    sections: { community: true, pricing: true, domain: true, resetUsage: true, packageGroups: true },
+  },
+  reseller: {
+    listPath: '/reseller/users',
+    editPath: (userId) => `/reseller/users/${userId}/edit`,
+    api: {
+      get: (id) => resellerUserAPI.get(id),
+      create: (data) => resellerUserAPI.create(data),
+      update: (id, data) => resellerUserAPI.update(id, data),
+      remove: (id) => resellerUserAPI.remove(id),
+    },
+    loadPackages: () => agencyPackageAPI.getAll(),
+    // Rules for a Reseller editing its own customers:
+    //  - community: the Community Forum is the platform's (Super Admin moderates
+    //    it); a reseller's customers can't use it at all (utils/tenantEligibility.js).
+    //  - pricing: special coupon / discount % belong to the platform checkout,
+    //    not the reseller's own customer payments.
+    //  - domain: its customers are never resellers.
+    //  - resetUsage: monthly counters are capped by the reseller's package per
+    //    customer; resetting them would lift that cap.
+    //  - packageGroups: the reseller's own plans only, no End User / Reseller groups.
+    sections: { community: false, pricing: false, domain: false, resetUsage: false, packageGroups: false },
+  },
+};
 
 const EMPTY_FORM = {
   name: '', email: '', phone: '', address: '',
@@ -66,7 +103,10 @@ const PACKAGE_GROUPS = [
 // What kind of account this is — shown, never edited: owners are End Users or
 // Resellers by their package (a Reseller stays one), team members come from
 // Team Members, Super Admins from the platform team.
-function accountKindOf(detail, isNew) {
+function accountKindOf(detail, isNew, scope = 'admin') {
+  if (scope === 'reseller') {
+    return { key: 'RESELLER_CUSTOMER', owner: true, label: 'End User', packageTypes: [], hint: 'Your customer — gets its own workspace and uses one of your plans.' };
+  }
   if (isNew || !detail) {
     return { key: 'END_USER', owner: true, label: 'End User', packageTypes: ['END_USER', 'AGENCY'], hint: 'New users get their own workspace. Give them a Reseller plan to make them a Reseller. Team members are added in Team Members.' };
   }
@@ -188,10 +228,12 @@ function PasswordInput({ value, onChange, placeholder, autoComplete }) {
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
-export default function UserEditPage() {
+export default function UserEditPage({ scope = 'admin' }) {
   const { id } = useParams();
   const isNew = !id;
   const navigate = useNavigate();
+  const cfg = SCOPES[scope] || SCOPES.admin;
+  const show = cfg.sections;
 
   const [detail, setDetail] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -207,10 +249,10 @@ export default function UserEditPage() {
   const setFromEvent = (key) => (e) => set(key)(e.target.value);
 
   useEffect(() => {
-    packageAPI.getAll()
+    cfg.loadPackages()
       .then((res) => setPackages(res.data?.packages || res.data || []))
       .catch(() => {});
-  }, []);
+  }, [cfg]);
 
   useEffect(() => {
     if (isNew) {
@@ -223,7 +265,7 @@ export default function UserEditPage() {
     let cancelled = false;
     setLoading(true);
     setLoadError('');
-    adminAPI.getUser(id)
+    cfg.api.get(id)
       .then((res) => {
         if (cancelled) return;
         const u = res.data.user;
@@ -237,10 +279,10 @@ export default function UserEditPage() {
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [id, isNew]);
+  }, [id, isNew, cfg]);
 
-  const isResellerWorkspace = detail?.workspace?.account_type === 'RESELLER';
-  const accountKind = accountKindOf(detail, isNew);
+  const isResellerWorkspace = show.domain && detail?.workspace?.account_type === 'RESELLER';
+  const accountKind = accountKindOf(detail, isNew, scope);
   const isDirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(initialForm), [form, initialForm]);
   const passwordMismatch = form.confirmPassword !== '' && form.newPassword !== form.confirmPassword;
 
@@ -254,7 +296,7 @@ export default function UserEditPage() {
 
   const goBack = async () => {
     if (isDirty && !(await showAlert.confirm({ title: 'Discard changes?', text: 'Your unsaved changes to this user will be lost.', confirmButtonText: 'Discard' }))) return;
-    navigate('/admin/users');
+    navigate(cfg.listPath);
   };
 
   // Only fields that changed are sent, so saving never touches (for
@@ -269,12 +311,12 @@ export default function UserEditPage() {
     if (!isNew && form.newPassword) p.newPassword = form.newPassword;
     if (changed('packageId') && form.packageId) p.packageId = Number(form.packageId);
     if (changed('expiryDate')) p.expiryDate = form.expiryDate ? `${form.expiryDate}T23:59:59` : null;
-    if (isNew || changed('specialCoupon')) p.specialCoupon = form.specialCoupon.trim();
-    if (isNew || changed('discountPercent')) p.discountPercent = form.discountPercent === '' ? null : Number(form.discountPercent);
+    if (show.pricing && (isNew || changed('specialCoupon'))) p.specialCoupon = form.specialCoupon.trim();
+    if (show.pricing && (isNew || changed('discountPercent'))) p.discountPercent = form.discountPercent === '' ? null : Number(form.discountPercent);
     if (isNew || changed('isActive')) p.isActive = form.isActive;
     if (isNew || changed('emailVerified')) p.emailVerified = form.emailVerified;
-    if (isNew || changed('canForumPost')) p.canForumPost = form.canForumPost;
-    if (isNew || changed('canComment')) p.canComment = form.canComment;
+    if (show.community && (isNew || changed('canForumPost'))) p.canForumPost = form.canForumPost;
+    if (show.community && (isNew || changed('canComment'))) p.canComment = form.canComment;
     if (isResellerWorkspace && (changed('customDomain') || changed('subdomain'))) {
       p.customDomain = form.customDomain.trim();
       p.subdomain = form.subdomain.trim();
@@ -288,14 +330,14 @@ export default function UserEditPage() {
     if (isNew && !form.newPassword) { notify.error('Set a password for the new user'); return; }
     if (form.newPassword && form.newPassword.length < 6) { notify.error('Password must be at least 6 characters'); return; }
     if (form.newPassword !== form.confirmPassword) { notify.error('The two passwords do not match'); return; }
-    if (form.discountPercent !== '' && (Number(form.discountPercent) < 0 || Number(form.discountPercent) > 100)) {
+    if (show.pricing && form.discountPercent !== '' && (Number(form.discountPercent) < 0 || Number(form.discountPercent) > 100)) {
       notify.error('Discount must be between 0 and 100'); return;
     }
 
     // A Reseller package makes the owner a Reseller for good; a Reseller moved to an
     // End User package stays a Reseller (chatbot_api/utils/accountTypeRules.js).
     const nextPkg = packages.find((p) => String(p.id) === String(form.packageId));
-    if (form.packageId !== initialForm.packageId && nextPkg && accountKind.owner) {
+    if (show.packageGroups && form.packageId !== initialForm.packageId && nextPkg && accountKind.owner) {
       if (nextPkg.type === 'AGENCY' && accountKind.key === 'END_USER') {
         const ok = await showAlert.confirm({
           title: 'Make this user a Reseller?',
@@ -318,14 +360,14 @@ export default function UserEditPage() {
     try {
       let userId = id;
       if (isNew) {
-        const created = await adminAPI.createUser({ name: form.name.trim(), email: form.email.trim(), password: form.newPassword });
-        userId = created.data?.user?.id;
+        const created = await cfg.api.create({ name: form.name.trim(), email: form.email.trim(), password: form.newPassword });
+        userId = created.data?.user?.id ?? created.data?.userId;
       }
-      const res = await adminAPI.updateUser(userId, buildPayload());
+      const res = await cfg.api.update(userId, buildPayload());
       if (res.data?.packageChange) setPackageNote(res.data.packageChange.note);
       notify.success(isNew ? 'User created' : 'User updated');
       if (isNew) {
-        navigate(`/admin/users/${userId}/edit`, { replace: true });
+        navigate(cfg.editPath(userId), { replace: true });
       } else {
         const u = res.data.user;
         setDetail(u);
@@ -360,12 +402,15 @@ export default function UserEditPage() {
   };
 
   const handleDelete = async () => {
-    const ok = await showAlert.confirm({ title: `Delete ${detail?.name}?`, text: 'This permanently deletes the user. This cannot be undone.', confirmButtonText: 'Delete user' });
+    const text = scope === 'reseller'
+      ? 'This permanently deletes the user together with their workspace and everything in it. This cannot be undone.'
+      : 'This permanently deletes the user. This cannot be undone.';
+    const ok = await showAlert.confirm({ title: `Delete ${detail?.name}?`, text, confirmButtonText: 'Delete user' });
     if (!ok) return;
     try {
-      await adminAPI.deleteUser(id);
+      await cfg.api.remove(id);
       notify.success('User deleted');
-      navigate('/admin/users');
+      navigate(cfg.listPath);
     } catch (err) {
       notify.error(err.response?.data?.message || 'Delete failed');
     }
@@ -378,7 +423,7 @@ export default function UserEditPage() {
           {loading ? 'Loading user…' : (
             <>
               <p style={{ margin: '0 0 12px' }}>{loadError}</p>
-              <Link to="/admin/users">Back to User Manager</Link>
+              <Link to={cfg.listPath}>Back to User Manager</Link>
             </>
           )}
         </div>
@@ -468,12 +513,15 @@ export default function UserEditPage() {
               </div>
             </Card>
 
-            <Card icon={CreditCard} title="Subscription" subtitle="Plan, expiry and special pricing">
+            <Card icon={CreditCard} title="Subscription" subtitle={show.pricing ? 'Plan, expiry and special pricing' : 'Plan and expiry'}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 14 }}>
                 <Field label="Subscription package" hint={detail?.subscription ? `Current: ${detail.subscription.package_name || 'Unknown'}` : (isNew ? null : 'No active subscription')}>
                   <select className="form-input w-full" value={form.packageId} onChange={setFromEvent('packageId')} disabled={accountKind.key === 'ADMIN'}>
                     <option value="">— No package —</option>
-                    {PACKAGE_GROUPS.filter((g) => accountKind.packageTypes.includes(g.type)).map((g) => {
+                    {!show.packageGroups && packages
+                      .filter((p) => p.is_active !== 0 || String(p.id) === String(form.packageId))
+                      .map((p) => <option key={p.id} value={p.id}>{p.name}{p.is_active === 0 ? ' (inactive)' : ''}</option>)}
+                    {show.packageGroups && PACKAGE_GROUPS.filter((g) => accountKind.packageTypes.includes(g.type)).map((g) => {
                       const list = packages.filter((p) => p.type === g.type || (!p.type && g.type === 'END_USER'));
                       return list.length ? (
                         <optgroup key={g.type} label={g.label}>
@@ -489,6 +537,7 @@ export default function UserEditPage() {
                 >
                   <input type="date" className="form-input w-full" value={form.expiryDate} onChange={setFromEvent('expiryDate')} disabled={!form.packageId} />
                 </Field>
+                {show.pricing && (<>
                 <Field label="Special coupon" hint="A code from Super Admin → Coupons, applied automatically when this user checks out">
                   <input className="form-input w-full" value={form.specialCoupon} onChange={(e) => set('specialCoupon')(e.target.value.toUpperCase())} placeholder="e.g. VIP2026" maxLength={64} style={{ fontFamily: 'var(--font-mono)', letterSpacing: 0.5 }} />
                 </Field>
@@ -498,6 +547,7 @@ export default function UserEditPage() {
                     <span style={{ position: 'absolute', right: 11, top: '50%', transform: 'translateY(-50%)', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>%</span>
                   </div>
                 </Field>
+                </>)}
               </div>
               {packageNote && (
                 <div style={{ marginTop: 14, background: 'rgba(37,99,235,0.07)', color: '#1d4ed8', padding: '10px 12px', borderRadius: 8, fontSize: '0.76rem', lineHeight: 1.5 }}>
@@ -558,21 +608,23 @@ export default function UserEditPage() {
               />
             </Card>
 
-            <Card icon={MessagesSquare} title="Community">
-              <ToggleRow
-                title="Forum posting"
-                description="Can start new threads in the Community Forum."
-                checked={form.canForumPost}
-                onChange={set('canForumPost')}
-              />
-              <div style={{ borderTop: '1px solid var(--border)' }} />
-              <ToggleRow
-                title="Forum & blog comments"
-                description="Can reply in the forum. Blog comments will follow this setting once the blog has comments."
-                checked={form.canComment}
-                onChange={set('canComment')}
-              />
-            </Card>
+            {show.community && (
+              <Card icon={MessagesSquare} title="Community">
+                <ToggleRow
+                  title="Forum posting"
+                  description="Can start new threads in the Community Forum."
+                  checked={form.canForumPost}
+                  onChange={set('canForumPost')}
+                />
+                <div style={{ borderTop: '1px solid var(--border)' }} />
+                <ToggleRow
+                  title="Forum & blog comments"
+                  description="Can reply in the forum. Blog comments will follow this setting once the blog has comments."
+                  checked={form.canComment}
+                  onChange={set('canComment')}
+                />
+              </Card>
+            )}
 
             {!isNew && (
               <Card
@@ -592,14 +644,14 @@ export default function UserEditPage() {
                         <strong style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>{Number(value || 0).toLocaleString()}</strong>
                       </div>
                     ))}
-                    <button
+                    {show.resetUsage && <button
                       type="button"
                       onClick={handleResetUsage}
                       disabled={resetting}
                       style={{ marginTop: 10, width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '0.8rem', fontWeight: 600, cursor: resetting ? 'default' : 'pointer' }}
                     >
                       <RotateCcw size={13} className={resetting ? 'animate-spin' : ''} /> {resetting ? 'Resetting…' : 'Reset monthly usage'}
-                    </button>
+                    </button>}
                   </>
                 ) : (
                   <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-tertiary)' }}>This user doesn't own a workspace, so there's no usage to show.</p>

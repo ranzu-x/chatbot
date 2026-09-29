@@ -24,6 +24,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
+import { toastByType } from '../../utils/alerts';
 
 // ─── Team Roles Definition & Capabilities ─────────────────────────────────────
 export const TEAM_ROLES = [
@@ -166,12 +167,7 @@ export default function TeamMembersPage() {
     });
   };
 
-  // Toast
-  const [toast, setToast] = useState(null);
-  const showToast = (message, type = 'success') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 3500);
-  };
+  const showToast = (message, type = 'success') => toastByType(message, type);
 
   // ─── Fetch Team Members ───────────────────────────────────────────────────
   const fetchMembers = useCallback(async () => {
@@ -358,30 +354,6 @@ export default function TeamMembersPage() {
 
   return (
     <AppLayout>
-      {/* Toast Notification */}
-      {toast && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 24,
-            right: 24,
-            zIndex: 99999,
-            padding: '12px 20px',
-            borderRadius: 10,
-            color: '#fff',
-            fontWeight: 600,
-            fontSize: '0.88rem',
-            boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
-            background: toast.type === 'error' ? '#ef4444' : '#10b981',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-          }}
-        >
-          {toast.type === 'error' ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
-          {toast.message}
-        </div>
-      )}
 
       <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 20px' }}>
         {/* ── Page Header ── */}

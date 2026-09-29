@@ -117,6 +117,40 @@ export async function getCustomerUser(resellerId, userId) {
   return row || null;
 }
 
+/**
+ * Everything the reseller's full-page user editor shows for one customer
+ * owner (same shape as the Super Admin's GET /admin/users/:id, minus the
+ * platform-only parts), or null if the user isn't this reseller's.
+ */
+export async function getCustomerUserDetail(resellerId, userId) {
+  const target = await getCustomerUser(resellerId, userId);
+  if (!target) return null;
+  const [[user]] = await pool.query(
+    `SELECT u.id, u.name, u.email, u.phone, u.address, u.avatar, u.email_verified_at, u.created_at,
+            (u.is_active = 1 AND a.is_active = 1) AS is_active,
+            a.id AS workspace_id, a.name AS workspace_name, a.usage_reset_at
+       FROM users u JOIN agencies a ON a.owner_id = u.id
+      WHERE u.id = ? AND a.id = ? AND a.parent_agency_id = ?`,
+    [target.id, target.agencyId, resellerId]
+  );
+  const [[subscription]] = await pool.query(
+    `SELECT acs.id, acs.package_id, acs.current_period_end, acs.started_at, ap.name AS package_name
+       FROM agency_client_subscriptions acs
+       LEFT JOIN agency_packages ap ON ap.id = acs.package_id AND ap.agency_id = ?
+      WHERE acs.client_agency_id = ? AND acs.agency_id = ? AND acs.status = 'ACTIVE'
+      ORDER BY acs.id DESC LIMIT 1`,
+    [resellerId, target.agencyId, resellerId]
+  );
+  const { getMonthlyUsage } = await import("./entitlements.js");
+  return {
+    ...user,
+    is_active: Boolean(user.is_active),
+    workspace: { id: user.workspace_id, name: user.workspace_name, usage_reset_at: user.usage_reset_at },
+    subscription: subscription || null,
+    usage: await getMonthlyUsage(target.agencyId),
+  };
+}
+
 /** One of this reseller's own plans. */
 export async function getResellerPackage(resellerId, packageId) {
   const [[row]] = await pool.query("SELECT id, name FROM agency_packages WHERE id = ? AND agency_id = ?", [packageId, resellerId]);
@@ -201,9 +235,13 @@ export async function createCustomerAccount({ resellerId, actor, name, slug, own
   }
 }
 
-/** Edit a customer owner's details / status / plan. `target` must come from getCustomerUser. */
+/**
+ * Edit a customer owner's details / status / plan / plan expiry / email
+ * verification. `target` must come from getCustomerUser. Only fields present
+ * in `patch` change.
+ */
 export async function updateCustomerUser(resellerId, actor, target, patch) {
-  const { phone, address, isActive, newPassword, packageId } = patch;
+  const { phone, address, isActive, newPassword, packageId, emailVerified, expiryDate } = patch;
   const name = patch.name !== undefined ? String(patch.name).trim() : undefined;
   const email = patch.email !== undefined ? String(patch.email).toLowerCase().trim() : undefined;
 
@@ -214,6 +252,9 @@ export async function updateCustomerUser(resellerId, actor, target, patch) {
     if (clash) throw new TenantError(400, EMAIL_UNAVAILABLE);
   }
   if (newPassword && String(newPassword).length < 6) throw new TenantError(400, "Password must be at least 6 characters");
+  if (expiryDate !== undefined && expiryDate !== null && Number.isNaN(new Date(expiryDate).getTime())) {
+    throw new TenantError(400, "Invalid expiry date");
+  }
 
   let newPackage = null;
   if (packageId && Number(packageId) !== Number(await getActivePackageId(target.agencyId))) {
@@ -229,6 +270,9 @@ export async function updateCustomerUser(resellerId, actor, target, patch) {
   if (address !== undefined) { fields.push("address = ?"); values.push(address || null); }
   if (newPassword) { fields.push("password = ?"); values.push(await bcrypt.hash(newPassword, 10)); }
   if (typeof isActive === "boolean") { fields.push("is_active = ?"); values.push(isActive ? 1 : 0); }
+  // The reseller vouches for its own customer's address (as when it creates one);
+  // switching it off makes the user confirm their email again.
+  if (typeof emailVerified === "boolean") fields.push(emailVerified ? "email_verified_at = COALESCE(email_verified_at, NOW())" : "email_verified_at = NULL");
   if (fields.length) {
     values.push(target.id);
     await pool.query(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`, values);
@@ -249,6 +293,18 @@ export async function updateCustomerUser(resellerId, actor, target, patch) {
       toPackage: newPackage.name,
       note: "Existing data is always kept. If this plan's limits are lower than what the user already has, they simply can't add more of that resource until they're back under the limit or upgraded. Nothing is deleted automatically.",
     };
+  }
+
+  // Plan expiry = the active subscription's current_period_end: past it the
+  // customer's workspace is read-only (utils/subscriptionStatus.js), null = never.
+  if (expiryDate !== undefined) {
+    const [upd] = await pool.query(
+      "UPDATE agency_client_subscriptions SET current_period_end = ? WHERE client_agency_id = ? AND agency_id = ? AND status = 'ACTIVE'",
+      [expiryDate ? new Date(expiryDate) : null, target.agencyId, resellerId]
+    );
+    if (!upd.affectedRows && expiryDate) throw new TenantError(400, "Give this user a plan before setting an expiry date");
+    const { invalidateSubscriptionCache } = await import("./subscriptionStatus.js");
+    invalidateSubscriptionCache(target.agencyId);
   }
 
   logAuditEvent({

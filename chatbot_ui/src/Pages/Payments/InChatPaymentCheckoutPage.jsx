@@ -41,6 +41,11 @@ export default function InChatPaymentCheckoutPage() {
     try {
       const res = await api.get(`/payments/order/${orderId}`, { params: { t: orderToken } });
       const ord = res.data?.order;
+      if (['EXPIRED', 'CANCELLED', 'FAILED'].includes(ord.status)) {
+        // e.g. an appointment whose reserved time ran out before payment
+        setError('This checkout is no longer available. Please go back to the chat and start again.');
+        return;
+      }
       setOrder(ord);
       if (ord.status === 'PAID') {
         setPaidSuccess(true);
@@ -63,7 +68,9 @@ export default function InChatPaymentCheckoutPage() {
       setPaidSuccess(true);
     } catch (err) {
       console.error(err);
-      setError('Payment failed. Please try again.');
+      setError(err?.response?.data?.code === 'ORDER_CLOSED'
+        ? 'This checkout is no longer available. Please go back to the chat and start again.'
+        : 'Payment failed. Please try again.');
     } finally {
       setPaying(false);
     }

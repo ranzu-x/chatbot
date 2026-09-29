@@ -107,6 +107,7 @@ import BusinessHoursPage     from './Pages/Settings/BusinessHoursPage';
 // Lazy-loaded so it only downloads when someone actually opens a bot/flow.
 import FlowListPage     from './Pages/Flows/FlowListPage';
 const FlowBuilderPage   = lazy(() => import('./Pages/Flows/FlowBuilderPage'));
+const FlowAnalyticsPage = lazy(() => import('./Pages/Flows/FlowAnalyticsPage'));
 
 // User Input Flows (reusable question sequences) — the builder is FlowBuilderPage
 // running in User Input Flow mode, keyed off the /user-input-flows route. The
@@ -171,6 +172,9 @@ export default function App() {
               <Route path="/admin/audit-log" element={<ProtectedRoute roles={ADMIN_AGENCY} accountTypes={['RESELLER']}><AuditLogPage /></ProtectedRoute>} />
               <Route path="/reseller/customers" element={<ProtectedRoute roles={['RESELLER']}><ResellerCustomersPage /></ProtectedRoute>} />
               <Route path="/reseller/users" element={<ProtectedRoute roles={['RESELLER']}><UsersPage scope="reseller" /></ProtectedRoute>} />
+            {/* Same full-page editor as the Super Admin's, reseller rules (no Community etc.) */}
+            <Route path="/reseller/users/new" element={<ProtectedRoute roles={['RESELLER']}><UserEditPage scope="reseller" /></ProtectedRoute>} />
+            <Route path="/reseller/users/:id/edit" element={<ProtectedRoute roles={['RESELLER']}><UserEditPage scope="reseller" /></ProtectedRoute>} />
               {/* "Packages & Modules" for an agency is now package-creation for ITS
                   OWN customers (used to be reseller-only) — /reseller/packages kept
                   as a working alias, /agency/packages is the primary path now. */}
@@ -227,6 +231,8 @@ export default function App() {
             <Route path="/flows/new" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
             <Route path="/flows/:id" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
             <Route path="/flows/:id/edit" element={<ProtectedRoute roles={ALL_ROLES}><FlowBuilderPage /></ProtectedRoute>} />
+            {/* Per-step flow analytics (chatbot_api/utils/flowStats.js) */}
+            <Route path="/flows/:id/analytics" element={<ProtectedRoute roles={ALL_ROLES}><FlowAnalyticsPage /></ProtectedRoute>} />
 
             {/* ── User Input Flows (reusable question sequences) ──
                 The builder is the same FlowBuilderPage; it switches into User Input

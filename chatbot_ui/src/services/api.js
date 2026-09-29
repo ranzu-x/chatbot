@@ -48,6 +48,17 @@ export const authAPI = {
   disableTwoFactor: (data) => api.post("/auth/2fa/disable", data),
   newBackupCodes: (data) => api.post("/auth/2fa/backup-codes", data),
   revokeAllSessions: () => api.post("/auth/sessions/revoke-all"),
+  // My Account → Profile: the signed-in person's own login.
+  getProfile: () => api.get("/auth/profile"),
+  updateProfile: (data) => api.put("/auth/profile", data),
+  uploadAvatar: (file) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return api.post("/auth/profile/avatar", fd, { headers: { "Content-Type": "multipart/form-data" } });
+  },
+  removeAvatar: () => api.delete("/auth/profile/avatar"),
+  changeEmail: (data) => api.put("/auth/profile/email", data),
+  changePassword: (data) => api.post("/auth/profile/password", data),
   register: (data) => api.post("/auth/register", data),
   logout: () => api.post("/auth/logout"),
   me: () => api.get("/auth/me"),
@@ -136,7 +147,7 @@ export const packageAPI = {
   update: (id, data) => api.put(`/packages/${id}`, data),
   clone: (id) => api.post(`/packages/${id}/clone`),
   delete: (id) => api.delete(`/packages/${id}`),
-  assign: (data) => api.post("/packages/assign", data),
+  // No "assign": a package is assigned from the Super Admin user editor.
 };
 
 // ─── Stripe & Billing Subscriptions ──────────────────────────────
@@ -412,6 +423,7 @@ export const resellerCustomerAPI = {
 // ─── Reseller's own users (User Manager, same screen as Super Admin's) ─
 export const resellerUserAPI = {
   getAll: () => api.get("/reseller/users"),
+  get: (id) => api.get(`/reseller/users/${id}`),
   create: (data) => api.post("/reseller/users", data),
   update: (id, data) => api.put(`/reseller/users/${id}`, data),
   toggle: (id) => api.patch(`/reseller/users/${id}/toggle`),
@@ -469,7 +481,13 @@ export const integrationAPI = {
 export const conversationAPI = {
   getAll: (params) => api.get("/conversations", { params }),
   getOne: (id) => api.get(`/conversations/${id}`),
+  // params: { before } older page · { after } newer page · { around } window centred on one message
   getMessages: (id, params) => api.get(`/conversations/${id}/messages`, { params }),
+  // AI assist (never sends): three reply suggestions / a short summary
+  aiSuggestReplies: (id) => api.post(`/conversations/${id}/ai/suggest-replies`),
+  aiSummary: (id) => api.post(`/conversations/${id}/ai/summary`),
+  // Server-side search inside one chat's history: { q, before, limit }
+  searchMessages: (id, params, config) => api.get(`/conversations/${id}/messages/search`, { params, ...config }),
   assign: (id, agentProfileId) => api.patch(`/conversations/${id}/assign`, { agentProfileId }),
   updateStatus: (id, status) => api.patch(`/conversations/${id}/status`, { status }),
   toggleBot: (id, reason) => api.patch(`/conversations/${id}/toggle-bot`, reason ? { reason } : undefined),
@@ -744,6 +762,8 @@ export const googleSheetsAPI = {
 export const flowAPI = {
   getAll: (params) => api.get('/flows', { params }),
   getOne: (id) => api.get(`/flows/${id}`),
+  // Per-step analytics; days = 7 | 30 | 90 | 'all'
+  analytics: (id, days) => api.get(`/flows/${id}/analytics`, { params: { days } }),
   create: (data) => api.post('/flows', data),
   update: (id, data) => api.put(`/flows/${id}`, data),
   toggle: (id) => api.patch(`/flows/${id}/toggle`),
@@ -786,6 +806,15 @@ export const contactAPI = {
 };
 
 // ─── Unified Labels ───────────────────────────────────────────────────
+// ─── Growth tools: trackable chat links + QR codes (routes/growthLinks.js) ─
+export const growthLinkAPI = {
+  list: (integrationId) => api.get('/growth-links', { params: { integrationId } }),
+  create: (data) => api.post('/growth-links', data),
+  update: (id, data) => api.put(`/growth-links/${id}`, data),
+  remove: (id) => api.delete(`/growth-links/${id}`),
+  qr: (id, format = 'png') => api.get(`/growth-links/${id}/qr`, { params: { format }, responseType: 'blob' }),
+};
+
 export const labelAPI = {
   getAll: () => api.get('/labels'),
   create: (data) => api.post('/labels', data),
@@ -831,6 +860,11 @@ export const myNotificationsAPI = {
   getAll: () => api.get('/me/notifications'),
   markRead: (id) => api.post(`/me/notifications/${id}/read`),
   markAllRead: () => api.post('/me/notifications/read-all'),
+  // Browser push (utils/webPush.js on the server, utils/browserPush.js here)
+  pushKey: () => api.get('/me/push/key'),
+  pushSubscribe: (subscription) => api.post('/me/push/subscribe', { subscription }),
+  pushUnsubscribe: (endpoint) => api.post('/me/push/unsubscribe', { endpoint }),
+  pushTest: () => api.post('/me/push/test'),
 };
 
 // ─── Upload ─────────────────────────────────────────────────────────

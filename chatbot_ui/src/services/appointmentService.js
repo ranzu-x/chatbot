@@ -111,6 +111,20 @@ export const fetchAppointmentStats = async () => {
   }
 };
 
+// ─── CHATBOT BOOKING SETTINGS ─────────────────────────────────────────────────
+// Payment (NONE / REQUIRED / PAY_LATER), slot hold minutes, booking window,
+// minimum notice, max bookings per day, timezone.
+
+export const fetchBookingSettings = async () => {
+  const res = await api.get(`${API_BASE}/settings`);
+  return res.data;
+};
+
+export const saveBookingSettings = async (settings) => {
+  const res = await api.put(`${API_BASE}/settings`, settings);
+  return res.data;
+};
+
 // ─── SLOT SERVICES ────────────────────────────────────────────────────────────
 
 export const fetchSlots = async (params = {}) => {

@@ -190,6 +190,13 @@ export function emitToAgency(agencyId, event, data) {
 /** Emit an event to one user (all of their open tabs) */
 export function emitToUser(userId, event, data) {
   if (io) io.to(`user:${userId}`).emit(event, data);
+  // Also a browser push when they have no dashboard tab open (utils/webPush.js).
+  import("./webPush.js").then((m) => m.pushForEvent(userId, event, data)).catch(() => {});
+}
+
+/** True while this person has at least one dashboard tab connected to this server. */
+export function hasOpenTab(userId) {
+  return (connections.get(Number(userId)) || connections.get(String(userId)) || 0) > 0;
 }
 
 /** Emit an event to a specific conversation room */

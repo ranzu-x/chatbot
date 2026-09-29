@@ -10,6 +10,7 @@ import {
   Users, CheckCircle2, Instagram, Trash2, AlertTriangle, RefreshCw, Zap, Rocket, Pencil, Info,
   ArrowLeft, ArrowRight, Plus, Check,
 } from 'lucide-react';
+import { toastByType } from '../../utils/alerts';
 
 // ─── Instagram Login Button ────────────────────────────────────────
 function IGLoginButton({ onClick, loading, disabled }) {
@@ -103,7 +104,6 @@ export default function InstagramPage({ embedded = false }) {
   const [quickToken, setQuickToken]       = useState('');
   const [quickLoading, setQuickLoading]   = useState(false);
   const [syncingFb, setSyncingFb]         = useState(false);
-  const [toast, setToast]                 = useState(null);
 
   // UI flow: 'list' | 'choose_method' | 'connect'
   const [view, setView] = useUrlState('view', 'list', { allowed: ['list','connect'] });
@@ -122,10 +122,7 @@ export default function InstagramPage({ embedded = false }) {
 
   useEffect(() => { fetchConnected(); }, [fetchConnected]);
 
-  const showToast = (msg, type = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 4000);
-  };
+  const showToast = (msg, type = 'success') => toastByType(msg, type);
 
   const goToMethod = (m) => { setMethod(m); setView('connect'); };
   const goBack = () => { setView('list'); setMethod(null); setStep('idle'); };
@@ -644,7 +641,6 @@ export default function InstagramPage({ embedded = false }) {
 
   const pageContent = (
     <div style={{ width: '100%', padding: embedded ? '0' : '16px 20px' }}>
-      {toast && <div className="toast-container"><div className={`toast ${toast.type}`}>{toast.msg}</div></div>}
       {!embedded && <ChannelBreadcrumb current="Instagram Direct" />}
       {view === 'list' && ListView()}
       {view === 'choose_method' && ChooseMethodView()}

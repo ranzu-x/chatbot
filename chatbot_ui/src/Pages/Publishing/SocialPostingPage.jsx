@@ -34,6 +34,7 @@ import {
   Upload,
   Info,
 } from 'lucide-react';
+import { toastByType } from '../../utils/alerts';
 
 const ACCOUNTS_PER_PAGE = 10;
 const HISTORY_PAGE_SIZE = 25;
@@ -69,12 +70,8 @@ export default function SocialPostingPage() {
   const [historyFilter, setHistoryFilter] = useState('ALL');
   const [historyPage, setHistoryPage] = useState(1);
   const [historyTotal, setHistoryTotal] = useState(0);
-  const [toast, setToast] = useState(null);
 
-  const showToast = (msg, type = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 4000);
-  };
+  const showToast = (msg, type = 'success') => toastByType(msg, type);
 
   useEffect(() => {
     loadIntegrations();
@@ -315,30 +312,6 @@ export default function SocialPostingPage() {
   return (
     <AppLayout>
       <div style={{ maxWidth: 1360, margin: '0 auto', padding: '24px 20px', fontFamily: 'inherit' }}>
-        {/* Toast Notification */}
-        {toast && (
-          <div
-            style={{
-              position: 'fixed',
-              top: 24,
-              right: 24,
-              zIndex: 99999,
-              padding: '12px 20px',
-              borderRadius: 8,
-              background: toast.type === 'error' ? '#ef4444' : '#10b981',
-              color: '#ffffff',
-              fontWeight: 600,
-              fontSize: '0.84rem',
-              boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-            }}
-          >
-            {toast.type === 'error' ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
-            {toast.msg}
-          </div>
-        )}
 
         {/* Page Top Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16, marginBottom: 24 }}>

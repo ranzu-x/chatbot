@@ -18,7 +18,7 @@ import {
   Video, Music, FileText, Globe, ExternalLink,
   Smartphone, RotateCcw, Undo2, Redo2, ThumbsUp, Sparkles, MoreVertical,
   Copy, ShoppingBag, BarChart3, PackageSearch, MailPlus, ListChecks, HelpCircle, Flag, ClipboardList, Workflow, Tag, Timer, Palette, Megaphone, Network, MessagesSquare,
-  ArrowUp, ArrowDown, MapPin, Contact, CalendarDays, BellRing, BellOff, Headset, Bot as BotIcon
+  ArrowUp, ArrowDown, MapPin, Contact, CalendarDays, BellRing, BellOff, Headset, Bot as BotIcon, Shuffle
 } from 'lucide-react';
 import FlowPhonePreview from './FlowPhonePreview';
 import PlatformIcon, { getPlatformMeta } from '../../Components/Common/PlatformIcon';
@@ -79,6 +79,7 @@ const PLATFORM_RULES = {
     startAutomation: true,
     messageBlock: true,
     condition: true,
+    randomizer: true, // A/B split — channel-agnostic
     delay: true,
     webhook: true,
     httpApi: true,
@@ -122,6 +123,7 @@ const PLATFORM_RULES = {
     startAutomation: true,
     messageBlock: true,
     condition: true,
+    randomizer: true, // A/B split — channel-agnostic
     delay: true,
     webhook: true,
     httpApi: true,
@@ -162,6 +164,7 @@ const PLATFORM_RULES = {
     startAutomation: true,
     messageBlock: true,
     condition: true,
+    randomizer: true, // A/B split — channel-agnostic
     delay: true,
     webhook: true,
     httpApi: true,
@@ -201,6 +204,7 @@ const PLATFORM_RULES = {
     startAutomation: true,
     messageBlock: true,
     condition: true,
+    randomizer: true, // A/B split — channel-agnostic
     delay: true,
     webhook: true,
     httpApi: true,
@@ -252,6 +256,7 @@ const PLATFORM_RULES = {
     startAutomation: true,
     messageBlock: true,
     condition: true,
+    randomizer: true, // A/B split — channel-agnostic
     delay: true,
     webhook: true,
     httpApi: true,
@@ -291,6 +296,7 @@ const PLATFORM_RULES = {
     startAutomation: true,
     messageBlock: true,
     condition: true,
+    randomizer: true, // A/B split — channel-agnostic
     delay: true,
     webhook: true,
     httpApi: true,
@@ -360,6 +366,7 @@ const NODE_COLORS = {
   carousel: '#c026d3',     // Fuchsia
   collectInput: '#0d9488', // Teal
   condition: '#ea580c',    // Warm orange
+  randomizer: '#8b5cf6',   // Purple — A/B split
   delay: '#64748b',        // Slate
   webhook: '#2563eb',      // Royal blue
   httpApi: '#7c3aed',      // Violet (distinct from webhook's blue, matches Automation module's purple elsewhere)
@@ -471,6 +478,7 @@ const NODE_ICONS = {
   carousel: Layers,
   collectInput: Mail,
   condition: GitBranch,
+  randomizer: Shuffle,
   delay: Clock,
   webhook: Globe,
   httpApi: Network,
@@ -529,6 +537,7 @@ const PALETTE_CATEGORIES = [
       { type: 'collectInput', label: 'Collect Input' },
       { type: 'runUserInputFlow', label: 'Run User Input Flow' },
       { type: 'condition', label: 'Condition' },
+      { type: 'randomizer', label: 'Randomizer (A/B split)' },
       { type: 'delay', label: 'Delay' },
       { type: 'webhook', label: 'Webhook / Zapier' },
       { type: 'httpApi', label: 'HTTP API' },
@@ -616,6 +625,10 @@ const SEQUENCE_PALETTE = [
   },
 ];
 
+// Randomizer (A/B split): each person goes down one branch, picked by weight
+// (chatbot_api/utils/flowEngine.js "randomizer"; output handles branch-0…).
+const RANDOMIZER_MAX_BRANCHES = 6;
+
 const DEFAULT_NODE_DATA = {
   start:        { label: 'When...', trigger_type: 'keyword', match_type: 'contains' },
   text:         { label: 'Text Message', message: '' },
@@ -638,6 +651,7 @@ const DEFAULT_NODE_DATA = {
   carousel:     { label: 'Carousel', cards: [{ title: 'Card 1', subtitle: '', imageUrl: '' }] },
   collectInput: { label: 'Collect Input', variable: '', inputType: 'name' },
   condition:    { label: 'Condition', variable: '', operator: 'equals', value: '' },
+  randomizer:   { label: 'Randomizer', branches: [{ label: 'A', weight: 50 }, { label: 'B', weight: 50 }] },
   delay:        { label: 'Delay', seconds: 3 },
   webhook:      { label: 'Webhook / Zapier Action', url: '', method: 'POST', payloadMode: 'ALL_VARIABLES', customPayload: '', customHeaders: '' },
   httpApi:      { label: 'HTTP API', campaignId: '' },
@@ -2555,6 +2569,16 @@ function validateNodeRequirements(node, platform = null) {
       }
       return null;
 
+    case 'randomizer': {
+      const branches = Array.isArray(data.branches) ? data.branches : [];
+      if (branches.length < 2) return 'A randomizer needs at least 2 branches';
+      if (branches.length > RANDOMIZER_MAX_BRANCHES) return `A randomizer can have at most ${RANDOMIZER_MAX_BRANCHES} branches`;
+      if (branches.some((b) => !Number.isInteger(Number(b.weight)) || Number(b.weight) < 0)) return 'Each branch needs a whole-number percentage';
+      const total = branches.reduce((s, b) => s + (Number(b.weight) || 0), 0);
+      if (total !== 100) return `The branches must add up to 100% (now ${total}%)`;
+      return null;
+    }
+
     case 'delay': {
       // A Delay node's own wait now comes from the same generic "Delay
       // before this step" field every node type has (see DelaySettings) —
@@ -2679,6 +2703,8 @@ function getNodeDimensions(node) {
       return { width, height: 185 };
     case 'condition':
       return { width, height: 145 };
+    case 'randomizer':
+      return { width, height: 70 + 32 * Math.max(2, (node?.data?.branches || []).length) };
     case 'httpApi':
       return { width, height: 135 };
     case 'startAutomation':
@@ -5738,6 +5764,56 @@ function ConditionNode({ id, data, selected }) {
             transform: 'translateY(-50%)',
           }}
         />
+      </div>
+    </div>
+  );
+}
+
+/* ── Randomizer (A/B split) Node ─────────────────────────────── */
+// One output per branch (handle branch-0…); each person follows exactly one,
+// picked by weight. An unwired branch just ends the flow for that person.
+function RandomizerNode({ id, data, selected }) {
+  const validationError = data?._validationError;
+  const connectedHandles = useConnectedHandles(id);
+  const branches = Array.isArray(data?.branches) ? data.branches : [];
+  const color = NODE_COLORS.randomizer;
+  return (
+    <div
+      className={`fb-node-condition${selected ? ' selected' : ''}${validationError ? ' has-error' : ''}`}
+      style={{ background: '#ffffff', borderRadius: 20, borderColor: validationError ? '#ef4444' : selected ? color : '#e2e8f0' }}
+    >
+      <NodeHoverActions nodeId={id} nodeType="randomizer" />
+      <DelayPill data={data} />
+      {validationError && (
+        <div className="fb-node-warning" style={{ background: '#ef4444' }} title={`Missing Data: ${validationError}`}>
+          <AlertTriangle size={12} color="#fff" />
+        </div>
+      )}
+      <Handle type="target" position={Position.Left} className="target-handle" style={{ position: 'absolute', left: -5, top: 22 }} />
+      <div
+        className="fb-node-header"
+        style={{ background: validationError ? '#fef2f2' : `${color}12`, borderBottom: `1px solid ${validationError ? '#fecaca' : `${color}22`}`, borderRadius: '19px 19px 0 0' }}
+      >
+        <div style={{ width: 22, height: 22, borderRadius: 6, background: validationError ? '#fee2e2' : `${color}1e`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <Shuffle size={13} style={{ color: validationError ? '#ef4444' : color }} />
+        </div>
+        <span style={{ fontWeight: 700, fontSize: '11.5px', color: validationError ? '#b91c1c' : '#1e293b' }}>Randomizer</span>
+      </div>
+      <div className="fb-condition-outputs" style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 12px 10px' }}>
+        {branches.map((b, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative', minHeight: 24 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: '#1e293b', background: `${color}10`, border: `1px solid ${color}30`, borderRadius: 8, padding: '3px 8px', maxWidth: 190, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {b.label || String.fromCharCode(65 + i)} · {Number(b.weight) || 0}%
+            </span>
+            <Handle
+              type="source"
+              position={Position.Right}
+              id={`branch-${i}`}
+              className={`btn-handle${connectedHandles.has(`branch-${i}`) ? ' connected' : ''}`}
+              style={{ right: 8, top: '50%', transform: 'translateY(-50%)', position: 'absolute' }}
+            />
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -10713,6 +10789,73 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
         );
       }
 
+      case 'randomizer': {
+        const branches = Array.isArray(data.branches) ? data.branches : [];
+        const total = branches.reduce((s, b) => s + (Number(b.weight) || 0), 0);
+        const setBranches = (next) => updateField('branches', next);
+        const splitEvenly = (list) => {
+          const n = list.length;
+          const base = Math.floor(100 / n);
+          return list.map((b, i) => ({ ...b, weight: base + (i < 100 - base * n ? 1 : 0) }));
+        };
+        return (
+          <>
+            <span className="fb-hint" style={{ display: 'block', marginBottom: 10 }}>
+              Each person goes down one branch, picked at random by these percentages — use it to A/B test messages.
+              The branch taken is saved as <code>{'{{randomizer_branch}}'}</code>. A branch with nothing connected ends the flow for that person.
+            </span>
+            {branches.map((b, i) => (
+              <div key={i} className="fb-field" style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                <div style={{ flex: 1 }}>
+                  <label>Branch {i + 1} name</label>
+                  <input
+                    value={b.label || ''}
+                    maxLength={40}
+                    placeholder={String.fromCharCode(65 + i)}
+                    onChange={(e) => setBranches(branches.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
+                  />
+                </div>
+                <div style={{ width: 86 }}>
+                  <label>%</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={b.weight ?? 0}
+                    onChange={(e) => setBranches(branches.map((x, j) => (j === i ? { ...x, weight: e.target.value === '' ? 0 : Math.round(Number(e.target.value)) } : x)))}
+                  />
+                </div>
+                {branches.length > 2 && (
+                  <button
+                    type="button"
+                    title="Remove branch"
+                    onClick={() => setBranches(branches.filter((_, j) => j !== i))}
+                    style={{ border: '1px solid #e2e8f0', background: '#fff', borderRadius: 8, height: 34, width: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#94a3b8', flexShrink: 0 }}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
+            ))}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: total === 100 ? '#059669' : '#dc2626' }}>Total: {total}%</span>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button type="button" className="fb-add-btn" onClick={() => setBranches(splitEvenly(branches))}>Split evenly</button>
+                {branches.length < RANDOMIZER_MAX_BRANCHES && (
+                  <button
+                    type="button"
+                    className="fb-add-btn"
+                    onClick={() => setBranches(splitEvenly([...branches, { label: String.fromCharCode(65 + branches.length), weight: 0 }]))}
+                  >
+                    <Plus size={12} /> Add branch
+                  </button>
+                )}
+              </div>
+            </div>
+          </>
+        );
+      }
+
       case 'condition': {
         const compareSource = data.compareSource || 'variable';
         return (
@@ -11728,6 +11871,7 @@ const nodeTypes = {
   carousel: CarouselNode,
   collectInput: CollectInputNode,
   condition: ConditionNode,
+  randomizer: RandomizerNode,
   delay: DelayNode,
   webhook: WebhookNode,
   httpApi: HttpApiNode,

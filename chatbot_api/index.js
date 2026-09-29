@@ -69,6 +69,7 @@ import storeTemplateRoutes from "./routes/storeTemplates.js";
 import whatsappCatalogRoutes from "./routes/whatsappCatalog.js";
 import apiKeyRoutes from "./routes/apiKeys.js";
 import publicApiRoutes from "./routes/publicApi.js";
+import growthLinkRoutes from "./routes/growthLinks.js";
 import commerceRoutes from "./routes/commerce.js";
 import httpApiCampaignRoutes from "./routes/httpApiCampaigns.js";
 import aiProviderRoutes from "./routes/aiProviders.js";
@@ -114,6 +115,8 @@ import { startCommerceSyncScheduler } from "./utils/commerceSyncScheduler.js";
 import { startCommerceEventScheduler } from "./utils/commerceEvents.js";
 import { startMetaAppHealthScheduler } from "./utils/metaAppHealthScheduler.js";
 import { startBotErrorLogRetentionScheduler } from "./utils/botErrorLogRetentionScheduler.js";
+import { startMessageRetentionScheduler } from "./utils/messageRetention.js";
+import { startAppointmentHoldScheduler } from "./utils/appointmentHoldScheduler.js";
 
 dotenv.config();
 
@@ -143,6 +146,8 @@ startMetaAppHealthScheduler();
 startBotErrorLogRetentionScheduler();
 startFollowUpScheduler();
 startTelegramGroupScheduler();
+startMessageRetentionScheduler();
+startAppointmentHoldScheduler();
 
 // ─── Middleware ────────────────────────────────────────────────────────────────
 app.use(
@@ -259,6 +264,8 @@ app.use("/api/v1", webhookRoutes);
 app.use("/api/v1", whatsappFlowEndpointRoutes);
 
 app.use(["/api/v1/auth/login", "/api/v1/auth/forgot-password", "/api/v1/auth/reset-password"], authLimiter);
+// Changing email / password checks the current password — same brute-force limit as login.
+app.use(["/api/v1/auth/profile/password", "/api/v1/auth/profile/email"], authLimiter);
 app.use("/api/v1/auth/register", authLimiter);
 app.use("/api/v1", apiLimiter);
 // Server-side workspace check + req.tenant for every authenticated request
@@ -310,6 +317,7 @@ app.use("/api/v1", appointmentRoutes);
 app.use("/api/v1", appointmentServicesRoutes);
 app.use("/api/v1", slotRoutes);
 app.use("/api/v1", publicApiRoutes);
+app.use("/api/v1", growthLinkRoutes); // public /go/:code redirect + /growth-links (scoped itself)
 // In-chat order checkout page (public, per-order token) + Stripe's calls for
 // reseller payments — both anonymous, both scope their own auth per path.
 app.use("/api/v1", chatPaymentRoutes);

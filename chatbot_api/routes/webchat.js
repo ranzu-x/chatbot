@@ -16,6 +16,7 @@ import { logBotPausedSkip } from "../utils/botLogger.js";
 import { isWorkspaceExpired } from "../utils/subscriptionStatus.js";
 import { handleQuickActionInbound, runNoMatchReply } from "../utils/quickActions.js";
 import { isValidTimeZone } from "../utils/subscriberLocale.js";
+import { notifyAssigneeOfInbound } from "../utils/webPush.js";
 
 const router = express.Router();
 
@@ -428,6 +429,7 @@ router.post("/webchat/message", async (req, res) => {
       conversationId,
       message,
     });
+    notifyAssigneeOfInbound(conversationId, message); // browser push, background
     emitToConversation(conversationId, "new_message", {
       conversationId,
       message,

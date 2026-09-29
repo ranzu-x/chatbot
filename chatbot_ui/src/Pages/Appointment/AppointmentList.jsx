@@ -2160,8 +2160,9 @@ export default function AppointmentList() {
                       fontSize: "0.7rem",
                       fontWeight: 700,
                       textTransform: "uppercase",
-                      color: selectedAppointment.payment_status === "paid" ? "var(--success)" : "var(--text-secondary)",
-                      background: selectedAppointment.payment_status === "paid" ? "rgba(16, 185, 129, 0.12)" : "var(--bg-hover)",
+                      // paid · pending (chatbot pay-later link sent) · failed · unpaid / cancelled / refunded
+                      color: { paid: "var(--success)", pending: "#b45309", failed: "#b91c1c" }[selectedAppointment.payment_status] || "var(--text-secondary)",
+                      background: { paid: "rgba(16, 185, 129, 0.12)", pending: "#fef3c7", failed: "#fee2e2" }[selectedAppointment.payment_status] || "var(--bg-hover)",
                     }}
                   >
                     {selectedAppointment.payment_status || "unpaid"}

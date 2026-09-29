@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import AppLayout from '../../Layout/AppLayout';
-import { packageAPI, adminAPI } from '../../services/api';
-import { alert } from '../../lib/alerts';
+import { packageAPI } from '../../services/api';
+import { alert, toast } from '../../lib/alerts';
 import {
   PACKAGE_FEATURE_ROWS,
   PACKAGE_CHANNEL_BLOCKS,
@@ -95,13 +95,11 @@ const EMPTY_DISCOUNT = {
 export default function PackagesPage() {
   const [packages, setPackages] = useState([]);
   const [modulesRegistry, setModulesRegistry] = useState([]);
-  const [agencies, setAgencies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState('ALL'); // 'ALL' | 'AGENCY' | 'END_USER' | 'TEAM_MEMBER'
   const [selectedPkgId, setSelectedPkgId] = useState(null);
-  const [toast, setToast] = useState(null);
 
   // Active Editor Form State
   const [form, setForm] = useState({
@@ -126,17 +124,8 @@ export default function PackagesPage() {
     modules: [], // { key, isEnabled, limits }
   });
 
-  // Assign Modal State
-  const [assignOpen, setAssignOpen] = useState(false);
-  const [assignTargetType, setAssignTargetType] = useState('AGENCY');
-  const [selectedAgencyId, setSelectedAgencyId] = useState('');
-  const [assignNotes, setAssignNotes] = useState('');
-  const [assigning, setAssigning] = useState(false);
-
-  const showToast = (msg, type = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
-  };
+  // The app's standard toaster (lib/alerts).
+  const showToast = (msg, type = 'success') => (type === 'error' ? toast.error(msg) : toast.success(msg));
 
   useEffect(() => {
     loadData();
@@ -145,17 +134,15 @@ export default function PackagesPage() {
   const loadData = async (preferredId = null) => {
     setLoading(true);
     try {
-      const [pkgRes, regRes, agRes] = await Promise.all([
+      const [pkgRes, regRes] = await Promise.all([
         packageAPI.getAll(),
         packageAPI.getRegistry(),
-        adminAPI.getAgencies().catch(() => ({ data: { agencies: [] } })),
       ]);
 
       const pkgList = pkgRes.data?.packages || [];
       const regList = regRes.data?.modules || [];
       setPackages(pkgList);
       setModulesRegistry(regList);
-      setAgencies(agRes.data?.agencies || []);
 
       // Select package
       const targetId = preferredId || selectedPkgId || pkgList[0]?.id;
@@ -344,33 +331,6 @@ export default function PackagesPage() {
       ? setForm((prev) => ({ ...prev, [row.limit.packageField]: val }))
       : setModuleLimit(row.module, row.limit.field, val);
 
-  const handleOpenAssignModal = () => {
-    setSelectedAgencyId(agencies[0]?.id || '');
-    setAssignNotes(`Assigned ${form.name}`);
-    setAssignOpen(true);
-  };
-
-  const handleAssignSubmit = async (e) => {
-    e.preventDefault();
-    if (!form.id) return;
-    setAssigning(true);
-    try {
-      await packageAPI.assign({
-        packageId: form.id,
-        agencyId: assignTargetType === 'AGENCY' ? selectedAgencyId : null,
-        notes: assignNotes,
-      });
-      showToast(`Package "${form.name}" assigned successfully!`);
-      setAssignOpen(false);
-      loadData(form.id);
-    } catch (err) {
-      console.error(err);
-      showToast(err.response?.data?.message || 'Failed to assign package', 'error');
-    } finally {
-      setAssigning(false);
-    }
-  };
-
   const filteredPackages = packages.filter((p) => {
     const matchesFilter = filterType === 'ALL' || p.type === filterType;
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase());
@@ -387,31 +347,6 @@ export default function PackagesPage() {
   return (
     <AppLayout>
       <div className="packages-master-detail-page" style={{ width: '100%', padding: '12px 16px' }}>
-        {/* Toast Notification */}
-        {toast && (
-          <div
-            style={{
-              position: 'fixed',
-              top: 20,
-              right: 20,
-              zIndex: 99999,
-              padding: '12px 20px',
-              borderRadius: 10,
-              background: toast.type === 'error' ? '#ef4444' : '#10b981',
-              color: '#ffffff',
-              fontWeight: 700,
-              fontSize: '0.84rem',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-            }}
-          >
-            {toast.type === 'error' ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
-            {toast.msg}
-          </div>
-        )}
-
         {/* Top Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 18 }}>
           <div>
@@ -468,7 +403,7 @@ export default function PackagesPage() {
             <div style={{ display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 4 }}>
               {[
                 { id: 'ALL', label: 'All' },
-                { id: 'AGENCY', label: 'Agency' },
+                { id: 'AGENCY', label: 'Reseller' },
                 { id: 'END_USER', label: 'End User' },
                 { id: 'TEAM_MEMBER', label: 'Team' },
               ].map((f) => (
@@ -589,14 +524,6 @@ export default function PackagesPage() {
                   <>
                     <button
                       type="button"
-                      onClick={handleOpenAssignModal}
-                      style={{ padding: '7px 12px', borderRadius: 8, background: '#ffffff', border: '1px solid #e2e8f0', fontSize: '0.78rem', fontWeight: 600, color: '#334155', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
-                    >
-                      <Users size={13} /> Assign to Agency
-                    </button>
-
-                    <button
-                      type="button"
                       onClick={() => handleClone(form.id)}
                       title="Clone Package"
                       style={{ padding: '7px 10px', borderRadius: 8, background: '#ffffff', border: '1px solid #e2e8f0', fontSize: '0.78rem', color: '#64748b', cursor: 'pointer' }}
@@ -661,7 +588,7 @@ export default function PackagesPage() {
                 <div>
                   <label style={labelStyle}>Package Type *</label>
                   <select className="form-input w-full" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
-                    <option value="AGENCY">Agency Package</option>
+                    <option value="AGENCY">Reseller Package</option>
                     <option value="END_USER">Premium End-User</option>
                     <option value="TEAM_MEMBER">Team Member</option>
                   </select>
@@ -729,11 +656,11 @@ export default function PackagesPage() {
             {registryKeys.has(RESELLER_MODULE) && (
               <div style={sectionStyle}>
                 <h4 style={sectionTitleStyle}>
-                  <Building2 size={15} color="#64748b" /> Reseller (Agency)
+                  <Building2 size={15} color="#64748b" /> Reseller
                 </h4>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10, alignItems: 'end' }}>
                   <SwitchTile
-                    label="Agency"
+                    label="Reseller"
                     hint="Can create and charge its own users"
                     checked={resellerOn}
                     onChange={() => toggleModule(RESELLER_MODULE)}
@@ -756,21 +683,6 @@ export default function PackagesPage() {
                         placeholder="Unlimited"
                         value={getModule(RESELLER_MODULE).limits?.maxResellerCustomers ?? ''}
                         onChange={(e) => setModuleLimit(RESELLER_MODULE, 'maxResellerCustomers', e.target.value)}
-                      />
-                    </div>
-                  )}
-                  {resellerOn && (
-                    <div>
-                      <label style={{ ...labelStyle, display: 'flex', gap: 6, alignItems: 'center' }}>
-                        Subscriber limit <NotEnforcedTag>Saved only</NotEnforcedTag>
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        className="form-input w-full"
-                        placeholder="Unlimited"
-                        value={getModule(RESELLER_MODULE).limits?.maxResellerSubscribers ?? ''}
-                        onChange={(e) => setModuleLimit(RESELLER_MODULE, 'maxResellerSubscribers', e.target.value)}
                       />
                     </div>
                   )}
@@ -808,6 +720,11 @@ export default function PackagesPage() {
                   <p style={{ fontSize: '0.74rem', color: '#64748b', margin: '2px 0 0 0' }}>
                     Blank limit = unlimited. Disabled features are blocked by the API where marked as enforced.
                   </p>
+                  {resellerOn && (
+                    <p style={{ fontSize: '0.74rem', color: '#1e40af', margin: '4px 0 0 0' }}>
+                      Reseller package: Subscribers is one total for the reseller and all its customers together. Every other limit applies to the reseller and to each customer separately — a customer never gets more, whatever plan the reseller gives it.
+                    </p>
+                  )}
                 </div>
                 <div style={{ display: 'flex', gap: 6 }}>
                   <button
@@ -848,6 +765,9 @@ export default function PackagesPage() {
                       <div style={{ flex: '1 1 220px', minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                         <span style={{ fontSize: '0.8rem', fontWeight: 600, color: mod.isEnabled ? '#0f172a' : '#94a3b8' }}>{row.label}</span>
                         {enforced && !enforced.toggle && !(row.limit && enforced.limit) && <NotEnforcedTag />}
+                        {row.module === 'feature_subscribers' && resellerOn && (
+                          <span style={{ fontSize: '0.7rem', color: '#64748b' }}>Reseller + all its customers together</span>
+                        )}
                       </div>
                       {row.limit && mod.isEnabled && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1005,79 +925,6 @@ export default function PackagesPage() {
             </div>
           </div>
         </div>
-
-        {/* ─── MODAL: ASSIGN PACKAGE TO AGENCY ─── */}
-        {assignOpen && form.id && (
-          <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-            <div style={{ background: '#ffffff', borderRadius: 14, width: '100%', maxWidth: 480, overflow: 'hidden', boxShadow: '0 20px 40px rgba(0,0,0,0.25)' }}>
-              <div style={{ padding: '16px 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Users size={16} color="#64748b" />
-                  <h3 style={{ fontSize: '0.98rem', fontWeight: 700, color: '#0f172a', margin: 0 }}>
-                    Assign Package: {form.name}
-                  </h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setAssignOpen(false)}
-                  style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer' }}
-                >
-                  <X size={18} />
-                </button>
-              </div>
-
-              <form onSubmit={handleAssignSubmit} style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, marginBottom: 4 }}>
-                    Select Target Agency Workspace
-                  </label>
-                  <select
-                    className="form-input w-full"
-                    value={selectedAgencyId}
-                    onChange={(e) => setSelectedAgencyId(e.target.value)}
-                    required
-                  >
-                    {agencies.map((ag) => (
-                      <option key={ag.id} value={ag.id}>
-                        {ag.name} (ID: {ag.id})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, marginBottom: 4 }}>
-                    Assignment / Internal Notes
-                  </label>
-                  <input
-                    type="text"
-                    className="form-input w-full"
-                    placeholder="e.g. Upgraded tier"
-                    value={assignNotes}
-                    onChange={(e) => setAssignNotes(e.target.value)}
-                  />
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
-                  <button
-                    type="button"
-                    onClick={() => setAssignOpen(false)}
-                    style={{ padding: '8px 14px', borderRadius: 8, background: '#ffffff', border: '1px solid #cbd5e1', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer' }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={assigning}
-                    style={{ padding: '8px 18px', borderRadius: 8, background: 'var(--primary)', color: '#ffffff', border: 'none', fontSize: '0.8rem', fontWeight: 700, cursor: assigning ? 'not-allowed' : 'pointer' }}
-                  >
-                    {assigning ? 'Assigning...' : 'Confirm Assignment'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
       </div>
     </AppLayout>
   );

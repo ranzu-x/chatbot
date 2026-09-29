@@ -5,6 +5,7 @@ import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { requireModule } from "../utils/entitlements.js";
 import { findOutOfScopeRefs, describeOutOfScope, violationsForClient, stripComponentRefs, getOwnedIntegration } from "../utils/botScope.js";
 import { findDeadEndOptions } from "../utils/flowDeadEnds.js";
+import { getFlowAnalytics } from "../utils/flowStats.js";
 
 const router = express.Router();
 router.use("/flows", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"), requireModule("feature_bot_manager"));
@@ -35,6 +36,23 @@ router.get("/flows", async (req, res) => {
     sql += " ORDER BY f.updated_at DESC";
     const [rows] = await pool.query(sql, params);
     return res.json({ success: true, flows: rows });
+  } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
+});
+
+// ── ANALYTICS (per step: reached, sent, delivered, read, clicks / branches) ──
+router.get("/flows/:id/analytics", async (req, res) => {
+  try {
+    const [[flow]] = await pool.query(
+      "SELECT id, name, nodes_json, edges_json, integration_id, is_active FROM flows WHERE id = ? AND agency_id = ?",
+      [req.params.id, req.user.agencyId]
+    );
+    if (!flow) return res.status(404).json({ success: false, message: "Flow not found" });
+    const nodes = JSON.parse(flow.nodes_json || "[]");
+    const edges = JSON.parse(flow.edges_json || "[]");
+    const startNode = nodes.find((n) => n.type === "start");
+    const days = req.query.days === "all" ? 0 : Math.min(3650, Math.max(1, parseInt(req.query.days) || 30));
+    const stats = await getFlowAnalytics(req.user.agencyId, flow.id, days, startNode?.id || null);
+    return res.json({ success: true, flow: { id: flow.id, name: flow.name, isActive: Boolean(flow.is_active), nodes, edges }, ...stats });
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 

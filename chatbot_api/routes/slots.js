@@ -4,6 +4,10 @@ import { authMiddleware } from "../middleware/authmiddleware.js";
 import { requireModule } from "../utils/entitlements.js";
 import { generateTimeSlots } from "../utils/slotGenerator.js";
 import { canUsePublicBooking } from "../utils/publicBooking.js";
+import { freeCapacitySql } from "../utils/appointmentAvailability.js";
+
+// Free places = capacity - bookings - live WhatsApp holds (utils/appointmentAvailability.js).
+const FREE = freeCapacitySql("s");
 
 const router = express.Router();
 
@@ -25,24 +29,24 @@ router.get("/slots/availability/dates", async (req, res) => {
     }
 
     let query = `
-      SELECT slot_date, COUNT(*) as total_slots,
-             SUM(max_capacity - booked_count) as total_available_capacity,
-             COUNT(CASE WHEN (max_capacity - booked_count) > 0 THEN 1 END) as available_slots_count
-      FROM appointment_slots
-      WHERE agency_id = ?
-        AND is_active = 1
-        AND slot_date >= ?
-        AND slot_date <= DATE_ADD(?, INTERVAL ? DAY)
-        AND (max_capacity - booked_count) > 0
+      SELECT s.slot_date, COUNT(*) as total_slots,
+             SUM(${FREE}) as total_available_capacity,
+             COUNT(*) as available_slots_count
+      FROM appointment_slots s
+      WHERE s.agency_id = ?
+        AND s.is_active = 1
+        AND s.slot_date >= ?
+        AND s.slot_date <= DATE_ADD(?, INTERVAL ? DAY)
+        AND ${FREE} > 0
     `;
     const params = [agencyId, fromDate, fromDate, daysAhead];
 
     if (staffId) {
-      query += " AND staff_id = ?";
+      query += " AND s.staff_id = ?";
       params.push(staffId);
     }
 
-    query += " GROUP BY slot_date ORDER BY slot_date ASC";
+    query += " GROUP BY s.slot_date ORDER BY s.slot_date ASC";
 
     const [rows] = await pool.query(query, params);
 
@@ -72,13 +76,13 @@ router.get("/slots/availability", async (req, res) => {
     let query = `
       SELECT s.id, s.agency_id, s.staff_id, s.slot_date, s.start_time, s.end_time,
              s.slot_duration, s.max_capacity, s.booked_count,
-             (s.max_capacity - s.booked_count) AS available_slots,
+             ${FREE} AS available_slots,
              u.name as staff_name
       FROM appointment_slots s
       LEFT JOIN users u ON u.id = s.staff_id
       WHERE s.agency_id = ?
         AND s.is_active = 1
-        AND (s.max_capacity - s.booked_count) > 0
+        AND ${FREE} > 0
     `;
     const params = [agencyId];
 
@@ -120,7 +124,9 @@ router.get("/slots", async (req, res) => {
 
     let query = `
       SELECT s.*, u.name AS staff_name, u.email AS staff_email,
-             (s.max_capacity - s.booked_count) AS available_capacity
+             (s.max_capacity - s.booked_count) AS available_capacity,
+             (SELECT COUNT(*) FROM appointment_slot_holds h
+               WHERE h.slot_id = s.id AND h.status = 'ACTIVE' AND h.expires_at > NOW()) AS held_count
       FROM appointment_slots s
       LEFT JOIN users u ON u.id = s.staff_id
       WHERE 1=1

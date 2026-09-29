@@ -824,11 +824,16 @@ export async function sendPlatformMessage(platform, integration, contactExternal
         const rawSections = getListMenuSections(listMenu).filter((s) => (s.rows || []).length > 0).slice(0, 10);
         let rowsBudget = 10;
         const sections = rawSections.map((s) => {
-          const rows = (s.rows || []).slice(0, rowsBudget).map((item, index) => ({
-            id: item.id || `item_${index}`,
-            title: (item.title || "").slice(0, 24),
-            description: item.description ? item.description.slice(0, 72) : "",
-          }));
+          // Meta limits: row id ≤ 200, title ≤ 24, description ≤ 72 (optional —
+          // left out when empty), section title ≤ 24, button text ≤ 20.
+          const rows = (s.rows || []).slice(0, rowsBudget).map((item, index) => {
+            const row = {
+              id: String(item.id || `item_${index}`).slice(0, 200),
+              title: (item.title || "").slice(0, 24),
+            };
+            if (item.description) row.description = String(item.description).slice(0, 72);
+            return row;
+          });
           rowsBudget -= rows.length;
           return { title: (s.title || "Options").slice(0, 24), rows };
         }).filter((s) => s.rows.length > 0);
@@ -836,12 +841,14 @@ export async function sendPlatformMessage(platform, integration, contactExternal
         payload.type = "interactive";
         payload.interactive = {
           type: "list",
-          body: { text: body || "Please select an option:" },
+          body: { text: (body || "Please select an option:").slice(0, 4096) },
           action: {
-            button: listMenu.buttonText || "Select",
+            button: String(listMenu.buttonText || "Select").slice(0, 20),
             sections,
           },
         };
+        if (listMenu.header) payload.interactive.header = { type: "text", text: String(listMenu.header).slice(0, 60) };
+        if (listMenu.footer) payload.interactive.footer = { text: String(listMenu.footer).slice(0, 60) };
       } else {
         // Default text message
         payload.type = "text";

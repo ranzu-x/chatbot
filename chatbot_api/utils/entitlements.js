@@ -137,6 +137,19 @@ async function getUsageAcrossAgencies(agencyIds) {
 // §7). This is the "individual ceiling" tier; the reseller's own platform
 // package (via subscriptions/packages) supplies the separate "pool ceiling"
 // tier, applied in assertLimit below.
+// The smaller of two limits, where null = unlimited.
+const lowerLimit = (a, b) => (a === null || a === undefined ? b ?? null : b === null || b === undefined ? a : Math.min(a, b));
+const numOrNull = (v) => (v === null || v === undefined ? null : Number(v));
+
+// Every limit of a reseller's package except Subscribers is a PER-ACCOUNT cap
+// (decided with the user): the reseller and each of its customers may have up
+// to that many (connected accounts, team members, messages a month, sequences,
+// AI tokens…). So a customer's limit is the lower of the plan its reseller gave
+// it and the reseller's own package — a reseller may sell "unlimited", but it
+// can't lift a customer above its own package. Subscribers are the exception:
+// the reseller package's number is ONE total for the reseller and all its
+// customers (assertResellerPoolLimit); the customer's own plan still caps it
+// individually.
 async function getResellerCustomerEntitlements(agencyId) {
   const [subRows] = await pool.query(
     `SELECT p.* FROM agency_client_subscriptions acs
@@ -148,25 +161,29 @@ async function getResellerCustomerEntitlements(agencyId) {
   const usage = await getUsageForAgency(agencyId);
   const pkg = subRows[0];
 
-  if (!pkg) {
-    // No plan assigned yet by the reseller — unlimited at THIS tier; the
-    // reseller's own pool ceiling (assertLimit's pool-tier check) still applies.
-    return {
-      package: { id: 0, name: "Unassigned (reseller pool applies)", type: "RESELLER_CUSTOMER", slug: "unassigned", price: 0, billingCycle: "monthly" },
-      limits: { maxBotAccounts: null, maxSubscribers: null, maxTeamMembers: null, maxMonthlyMessages: null },
-      usage,
-      enabledModules: getFallbackUnlimitedEntitlements().enabledModules,
-      modulesMap: {},
-    };
-  }
+  const [[self]] = await pool.query("SELECT parent_agency_id FROM agencies WHERE id = ?", [agencyId]);
+  const reseller = self?.parent_agency_id ? await getAgencyEntitlements(self.parent_agency_id, null) : null;
+  const cap = reseller?.limits || {};
+
+  const own = pkg
+    ? {
+      maxBotAccounts: numOrNull(pkg.max_bot_accounts),
+      maxSubscribers: numOrNull(pkg.max_subscribers),
+      maxTeamMembers: numOrNull(pkg.max_team_members),
+      maxMonthlyMessages: numOrNull(pkg.max_monthly_messages),
+    }
+    : { maxBotAccounts: null, maxSubscribers: null, maxTeamMembers: null, maxMonthlyMessages: null };
 
   return {
-    package: { id: pkg.id, name: pkg.name, slug: pkg.slug, type: "RESELLER_CUSTOMER", price: Number(pkg.price), billingCycle: pkg.billing_cycle },
+    package: pkg
+      ? { id: pkg.id, name: pkg.name, slug: pkg.slug, type: "RESELLER_CUSTOMER", price: Number(pkg.price), billingCycle: pkg.billing_cycle }
+      // No plan assigned yet by the reseller — the reseller's package limits apply.
+      : { id: 0, name: "Unassigned (reseller's package limits apply)", type: "RESELLER_CUSTOMER", slug: "unassigned", price: 0, billingCycle: "monthly" },
     limits: {
-      maxBotAccounts: pkg.max_bot_accounts === null ? null : Number(pkg.max_bot_accounts),
-      maxSubscribers: pkg.max_subscribers === null ? null : Number(pkg.max_subscribers),
-      maxTeamMembers: pkg.max_team_members === null ? null : Number(pkg.max_team_members),
-      maxMonthlyMessages: pkg.max_monthly_messages === null ? null : Number(pkg.max_monthly_messages),
+      maxBotAccounts: lowerLimit(own.maxBotAccounts, cap.maxBotAccounts),
+      maxSubscribers: own.maxSubscribers, // the reseller's number is a shared total (pool check)
+      maxTeamMembers: lowerLimit(own.maxTeamMembers, cap.maxTeamMembers),
+      maxMonthlyMessages: lowerLimit(own.maxMonthlyMessages, cap.maxMonthlyMessages),
     },
     usage,
     // agency_packages has no module matrix of its own (yet) — features
@@ -174,7 +191,10 @@ async function getResellerCustomerEntitlements(agencyId) {
     // per-module gating for reseller-defined plans is a future extension
     // (features_summary JSON is available on the row for display purposes).
     enabledModules: getFallbackUnlimitedEntitlements().enabledModules,
-    modulesMap: {},
+    // The module-level limits (sequences, AI tokens, posts a month, call
+    // minutes…, and a switched-off Connect Account / Team Members = 0) come
+    // from the reseller's package, per customer.
+    modulesMap: reseller?.modulesMap || {},
   };
 }
 
@@ -420,7 +440,9 @@ function getFallbackUnlimitedEntitlements() {
 // via agency_packages. A RESELLER_CUSTOMER's individual agency_packages
 // ceiling (handled by getResellerCustomerEntitlements above) is a SEPARATE,
 // ADDITIONAL check — both must pass.
-const POOLABLE_LIMITS = new Set(["max_bot_accounts", "max_subscribers", "max_team_members"]);
+// Only Subscribers is a shared total (decided with the user); every other
+// limit applies to each account on its own (getResellerCustomerEntitlements).
+const POOLABLE_LIMITS = new Set(["max_subscribers"]);
 
 async function getPoolAgencyIds(resellerAgencyId) {
   const [rows] = await pool.query(
@@ -430,7 +452,12 @@ async function getPoolAgencyIds(resellerAgencyId) {
   return rows.map((r) => r.id);
 }
 
-async function assertResellerPoolLimit(resellerAgencyId, limitType, increment) {
+// A Reseller package's own limits (e.g. "Subscribers") are the ceiling for the
+// reseller AND all its customers together (decided with the user). The plans
+// a reseller gives its customers are its own business — they may be unlimited
+// or bigger than its package; this total is what's enforced, and a reseller
+// near it buys a bigger package.
+async function assertResellerPoolLimit(resellerAgencyId, limitType, increment, { isResellerItself = false } = {}) {
   if (!POOLABLE_LIMITS.has(limitType)) return;
   const rootEntitlements = await getAgencyEntitlements(resellerAgencyId, null);
   const poolLimitByType = {
@@ -451,8 +478,11 @@ async function assertResellerPoolLimit(resellerAgencyId, limitType, increment) {
   const used = usedByType[limitType] ?? 0;
 
   if (used + increment > poolLimit) {
+    const what = { max_bot_accounts: "connected accounts", max_subscribers: "subscribers", max_team_members: "team members" }[limitType];
     const err = new Error(
-      `Your reseller's shared plan limit has been reached (${used}/${poolLimit} used across every customer combined). Every customer under this reseller is blocked from adding more until the reseller upgrades its plan.`
+      isResellerItself
+        ? `Limit reached: your plan allows ${poolLimit} ${what} for you and all of your customers together (${used} in use). Please upgrade your plan to add more.`
+        : `Your reseller's shared plan limit has been reached (${used}/${poolLimit} used across every customer combined). Every customer under this reseller is blocked from adding more until the reseller upgrades its plan.`
     );
     err.status = 403;
     err.code = "RESELLER_POOL_LIMIT_EXCEEDED";
@@ -710,7 +740,7 @@ export async function assertLimit(agencyId, limitType, increment = 1, userId = n
   if (agencyId && POOLABLE_LIMITS.has(limitType)) {
     const [[agencyRow]] = await pool.query("SELECT account_type, parent_agency_id FROM agencies WHERE id = ?", [agencyId]);
     if (agencyRow?.account_type === "RESELLER") {
-      await assertResellerPoolLimit(agencyId, limitType, increment);
+      await assertResellerPoolLimit(agencyId, limitType, increment, { isResellerItself: true });
     } else if (agencyRow?.account_type === "RESELLER_CUSTOMER" && agencyRow.parent_agency_id) {
       await assertResellerPoolLimit(agencyRow.parent_agency_id, limitType, increment);
     }

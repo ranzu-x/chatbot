@@ -9,6 +9,7 @@ import { getBackendOrigin } from '../../utils/assetUrl';
 import { validateWebsiteUrl, createChatWidgetAndFlow, createReplyFlowForWidget, confirmAndDeleteWidget } from '../../utils/chatWidgetHelpers';
 import { useAuth } from '../../Provider/AuthContext';
 import { Globe, CheckCircle2, XCircle, ClipboardCopy, Plus, Trash2, RefreshCw, ArrowLeft, GitBranch, AlertTriangle } from 'lucide-react';
+import { toastByType } from '../../utils/alerts';
 
 const EmbeddedWrapper = ({ children }) => <div>{children}</div>;
 
@@ -21,7 +22,6 @@ export default function WebchatPage({ embedded = false }) {
   const [widgets, setWidgets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState(null);
   const [embedModal, setEmbedModal] = useState(null);
   const [copied, setCopied] = useState(false);
   const [form, setForm] = useState(DEFAULT_FORM);
@@ -43,7 +43,7 @@ export default function WebchatPage({ embedded = false }) {
 
   useEffect(() => { fetchWidgets(); }, [fetchWidgets]);
 
-  const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3500); };
+  const showToast = (msg, type = 'success') => toastByType(msg, type);
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -402,7 +402,6 @@ export default function WebchatPage({ embedded = false }) {
   return (
     <LayoutWrapper>
       <div style={{ width: '100%', padding: embedded ? '0' : '16px 20px' }}>
-        {toast && <div className="toast-container"><div className={`toast ${toast.type}`} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>{toast.type === 'success' ? <CheckCircle2 size={14} /> : <XCircle size={14} />} {toast.msg}</div></div>}
 
         {/* Embed Code Modal */}
         {embedModal && (

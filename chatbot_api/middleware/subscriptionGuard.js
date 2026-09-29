@@ -13,6 +13,7 @@ const ALWAYS_ALLOWED = [
   /^\/billing\//,
   /^\/customer-billing\//, // a reseller's customer paying its reseller (utils/resellerBilling.js)
   /^\/me\/notifications/,
+  /^\/me\/push\//, // browser push on/off (utils/webPush.js)
   /^\/notifications\/(read|mark)/,
 ];
 

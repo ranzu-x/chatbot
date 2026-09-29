@@ -2,11 +2,22 @@ import express from "express";
 import pool from "../db.js";
 import { buildSearch } from "../utils/searchQuery.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
-import { requireModule } from "../utils/entitlements.js";
+import { requireModule, assertLimit } from "../utils/entitlements.js";
 import { emitToAgency } from "../utils/socket.js";
 import { canUsePublicBooking } from "../utils/publicBooking.js";
+import { getBookingSettings, saveBookingSettings, cleanBookingSettings } from "../utils/appointmentAvailability.js";
+import { stripe } from "../services/stripeService.js";
 
 const router = express.Router();
+
+/** Live WhatsApp booking holds on a slot (utils/appointmentAvailability.js). Call after locking the slot row. */
+async function liveHolds(conn, slotId) {
+  const [[{ n }]] = await conn.query(
+    "SELECT COUNT(*) AS n FROM appointment_slot_holds WHERE slot_id = ? AND status = 'ACTIVE' AND expires_at > NOW()",
+    [slotId]
+  );
+  return Number(n);
+}
 
 // ─── 1. PUBLIC CHANNEL / BOT / WEBCHAT BOOKING ENDPOINT ──────────────────────
 // Used by WhatsApp bot flow nodes, Webchat widgets, and public booking page
@@ -80,7 +91,9 @@ router.post("/appointments/book-public", async (req, res) => {
       }
 
       const slot = slots[0];
-      if (slot.booked_count >= slot.max_capacity) {
+      // Places held by WhatsApp subscribers who are confirming / paying count as taken.
+      const held = await liveHolds(conn, slot.id);
+      if (slot.booked_count + held >= slot.max_capacity) {
         await conn.rollback();
         return res.status(400).json({ success: false, message: "Selected time slot is already fully booked" });
       }
@@ -97,7 +110,7 @@ router.post("/appointments/book-public", async (req, res) => {
         "SELECT id, booked_count, max_capacity FROM appointment_slots WHERE agency_id = ? AND slot_date = ? AND start_time = ? AND is_active = 1 FOR UPDATE",
         [agency_id, finalDate, finalTime]
       );
-      if (matchingSlots.length > 0 && matchingSlots[0].booked_count < matchingSlots[0].max_capacity) {
+      if (matchingSlots.length > 0 && matchingSlots[0].booked_count + (await liveHolds(conn, matchingSlots[0].id)) < matchingSlots[0].max_capacity) {
         targetSlotId = matchingSlots[0].id;
         await conn.query("UPDATE appointment_slots SET booked_count = booked_count + 1 WHERE id = ?", [targetSlotId]);
       }
@@ -117,9 +130,14 @@ router.post("/appointments/book-public", async (req, res) => {
       [agency_id, cleanPhone, cleanPhone]
     );
 
+    // Over the plan's subscriber limit: still take the booking (it keeps the
+    // customer's name / phone / email), just don't add a new subscriber.
+    const roomForSubscriber = existingContacts.length > 0
+      || await assertLimit(agency_id, "max_subscribers", 1, null).then(() => true, () => false);
+
     if (existingContacts.length > 0) {
       contactId = existingContacts[0].id;
-    } else {
+    } else if (roomForSubscriber) {
       const validPlatforms = ["WHATSAPP", "FACEBOOK", "INSTAGRAM", "TELEGRAM", "WEBCHAT", "TIKTOK"];
       const contactPlatform = validPlatforms.includes(channel) ? channel : "WEBCHAT";
       const [newContact] = await conn.query(
@@ -219,6 +237,34 @@ router.get("/appointments/stats", async (req, res) => {
   } catch (err) {
     console.error("[APPOINTMENT STATS ERROR]", err);
     return res.status(500).json({ success: false, message: "Error fetching appointment statistics" });
+  }
+});
+
+// GET/PUT /api/v1/appointments/settings — chatbot booking rules (payment, hold,
+// window, notice, daily cap, timezone). Must stay above /appointments/:id.
+router.get("/appointments/settings", async (req, res) => {
+  try {
+    const agencyId = req.tenant?.agencyId ?? req.user?.agencyId;
+    if (!agencyId) return res.status(403).json({ success: false, message: "Workspace required" });
+    const settings = await getBookingSettings(agencyId);
+    return res.json({ success: true, settings, paymentProviderReady: Boolean(stripe) });
+  } catch (err) {
+    console.error("[APPOINTMENT SETTINGS GET]", err);
+    return res.status(500).json({ success: false, message: "Failed to load booking settings" });
+  }
+});
+
+router.put("/appointments/settings", async (req, res) => {
+  try {
+    const agencyId = req.tenant?.agencyId ?? req.user?.agencyId;
+    if (!agencyId) return res.status(403).json({ success: false, message: "Workspace required" });
+    const { settings: clean, errors } = cleanBookingSettings(req.body || {});
+    if (errors.length) return res.status(400).json({ success: false, message: errors[0], errors });
+    const settings = await saveBookingSettings(agencyId, clean);
+    return res.json({ success: true, settings, paymentProviderReady: Boolean(stripe) });
+  } catch (err) {
+    console.error("[APPOINTMENT SETTINGS PUT]", err);
+    return res.status(500).json({ success: false, message: "Failed to save booking settings" });
   }
 });
 

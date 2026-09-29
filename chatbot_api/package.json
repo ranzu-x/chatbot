@@ -25,7 +25,16 @@
     "test:reseller-payments": "node scripts/test-reseller-payments.mjs",
     "test:marketing-messages": "node scripts/test-marketing-messages.mjs",
     "test:telegram-checklists": "node scripts/test-telegram-checklists.mjs",
-    "test:wa-pacing": "node scripts/test-wa-pacing.mjs"
+    "test:wa-pacing": "node scripts/test-wa-pacing.mjs",
+    "test:appointments": "node scripts/test-appointment-booking.mjs",
+    "test:inbox-history": "node scripts/test-inbox-history.mjs",
+    "test:reseller-limits": "node scripts/test-reseller-limits.mjs",
+    "test:reseller-user-editor": "node scripts/test-reseller-user-editor.mjs",
+    "test:my-profile": "node scripts/test-my-profile.mjs",
+    "test:flow-analytics": "node scripts/test-flow-analytics.mjs",
+    "test:growth-links": "node scripts/test-growth-links.mjs",
+    "test:inbox-assist": "node scripts/test-inbox-assist.mjs",
+    "test:web-push": "node scripts/test-web-push.mjs"
   },
   "keywords": [],
   "author": "",
@@ -55,6 +64,7 @@
     "pdf-parse": "^2.4.5",
     "qrcode": "^1.5.4",
     "socket.io": "^4.8.3",
-    "stripe": "^22.6.0"
+    "stripe": "^22.6.0",
+    "web-push": "^3.6.7"
   }
 }

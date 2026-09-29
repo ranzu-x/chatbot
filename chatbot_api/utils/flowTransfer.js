@@ -32,7 +32,7 @@ export const MAX_EDGES = 5000;
 // Element types this version understands (FlowBuilderPage.jsx nodeTypes).
 export const KNOWN_NODE_TYPES = new Set([
   "start", "text", "interactive", "image", "video", "audio", "file", "buttons", "quickReplies", "listMenu",
-  "card", "carousel", "collectInput", "condition", "delay", "webhook", "httpApi", "payment", "telegramPoll",
+  "card", "carousel", "collectInput", "condition", "randomizer", "delay", "webhook", "httpApi", "payment", "telegramPoll",
   "telegramChecklist", "orderStatus", "marketingOptIn", "handoff", "end", "runUserInputFlow", "question",
   "finalAnswer", "startSequenceAction", "stopSequenceAction", "wait", "actions", "startAutomation",
   "messageBlock", "appointment", "whatsappTemplate", "messengerTemplate", "whatsappCtaUrl",

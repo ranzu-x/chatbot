@@ -5,7 +5,7 @@ import AppLayout from '../../Layout/AppLayout';
 import { adminAPI, packageAPI, resellerUserAPI, agencyPackageAPI } from '../../services/api';
 import { BulkEmailModal, BulkNotifyModal } from './BulkUserActions';
 import { downloadCsv } from '../../utils/csv';
-import { alert } from '../../lib/alerts';
+import { alert, toast } from '../../lib/alerts';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -79,8 +79,6 @@ export default function UsersPage({ scope = 'admin' }) {
   const [selectedIds, setSelectedIds] = useState(new Set());
 
   // Modals & Drawers
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [editingUser, setEditingUser] = useState(null);
   const [viewingUser, setViewingUser] = useState(null);
   const [showRatingsModal, setShowRatingsModal] = useState(false);
   const [showOptionsDropdown, setShowOptionsDropdown] = useState(false);
@@ -94,28 +92,9 @@ export default function UsersPage({ scope = 'admin' }) {
     return () => document.removeEventListener('mousedown', onClick);
   }, [showOptionsDropdown]);
   useEffect(() => { if (!showOptionsDropdown) setShowSelectedSubmenu(false); }, [showOptionsDropdown]);
-  const [saving, setSaving] = useState(false);
 
-  // Form State
-  const [form, setForm] = useState({
-    name: '',
-    email: '',
-    password: '',
-    role: 'USER',
-    phone: '',
-    address: '',
-    packageId: '',
-    isActive: true,
-    newPassword: '',
-  });
-  const [packageChangeNote, setPackageChangeNote] = useState('');
-
-  // Toast notification
-  const [toast, setToast] = useState(null);
-  const showToast = (msg, type = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
-  };
+  // The app's standard toaster (lib/alerts).
+  const showToast = (msg, type = 'success') => (type === 'error' ? toast.error(msg) : toast.success(msg));
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -153,58 +132,6 @@ export default function UsersPage({ scope = 'admin' }) {
     } catch (err) {
       console.error(err);
       showToast('Failed to update status', 'error');
-    }
-  };
-
-  // ── Create or Update User ──
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      if (editingUser) {
-        if (isReseller || adminAPI.updateUser) {
-          const payload = {
-            name: form.name,
-            email: form.email,
-            phone: form.phone,
-            address: form.address,
-            packageId: form.packageId || undefined,
-            isActive: form.isActive,
-            ...(form.newPassword && { newPassword: form.newPassword }),
-          };
-          const res = isReseller
-            ? await resellerUserAPI.update(editingUser.id, payload)
-            // The user type is never edited — it follows the package (chatbot_api/utils/accountTypeRules.js).
-            : await adminAPI.updateUser(editingUser.id, payload);
-          if (res.data?.packageChange) {
-            setPackageChangeNote(res.data.packageChange.note);
-            showToast(`User updated — plan changed to ${res.data.packageChange.toPackage}`);
-          } else {
-            showToast('User updated successfully');
-          }
-        }
-      } else {
-        if (isReseller) {
-          await resellerUserAPI.create({
-            name: form.name,
-            email: form.email,
-            password: form.password,
-            phone: form.phone || undefined,
-            packageId: form.packageId || undefined,
-          });
-        } else if (adminAPI.createUser) {
-          await adminAPI.createUser(form);
-        }
-        showToast('User created successfully');
-      }
-      setShowCreateModal(false);
-      setEditingUser(null);
-      setForm({ name: '', email: '', password: '', role: 'USER', phone: '', address: '', packageId: '', isActive: true, newPassword: '' });
-      fetchUsers();
-    } catch (err) {
-      showToast(err.response?.data?.message || 'Action failed', 'error');
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -454,14 +381,8 @@ export default function UsersPage({ scope = 'admin' }) {
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           {/* Create Button */}
           <button
-            onClick={() => {
-              // Super Admin: full-page editor (UserEditPage.jsx). Resellers keep the modal.
-              if (!isReseller) { navigate('/admin/users/new'); return; }
-              setEditingUser(null);
-              setForm({ name: '', email: '', password: '', role: 'USER', phone: '', address: '', packageId: '', isActive: true, newPassword: '' });
-              setPackageChangeNote('');
-              setShowCreateModal(true);
-            }}
+            // Both scopes use the full-page editor (UserEditPage.jsx).
+            onClick={() => navigate(isReseller ? '/reseller/users/new' : '/admin/users/new')}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -960,17 +881,7 @@ export default function UsersPage({ scope = 'admin' }) {
                           <button
                             className="action-icon-btn"
                             title="Edit User"
-                            onClick={() => {
-                              if (!isReseller) { navigate(`/admin/users/${u.id}/edit`); return; }
-                              setEditingUser(u);
-                              setForm({
-                                name: u.name || '', email: u.email || '', password: '', role: u.role || 'USER',
-                                phone: u.phone || '', address: u.address || '', packageId: u.package_id || '',
-                                isActive: Boolean(u.is_active), newPassword: '',
-                              });
-                              setPackageChangeNote('');
-                              setShowCreateModal(true);
-                            }}
+                            onClick={() => navigate(isReseller ? `/reseller/users/${u.id}/edit` : `/admin/users/${u.id}/edit`)}
                           >
                             ✏️
                           </button>
@@ -1120,192 +1031,6 @@ export default function UsersPage({ scope = 'admin' }) {
         <BulkNotifyModal users={selectedUsers} onClose={() => setBulkModal(null)} onDone={(r) => handleBulkDone('notify', r)} />
       )}
 
-      {/* ── Create / Edit User Modal ── */}
-      {showCreateModal && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.5)',
-            zIndex: 9999,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <div
-            style={{
-              width: 440,
-              maxWidth: '92vw',
-              background: 'var(--bg-card)',
-              borderRadius: 14,
-              padding: 24,
-              boxShadow: 'var(--shadow-md)',
-              border: '1px solid var(--border)',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-              <h3 style={{ fontSize: '1.15rem', fontWeight: 700, margin: 0 }}>
-                {editingUser ? 'Edit User' : 'Create New User'}
-              </h3>
-              <button
-                onClick={() => {
-                  setShowCreateModal(false);
-                  setEditingUser(null);
-                }}
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: '50%',
-                  border: '1px solid var(--border)',
-                  background: 'var(--bg-hover)',
-                  cursor: 'pointer',
-                }}
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>
-                  Full Name
-                </label>
-                <input
-                  required
-                  className="form-input w-full"
-                  placeholder="e.g. John Doe"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>
-                  Email Address
-                </label>
-                <input
-                  type="email"
-                  required
-                  className="form-input w-full"
-                  placeholder="john@example.com"
-                  value={form.email}
-                  onChange={(e) => setForm({ ...form, email: e.target.value })}
-                />
-              </div>
-
-              {!editingUser && (
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>
-                    Password
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    className="form-input w-full"
-                    placeholder="••••••••"
-                    value={form.password}
-                    onChange={(e) => setForm({ ...form, password: e.target.value })}
-                  />
-                </div>
-              )}
-
-              {isReseller && !editingUser && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>Phone</label>
-                    <input className="form-input w-full" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>Package</label>
-                    <select className="form-input w-full" value={form.packageId} onChange={(e) => setForm({ ...form, packageId: e.target.value })}>
-                      <option value="">— No plan —</option>
-                      {packages.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                  </div>
-                </div>
-              )}
-
-              {editingUser && (
-                <>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>Phone</label>
-                      <input className="form-input w-full" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>Reset Password</label>
-                      <input type="password" className="form-input w-full" placeholder="Leave blank to keep current" value={form.newPassword} onChange={(e) => setForm({ ...form, newPassword: e.target.value })} />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>Address</label>
-                    <input className="form-input w-full" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, alignItems: 'end' }}>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, marginBottom: 5 }}>Package</label>
-                      <select className="form-input w-full" value={form.packageId} onChange={(e) => setForm({ ...form, packageId: e.target.value })}>
-                        <option value="">— No change —</option>
-                        {packages.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                      </select>
-                    </div>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.84rem', fontWeight: 600, paddingBottom: 9 }}>
-                      <input type="checkbox" checked={form.isActive} onChange={(e) => setForm({ ...form, isActive: e.target.checked })} />
-                      Account active
-                    </label>
-                  </div>
-
-                  {packageChangeNote && (
-                    <div style={{ background: 'rgba(37,99,235,0.08)', color: 'var(--primary)', padding: '10px 12px', borderRadius: 8, fontSize: '0.78rem', lineHeight: 1.5 }}>
-                      {packageChangeNote}
-                    </div>
-                  )}
-                </>
-              )}
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowCreateModal(false);
-                    setEditingUser(null);
-                  }}
-                  style={{
-                    padding: '8px 16px',
-                    borderRadius: 8,
-                    border: '1px solid var(--border)',
-                    background: 'var(--bg-card)',
-                    cursor: 'pointer',
-                    fontSize: '0.85rem',
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  style={{
-                    padding: '8px 20px',
-                    borderRadius: 8,
-                    background: 'var(--primary)',
-                    color: '#ffffff',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: '0.85rem',
-                    fontWeight: 600,
-                  }}
-                >
-                  {saving ? 'Saving...' : editingUser ? 'Update User' : 'Create User'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* ── View User Drawer / Modal ── */}
       {viewingUser && (
         <div
@@ -1437,24 +1162,7 @@ export default function UsersPage({ scope = 'admin' }) {
             {/* Actions */}
             <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
               <button
-                onClick={() => {
-                  if (!isReseller) { navigate(`/admin/users/${viewingUser.id}/edit`); return; }
-                  setEditingUser(viewingUser);
-                  setForm({
-                    name: viewingUser.name || '',
-                    email: viewingUser.email || '',
-                    password: '',
-                    role: viewingUser.role || 'USER',
-                    phone: viewingUser.phone || '',
-                    address: viewingUser.address || '',
-                    packageId: viewingUser.package_id || '',
-                    isActive: Boolean(viewingUser.is_active),
-                    newPassword: '',
-                  });
-                  setPackageChangeNote('');
-                  setViewingUser(null);
-                  setShowCreateModal(true);
-                }}
+                onClick={() => navigate(isReseller ? `/reseller/users/${viewingUser.id}/edit` : `/admin/users/${viewingUser.id}/edit`)}
                 style={{
                   flex: 1,
                   padding: '9px',
@@ -1535,7 +1243,7 @@ export default function UsersPage({ scope = 'admin' }) {
               Configure subscription tiers, package limits, and rating permissions across team members.
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
-              {['Basic (Default)', 'Premium 1K (Broadcasts)', 'Agency Pro (Multi-agent)', 'Enterprise (Custom)'].map((tier, i) => (
+              {['Basic (Default)', 'Premium 1K (Broadcasts)', 'Reseller Pro (Multi-agent)', 'Enterprise (Custom)'].map((tier, i) => (
                 <div
                   key={i}
                   style={{
@@ -1573,27 +1281,7 @@ export default function UsersPage({ scope = 'admin' }) {
           </div>
         </div>
       )}
-
-      {/* ── Toast Notification ── */}
-      {toast && (
-        <div
-          style={{
-            position: 'fixed',
-            bottom: 24,
-            right: 24,
-            zIndex: 9999,
-            padding: '12px 20px',
-            borderRadius: 8,
-            background: toast.type === 'error' ? 'var(--danger)' : 'var(--success)',
-            color: '#ffffff',
-            fontWeight: 500,
-            fontSize: '0.85rem',
-            boxShadow: 'var(--shadow-md)',
-          }}
-        >
-          {toast.msg}
-        </div>
-      )}</div>
+</div>
     </AppLayout>
   );
 }

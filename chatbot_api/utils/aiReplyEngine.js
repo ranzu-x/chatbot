@@ -53,7 +53,7 @@ async function loadHistory(conversationId, limit = 8) {
  * computed for this message when routing used the semantic tiebreak,
  * rather than paying for a second embeddings call.
  */
-async function buildKnowledgeContext(agencyId, agentId, message, routingEmbedding) {
+export async function buildKnowledgeContext(agencyId, agentId, message, routingEmbedding) {
   try {
     const [[{ cnt }]] = await pool.query(
       "SELECT COUNT(*) AS cnt FROM ai_knowledge_chunks WHERE agent_id = ? AND embedding IS NOT NULL",

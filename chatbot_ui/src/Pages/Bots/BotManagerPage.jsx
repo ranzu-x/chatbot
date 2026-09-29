@@ -22,6 +22,7 @@ import { TG_GROUP_URL_KEYS } from '../../Components/Bots/TelegramGroups/groupUi'
 import MarketingMessagesPanel from '../../Components/Engagement/MarketingMessagesPanel';
 import OptOutSettings from '../../Components/Engagement/OptOutSettings';
 import StoryRepliesPanel from '../../Components/Engagement/StoryRepliesPanel';
+
 import WhatsAppNumberPanel from '../../Components/Bots/WhatsAppNumberPanel';
 import WhatsAppGroupsPanel from '../../Components/Bots/WhatsAppGroupsPanel';
 import WhatsAppCatalogPanel from '../../Components/Bots/WhatsAppCatalogPanel';
@@ -47,6 +48,7 @@ import {
   Play,
   Pause,
   Edit3,
+  BarChart3,
   Copy,
   Trash2,
   ExternalLink,
@@ -88,6 +90,7 @@ import {
   MoreVertical,
   X,
 } from 'lucide-react';
+import { toastByType } from '../../utils/alerts';
 
 /* ─── Platform Map & Config ─── */
 const PLATFORM_MAP = {
@@ -148,6 +151,7 @@ const SUB_TABS = {
     { id: 'storyMentions',     label: 'Story Mentions Reply' },
     { id: 'actionMenus',       label: 'Action Buttons & Menus' },
     { id: 'chatWidget',        label: 'Chat Widget' },
+    { id: 'growthTools',       label: 'Growth Tools (Links & QR)' },
   ],
   commerce: [
     { id: 'commerceCampaigns', label: 'Automation Campaigns' },
@@ -178,6 +182,8 @@ function isSubTabAvailable(subId, platform, role) {
   // (Components/Inbox/HumanAgentToggle.jsx), not here.
   // Story mentions: Facebook / Instagram
   if (subId === 'storyMentions') return ['FACEBOOK', 'INSTAGRAM'].includes(platform);
+  // Growth tools: chat links + QR codes (m.me / ig.me / t.me / wa.me)
+  if (subId === 'growthTools') return ['WHATSAPP', 'FACEBOOK', 'INSTAGRAM', 'TELEGRAM'].includes(platform);
   // Telegram-only features.
   if (subId === 'tgGroups' || subId === 'telegramBusiness') return platform === 'TELEGRAM';
   // WhatsApp Flows management (incl. encryption keys) is ADMIN/RESELLER only
@@ -430,12 +436,7 @@ export default function BotManagerPage() {
   const [errorLogView, setErrorLogView] = useState('simple');
 
 
-  // Toast
-  const [toast, setToast] = useState(null);
-  const showToast = (message, type = 'success') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 3500);
-  };
+  const showToast = (message, type = 'success') => toastByType(message, type);
 
   const loadErrorLogs = useCallback(async () => {
     setErrorLogsLoading(true);
@@ -917,17 +918,21 @@ export default function BotManagerPage() {
         }
 
         /* ── Left Navigation Column ── */
+        /* Floating card: space on every side, rounded, soft shadow. */
         .bm-accounts-nav {
-          width: 280px;
+          width: 300px;
           flex-shrink: 0;
+          margin: 12px;
           background: var(--bg-surface);
-          border-right: 1px solid var(--border);
+          border: 1px solid var(--border);
+          border-radius: 12px;
           display: flex;
           flex-direction: column;
-          box-shadow: 2px 0 6px rgba(0,0,0,0.02);
+          overflow: hidden;
+          box-shadow: 0 4px 16px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.04);
         }
         .bm-nav-header {
-          padding: 16px;
+          padding: 16px 20px;
           display: flex;
           align-items: center;
           justify-content: space-between;
@@ -957,11 +962,12 @@ export default function BotManagerPage() {
           color: #ffffff;
         }
         .bm-search-wrap {
-          padding: 10px 14px;
+          padding: 10px 20px;
           position: relative;
         }
         .bm-search-input {
           width: 100%;
+          box-sizing: border-box;
           padding: 7px 10px 7px 32px;
           border-radius: 8px;
           border: 1px solid var(--border);
@@ -970,39 +976,58 @@ export default function BotManagerPage() {
           color: var(--text-primary);
           outline: none;
         }
+        /* Channel filter: one row of flat tabs on a raised bar. Equal-width
+           tabs (flex-basis 0) that may still grow for a long count
+           (min-width: max-content). */
         .bm-channel-pills {
           display: flex;
-          gap: 4px;
-          padding: 0 14px 10px;
-          overflow-x: auto;
-          border-bottom: 1px solid var(--border);
-          scrollbar-width: none;
-        }
-        .bm-channel-pills::-webkit-scrollbar { display: none; }
-        .bm-pill {
-          padding: 4px 8px;
-          border-radius: 14px;
-          font-size: 0.72rem;
-          font-weight: 600;
+          align-items: stretch;
+          gap: 2px;
+          margin: 0 14px 10px;
+          padding: 0 4px;
+          border-radius: 10px;
           border: 1px solid var(--border);
           background: var(--bg-surface);
+          box-shadow: 0 2px 8px rgba(15, 23, 42, 0.07), 0 1px 2px rgba(15, 23, 42, 0.05);
+        }
+        .bm-pill {
+          flex: 1 1 0;
+          min-width: max-content;
+          height: 34px;
+          padding: 0 3px;
+          margin: 0;
+          font-size: 0.74rem;
+          font-weight: 600;
+          line-height: 1;
+          border: none;
+          background: transparent;
           color: var(--text-tertiary);
           cursor: pointer;
           white-space: nowrap;
           display: flex;
           align-items: center;
+          justify-content: center;
           gap: 4px;
-          transition: all 0.15s;
+          font-variant-numeric: tabular-nums;
+          transition: color 0.15s, box-shadow 0.15s;
         }
+        /* Icons as blocks, so they center on the box, not the text baseline. */
+        .bm-pill svg {
+          display: block;
+          flex-shrink: 0;
+        }
+        .bm-pill:hover {
+          color: var(--text-primary);
+        }
+        /* Underline drawn inside the tab (no border), so it never shifts the content. */
         .bm-pill.active {
-          background: var(--primary);
-          color: #ffffff;
-          border-color: var(--primary);
+          color: var(--primary);
+          box-shadow: inset 0 -2px 0 var(--primary);
         }
         .bm-account-list {
           flex: 1;
           overflow-y: auto;
-          padding: 8px;
+          padding: 8px 14px;
           display: flex;
           flex-direction: column;
           gap: 3px;
@@ -1047,6 +1072,13 @@ export default function BotManagerPage() {
         }
 
         /* ── Top Account Header ── */
+        /* The header and both tab bars never shrink: .bm-main-content is a
+           flex column, and a tall tab that isn't inside a .bm-content-card
+           (e.g. Messenger Utility templates) squeezed the sub-tab bar — which
+           has overflow-x, so no minimum height — down to nothing. */
+        .bm-top-header, .bm-category-tabs, .bm-subtabs-row {
+          flex-shrink: 0;
+        }
         .bm-top-header {
           display: flex;
           align-items: center;
@@ -1341,10 +1373,10 @@ export default function BotManagerPage() {
                     </div>
 
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-primary)', truncate: true }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {acc.name || acc.fb_page_name || 'Nexa Bot'}
                       </div>
-                      <div style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', marginTop: 1, truncate: true }}>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {identifier}
                       </div>
                     </div>
@@ -1811,6 +1843,16 @@ export default function BotManagerPage() {
                               </button>
                               <button
                                 className="bm-row-action"
+                                title="Analytics — how each step performs"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigate(`/flows/${flow.id}/analytics`);
+                                }}
+                              >
+                                <BarChart3 size={13} />
+                              </button>
+                              <button
+                                className="bm-row-action"
                                 title="Clone / Copy to Bot Account"
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -2183,6 +2225,10 @@ export default function BotManagerPage() {
             <StoryRepliesPanel key={selectedAccount.id} account={selectedAccount} />
           )}
 
+          {activeCategory === 'engagement' && activeSubTab === 'growthTools' && selectedAccount?.id && selectedAccount.id !== 'all' && (
+            <GrowthToolsPanel key={selectedAccount.id} account={selectedAccount} />
+          )}
+
           {activeCategory === 'automation' && activeSubTab === 'whatsappCalling' && (
             <WhatsAppCallingTab account={selectedAccount} />
           )}
@@ -2205,7 +2251,7 @@ export default function BotManagerPage() {
             </div>
           )}
 
-          {!LINKED_TABS[activeSubTab] && activeSubTab !== 'whatsappCalling' && activeSubTab !== 'optOut' && activeSubTab !== 'numberProfile' && activeSubTab !== 'waGroups' && activeSubTab !== 'telegramBusiness' && activeSubTab !== 'tgGroups' && activeSubTab !== 'quickActions' && activeSubTab !== 'marketingMessages' && activeSubTab !== 'storyMentions' && !['catalogSync', 'productMessages'].includes(activeSubTab) && !(['iceBreakers', 'actionMenus'].includes(activeSubTab) && ['FACEBOOK', 'INSTAGRAM', 'WHATSAPP', 'TELEGRAM'].includes((selectedAccount?.platform || '').toUpperCase())) && !(activeSubTab === 'iceBreakers' && (selectedAccount?.platform || '').toUpperCase() === 'TIKTOK') && !['keywordReplies', 'messageTemplates'].includes(activeSubTab) && !(activeCategory === 'dataCollection' && activeSubTab === 'userInputFlows') && !(activeCategory === 'automation' && activeSubTab === 'httpApiCampaigns') && !(activeCategory === 'engagement' && activeSubTab === 'followUpSequences') && !(activeCategory === 'dataCollection' && activeSubTab === 'whatsappFlows') && !(activeCategory === 'commerce' && ['storeConnections', 'commerceCampaigns', 'commerceActivity'].includes(activeSubTab)) && !(activeCategory === 'engagement' && activeSubTab === 'chatWidget') && activeCategory !== 'ai' && (
+          {!LINKED_TABS[activeSubTab] && activeSubTab !== 'whatsappCalling' && activeSubTab !== 'optOut' && activeSubTab !== 'numberProfile' && activeSubTab !== 'waGroups' && activeSubTab !== 'telegramBusiness' && activeSubTab !== 'tgGroups' && activeSubTab !== 'quickActions' && activeSubTab !== 'marketingMessages' && activeSubTab !== 'storyMentions' && activeSubTab !== 'growthTools' && !['catalogSync', 'productMessages'].includes(activeSubTab) && !(['iceBreakers', 'actionMenus'].includes(activeSubTab) && ['FACEBOOK', 'INSTAGRAM', 'WHATSAPP', 'TELEGRAM'].includes((selectedAccount?.platform || '').toUpperCase())) && !(activeSubTab === 'iceBreakers' && (selectedAccount?.platform || '').toUpperCase() === 'TIKTOK') && !['keywordReplies', 'messageTemplates'].includes(activeSubTab) && !(activeCategory === 'dataCollection' && activeSubTab === 'userInputFlows') && !(activeCategory === 'automation' && activeSubTab === 'httpApiCampaigns') && !(activeCategory === 'engagement' && activeSubTab === 'followUpSequences') && !(activeCategory === 'dataCollection' && activeSubTab === 'whatsappFlows') && !(activeCategory === 'commerce' && ['storeConnections', 'commerceCampaigns', 'commerceActivity'].includes(activeSubTab)) && !(activeCategory === 'engagement' && activeSubTab === 'chatWidget') && activeCategory !== 'ai' && (
             <div className="bm-content-card">
               <div className="bm-card-header">
                 <h3 className="bm-card-title">{activeSubTab.replace(/([A-Z])/g, ' $1').trim()}</h3>
@@ -3067,26 +3113,6 @@ export default function BotManagerPage() {
         </div>
       )}
 
-      {/* ── Toast Notification ── */}
-      {toast && (
-        <div
-          style={{
-            position: 'fixed',
-            bottom: 24,
-            right: 24,
-            zIndex: 9999,
-            padding: '12px 20px',
-            borderRadius: 8,
-            background: toast.type === 'error' ? '#ef4444' : '#10b981',
-            color: '#ffffff',
-            fontWeight: 600,
-            fontSize: '0.85rem',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-          }}
-        >
-          {toast.message}
-        </div>
-      )}
     </AppLayout>
   );
 }

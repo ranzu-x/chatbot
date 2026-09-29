@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { chatHeaderIdentifier } from './chatHeaderIdentifier';
 import SubscriberInfoBanner from '../../Components/Inbox/SubscriberInfoBanner';
+import MessageSearchPanel from '../../Components/Inbox/MessageSearchPanel';
+import { highlightParts } from '../../Components/Inbox/highlightParts';
 import AppLayout from '../../Layout/AppLayout';
 import {
   conversationAPI,
@@ -32,6 +34,7 @@ import HumanAgentToggle from '../../Components/Inbox/HumanAgentToggle';
 import useWhatsAppCall from '../../hooks/useWhatsAppCall';
 import { useAuth } from '../../Provider/AuthContext';
 import { useLayout } from '../../Provider/LayoutContext';
+import AiAssistBar from '../../Components/Inbox/AiAssistBar';
 import io from 'socket.io-client';
 import {
   MessageSquare,
@@ -942,7 +945,7 @@ function InboxRangeCalendar({ month, from, to, onNavigate, onPick }) {
 const SELECTED_CONVERSATION_KEY = 'inbox_selected_conversation_id';
 
 export default function InboxPage() {
-  const { user } = useAuth();
+  const { user, hasModule } = useAuth();
   const { openPopupNav } = useLayout();
   const whatsappCall = useWhatsAppCall();
 
@@ -968,6 +971,18 @@ export default function InboxPage() {
   // /conversations/:id/messages?before=...
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  // After jumping to a search result the list is a window in the middle of
+  // the history: newer messages exist below it (GET …/messages?after=…).
+  // While that's true, live messages aren't appended (they'd leave a gap).
+  const [hasNewerMessages, setHasNewerMessages] = useState(false);
+  const [loadingNewerMessages, setLoadingNewerMessages] = useState(false);
+  const [newWhileDetached, setNewWhileDetached] = useState(0);
+  const hasNewerRef = useRef(false);
+  useEffect(() => { hasNewerRef.current = hasNewerMessages; }, [hasNewerMessages]);
+  // Message retention (server deletes messages older than retentionDays).
+  const [historyInfo, setHistoryInfo] = useState({ retentionDays: 0, prunedAt: null });
+  const [showMessageSearch, setShowMessageSearch] = useState(false);
+  const [highlightedMsg, setHighlightedMsg] = useState(null); // { id, tokens }
   const [messageText, setMessageText] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
@@ -1424,6 +1439,11 @@ export default function InboxPage() {
       const data = res.data;
       setMessages(data.messages || []);
       setHasMoreMessages(Boolean(data.hasMoreMessages));
+      setHasNewerMessages(false);
+      hasNewerRef.current = false;
+      setNewWhileDetached(0);
+      setHighlightedMsg(null);
+      setHistoryInfo({ retentionDays: Number(data.retentionDays) || 0, prunedAt: data.historyPrunedAt || null });
       const conv = data.conversation || data;
       setSelectedConv(conv);
       setConvStatus(conv.status || 'OPEN');
@@ -1587,7 +1607,11 @@ export default function InboxPage() {
             conversationAPI.markRead(data.conversationId).catch(() => {});
           }
         }
-        setMessages((prev) => {
+        // Viewing an older window (search jump): don't tack the live message
+        // onto it — the "Jump to latest" bar counts it instead.
+        if (hasNewerRef.current) {
+          setNewWhileDetached((n) => n + 1);
+        } else setMessages((prev) => {
           const isDuplicate = prev.some((m) => {
             if (m.id && incoming.id && String(m.id) === String(incoming.id)) return true;
             if (m._id && incoming._id && String(m._id) === String(incoming._id)) return true;
@@ -1873,11 +1897,25 @@ export default function InboxPage() {
     }
   }, []);
 
-  // Load older message history on scroll-up (GET /conversations/:id/messages
-  // cursor pagination) — prepending must NOT trigger the scroll-to-bottom
-  // effect below, so it flags isPrependingOlderRef and manually restores the
-  // scroll offset instead.
-  const isPrependingOlderRef = useRef(false);
+  // History paging (GET /conversations/:id/messages cursor pagination).
+  // A change to `messages` normally scrolls to the newest message (effect
+  // below). Paging and jumping set pendingScrollRef instead, which the layout
+  // effect applies before the browser paints — so loading older messages keeps
+  // the view exactly where it was (no jump), and a search jump lands centred on
+  // the result.
+  //   { type: 'prepend', prevHeight, prevTop } · { type: 'target', id } · { type: 'keep' }
+  const pendingScrollRef = useRef(null);
+  useLayoutEffect(() => {
+    const pending = pendingScrollRef.current;
+    const container = messagesContainerRef.current;
+    if (!pending || !container) return;
+    if (pending.type === 'prepend') {
+      container.scrollTop = container.scrollHeight - pending.prevHeight + pending.prevTop;
+    } else if (pending.type === 'target') {
+      container.querySelector(`[data-msg-id="${pending.id}"]`)?.scrollIntoView({ block: 'center' });
+    }
+  }, [messages]);
+
   const loadOlderMessages = useCallback(async () => {
     if (loadingOlderMessages || !hasMoreMessages || !selectedIdRef.current || messages.length === 0) return;
     const container = messagesContainerRef.current;
@@ -1885,18 +1923,15 @@ export default function InboxPage() {
     if (!oldestId) return;
     setLoadingOlderMessages(true);
     const pagingConvId = selectedIdRef.current;
-    const prevScrollHeight = container?.scrollHeight || 0;
-    const prevScrollTop = container?.scrollTop || 0;
     try {
       const res = await conversationAPI.getMessages(pagingConvId, { before: oldestId, limit: 50 });
       if (String(selectedIdRef.current) !== String(pagingConvId)) return; // switched chats while loading
       const older = res.data?.messages || [];
       if (older.length) {
-        isPrependingOlderRef.current = true;
+        // Measured right before the insert (not before the request), so
+        // scrolling during the request doesn't throw the position off.
+        pendingScrollRef.current = { type: 'prepend', prevHeight: container?.scrollHeight || 0, prevTop: container?.scrollTop || 0 };
         setMessages((prev) => [...older, ...prev]);
-        requestAnimationFrame(() => {
-          if (container) container.scrollTop = container.scrollHeight - prevScrollHeight + prevScrollTop;
-        });
       }
       setHasMoreMessages(Boolean(res.data?.hasMore));
     } catch (err) {
@@ -1906,12 +1941,93 @@ export default function InboxPage() {
     }
   }, [loadingOlderMessages, hasMoreMessages, messages]);
 
+  const loadNewerMessages = useCallback(async () => {
+    if (loadingNewerMessages || !hasNewerMessages || !selectedIdRef.current || messages.length === 0) return;
+    const newestId = messages[messages.length - 1]?.id;
+    if (!newestId) return;
+    setLoadingNewerMessages(true);
+    const pagingConvId = selectedIdRef.current;
+    try {
+      const res = await conversationAPI.getMessages(pagingConvId, { after: newestId, limit: 50 });
+      if (String(selectedIdRef.current) !== String(pagingConvId)) return;
+      const newer = res.data?.messages || [];
+      pendingScrollRef.current = { type: 'keep' };
+      setMessages((prev) => {
+        const seen = new Set(prev.map((m) => String(m.id)));
+        return [...prev, ...newer.filter((m) => !seen.has(String(m.id)))];
+      });
+      setHasNewerMessages(Boolean(res.data?.hasNewer));
+      if (!res.data?.hasNewer) setNewWhileDetached(0);
+    } catch (err) {
+      console.error('Failed to load newer messages', err);
+    } finally {
+      setLoadingNewerMessages(false);
+    }
+  }, [loadingNewerMessages, hasNewerMessages, messages]);
+
+  // Back to the live end of the conversation (after a search jump).
+  const jumpToLatest = useCallback(async () => {
+    if (!selectedIdRef.current) return;
+    setHighlightedMsg(null);
+    await loadMessages(selectedIdRef.current);
+  }, [loadMessages]);
+
+  // Open a search result: scroll to it if it's loaded, else load the messages
+  // around it (server-side), then highlight it for a few seconds.
+  const highlightTimerRef = useRef(null);
+  const jumpToMessage = useCallback(async (messageId, tokens = []) => {
+    const convId = selectedIdRef.current;
+    if (!convId || !messageId) return;
+    const flash = () => {
+      setHighlightedMsg({ id: String(messageId), tokens });
+      clearTimeout(highlightTimerRef.current);
+      highlightTimerRef.current = setTimeout(() => setHighlightedMsg(null), 4000);
+    };
+    if (messages.some((m) => String(m.id) === String(messageId))) {
+      messagesContainerRef.current?.querySelector(`[data-msg-id="${messageId}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      flash();
+      return;
+    }
+    try {
+      const res = await conversationAPI.getMessages(convId, { around: messageId, limit: 50 });
+      if (String(selectedIdRef.current) !== String(convId)) return;
+      pendingScrollRef.current = { type: 'target', id: String(messageId) };
+      setMessages(res.data?.messages || []);
+      setHasMoreMessages(Boolean(res.data?.hasMore));
+      setHasNewerMessages(Boolean(res.data?.hasNewer));
+      hasNewerRef.current = Boolean(res.data?.hasNewer);
+      flash();
+    } catch (err) {
+      if (err?.response?.data?.code === 'MESSAGE_GONE') {
+        toast.info('This message is no longer available', {
+          description: historyInfo.retentionDays ? `Messages older than ${historyInfo.retentionDays} days are deleted automatically.` : undefined,
+        });
+      } else {
+        toast.error('Could not open that message. Please try again.');
+      }
+    }
+  }, [messages, historyInfo.retentionDays]);
+  useEffect(() => () => clearTimeout(highlightTimerRef.current), []);
+
   const handleMessagesScroll = useCallback((e) => {
     if (e.target.scrollTop < 80) loadOlderMessages();
   }, [loadOlderMessages]);
 
   useEffect(() => {
-    if (isPrependingOlderRef.current) { isPrependingOlderRef.current = false; return; }
+    // Paging / jumping positioned the view itself (layout effect above).
+    if (pendingScrollRef.current) {
+      const pending = pendingScrollRef.current;
+      pendingScrollRef.current = null;
+      if (pending.type === 'target') {
+        // Images above the target may still be loading and push it down.
+        const t = setTimeout(() => {
+          messagesContainerRef.current?.querySelector(`[data-msg-id="${pending.id}"]`)?.scrollIntoView({ block: 'center' });
+        }, 250);
+        return () => clearTimeout(t);
+      }
+      return undefined;
+    }
+    if (hasNewerRef.current) return undefined; // viewing older history — never yank to the bottom
     if (!msgLoading && messages.length > 0) {
       // Immediate scroll
       scrollToBottom(true);
@@ -1955,6 +2071,10 @@ export default function InboxPage() {
       setTimeout(() => setSendError(''), 9000);
       return;
     }
+
+    // Replying from an older-history window (search jump): go back to the
+    // latest messages first, so the reply lands after them.
+    if (hasNewerRef.current) await jumpToLatest();
 
     const text = messageText.trim();
     const sentConvId = selectedId; // the reply may finish after the agent has opened another chat
@@ -2032,6 +2152,7 @@ export default function InboxPage() {
       setShowJoinModal(true);
       return;
     }
+    if (hasNewerRef.current) await jumpToLatest();
 
     // WhatsApp 24-hour messaging window enforcement:
     const isWhatsApp = (selectedConv?.platform || selectedConv?.integrationPlatform || selectedConv?.contactPlatform || '').toUpperCase() === 'WHATSAPP';
@@ -3574,6 +3695,29 @@ export default function InboxPage() {
                     )}
                   </button>
 
+                  {/* Search this conversation's messages (Components/Inbox/MessageSearchPanel.jsx) */}
+                  <button
+                    onClick={() => setShowMessageSearch((s) => !s)}
+                    title={showMessageSearch ? 'Close message search' : 'Search messages in this chat'}
+                    aria-pressed={showMessageSearch}
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 8,
+                      border: '1px solid',
+                      borderColor: showMessageSearch ? 'var(--primary, #6366f1)' : '#e2e8f0',
+                      background: showMessageSearch ? '#eef2ff' : '#ffffff',
+                      color: showMessageSearch ? '#4f46e5' : '#64748b',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <Search size={15} />
+                  </button>
+
                   {/* Toggle Subscriber Drawer */}
                   <button
                     onClick={() => setShowSubscriberPanel((p) => !p)}
@@ -3620,6 +3764,16 @@ export default function InboxPage() {
                 subscribedAt={selectedConv.contactCreatedAt}
               />
 
+              {showMessageSearch && selectedId && (
+                <MessageSearchPanel
+                  key={selectedId}
+                  conversationId={selectedId}
+                  retentionDays={historyInfo.retentionDays}
+                  onJump={jumpToMessage}
+                  onClose={() => setShowMessageSearch(false)}
+                />
+              )}
+
               {/* Chat Message List */}
               <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="chat-messages" style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {msgLoading ? (
@@ -3645,8 +3799,13 @@ export default function InboxPage() {
                           onClick={loadOlderMessages}
                           style={{ fontSize: '0.74rem', color: 'var(--primary-light)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
                         >
-                          Load older messages
+                          Load more messages
                         </button>
+                      </div>
+                    )}
+                    {!loadingOlderMessages && !hasMoreMessages && historyInfo.prunedAt && historyInfo.retentionDays > 0 && (
+                      <div style={{ textAlign: 'center', fontSize: '0.72rem', color: '#94a3b8' }}>
+                        Messages older than {historyInfo.retentionDays} days are deleted automatically.
                       </div>
                     )}
                   </>
@@ -3742,6 +3901,7 @@ export default function InboxPage() {
                           </div>
                         )}
                         <div
+                          data-msg-id={msg.id}
                           style={{
                             display: 'flex',
                             flexDirection: 'column',
@@ -3753,12 +3913,16 @@ export default function InboxPage() {
                               maxWidth: '60%',
                             padding: (isImage && isMediaOnly && !buttons) ? '4px' : '10px 14px',
                             borderRadius: isOutbound ? '14px 14px 2px 14px' : '14px 14px 14px 2px',
-                            background: isOutbound ? 'var(--bg-selected)' : 'var(--bg-card)',
+                            background: 'var(--bg-card)',
                             color: 'var(--text-primary)',
                             border: '1px solid var(--border)',
                             fontSize: '0.86rem',
                             lineHeight: 1.45,
-                            boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                            // Search result the agent jumped to: a soft yellow ring for a few seconds.
+                            boxShadow: highlightedMsg && String(highlightedMsg.id) === String(msg.id)
+                              ? '0 0 0 3px #fde047, 0 0 0 6px rgba(253, 224, 71, 0.35)'
+                              : '0 1px 2px rgba(0,0,0,0.04)',
+                            transition: 'box-shadow 0.3s ease',
                             wordBreak: 'break-word',
                             overflow: 'hidden',
                           }}
@@ -3857,7 +4021,11 @@ export default function InboxPage() {
                           {/* Text message */}
                           {!isMediaOnly && text && (
                             <div>
-                              {text}
+                              {highlightedMsg && String(highlightedMsg.id) === String(msg.id) && highlightedMsg.tokens?.length
+                                ? highlightParts(text, highlightedMsg.tokens).map((p, i) => (p.match
+                                  ? <mark key={i} style={{ background: '#fef08a', color: 'inherit', borderRadius: 2, padding: '0 1px' }}>{p.text}</mark>
+                                  : <React.Fragment key={i}>{p.text}</React.Fragment>))
+                                : text}
                             </div>
                           )}
 
@@ -4017,6 +4185,33 @@ export default function InboxPage() {
                     </React.Fragment>
                   );
                   })
+                )}
+                {/* Viewing an older window (search jump): newer messages exist below. */}
+                {!msgLoading && hasNewerMessages && (
+                  <div
+                    style={{
+                      position: 'sticky', bottom: 0, alignSelf: 'center', display: 'flex', gap: 8, alignItems: 'center',
+                      padding: '6px 10px', borderRadius: 999, background: 'var(--bg-card, #fff)',
+                      border: '1px solid var(--border, #e2e8f0)', boxShadow: '0 2px 8px rgba(15, 23, 42, 0.08)', fontSize: '0.74rem',
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={loadNewerMessages}
+                      disabled={loadingNewerMessages}
+                      style={{ color: 'var(--primary-light, #2563eb)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      {loadingNewerMessages ? 'Loading…' : 'Load newer messages'}
+                    </button>
+                    <span style={{ color: '#cbd5e1' }}>|</span>
+                    <button
+                      type="button"
+                      onClick={jumpToLatest}
+                      style={{ color: 'var(--primary-light, #2563eb)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      Jump to latest ↓{newWhileDetached > 0 ? ` (${newWhileDetached} new)` : ''}
+                    </button>
+                  </div>
                 )}
                 <div ref={messagesEndRef} />
               </div>
@@ -4191,6 +4386,15 @@ export default function InboxPage() {
                       style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', padding: '0 2px', fontWeight: 700, flexShrink: 0 }}
                     >✕</button>
                   </div>
+                )}
+
+                {/* AI: suggested replies + chat summary (Components/Inbox/AiAssistBar.jsx) */}
+                {hasModule('feature_ai_assistant') && (
+                  <AiAssistBar
+                    conversationId={selectedId}
+                    disabled={!botPaused}
+                    onUseReply={(text) => { setMessageText(text); messageInputRef.current?.focus(); }}
+                  />
                 )}
 
                 <form onSubmit={handleSendMessage} className="chat-input-area" style={{ padding: '12px 20px', display: 'flex', gap: 10, alignItems: 'center' }}>

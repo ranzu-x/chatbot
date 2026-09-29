@@ -14,6 +14,7 @@ import {
   Plus, Clock, Tag, Workflow, FileText, CheckCircle2, AlertTriangle, Loader2,
   Phone, CalendarClock, Ban, Search, Inbox, Eye, Zap, SlidersHorizontal,
 } from 'lucide-react';
+import { toastByType } from '../../utils/alerts';
 
 const CHANNELS = [
   { id: 'WHATSAPP', label: 'WhatsApp',  Icon: MessageCircle, hint: '24-hour window + templates' },
@@ -104,7 +105,6 @@ const PAGE_CSS = `
 .bc-modal-body{padding:20px;overflow-y:auto}
 .bc-modal-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:14px 20px;border-top:1px solid var(--border);background:var(--bg-base);flex-shrink:0}
 .bc-slide{position:fixed;top:0;right:0;bottom:0;width:440px;max-width:94vw;background:var(--bg-card);border-left:1px solid var(--border);z-index:1001;display:flex;flex-direction:column;box-shadow:-12px 0 40px rgba(0,0,0,.16);animation:bcSlide .2s ease}
-.bc-toast{position:fixed;bottom:24px;right:24px;z-index:1100;display:flex;align-items:center;gap:9px;padding:12px 16px;border-radius:var(--radius);font-weight:600;font-size:.85rem;color:#fff;box-shadow:var(--shadow-md);animation:bcUp .18s ease}
 .bc-sq{border-radius:10px;display:grid;place-items:center;flex-shrink:0}
 .bc-types{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 @media (max-width:520px){.bc-types{grid-template-columns:1fr}}
@@ -231,8 +231,7 @@ export default function CampaignListPage() {
   const [variantStats, setVariantStats] = useState(null);
   const [logsLoading, setLogsLoading] = useState(false);
 
-  const [toast, setToast] = useState(null);
-  const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3500); };
+  const showToast = (msg, type = 'success') => toastByType(msg, type);
 
   const channel = CHANNELS.find((c) => c.id === activeTab) || CHANNELS[0];
 
@@ -1004,13 +1003,6 @@ export default function CampaignListPage() {
         </ModalShell>
       )}
 
-      {/* ── Toast ── */}
-      {toast && (
-        <div className="bc-toast" style={{ background: toast.type === 'error' ? 'var(--danger)' : 'var(--success)' }}>
-          {toast.type === 'error' ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
-          {toast.msg}
-        </div>
-      )}
     </AppLayout>
   );
 }

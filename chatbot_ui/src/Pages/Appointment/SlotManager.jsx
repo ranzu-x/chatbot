@@ -30,7 +30,9 @@ import {
   MessageSquare,
   Tag,
   Info,
+  CreditCard,
 } from "lucide-react";
+import BookingSettingsPanel from "./BookingSettingsPanel";
 import {
   fetchSlots,
   createSlots,
@@ -146,7 +148,7 @@ function StatCard({ icon: Icon, title, value, sub, color }) {
 }
 
 export default function SlotManager({ defaultTab }) {
-  const [activeTab, setActiveTab] = useUrlState("tab", defaultTab || "slots", { allowed: ["slots", "services", "schedule", "campaigns"] });
+  const [activeTab, setActiveTab] = useUrlState("tab", defaultTab || "slots", { allowed: ["slots", "services", "schedule", "campaigns", "booking"] });
   const [slots, setSlots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0]);
@@ -182,6 +184,7 @@ export default function SlotManager({ defaultTab }) {
     service_ids: [],
     staff_id: "",
     is_active: 1,
+    payment_mode: "",
   });
 
   // Generate slots modal state
@@ -511,6 +514,7 @@ export default function SlotManager({ defaultTab }) {
       service_ids: [],
       staff_id: "",
       is_active: 1,
+      payment_mode: "",
     });
     setCampaignModalOpen(true);
   };
@@ -530,6 +534,7 @@ export default function SlotManager({ defaultTab }) {
       service_ids: sIds,
       staff_id: c.staff_id || "",
       is_active: c.is_active !== undefined ? c.is_active : 1,
+      payment_mode: c.payment_mode || "",
     });
     setCampaignModalOpen(true);
   };
@@ -548,6 +553,7 @@ export default function SlotManager({ defaultTab }) {
         service_ids: campaignForm.service_ids.length > 0 ? campaignForm.service_ids : null,
         staff_id: campaignForm.staff_id ? parseInt(campaignForm.staff_id) : null,
         is_active: campaignForm.is_active ? 1 : 0,
+        payment_mode: campaignForm.payment_mode || null,
       };
       if (editingCampaign) {
         await appointmentCampaignAPI.update(editingCampaign.id, payload);
@@ -885,7 +891,29 @@ export default function SlotManager({ defaultTab }) {
           >
             <Workflow size={16} /> Flow Campaigns ({campaigns.length})
           </button>
+          <button
+            onClick={() => setActiveTab("booking")}
+            style={{
+              padding: "10px 16px",
+              fontSize: "0.85rem",
+              fontWeight: 700,
+              background: "transparent",
+              border: "none",
+              borderBottom: activeTab === "booking" ? "2px solid var(--primary)" : "2px solid transparent",
+              color: activeTab === "booking" ? "var(--text-primary)" : "var(--text-muted)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              transition: "all 0.15s ease",
+            }}
+          >
+            <CreditCard size={16} /> Booking & Payment
+          </button>
         </div>
+
+        {/* TAB 5: CHATBOT BOOKING RULES (Pages/Appointment/BookingSettingsPanel.jsx) */}
+        {activeTab === "booking" && <BookingSettingsPanel />}
 
         {/* ════════════════════════════════════════════════════════════════════
             TAB 1: SLOTS
@@ -2994,6 +3022,23 @@ export default function SlotManager({ defaultTab }) {
                         {m.name || m.email} ({m.role})
                       </option>
                     ))}
+                  </select>
+                </div>
+
+                {/* Payment override (Booking & Payment tab holds the default) */}
+                <div>
+                  <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 700, color: "var(--text-secondary)", marginBottom: 4 }}>
+                    Payment
+                  </label>
+                  <select
+                    value={campaignForm.payment_mode}
+                    onChange={(e) => setCampaignForm({ ...campaignForm, payment_mode: e.target.value })}
+                    style={selectBaseStyle}
+                  >
+                    <option value="">Use the Booking & Payment setting</option>
+                    <option value="NONE">No payment</option>
+                    <option value="REQUIRED">Payment required before confirming</option>
+                    <option value="PAY_LATER">Pay later</option>
                   </select>
                 </div>
 

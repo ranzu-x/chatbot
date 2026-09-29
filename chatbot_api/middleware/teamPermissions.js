@@ -59,6 +59,7 @@ const RULES = [
   ["*", new RegExp(`^/conversations/${ID}/(translate|messages/${ID}/translate)$`), "live_chat.translator"],
   ["DELETE", new RegExp(`^/conversations/${ID}/messages$`), "live_chat.delete"],
   ["POST", new RegExp(`^/conversations/${ID}/messages$`), "live_chat.update"],
+  ["POST", new RegExp(`^/conversations/${ID}/ai/(suggest-replies|summary)$`), "live_chat.update"], // AI assist: same right as replying
   ["*", new RegExp(`^/conversations/(bulk-assign|${ID}/(assign|join|leave|toggle-bot|reset-flow|trigger-flow))$`), "live_chat.special"],
   ["POST", new RegExp(`^/conversations/${ID}/unsubscribe$`), "subscribers.update"],
   ["*", new RegExp(`^/conversations/(bulk-status|${ID}/(status|important|archive))$`), "live_chat.update"],
@@ -76,6 +77,7 @@ const RULES = [
   ["*", /^\/bot-profile\//, "bot_manager.update"], // Get Started, greeting, ice breakers, persistent menu
   ["*", /^\/opt-out\//, "bot_manager.update"], // STOP / START keywords
   ["*", /^\/quick-actions\//, "bot_manager.update"], // No match / Chat with human / robot / (un)subscribe replies
+  ["*", /^\/growth-links(\/|$)/, "bot_manager.update"], // Growth tools: chat links + QR codes
   ["*", /^\/(bot-settings|business-hours)\//, "bot_manager.update"], // Bot Settings: General / Business Hours / Inbox tabs
   // Telegram group management (routes/telegramGroups.js)
   ["POST", new RegExp(`^/tg-groups/${ID}/refresh$`), null], // reads Telegram, changes nothing there

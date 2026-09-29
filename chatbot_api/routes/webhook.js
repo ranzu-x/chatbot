@@ -21,6 +21,8 @@ import { handleAppointmentBooking } from "../utils/appointmentBookingEngine.js";
 import { isCommerceButton, handleCommerceButton } from "../utils/commerceEvents.js";
 import { isValidTelegramSecret, isValidTikTokSignature } from "../utils/webhookAuth.js";
 import { recountBroadcastStats } from "../utils/broadcastStats.js";
+import { trackMessageReceipt } from "../utils/flowStats.js";
+import { extractGrowthCode, extractMetaLinkRef, handleGrowthLinkArrival } from "../utils/growthLinks.js";
 import { loadRuleLinks, findRuleForPost } from "../utils/commentRulePosts.js";
 import { getPublicBackendUrl, resolvePublicImageUrl } from "../utils/platformSender.js";
 import { applyTemplateStatusUpdate } from "../utils/messengerUtility.js";
@@ -30,6 +32,7 @@ import { handleOptKeywords } from "../utils/optOut.js";
 import { handleQuickActionInbound, runNoMatchReply } from "../utils/quickActions.js";
 import { handleTelegramGroupUpdate } from "../utils/telegramGroups.js";
 import { handleCsatReply, getInboxSettings, autoAssign } from "../utils/inboxQuality.js";
+import { notifyAssigneeOfInbound } from "../utils/webPush.js";
 import { transcribeMessage } from "../utils/transcribe.js";
 import { handleGroupMessage, handleGroupEvent } from "../utils/whatsappGroups.js";
 import { describeOrder } from "../utils/whatsappCatalog.js";
@@ -536,6 +539,7 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
               if (status === "sent") {
                 await markBroadcastLogStatus(externalMsgId, "SENT");
               } else if (status === "delivered") {
+                await trackMessageReceipt(msgRow.id, "delivered"); // flow analytics — counts once
                 await pool.query("UPDATE messages SET delivered_at = NOW() WHERE id = ?", [msgRow.id]);
                 await markBroadcastLogStatus(externalMsgId, "DELIVERED");
                 const payload = { messageId: msgRow.id, conversationId: msgRow.conversation_id, deliveredAt: new Date().toISOString() };
@@ -546,6 +550,7 @@ async function handleWhatsAppPayload(body, agencyId, integrationId, integration)
               } else if (status === "read" || status === "played") {
                 // "played" (Nov 2025): a voice message was listened to — it implies read.
                 const played = status === "played";
+                await trackMessageReceipt(msgRow.id, "read"); // flow analytics — counts once
                 await pool.query(
                   played
                     ? "UPDATE messages SET read_at = COALESCE(read_at, NOW()), is_read = 1, metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.playedAt', DATE_FORMAT(NOW(), '%Y-%m-%dT%H:%i:%s')) WHERE id = ?"
@@ -1077,7 +1082,8 @@ async function handleFacebookPayload(body, agencyId, integrationId, integration)
         if (event.delivery) {
           const mids = Array.isArray(event.delivery.mids) ? event.delivery.mids : [];
           for (const mid of mids) {
-            await pool.query("UPDATE messages SET delivered_at = NOW() WHERE external_msg_id = ? AND delivered_at IS NULL", [mid]);
+            const [[delivered]] = await pool.query("SELECT id FROM messages WHERE external_msg_id = ? LIMIT 1", [mid]);
+            if (delivered) await trackMessageReceipt(delivered.id, "delivered"); // sets delivered_at once + flow analytics
             await markBroadcastLogStatus(mid, "DELIVERED");
           }
           continue;
@@ -1094,7 +1100,7 @@ async function handleFacebookPayload(body, agencyId, integrationId, integration)
               [senderId, event.read.watermark]
             );
             for (const r of readRows) {
-              await pool.query("UPDATE messages SET read_at = NOW(), is_read = 1 WHERE id = ?", [r.id]);
+              await trackMessageReceipt(r.id, "read"); // sets read_at once + flow analytics
               if (r.external_msg_id) await markBroadcastLogStatus(r.external_msg_id, "READ");
             }
           } catch (readErr) {
@@ -1103,6 +1109,12 @@ async function handleFacebookPayload(body, agencyId, integrationId, integration)
           continue;
         }
 
+        // Opened the chat from a growth link (m.me/…?ref=gl_…) in an existing
+        // thread: Meta sends only a referral event (utils/growthLinks.js).
+        if (!event.message && !event.postback && event.referral && extractMetaLinkRef(event)) {
+          await handleLinkReferralEvent({ event, agencyId, integrationId, integration, platform: "FACEBOOK" });
+          continue;
+        }
         if (!event.message && !event.postback) continue;
         if (event.message?.is_echo) continue;
 
@@ -1154,12 +1166,49 @@ async function handleFacebookPayload(body, agencyId, integrationId, integration)
           integration,
           storyEvent,
           adReferral: extractMetaReferral(event),
+          linkRef: extractMetaLinkRef(event),
         });
       }
     }
   } catch (err) {
     console.error("Facebook Webhook processing error:", err);
   }
+}
+
+/**
+ * Messenger / Instagram "opened the chat from a growth link" in a thread that
+ * already exists: a referral-only event, no message. Kept as a small note in
+ * the Inbox and handled like an arrival (count, label, the link's flow).
+ */
+async function handleLinkReferralEvent({ event, agencyId, integrationId, integration, platform }) {
+  const externalId = event.sender?.id;
+  if (!externalId || (platform === "INSTAGRAM" && String(externalId) === String(integration?.ig_account_id))) return;
+  let senderName = externalId;
+  let avatar = null;
+  let platformProfile = null;
+  if (integration?.access_token) {
+    const profile = await fetchMetaUserProfile(platform, externalId, integration.access_token);
+    if (profile.name) senderName = profile.name;
+    if (profile.avatar) avatar = profile.avatar;
+    platformProfile = profile.systemFields;
+  }
+  await handleIncomingPayload({
+    agencyId,
+    integrationId,
+    platform,
+    externalId,
+    externalMsgId: `ref-${platform}-${externalId}-${event.timestamp || Date.now()}`,
+    msgType: "TEXT",
+    buttonRoute: null,
+    msgBody: "🔗 Opened the chat from a link",
+    mediaUrl: null,
+    senderName,
+    avatar,
+    platformProfile,
+    integration,
+    linkRef: extractMetaLinkRef(event),
+    referralOnly: true,
+  });
 }
 
 async function handleInstagramPayload(body, agencyId, integrationId, integration) {
@@ -1186,6 +1235,11 @@ async function handleInstagramPayload(body, agencyId, integrationId, integration
       // 2. Direct Messages
       const messaging = entry?.messaging || [];
       for (const event of messaging) {
+        // Opened the chat from a growth link (ig.me/m/…?ref=gl_…) — a referral-only event.
+        if (!event.message && !event.postback && event.referral && extractMetaLinkRef(event)) {
+          await handleLinkReferralEvent({ event, agencyId, integrationId, integration, platform: "INSTAGRAM" });
+          continue;
+        }
         if (!event.message && !event.postback) continue;
         // Our own messages echoed back — never a customer message (the bot would answer itself).
         if (event.message?.is_echo || (event.sender?.id && String(event.sender.id) === String(integration?.ig_account_id))) continue;
@@ -1238,6 +1292,7 @@ async function handleInstagramPayload(body, agencyId, integrationId, integration
           integration,
           storyEvent,
           adReferral: extractMetaReferral(event),
+          linkRef: extractMetaLinkRef(event),
         });
       }
     }
@@ -1531,6 +1586,8 @@ async function handleIncomingPayload({
   waIdentity = null,
   storyEvent = null,
   adReferral = null,
+  linkRef = null, // Messenger / Instagram growth link ref ("gl_<code>")
+  referralOnly = false, // only "opened the chat from a link" — no customer message to answer
 }) {
   try {
     // 1. Prevent duplicate messages
@@ -1606,6 +1663,7 @@ async function handleIncomingPayload({
       conversationId: conversation.id,
       message: socketMsg,
     });
+    notifyAssigneeOfInbound(conversation.id, message); // browser push, background
 
     if (isNew) {
       emitToAgency(agencyId, "new_conversation", {
@@ -1651,6 +1709,16 @@ async function handleIncomingPayload({
         }
       }
     }
+
+    // Growth link (utils/growthLinks.js): counted, labelled, and its flow answers first.
+    const growthCode = extractGrowthCode({ platform, text: msgType === "TEXT" && !buttonRoute ? msgBody : "", metaRef: linkRef });
+    if (growthCode) {
+      const started = await handleGrowthLinkArrival({ agencyId, integration, platform, conversation, contact, code: growthCode })
+        .catch((e) => { console.error("[Growth] link arrival:", e.message); return false; });
+      if (started) return;
+    }
+    // Only "opened the chat from a link": nothing else should reply to it.
+    if (referralOnly) return;
 
     // 4-. Messenger / Instagram Get Started, ice breaker or persistent-menu tap
     // (utils/messengerProfile.js). Paused bot (a person is handling the chat)

@@ -44,7 +44,7 @@ function getPackageCategory(pkg) {
 function cleanTierLabel(name) {
   if (!name) return 'Standard';
   return name
-    .replace(/(Agency|Premium|End-User|Package)\s*/gi, '')
+    .replace(/(Agency|Reseller|Premium|End-User|Package)\s*/gi, '')
     .replace(/\s*\((Unlimited|Quarterly|Yearly)\)/gi, '')
     .trim() || name;
 }
@@ -117,7 +117,7 @@ function PlanColumnCard({
     <div className={`pp-card ${featured ? 'featured' : ''} ${categoryKey === 'RESELLER' ? 'reseller-card' : ''}`}>
       {featured && <div className="pp-badge">{badgeText || 'Most Popular'}</div>}
       {categoryKey === 'RESELLER' && !featured && (
-        <div className="pp-reseller-badge">{badgeText || 'Agency & White-Label'}</div>
+        <div className="pp-reseller-badge">{badgeText || 'Reseller & White-Label'}</div>
       )}
 
       <div className="pp-card-header">
@@ -293,7 +293,7 @@ function PlanColumnCard({
           {isFree
             ? 'Get Started Free'
             : categoryKey === 'RESELLER'
-            ? 'Launch Reseller Agency'
+            ? 'Become a Reseller'
             : 'Get Started with Premium'}
         </span>
         <ArrowRight size={16} />
@@ -892,7 +892,7 @@ export default function PricingPage() {
           </div>
           <h1 className="pp-hero-title">Simple, powerful pricing for every scale</h1>
           <p className="pp-hero-sub">
-            Whether you are automating your first bot or scaling a full white-label agency,
+            Whether you are automating your first bot or running a full white-label reseller business,
             pick the perfect plan. Change tiers anytime.
           </p>
 
@@ -946,12 +946,12 @@ export default function PricingPage() {
               featured={true}
             />
 
-            {/* Column 3: Reseller & Agency */}
+            {/* Column 3: Reseller */}
             <PlanColumnCard
               categoryKey="RESELLER"
-              columnTitle="Reseller Agency"
-              subtitle="Launch your own AI chatbot SaaS agency with custom branding & sub-accounts."
-              badgeText="White-Label Agency"
+              columnTitle="Reseller"
+              subtitle="Launch your own AI chatbot SaaS business with custom branding & sub-accounts."
+              badgeText="White-Label Reseller"
               packages={resellerPlans}
               cycle={cycle}
               onBuyNow={handleBuyNow}

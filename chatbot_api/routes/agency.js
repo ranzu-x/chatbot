@@ -33,7 +33,7 @@ router.get("/agency/profile", async (req, res) => {
        WHERE a.id = ?`,
       [agencyId]
     );
-    if (!rows.length) return res.status(404).json({ success: false, message: "Agency not found" });
+    if (!rows.length) return res.status(404).json({ success: false, message: "Workspace not found" });
     return res.json({ success: true, agency: rows[0] });
   } catch (err) {
     console.error(err);

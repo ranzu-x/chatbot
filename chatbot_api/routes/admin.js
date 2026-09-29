@@ -208,7 +208,7 @@ router.post("/admin/agencies", requirePermission("admin.agencies.manage"), async
       targetAgencyId: agencyId,
     });
 
-    return res.status(201).json({ success: true, message: "Agency created successfully", agencyId });
+    return res.status(201).json({ success: true, message: "Workspace created successfully", agencyId });
   } catch (err) {
     await conn.rollback();
     console.error(err);
@@ -222,7 +222,7 @@ router.post("/admin/agencies", requirePermission("admin.agencies.manage"), async
 router.patch("/admin/agencies/:id/toggle", requirePermission("admin.agencies.manage"), async (req, res) => {
   try {
     const [rows] = await pool.query("SELECT is_active, name FROM agencies WHERE id = ?", [req.params.id]);
-    if (!rows.length) return res.status(404).json({ success: false, message: "Agency not found" });
+    if (!rows.length) return res.status(404).json({ success: false, message: "Workspace not found" });
     const newStatus = !rows[0].is_active;
     await pool.query("UPDATE agencies SET is_active = ? WHERE id = ?", [newStatus, req.params.id]);
     invalidateTenantCache(); // deactivation must lock the workspace out immediately
@@ -254,7 +254,7 @@ router.patch("/admin/agencies/:id", requirePermission("admin.agencies.manage"), 
       "SELECT id, owner_id, account_type, name, website, is_active FROM agencies WHERE id = ? AND account_type IN ('DIRECT_CUSTOMER','RESELLER')",
       [req.params.id]
     );
-    if (!agency) return res.status(404).json({ success: false, message: "Agency not found" });
+    if (!agency) return res.status(404).json({ success: false, message: "Workspace not found" });
 
     const { isActive, packageId, name, website, ownerName, ownerEmail, ownerPassword, isReseller } = req.body;
 
@@ -348,7 +348,7 @@ router.patch("/admin/agencies/:id", requirePermission("admin.agencies.manage"), 
 router.delete("/admin/agencies/:id", requirePermission("admin.agencies.manage"), async (req, res) => {
   try {
     const [rows] = await pool.query("SELECT account_type, name FROM agencies WHERE id = ?", [req.params.id]);
-    if (!rows.length) return res.status(404).json({ success: false, message: "Agency not found" });
+    if (!rows.length) return res.status(404).json({ success: false, message: "Workspace not found" });
     if (rows[0].account_type === "PLATFORM") {
       return res.status(400).json({ success: false, message: "The platform account cannot be deleted" });
     }
@@ -407,7 +407,7 @@ router.delete("/admin/agencies/:id", requirePermission("admin.agencies.manage"),
       summary: `Deleted agency "${rows[0].name}"`,
     });
 
-    return res.json({ success: true, message: "Agency deleted" });
+    return res.json({ success: true, message: "Workspace deleted" });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ success: false, message: "Server error" });

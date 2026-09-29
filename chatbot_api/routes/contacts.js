@@ -141,7 +141,11 @@ router.get("/contacts", async (req, res) => {
     const query = `
       SELECT c.*,
              (SELECT COUNT(*) FROM conversations WHERE contact_id = c.id) as conversationCount,
-             (SELECT MAX(created_at) FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE contact_id = c.id)) as lastActivity,
+             COALESCE(
+               (SELECT MAX(created_at) FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE contact_id = c.id)),
+               -- messages older than the retention period are deleted (utils/messageRetention.js)
+               (SELECT MAX(last_message_at) FROM conversations WHERE contact_id = c.id)
+             ) as lastActivity,
              (SELECT i.wa_display_phone FROM conversations cv2 JOIN integrations i ON i.id = cv2.integration_id
               WHERE cv2.contact_id = c.id ORDER BY cv2.last_message_at DESC LIMIT 1) as accountLabel,
              ${retainedExpr} as retained

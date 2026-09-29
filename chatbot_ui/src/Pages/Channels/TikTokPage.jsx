@@ -7,6 +7,7 @@ import { handleLimitError, alert } from '../../utils/alerts';
 import { useAuth } from '../../Provider/AuthContext';
 import { Plus, Trash2, CheckCircle2, RefreshCw, Key, Music, ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router';
+import { toastByType } from '../../utils/alerts';
 
 const EmbeddedWrapper = ({ children }) => <div>{children}</div>;
 
@@ -17,7 +18,6 @@ export default function TikTokPage({ embedded = false }) {
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState(null);
   const [form, setForm] = useState(DEFAULT_FORM);
   const [view, setView] = useUrlState('view', 'list', { allowed: ['list','connect'] });
 
@@ -35,10 +35,7 @@ export default function TikTokPage({ embedded = false }) {
 
   useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
 
-  const showToast = (msg, type = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 4000);
-  };
+  const showToast = (msg, type = 'success') => toastByType(msg, type);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -298,11 +295,6 @@ export default function TikTokPage({ embedded = false }) {
   return (
     <LayoutWrapper>
       <div style={{ width: '100%', padding: embedded ? '0' : '16px 20px' }}>
-        {toast && (
-          <div className="toast-container">
-            <div className={`toast ${toast.type}`}>{toast.msg}</div>
-          </div>
-        )}
         {!embedded && <ChannelBreadcrumb current="TikTok" />}
         {view === 'list' ? ListView() : ConnectView()}
       </div>

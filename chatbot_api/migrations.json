@@ -116,7 +116,11 @@
     "migrate_developer_apps_permission.js",
     "migrate_no_match_frequency.js",
     "migrate_bot_settings.js",
-    "migrate_docs_and_sites.js"
+    "migrate_docs_and_sites.js",
+    "migrate_appointment_holds_and_retention.js",
+    "migrate_flow_analytics.js",
+    "migrate_growth_links.js",
+    "migrate_web_push.js"
   ],
   "manual": {
     "migrate_widget_key_rotation.js": "Rotates every webchat widget key on each run - breaks every pasted embed snippet. Run by hand only when you mean it.",

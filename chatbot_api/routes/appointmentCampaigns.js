@@ -2,6 +2,7 @@ import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { requireModule } from "../utils/entitlements.js";
+import { PAYMENT_MODES } from "../utils/appointmentAvailability.js";
 
 const router = express.Router();
 
@@ -12,7 +13,7 @@ router.get("/appointment-campaigns", async (req, res) => {
   try {
     const agencyId = req.user?.agencyId;
     const [rows] = await pool.query(
-      `SELECT id, agency_id, name, description, greeting_message, service_ids, staff_id, is_active, created_at, updated_at
+      `SELECT id, agency_id, name, description, greeting_message, service_ids, staff_id, payment_mode, is_active, created_at, updated_at
        FROM appointment_campaigns
        WHERE agency_id = ?
        ORDER BY name ASC`,
@@ -29,13 +30,16 @@ router.get("/appointment-campaigns", async (req, res) => {
 router.post("/appointment-campaigns", async (req, res) => {
   try {
     const agencyId = req.user?.agencyId;
-    const { name, description, greeting_message, service_ids, staff_id, is_active } = req.body;
+    const { name, description, greeting_message, service_ids, staff_id, is_active, payment_mode } = req.body;
     if (!name?.trim()) {
       return res.status(400).json({ success: false, message: "Campaign name is required" });
     }
+    if (payment_mode && !PAYMENT_MODES.includes(payment_mode)) {
+      return res.status(400).json({ success: false, message: "Payment must be NONE, REQUIRED or PAY_LATER" });
+    }
     const [result] = await pool.query(
-      `INSERT INTO appointment_campaigns (agency_id, name, description, greeting_message, service_ids, staff_id, is_active)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO appointment_campaigns (agency_id, name, description, greeting_message, service_ids, staff_id, is_active, payment_mode)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         agencyId,
         name.trim(),
@@ -44,6 +48,7 @@ router.post("/appointment-campaigns", async (req, res) => {
         service_ids ? JSON.stringify(service_ids) : null,
         staff_id ? parseInt(staff_id) : null,
         is_active !== false ? 1 : 0,
+        payment_mode || null,
       ]
     );
     const [[created]] = await pool.query("SELECT * FROM appointment_campaigns WHERE id = ?", [result.insertId]);
@@ -59,7 +64,7 @@ router.put("/appointment-campaigns/:id", async (req, res) => {
   try {
     const agencyId = req.user?.agencyId;
     const { id } = req.params;
-    const { name, description, greeting_message, service_ids, staff_id, is_active } = req.body;
+    const { name, description, greeting_message, service_ids, staff_id, is_active, payment_mode } = req.body;
     const [[existing]] = await pool.query(
       "SELECT * FROM appointment_campaigns WHERE id = ? AND agency_id = ?",
       [id, agencyId]
@@ -67,8 +72,11 @@ router.put("/appointment-campaigns/:id", async (req, res) => {
     if (!existing) {
       return res.status(404).json({ success: false, message: "Campaign not found" });
     }
+    if (payment_mode && !PAYMENT_MODES.includes(payment_mode)) {
+      return res.status(400).json({ success: false, message: "Payment must be NONE, REQUIRED or PAY_LATER" });
+    }
     await pool.query(
-      `UPDATE appointment_campaigns SET name = ?, description = ?, greeting_message = ?, service_ids = ?, staff_id = ?, is_active = ?
+      `UPDATE appointment_campaigns SET name = ?, description = ?, greeting_message = ?, service_ids = ?, staff_id = ?, is_active = ?, payment_mode = ?
        WHERE id = ? AND agency_id = ?`,
       [
         name?.trim() || existing.name,
@@ -77,6 +85,8 @@ router.put("/appointment-campaigns/:id", async (req, res) => {
         service_ids !== undefined ? JSON.stringify(service_ids) : existing.service_ids,
         staff_id !== undefined ? (staff_id ? parseInt(staff_id) : null) : existing.staff_id,
         is_active !== undefined ? (is_active ? 1 : 0) : existing.is_active,
+        // "" / null = use the workspace's booking settings
+        payment_mode !== undefined ? (payment_mode || null) : existing.payment_mode,
         id,
         agencyId,
       ]

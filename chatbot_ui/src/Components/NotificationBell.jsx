@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router';
-import { Bell, CheckCheck, Settings, ExternalLink } from 'lucide-react';
+import { Bell, BellRing, BellOff, CheckCheck, Settings, ExternalLink } from 'lucide-react';
 import { useNotification } from '../Provider/NotificationContext';
+import { myNotificationsAPI } from '../services/api';
+import { toast } from '../lib/alerts';
+import { pushState, enablePush, disablePush } from '../utils/browserPush';
 
 // Top-bar bell: the signed-in user's in-app notifications (sent by the Super
 // Admin from User Manager → Selected users → Send notification). Data and the
@@ -15,6 +18,69 @@ function timeAgo(value) {
   if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
   if (secs < 7 * 86400) return `${Math.floor(secs / 86400)}d ago`;
   return new Date(value).toLocaleDateString();
+}
+
+// "Desktop notifications" switch for this browser (utils/browserPush.js):
+// alerts for new messages in your assigned chats, @mentions, assigned chats
+// and follow-ups — only sent while no dashboard tab is open.
+function DesktopAlertsRow() {
+  const [state, setState] = useState('loading');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { pushState().then(setState).catch(() => setState('off')); }, []);
+
+  const toggle = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const next = state === 'on' ? await disablePush() : await enablePush();
+      setState(next);
+      if (next === 'on') {
+        await myNotificationsAPI.pushTest().catch(() => {});
+        toast.success('Desktop notifications are on', { description: "You'll be alerted here when the dashboard is closed." });
+      } else if (next === 'denied') {
+        toast.warning('Notifications are blocked', { description: 'Allow notifications for this site in your browser settings, then try again.' });
+      }
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Could not change desktop notifications');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (state === 'loading') return null;
+  const note = {
+    unsupported: 'Not available in this browser (needs HTTPS).',
+    denied: 'Blocked in your browser settings.',
+    on: 'On for this browser — alerts when the dashboard is closed.',
+    off: 'Get alerts for your chats when the dashboard is closed.',
+  }[state];
+  const canToggle = state === 'on' || state === 'off';
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
+      {state === 'on' ? <BellRing size={15} style={{ color: 'var(--primary)', flexShrink: 0 }} /> : <BellOff size={15} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />}
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-primary)' }}>Desktop notifications</span>
+        <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>{note}</span>
+      </span>
+      {canToggle && (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={state === 'on'}
+          onClick={toggle}
+          disabled={busy}
+          style={{
+            width: 34, height: 20, borderRadius: 999, border: 'none', padding: 2, cursor: busy ? 'wait' : 'pointer', flexShrink: 0,
+            background: state === 'on' ? 'var(--primary)' : 'var(--border)', transition: 'background 0.15s',
+          }}
+        >
+          <span style={{ display: 'block', width: 16, height: 16, borderRadius: '50%', background: '#fff', transform: state === 'on' ? 'translateX(14px)' : 'none', transition: 'transform 0.15s' }} />
+        </button>
+      )}
+    </div>
+  );
 }
 
 export default function NotificationBell() {
@@ -124,6 +190,8 @@ export default function NotificationBell() {
               );
             })}
           </div>
+
+          <DesktopAlertsRow />
 
           <button
             type="button"

@@ -6,6 +6,7 @@ import { applyLabelToContact, removeLabelFromContact } from "../routes/labels.js
 import { sendWebhook } from "./outboundWebhook.js";
 import * as googleSheetsUtil from "./googleSheets.js";
 import { resolveNextNodeId, resolveNextStepNodeId, expandMessageBlocks, isOptionHandle } from "./flowGraph.js";
+import { bumpStepStat, pickWeightedBranch } from "./flowStats.js";
 import { enrollContactsInSequence, unsubscribeContactFromSequence } from "../routes/sequences.js";
 import { executeHttpApiCampaign } from "../services/httpApiExecutor.js";
 import { scheduleFlowDelayResume } from "./flowDelayScheduler.js";
@@ -195,11 +196,15 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
         if (conversationId) {
           // Count only INBOUND messages from the visitor so initial greeting
           // messages (e.g. sent by webchat/init) don't inflate the count.
+          // A chat whose customer messages were removed by message retention
+          // (utils/messageRetention.js) isn't a first contact however few remain.
           const [msgCount] = await pool.query(
-            "SELECT COUNT(*) as count FROM messages WHERE conversation_id = ? AND direction = 'INBOUND'",
-            [conversationId]
+            `SELECT COUNT(*) as count,
+                    (SELECT inbound_pruned FROM conversations WHERE id = ?) AS pruned
+               FROM messages WHERE conversation_id = ? AND direction = 'INBOUND'`,
+            [conversationId, conversationId]
           );
-          if (msgCount[0]?.count <= 1) {
+          if (msgCount[0]?.count <= 1 && !Number(msgCount[0]?.pruned)) {
             isMatch = true;
             break;
           }
@@ -232,10 +237,12 @@ export async function findMatchingFlow(agencyId, platform, conversationId, integ
   // inbound message and has a designated widget flow, launch that flow!
   if (extraContext?.widgetFlowId && conversationId) {
     const [inboundCount] = await pool.query(
-      "SELECT COUNT(*) as count FROM messages WHERE conversation_id = ? AND direction = 'INBOUND'",
-      [conversationId]
+      `SELECT COUNT(*) as count,
+              (SELECT inbound_pruned FROM conversations WHERE id = ?) AS pruned
+         FROM messages WHERE conversation_id = ? AND direction = 'INBOUND'`,
+      [conversationId, conversationId]
     );
-    if (inboundCount[0]?.count <= 1 || extraContext?.sourceHandle) {
+    if ((inboundCount[0]?.count <= 1 && !Number(inboundCount[0]?.pruned)) || extraContext?.sourceHandle) {
       let widgetFlow = flows.find(f => f.id === extraContext.widgetFlowId);
       if (!widgetFlow) {
         const [[fRow]] = await pool.query("SELECT * FROM flows WHERE id = ? AND is_active = 1", [extraContext.widgetFlowId]);
@@ -330,6 +337,9 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
     const tapped = decodedRoute ? await resolveTappedButton(agencyId, decodedRoute) : null;
     if (tapped) {
       const { flow: routedFlow, edges: routedEdges, sourceNode, button: tappedButton, optionCount } = tapped;
+      // Flow analytics: a tap on this step's option number `idx` (button, quick reply or list item).
+      bumpStepStat({ flowId: routedFlow.id, nodeId: decodedRoute.nodeId, field: "clicked" });
+      bumpStepStat({ flowId: routedFlow.id, nodeId: decodedRoute.nodeId, handle: `opt-${decodedRoute.idx}`, field: "clicked" });
       {
           // Quick Action button (Chat with Human / Robot, Unsubscribe / Resubscribe —
           // utils/quickActions.js). Normally intercepted before this point by
@@ -1273,6 +1283,9 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         }
       }
 
+      // Flow analytics: this step ran (not steps inside a User Input Flow — they aren't this flow's).
+      if (!inUIF) bumpStepStat({ flowId: flow?.id || session?.flow_id, nodeId: node.id, field: "reached" });
+
       switch (node.type) {
         case "start": {
           // "Also Start a Sequence" (Start node's own properties panel) is a
@@ -1911,6 +1924,20 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           break;
         }
 
+        case "randomizer": {
+          // Randomizer (A/B split): sends each person down one branch, picked by
+          // the branches' weights. Only that branch's own wire is followed — an
+          // unwired branch simply ends the flow for that person (never falls
+          // through to another branch).
+          const branches = Array.isArray(node.data?.branches) ? node.data.branches : [];
+          const pick = pickWeightedBranch(branches);
+          if (pick < 0) { currentNodeId = null; break; }
+          bumpStepStat({ flowId: flow?.id || session?.flow_id, nodeId: node.id, handle: `branch-${pick}`, field: "clicked" });
+          variables.randomizer_branch = branches[pick]?.label || String.fromCharCode(65 + pick);
+          currentNodeId = edges.find((e) => e.source === node.id && e.sourceHandle === `branch-${pick}`)?.target || null;
+          break;
+        }
+
         case "delay": {
           // The actual wait already happened above (the generic per-node
           // Delay pause/resume, which a Delay node's own `data.delay` — or
@@ -2055,7 +2082,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
 
         case "handoff": {
           const handoffMsg = replaceVariables(node.data?.message || "Transferring you to a live agent. Please wait.", variables, contact);
-          await sendMsg(agencyId, conversation, handoffMsg, "TEXT", integration);
+          await sendMsg(agencyId, conversation, handoffMsg, "TEXT", integration, { flowId: flow?.id || session?.flow_id || null, nodeId: node.id });
 
           // Update conversation to open and assign status
           await pool.query(
@@ -2304,7 +2331,7 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
         case "end": {
           const closingMsg = replaceVariables(node.data?.message || "Thank you! The flow has ended.", variables, contact);
           if (closingMsg) {
-            await sendMsg(agencyId, conversation, closingMsg, "TEXT", integration);
+            await sendMsg(agencyId, conversation, closingMsg, "TEXT", integration, { flowId: flow?.id || session?.flow_id || null, nodeId: node.id });
           }
 
           // Complete flow session
@@ -2938,6 +2965,14 @@ export async function sendMsg(agencyId, conversation, bodyText, type, integratio
     metadataObj.template = extraFields.messengerTemplate.name;
     metadataObj.messagingType = "UTILITY";
   }
+  // Flow analytics (utils/flowStats.js): which flow step sent this, so its
+  // delivery / read receipts are counted on that step.
+  const statFlowId = Number(extraFields?.flowId) || null;
+  const statNodeId = extraFields?.nodeId ? String(extraFields.nodeId) : null;
+  if (statFlowId && statNodeId) {
+    metadataObj.flowId = statFlowId;
+    metadataObj.nodeId = statNodeId;
+  }
   const metadataJson = JSON.stringify(metadataObj);
 
   // Insert message in DB
@@ -2956,6 +2991,8 @@ export async function sendMsg(agencyId, conversation, bodyText, type, integratio
   const [savedMsg] = await pool.query("SELECT * FROM messages WHERE id = ?", [msgResult.insertId]);
   const message = savedMsg[0];
   message.metadata = metadataObj;
+
+  if (statFlowId && statNodeId) bumpStepStat({ flowId: statFlowId, nodeId: statNodeId, field: sendError ? "failed" : "sent" });
 
   // Emit sockets
   emitToAgency(agencyId, "new_message", {

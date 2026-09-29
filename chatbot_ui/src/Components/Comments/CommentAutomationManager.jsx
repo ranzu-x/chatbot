@@ -33,6 +33,7 @@ import {
   GitBranch,
   Upload,
 } from 'lucide-react';
+import { toastByType } from '../../utils/alerts';
 
 // `lockPlatform` ('FACEBOOK' | 'INSTAGRAM') restricts this instance to one
 // platform for good — its integration list, account selector, and campaigns
@@ -82,7 +83,6 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
   const [pageWideRule, setPageWideRule] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [toast, setToast] = useState(null);
 
   // Modal State
   const [modalOpen, setModalOpen] = useState(false);
@@ -164,10 +164,7 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
     }
   };
 
-  const showToast = (msg, type = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
-  };
+  const showToast = (msg, type = 'success') => toastByType(msg, type);
 
   useEffect(() => {
     loadIntegrations();
@@ -588,30 +585,6 @@ export default function CommentAutomationManager({ defaultPlatform = 'FACEBOOK',
 
   return (
     <div className="comment-automation-container" style={{ background: 'transparent', borderRadius: 12, padding: 20 }}>
-      {/* Toast Notification */}
-      {toast && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 20,
-            right: 20,
-            zIndex: 99999,
-            padding: '12px 20px',
-            borderRadius: 10,
-            background: toast.type === 'error' ? '#ef4444' : '#10b981',
-            color: '#ffffff',
-            fontWeight: 700,
-            fontSize: '0.84rem',
-            boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-          }}
-        >
-          {toast.type === 'error' ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
-          {toast.msg}
-        </div>
-      )}
 
       {/* Top Header: Account Selector & Actions */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 14, marginBottom: 20, background: '#ffffff', padding: '16px 20px', borderRadius: 12, border: '1px solid #e2e8f0' }}>

@@ -2,6 +2,7 @@ import express from "express";
 import pool from "../db.js";
 import { authMiddleware } from "../middleware/authmiddleware.js";
 import { broadcastAgentAlert } from "../services/notificationService.js";
+import { saveSubscription } from "../utils/webPush.js";
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -82,17 +83,10 @@ router.put("/notifications/settings", async (req, res) => {
 // ─── SAVE WEBPUSH SUBSCRIPTION ───────────────────────────────────────────────
 router.post("/notifications/subscribe", async (req, res) => {
   try {
-    const userId = req.user.id;
-    const agencyId = req.user.agencyId || 1;
-    const { endpoint, keys, userAgent } = req.body;
-
-    if (!endpoint) return res.status(400).json({ success: false, message: "Endpoint required" });
-
-    await pool.query(
-      `INSERT INTO push_subscriptions (user_id, agency_id, endpoint, p256dh_key, auth_key, user_agent)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [userId, agencyId, endpoint, keys?.p256dh || null, keys?.auth || null, userAgent || null]
-    );
+    // Old endpoint, kept for compatibility — the dashboard uses POST /me/push/subscribe (utils/webPush.js).
+    const { endpoint, keys, userAgent } = req.body || {};
+    const saved = await saveSubscription(req.user.id, { endpoint, keys }, userAgent || req.get("user-agent"));
+    if (!saved) return res.status(400).json({ success: false, message: "A valid push subscription is required" });
 
     return res.json({ success: true, message: "Push subscription saved" });
   } catch (err) {

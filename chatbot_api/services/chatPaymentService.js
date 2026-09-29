@@ -47,6 +47,12 @@ export async function createChatPaymentLink({
   collectAddress = false,
   successMessage = null,
   provider = "STRIPE",
+  // Appointment booking (utils/appointmentBookingEngine.js): the held slot a
+  // payment-required booking is waiting on, or the pay-later appointment.
+  appointmentHoldId = null,
+  appointmentId = null,
+  // Minutes until the checkout must stop accepting payment (the slot hold's end).
+  expiresInMinutes = null,
 }) {
   if (!productName || !amount) {
     throw new Error("Product name and amount are required");
@@ -66,12 +72,15 @@ export async function createChatPaymentLink({
   const [ins] = await pool.query(
     `INSERT INTO chat_orders (
       agency_id, subscriber_id, conversation_id, integration_id, flow_id, node_id, next_node_id, product_name, amount,
-      currency, provider, status, customer_name, customer_email, customer_phone, channel, access_token, success_message
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, ?)`,
+      currency, provider, status, customer_name, customer_email, customer_phone, channel, access_token, success_message,
+      appointment_hold_id, appointment_id, expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?,
+      IF(? IS NULL, NULL, NOW() + INTERVAL ? MINUTE))`,
     [
       agencyId, subscriberId, conversationId, integrationId, flowId, nodeId, nextNodeId,
       productName.trim(), numericAmount, curr, isStars ? "TELEGRAM_STARS" : "STRIPE",
       customerName, customerEmail, customerPhone, channel, accessToken, successMessage || null,
+      appointmentHoldId, appointmentId, expiresInMinutes, Number(expiresInMinutes) || 0,
     ]
   );
 
@@ -101,6 +110,10 @@ export async function createChatPaymentLink({
           },
         ],
         mode: "payment",
+        // Stripe accepts 30 min – 24 h; callers keep their hold at least 30 min.
+        expires_at: expiresInMinutes
+          ? Math.floor(Date.now() / 1000) + Math.min(86000, Math.max(1805, Math.round(Number(expiresInMinutes) * 60)))
+          : undefined,
         customer_email: customerEmail || undefined,
         shipping_address_collection: collectAddress ? { allowed_countries: ["US", "CA", "GB", "AU", "DE", "FR", "ES", "IT"] } : undefined,
         success_url: `${frontendBase()}/payments/success?order_id=${orderId}&session_id={CHECKOUT_SESSION_ID}`,
@@ -234,17 +247,22 @@ export async function markOrderPaid(orderId, stripeSessionDetails = {}) {
   if (!rows.length) return null;
 
   const order = rows[0];
-  if (order.status !== "PENDING") return order;
   // A Stripe webhook must name this order's own checkout session.
   if (stripeSessionDetails.sessionId && order.stripe_session_id && stripeSessionDetails.sessionId !== order.stripe_session_id) {
     console.warn(`[IN-CHAT PAYMENT] Session mismatch for order #${orderId}; ignored.`);
     return null;
   }
+  // Money verified by the provider's signed webhook is never ignored: an order
+  // our side already expired/cancelled (e.g. an appointment hold that ran out
+  // seconds before Stripe reported the payment) still becomes PAID.
+  const verified = Boolean(stripeSessionDetails.sessionId);
+  const payable = order.status === "PENDING" || (verified && ["EXPIRED", "CANCELLED", "FAILED"].includes(order.status));
+  if (!payable) return order;
 
-  // Only the request that actually flips PENDING → PAID continues the chat (no double confirmation).
+  // Only the request that actually flips the order to PAID continues the chat (no double confirmation).
   const [upd] = await pool.query(
-    "UPDATE chat_orders SET status = 'PAID', paid_at = NOW() WHERE id = ? AND status = 'PENDING'",
-    [orderId]
+    "UPDATE chat_orders SET status = 'PAID', paid_at = NOW() WHERE id = ? AND status = ?",
+    [orderId, order.status]
   );
   if (!upd.affectedRows) return { ...order, status: "PAID" };
 
@@ -254,8 +272,34 @@ export async function markOrderPaid(orderId, stripeSessionDetails = {}) {
   return paid;
 }
 
+/**
+ * A checkout that will not be paid: Stripe reported it expired / failed, or it
+ * was cancelled. Only a PENDING order changes. Appointment orders free their
+ * held slot (utils/appointmentBookingEngine.js).
+ */
+export async function markOrderUnpaid(orderId, status, stripeSessionDetails = {}) {
+  if (!["EXPIRED", "FAILED", "CANCELLED"].includes(status)) throw new Error(`Bad order status ${status}`);
+  const [[order]] = await pool.query("SELECT * FROM chat_orders WHERE id = ?", [orderId]);
+  if (!order) return null;
+  if (stripeSessionDetails.sessionId && order.stripe_session_id && stripeSessionDetails.sessionId !== order.stripe_session_id) return null;
+  const [upd] = await pool.query("UPDATE chat_orders SET status = ? WHERE id = ? AND status = 'PENDING'", [status, orderId]);
+  if (!upd.affectedRows) return order;
+  if (order.appointment_hold_id || order.appointment_id) {
+    const { handleAppointmentOrderUnpaid } = await import("../utils/appointmentBookingEngine.js");
+    await handleAppointmentOrderUnpaid(order, status).catch((err) =>
+      console.error(`[IN-CHAT PAYMENT] Appointment follow-up for order #${orderId} failed:`, err.message)
+    );
+  }
+  return { ...order, status };
+}
+
 /** Sends the element's confirmation message and continues the flow from its next step. */
 export async function continueAfterPayment(order) {
+  // Appointment fee: the booking engine confirms the appointment itself.
+  if (order.appointment_hold_id || order.appointment_id) {
+    const { handleAppointmentOrderPaid } = await import("../utils/appointmentBookingEngine.js");
+    return handleAppointmentOrderPaid(order);
+  }
   if (!order.conversation_id) return;
   const [[conversation]] = await pool.query("SELECT * FROM conversations WHERE id = ? AND agency_id = ?", [order.conversation_id, order.agency_id]);
   if (!conversation) return;

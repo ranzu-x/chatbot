@@ -21,6 +21,7 @@ import {
   Play,
   Check,
 } from 'lucide-react';
+import { toastByType } from '../../utils/alerts';
 
 export default function WebhooksManagerPage() {
   const [flows, setFlows] = useState([]);
@@ -38,12 +39,8 @@ export default function WebhooksManagerPage() {
   const [inboundUrls, setInboundUrls] = useState({}); // flowId → URL with its key
   const [testingTrigger, setTestingTrigger] = useState(false);
   const [testResult, setTestResult] = useState(null);
-  const [toast, setToast] = useState(null);
 
-  const showToast = (msg, type = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
-  };
+  const showToast = (msg, type = 'success') => toastByType(msg, type);
 
   const [queueStats, setQueueStats] = useState({ queueLength: 0, activeWorkers: 0, totalReceived: 0, totalProcessed: 0, throughputPerSec: 0 });
   const [enqueuingBatch, setEnqueuingBatch] = useState(false);
@@ -135,30 +132,6 @@ export default function WebhooksManagerPage() {
   return (
     <AppLayout>
       <div className="webhooks-manager-page" style={{ width: '100%', padding: '14px 18px' }}>
-        {/* Toast Notification */}
-        {toast && (
-          <div
-            style={{
-              position: 'fixed',
-              top: 20,
-              right: 20,
-              zIndex: 99999,
-              padding: '12px 20px',
-              borderRadius: 10,
-              background: toast.type === 'error' ? '#ef4444' : '#10b981',
-              color: '#ffffff',
-              fontWeight: 700,
-              fontSize: '0.84rem',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-            }}
-          >
-            {toast.type === 'error' ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
-            {toast.msg}
-          </div>
-        )}
 
         {/* Page Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 18 }}>

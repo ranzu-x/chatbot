@@ -124,7 +124,6 @@ export default function MetaAppPage({ embedded = false, forcedPlatformGroup = nu
   const lastFetchedCreds = useRef('');
   const [showSecret, setShowSecret] = useState(false);
   const [showSystemToken, setShowSystemToken] = useState(false);
-  const [toast, setToast] = useState(null);
   const [copiedKey, setCopiedKey] = useState('');
 
   // Derived URLs based on public domain & agency ID
@@ -336,11 +335,6 @@ export default function MetaAppPage({ embedded = false, forcedPlatformGroup = nu
 
   return (
     <LayoutWrapper>
-      {toast && (
-        <div className="toast-container">
-          <div className={`toast ${toast.type === 'error' ? 'error' : 'success'}`}>{toast.msg}</div>
-        </div>
-      )}
 
       {!embedded && (
         <div className="page-header">

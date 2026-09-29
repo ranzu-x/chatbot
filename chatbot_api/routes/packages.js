@@ -510,62 +510,8 @@ router.delete("/packages/:id", authMiddleware, roleMiddleware("ADMIN"), async (r
   }
 });
 
-// ─── ADMIN: ASSIGN PACKAGE TO AGENCY OR USER ─────────────────────────────────
-router.post("/packages/assign", authMiddleware, roleMiddleware("ADMIN"), async (req, res) => {
-  try {
-    const { packageId, agencyId, userId, notes } = req.body;
-
-    if (!packageId) {
-      return res.status(400).json({ success: false, message: "Package ID is required" });
-    }
-    if (!agencyId && !userId) {
-      return res.status(400).json({ success: false, message: "Please specify an Agency ID or User ID" });
-    }
-
-    const [pkg] = await pool.query("SELECT name FROM packages WHERE id = ?", [packageId]);
-    if (!pkg.length) return res.status(404).json({ success: false, message: "Package not found" });
-
-    if (agencyId) {
-      const [[targetAg]] = await pool.query("SELECT account_type FROM agencies WHERE id = ?", [agencyId]);
-      if (targetAg?.account_type === "PLATFORM") {
-        return res.status(400).json({ success: false, message: "The Super Admin / Platform workspace is permanently unlimited and does not need any package." });
-      }
-      await pool.query("UPDATE agencies SET package_id = ? WHERE id = ?", [packageId, agencyId]);
-      await pool.query("UPDATE subscriptions SET status = 'CANCELLED' WHERE agency_id = ? AND status = 'ACTIVE'", [agencyId]);
-      await pool.query(
-        "INSERT INTO subscriptions (agency_id, package_id, status, started_at, notes) VALUES (?, ?, 'ACTIVE', NOW(), ?)",
-        [agencyId, packageId, notes || `Assigned ${pkg[0].name}`]
-      );
-    }
-
-    if (userId) {
-      const [[targetUser]] = await pool.query("SELECT role FROM users WHERE id = ?", [userId]);
-      if (targetUser?.role === "ADMIN") {
-        return res.status(400).json({ success: false, message: "Super Admin users are permanently unlimited and do not need any package." });
-      }
-      await pool.query("UPDATE users SET package_id = ? WHERE id = ?", [packageId, userId]);
-      await pool.query("UPDATE subscriptions SET status = 'CANCELLED' WHERE user_id = ? AND status = 'ACTIVE'", [userId]);
-      await pool.query(
-        "INSERT INTO subscriptions (user_id, package_id, status, started_at, notes) VALUES (?, ?, 'ACTIVE', NOW(), ?)",
-        [userId, packageId, notes || `Assigned ${pkg[0].name}`]
-      );
-    }
-
-    logAuditEvent({
-      agencyId: req.user.agencyId, actor: req.user, action: "package.assign",
-      entityType: agencyId ? "agency" : "user", entityId: Number(agencyId || userId), entityLabel: pkg[0].name,
-      summary: `Assigned package "${pkg[0].name}" to ${agencyId ? `agency #${agencyId}` : `user #${userId}`}`,
-      targetAgencyId: agencyId ? Number(agencyId) : null,
-    });
-
-    return res.json({
-      success: true,
-      message: `Package "${pkg[0].name}" successfully assigned!`,
-    });
-  } catch (err) {
-    console.error("Assign package error:", err);
-    return res.status(500).json({ success: false, message: "Failed to assign package" });
-  }
-});
+// A package is assigned from the Super Admin user editor (PUT /admin/users/:id
+// → assignPackageLocally), never here: the old POST /packages/assign shortcut
+// skipped expiry dates and the End User → Reseller switch, so it was removed.
 
 export default router;

@@ -191,7 +191,7 @@ export default function AdminDashboard() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
               <StatCard
                 icon={Building2}
-                label="Registered Agencies"
+                label="Registered End Users"
                 value={stats?.totalAgencies}
                 color="#2563eb"
                 bg="rgba(37, 99, 235, 0.08)"
@@ -219,12 +219,12 @@ export default function AdminDashboard() {
               />
             </div>
 
-            {/* Agencies table */}
+            {/* Workspaces table (End Users + Resellers, GET /admin/agencies) */}
             <div className="card" style={{ padding: 0, background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
               <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                   <h2 style={{ fontSize: '0.92rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>
-                    Recent Agencies
+                    Recent Workspaces
                   </h2>
                   <p style={{ fontSize: '0.76rem', color: '#64748b', margin: '2px 0 0 0' }}>
                     Latest onboarded enterprise clients & white-label tenants
@@ -235,7 +235,7 @@ export default function AdminDashboard() {
                   className="btn btn-secondary btn-sm"
                   style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.78rem', height: 30 }}
                 >
-                  View All Agencies <ArrowUpRight size={13} />
+                  View All Workspaces <ArrowUpRight size={13} />
                 </button>
               </div>
 
@@ -243,7 +243,7 @@ export default function AdminDashboard() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.84rem' }}>
                   <thead>
                     <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', color: '#64748b', fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                      <th style={{ padding: '10px 14px', fontWeight: 700 }}>Agency Name</th>
+                      <th style={{ padding: '10px 14px', fontWeight: 700 }}>Workspace Name</th>
                       <th style={{ padding: '10px 14px', fontWeight: 700 }}>Owner Account</th>
                       <th style={{ padding: '10px 14px', fontWeight: 700 }}>Agents</th>
                       <th style={{ padding: '10px 14px', fontWeight: 700 }}>Status</th>
@@ -254,7 +254,7 @@ export default function AdminDashboard() {
                     {agencies.length === 0 ? (
                       <tr>
                         <td colSpan={5} style={{ padding: 30, textAlign: 'center', color: '#94a3b8' }}>
-                          No agencies registered yet.
+                          No workspaces registered yet.
                         </td>
                       </tr>
                     ) : (

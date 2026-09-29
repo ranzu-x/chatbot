@@ -78,6 +78,15 @@ router.get("/reseller/users", VIEW, async (req, res) => {
   } catch (err) { return fail(res, err, "GET /reseller/users"); }
 });
 
+// One user for the full-page editor (Pages/SuperAdmin/UserEditPage.jsx, reseller scope).
+router.get("/reseller/users/:id", VIEW, async (req, res) => {
+  try {
+    const user = await scope.getCustomerUserDetail(req.tenant.agencyId, req.params.id);
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    return res.json({ success: true, user });
+  } catch (err) { return fail(res, err, "GET /reseller/users/:id"); }
+});
+
 router.post("/reseller/users", MANAGE, async (req, res) => {
   const name = String(req.body.name || "").trim();
   const email = String(req.body.email || "").toLowerCase().trim();
@@ -94,7 +103,7 @@ router.post("/reseller/users", MANAGE, async (req, res) => {
       name: `${name}'s Workspace`, ownerName: name, ownerEmail: email, ownerPassword: password,
       agencyPackageId: packageId || null, phone: phone || null,
     });
-    return res.status(201).json({ success: true, message: "User created", userId: ownerId, customerId });
+    return res.status(201).json({ success: true, message: "User created", userId: ownerId, customerId, user: { id: ownerId } });
   } catch (err) { return fail(res, err, "POST /reseller/users"); }
 });
 
@@ -103,7 +112,8 @@ router.put("/reseller/users/:id", MANAGE, async (req, res) => {
     const target = await scope.getCustomerUser(req.tenant.agencyId, req.params.id);
     if (!target) return res.status(404).json({ success: false, message: "User not found" });
     const { packageChange } = await scope.updateCustomerUser(req.tenant.agencyId, req.user, target, req.body);
-    return res.json({ success: true, message: "User updated", packageChange });
+    const user = await scope.getCustomerUserDetail(req.tenant.agencyId, target.id);
+    return res.json({ success: true, message: "User updated", packageChange, user });
   } catch (err) { return fail(res, err, "PUT /reseller/users/:id"); }
 });
 
