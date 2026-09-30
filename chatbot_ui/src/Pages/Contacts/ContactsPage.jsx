@@ -16,6 +16,7 @@ import ManageModal from './ManageModal';
 import ImportModal from './ImportModal';
 import { BulkListModal, BulkSequenceModal, DeleteConfirmModal } from './BulkActionModals';
 import { toastByType } from '../../utils/alerts';
+import SelectToggle from '../../Components/Common/SelectToggle';
 
 // ─── Small shared bits ──────────────────────────────────────────────────────
 
@@ -510,7 +511,7 @@ export default function ContactsPage() {
               <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                 <tr style={{ background: 'var(--bg-base)', borderBottom: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: 0.5 }}>
                   <th style={{ padding: '12px 16px', width: 56 }}>
-                    <input type="checkbox" checked={allSelected} onChange={toggleAll} style={{ cursor: 'pointer' }} />
+                    <SelectToggle checked={allSelected} indeterminate={selectedIds.size > 0} onChange={toggleAll} label="Select all subscribers on this page" />
                   </th>
                   <th style={{ padding: '12px 16px', fontWeight: 700 }}>ID</th>
                   {platformFilter === 'WHATSAPP' ? (
@@ -556,7 +557,7 @@ export default function ContactsPage() {
                       <td style={{ padding: '12px 16px' }} onClick={(e) => e.stopPropagation()}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)', minWidth: 14 }}>{rowNum}</span>
-                          <input type="checkbox" checked={isChecked} onChange={() => toggleOne(c.id)} style={{ cursor: 'pointer' }} />
+                          <SelectToggle checked={isChecked} onChange={() => toggleOne(c.id)} label={`Select ${c.name || 'subscriber'}`} />
                         </div>
                       </td>
 

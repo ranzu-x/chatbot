@@ -33,7 +33,7 @@ export const MAX_EDGES = 5000;
 export const KNOWN_NODE_TYPES = new Set([
   "start", "text", "interactive", "image", "video", "audio", "file", "buttons", "quickReplies", "listMenu",
   "card", "carousel", "collectInput", "condition", "randomizer", "delay", "webhook", "httpApi", "payment", "telegramPoll",
-  "telegramChecklist", "orderStatus", "marketingOptIn", "handoff", "end", "runUserInputFlow", "question",
+  "telegramChecklist", "orderStatus", "crmSync", "marketingOptIn", "handoff", "end", "runUserInputFlow", "question",
   "finalAnswer", "startSequenceAction", "stopSequenceAction", "wait", "actions", "startAutomation",
   "messageBlock", "appointment", "whatsappTemplate", "messengerTemplate", "whatsappCtaUrl",
   "quickActionStart", "broadcastStart", "chatWidgetStart",
@@ -75,7 +75,8 @@ const TYPED_REF_KEYS = {
   campaignId: { httpApi: "httpApiCampaigns", appointment: "appointmentCampaigns" },
 };
 // Account-bound: never carried over (the importer re-chooses them).
-const ACCOUNT_BOUND_KEYS = ["googleSheetId", "googleSheetTab", "autoResponderListId"];
+// connectionId = a Send to CRM element's CRM connection (utils/crm.js) — the workspace's own keys.
+const ACCOUNT_BOUND_KEYS = ["googleSheetId", "googleSheetTab", "autoResponderListId", "connectionId"];
 
 export const SECRET_KEY_RE = /(pass(word|wd)?|secret|token|api[_-]?key|apikey|authorization|auth[_-]?header|credential|private[_-]?key|access[_-]?key|signing[_-]?key|bearer)/i;
 const AUTH_HEADER_LINE_RE = /^\s*(authorization|proxy-authorization|x-api-key|api-key|x-auth-token|cookie)\s*:/i;

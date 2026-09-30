@@ -63,7 +63,7 @@ export async function buildKnowledgeContext(agencyId, agentId, message, routingE
 
     let queryEmbedding = routingEmbedding;
     if (!queryEmbedding) {
-      const resolved = await resolveCapability(agencyId, "embeddings");
+      const resolved = await resolveCapability(agencyId, "embeddings", null, { feature: "ai_reply", agentId });
       if (!resolved) return null;
       [queryEmbedding] = await resolved.adapter.embed({ apiKey: resolved.apiKey, model: resolved.model, texts: [message] });
     }
@@ -167,12 +167,16 @@ export async function runAIReply(agencyId, platform, conversation, contact, msgB
   // messageProcessor.js. Silently declines rather than throwing, since this
   // runs inline in inbound message processing which must never crash on a
   // plan-limit condition.
+  // AI Credits (utils/aiCredits): the plan's credits + purchased add-ons + the
+  // platform pool. Each provider call below also reserves its own credits.
   try {
     await assertLimit(agencyId, "max_ai_tokens_per_month", 0, null);
-  } catch {
-    console.warn(`[AI Token Limit] Agency ${agencyId} is over its monthly AI token limit — skipping AI reply.`);
+  } catch (err) {
+    console.warn(`[AI Credits] Agency ${agencyId}: ${err.message} — skipping AI reply.`);
+    await logAttempt({ agencyId, conversationId: conversation?.id, integrationId: integration.id, inputType: msgType, error: err.message });
     return false;
   }
+  const meterContext = { feature: "ai_reply", integrationId: integration.id, conversationId: conversation?.id || null };
 
   // Multimodal: TEXT/IMAGE/AUDIO/DOCUMENT/VIDEO all work now.
   const upperMsgType = (msgType || "TEXT").toUpperCase();
@@ -195,7 +199,7 @@ export async function runAIReply(agencyId, platform, conversation, contact, msgB
     // provider supports it, completely independent of which provider ends
     // up actually generating the reply below (resolved separately further
     // down, using the Agent's own preferred provider as normal).
-    const transcribeResolved = await resolveCapability(agencyId, "audio_transcription");
+    const transcribeResolved = await resolveCapability(agencyId, "audio_transcription", null, meterContext);
     if (!transcribeResolved) {
       await logAttempt({ agencyId, conversationId: conversation?.id, integrationId: integration.id, inputType: msgType, error: "No audio-transcription-capable AI provider connected" });
       return false;
@@ -251,7 +255,7 @@ export async function runAIReply(agencyId, platform, conversation, contact, msgB
   // video_understanding — see registry.js — so a video always gets
   // answered by Gemini regardless of the Agent's own preferred provider.)
   const capability = upperMsgType === "IMAGE" ? "vision" : upperMsgType === "VIDEO" ? "video_understanding" : "text_generation";
-  const resolved = await resolveCapability(agencyId, capability, agent.preferred_provider);
+  const resolved = await resolveCapability(agencyId, capability, agent.preferred_provider, { ...meterContext, agentId: agent.id });
   if (!resolved) {
     await logAttempt({
       agencyId, conversationId: conversation?.id, integrationId: integration.id, agentId: agent.id, inputType: msgType, routingMethod: routing.method,

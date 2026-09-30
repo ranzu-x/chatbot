@@ -21,7 +21,7 @@ export async function transcribeMessage(agencyId, messageId) {
   if (msg.transcript) return msg.transcript;
   if (msg.type !== "AUDIO") { const e = new Error("Only voice / audio messages can be transcribed"); e.status = 400; throw e; }
 
-  const provider = await resolveCapability(agencyId, "audio_transcription");
+  const provider = await resolveCapability(agencyId, "audio_transcription", null, { feature: "transcription" });
   if (!provider) { const e = new Error("Connect an AI provider that can transcribe audio (OpenAI or Google Gemini) under AI Providers"); e.status = 400; throw e; }
   const media = await fetchMessageMediaBytes(msg.id);
   if (!media) { const e = new Error("Could not download the audio"); e.status = 502; throw e; }

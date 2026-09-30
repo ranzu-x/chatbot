@@ -162,7 +162,7 @@ export async function mergeContacts({ agencyId, survivorId, mergedId, reason = "
        WHERE s.contact_id = ? AND (s.value IS NULL OR s.value = '') AND d.value IS NOT NULL AND d.value <> ''`,
       [mergedId, survivorId]
     );
-    for (const table of ["contact_custom_field_values", "contact_labels", "contact_list_members", "contact_wa_identities"]) {
+    for (const table of ["contact_custom_field_values", "contact_labels", "contact_list_members", "contact_wa_identities", "crm_contact_links"]) {
       await conn.query(`UPDATE IGNORE ${table} SET contact_id = ? WHERE contact_id = ?`, [survivorId, mergedId]);
       await conn.query(`DELETE FROM ${table} WHERE contact_id = ?`, [mergedId]);
     }

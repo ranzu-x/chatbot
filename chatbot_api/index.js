@@ -13,6 +13,7 @@ import { tenantContext } from "./middleware/tenant.js";
 import { subscriptionGuard } from "./middleware/subscriptionGuard.js";
 import { teamPermissions } from "./middleware/teamPermissions.js";
 import { startFollowUpScheduler } from "./utils/followUpScheduler.js";
+import { startCrmSyncScheduler } from "./utils/crm.js";
 import adminRoutes from "./routes/admin.js";
 import agencyRoutes from "./routes/agency.js";
 import conversationRoutes from "./routes/conversations.js";
@@ -46,6 +47,9 @@ import billingRoutes from "./routes/billing.js";
 import flowWebhookRoutes from "./routes/flowWebhooks.js";
 import chatPaymentRoutes from "./routes/chatPayments.js";
 import resellerBillingRoutes from "./routes/resellerBilling.js";
+import aiCreditRoutes from "./routes/aiCredits.js";
+import adminAiCreditRoutes from "./routes/adminAiCredits.js";
+import { startAiCreditJobs } from "./utils/aiCredits/service.js";
 import notificationRoutes from "./routes/notifications.js";
 import userNotificationRoutes from "./routes/userNotifications.js";
 import socialPostRoutes from "./routes/socialPosts.js";
@@ -81,6 +85,7 @@ import customFieldRoutes from "./routes/customFields.js";
 import flowTransferRoutes from "./routes/flowTransfer.js";
 import botSettingsRoutes from "./routes/botSettings.js";
 import autoResponderRoutes from "./routes/autoResponders.js";
+import crmRoutes from "./routes/crm.js";
 import workspaceVariableRoutes from "./routes/workspaceVariables.js";
 import userInputFlowRoutes from "./routes/userInputFlows.js";
 import googleSheetsRoutes from "./routes/googleSheets.js";
@@ -145,6 +150,8 @@ startCustomDomainScheduler();
 startMetaAppHealthScheduler();
 startBotErrorLogRetentionScheduler();
 startFollowUpScheduler();
+startAiCreditJobs();
+startCrmSyncScheduler();
 startTelegramGroupScheduler();
 startMessageRetentionScheduler();
 startAppointmentHoldScheduler();
@@ -322,6 +329,9 @@ app.use("/api/v1", growthLinkRoutes); // public /go/:code redirect + /growth-lin
 // reseller payments — both anonymous, both scope their own auth per path.
 app.use("/api/v1", chatPaymentRoutes);
 app.use("/api/v1", resellerBillingRoutes);
+// AI Credits: its gateway IPN is anonymous, so it sits with the public routers (each path does its own auth).
+app.use("/api/v1", aiCreditRoutes);
+app.use("/api/v1", adminAiCreditRoutes);
 
 // ─── Protected Application Routes ─────────────────────────────────────────────
 app.use("/api/v1", adminRoutes);
@@ -376,6 +386,7 @@ app.use("/api/v1", aiKnowledgeRoutes);
 app.use("/api/v1", customFieldRoutes);
 app.use("/api/v1", botSettingsRoutes);
 app.use("/api/v1", autoResponderRoutes);
+app.use("/api/v1", crmRoutes);
 app.use("/api/v1", workspaceVariableRoutes);
 app.use("/api/v1", userInputFlowRoutes);
 app.use("/api/v1", googleSheetsRoutes);

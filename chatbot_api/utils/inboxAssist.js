@@ -1,5 +1,6 @@
 import pool from "../db.js";
 import { resolveCapability } from "./aiProviders/registry.js";
+import { ProviderCallError } from "./aiProviders/errors.js";
 import { assertLimit } from "./entitlements.js";
 
 /**
@@ -48,18 +49,33 @@ async function knowledgeFor(agencyId, integrationId, question) {
   return buildKnowledgeContext(agencyId, agent.id, question, null);
 }
 
-async function generate(agencyId, userId, messages, maxTokens) {
+async function generate(agencyId, userId, messages, maxTokens, { feature, conversation } = {}) {
   try {
     await assertLimit(agencyId, "max_ai_tokens_per_month", 0, userId);
   } catch (err) {
     throw new AssistError(err.status || 403, err.message, err.code || "LIMIT_EXCEEDED");
   }
-  const resolved = await resolveCapability(agencyId, "text_generation");
+  const resolved = await resolveCapability(agencyId, "text_generation", null, {
+    feature, userId, conversationId: conversation?.id || null, integrationId: conversation?.integration_id || null,
+  });
   if (!resolved) {
-    throw new AssistError(403, "No AI provider is configured for this workspace yet. Connect one under Settings → AI Providers.", "AI_NOT_CONFIGURED");
+    throw new AssistError(403, "The platform's AI isn't set up yet — please contact support.", "AI_NOT_CONFIGURED");
   }
   const started = Date.now();
-  const result = await resolved.adapter.generate({ apiKey: resolved.apiKey, model: resolved.model, messages, maxTokens });
+  let result;
+  try {
+    result = await resolved.adapter.generate({ apiKey: resolved.apiKey, model: resolved.model, messages, maxTokens });
+  } catch (err) {
+    // Show the provider's own reason (out of credit, bad key, model not found…)
+    // instead of a generic "didn't answer" — the person can't fix what they can't see.
+    if (err instanceof ProviderCallError) {
+      console.error(`[Inbox assist] ${err.providerId}: ${err.message}`);
+      throw new AssistError(502, `The AI provider (${resolved.providerId || err.providerId}) refused the request: ${err.message}`, "AI_PROVIDER_ERROR");
+    }
+    // Not enough AI credits (utils/aiCredits) — checked before the provider was called.
+    if (err?.name === "AiCreditError") throw new AssistError(err.status || 402, err.message, err.code);
+    throw err;
+  }
   return { text: String(result?.text || "").trim(), usage: result?.usage, resolved, latencyMs: Date.now() - started };
 }
 
@@ -109,7 +125,7 @@ export async function suggestReplies({ agencyId, userId, conversation }) {
   if (knowledge?.text) messages.push({ role: "system", content: knowledge.text });
   messages.push({ role: "user", content: `The conversation so far (oldest first):\n${lines.join("\n")}\n\nSuggest 3 replies for the Team to send next.` });
 
-  const out = await generate(agencyId, userId, messages, 700);
+  const out = await generate(agencyId, userId, messages, 700, { feature: "inbox_suggest", conversation });
   await logUsage({ agencyId, conversation, inputType: "assist_suggest", out });
   const replies = parseSuggestions(out.text);
   if (!replies.length) throw new AssistError(502, "The AI didn't return any suggestions. Please try again.", "EMPTY_RESPONSE");
@@ -131,7 +147,7 @@ export async function summarize({ agencyId, userId, conversation }) {
     },
     { role: "user", content: `The conversation (oldest first):\n${lines.join("\n")}` },
   ];
-  const out = await generate(agencyId, userId, messages, 450);
+  const out = await generate(agencyId, userId, messages, 450, { feature: "inbox_summary", conversation });
   await logUsage({ agencyId, conversation, inputType: "assist_summary", out });
   if (!out.text) throw new AssistError(502, "The AI didn't return a summary. Please try again.", "EMPTY_RESPONSE");
   const bullets = out.text.split(/\n+/).map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim()).filter(Boolean).slice(0, 8);

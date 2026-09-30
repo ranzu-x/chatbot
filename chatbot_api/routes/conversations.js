@@ -11,6 +11,7 @@ import { translateText } from "../utils/translateMessage.js";
 import { buildSearch } from "../utils/searchQuery.js";
 import { buildTemplateSend } from "../utils/templateMessage.js";
 import { sendCsatRequest, getInboxSettings, saveInboxSettings, inboxMetrics } from "../utils/inboxQuality.js";
+import { logResolvedChatToCrm } from "../utils/crm.js";
 import { transcribeMessage } from "../utils/transcribe.js";
 import {
   loadApprovedMessengerTemplate, buildMessengerUtilitySend, missingMessengerParams, conversationWindow, friendlyMessengerError,
@@ -679,7 +680,10 @@ router.patch("/conversations/:id/status", async (req, res) => {
         [status, req.params.id, req.user.agencyId]
       );
       // Resolved → rating question when CSAT is on (utils/inboxQuality.js). Never blocks the answer.
-      if (status === "RESOLVED") sendCsatRequest({ agencyId: req.user.agencyId, conversationId: Number(req.params.id) });
+      if (status === "RESOLVED") {
+        sendCsatRequest({ agencyId: req.user.agencyId, conversationId: Number(req.params.id) });
+        logResolvedChatToCrm({ agencyId: req.user.agencyId, conversationId: Number(req.params.id) });
+      }
       const payload = {
         conversationId: parseInt(req.params.id),
         status,
@@ -868,7 +872,10 @@ router.patch("/conversations/bulk-status", async (req, res) => {
       [status, conversationIds, agencyId]
     );
     if (status === "RESOLVED") {
-      for (const id of conversationIds) sendCsatRequest({ agencyId, conversationId: Number(id) });
+      for (const id of conversationIds) {
+        sendCsatRequest({ agencyId, conversationId: Number(id) });
+        logResolvedChatToCrm({ agencyId, conversationId: Number(id) });
+      }
     }
     for (const id of conversationIds) {
       emitToAgency(agencyId, "conversation_updated", {
@@ -1030,19 +1037,20 @@ router.post("/conversations/:id/messages", async (req, res) => {
 
     // ─── Messenger / Instagram window + HUMAN_AGENT ───
     // Inside 24h: normal reply. 24h – 7 days: a PERSON's reply goes out with
-    // tag HUMAN_AGENT when the account has Meta's Human Agent feature (never
-    // an AI / automated reply). After that: Messenger → Utility template only.
+    // tag HUMAN_AGENT, only when they switched Human Agent on in the composer
+    // for this reply (`humanAgent: true`) — never an AI / automated reply.
+    // After that: Messenger → Utility template only.
     if ((platformUpper === "FACEBOOK" || platformUpper === "INSTAGRAM") && !messagePayload.messengerTemplate) {
-      const win = await conversationWindow(conv.id, conv);
-      if (win.state === "HUMAN_AGENT" && senderType === "AGENT") {
+      const win = await conversationWindow(conv.id);
+      if (win.state === "HUMAN_AGENT" && senderType === "AGENT" && req.body.humanAgent === true) {
         messagePayload.messageTag = "HUMAN_AGENT";
         metadata.messagingType = "MESSAGE_TAG";
         metadata.messageTag = "HUMAN_AGENT";
       } else if (win.state !== "OPEN") {
         const channel = platformUpper === "FACEBOOK" ? "Messenger" : "Instagram";
         let message;
-        if (win.state === "HUMAN_AGENT") message = `Outside ${channel}'s 24-hour window — only a person's reply may be sent now (Human Agent), not an automated one.`;
-        else if (win.humanAgentAvailable && !conv.human_agent_enabled) message = `Outside ${channel}'s 24-hour window. Turn on Human Agent for this account to reply for up to 7 days${platformUpper === "FACEBOOK" ? ", or send a Utility template" : ""}.`;
+        if (win.state === "HUMAN_AGENT" && senderType !== "AGENT") message = `Outside ${channel}'s 24-hour window — only a person's reply may be sent now (Human Agent), not an automated one.`;
+        else if (win.state === "HUMAN_AGENT") message = `Outside ${channel}'s 24-hour window. Turn on Human Agent in the reply box to send this with Meta's HUMAN_AGENT tag (up to 7 days after their last message)${platformUpper === "FACEBOOK" ? ", or send a Utility template" : ""}.`;
         else message = platformUpper === "FACEBOOK"
           ? "This person hasn't written in the last 7 days — only a Utility template can be sent now."
           : "Instagram's messaging window is closed — wait for this person to write again.";
@@ -1175,11 +1183,12 @@ router.post("/conversations/:id/messages", async (req, res) => {
 
 // ─── MESSAGING WINDOW (Messenger / Instagram composer banner) ───────────────
 // { platform, state: OPEN | HUMAN_AGENT | CLOSED, windowEndsAt, humanAgentEndsAt,
-//   humanAgentEnabled, humanAgentAvailable, utilityAvailable }. Other channels: state OPEN.
+//   humanAgentAvailable, utilityAvailable }. Other channels: state OPEN.
+// HUMAN_AGENT = 24h – 7 days: the person may switch Human Agent on for a reply.
 router.get("/conversations/:id/messaging-window", async (req, res) => {
   try {
     const [[conv]] = await pool.query(
-      `SELECT cv.id, i.platform, i.human_agent_enabled FROM conversations cv
+      `SELECT cv.id, i.platform FROM conversations cv
        JOIN integrations i ON i.id = cv.integration_id
        WHERE cv.id = ? AND cv.agency_id = ?`,
       [req.params.id, req.user.agencyId]
@@ -1187,12 +1196,11 @@ router.get("/conversations/:id/messaging-window", async (req, res) => {
     if (!conv) return res.status(404).json({ success: false, message: "Conversation not found" });
     const platform = String(conv.platform || "").toUpperCase();
     if (platform !== "FACEBOOK" && platform !== "INSTAGRAM") return res.json({ success: true, platform, state: "OPEN" });
-    const win = await conversationWindow(conv.id, conv);
+    const win = await conversationWindow(conv.id);
     return res.json({
       success: true,
       platform,
       ...win,
-      humanAgentEnabled: Boolean(conv.human_agent_enabled),
       utilityAvailable: platform === "FACEBOOK",
     });
   } catch (err) {

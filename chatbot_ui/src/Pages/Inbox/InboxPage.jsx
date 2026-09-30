@@ -1227,7 +1227,6 @@ export default function InboxPage() {
   // previous chat's window (and Human Agent state) must never show for the new one.
   const [msgWindowState, setMsgWindow] = useState(null);
   const msgWindow = msgWindowState && String(msgWindowState.conversationId) === String(selectedId) ? msgWindowState : null;
-  const [msgWindowTick, setMsgWindowTick] = useState(0); // bump = reload the window (Human Agent switch)
   const lastInboundKey = selectedConv?.lastInboundAt || selectedConv?.last_inbound_at || null;
   useEffect(() => {
     if (!selectedId || (selectedPlatformUpper !== 'FACEBOOK' && selectedPlatformUpper !== 'INSTAGRAM')) { setMsgWindow(null); return undefined; }
@@ -1238,7 +1237,31 @@ export default function InboxPage() {
     load();
     const timer = setInterval(load, 60 * 1000);
     return () => { alive = false; clearInterval(timer); };
-  }, [selectedId, selectedPlatformUpper, lastInboundKey, msgWindowTick]);
+  }, [selectedId, selectedPlatformUpper, lastInboundKey]);
+
+  // Which replies the composer allows right now, per channel window:
+  //   WhatsApp past 24h            → templates only (no Join Chat, no typing)
+  //   Messenger / Instagram 24h–7d → typing only after the person switches
+  //                                  Human Agent on (per chat, off every time
+  //                                  a chat is opened; sent with HUMAN_AGENT)
+  //   Messenger / Instagram past 7d → Utility template only / nothing
+  const waWindowExpired = selectedPlatformUpper === 'WHATSAPP'
+    && (!lastInboundKey || Date.now() - new Date(lastInboundKey).getTime() > 24 * 60 * 60 * 1000);
+  const humanAgentWindow = msgWindow?.state === 'HUMAN_AGENT';
+  const [humanAgentFor, setHumanAgentFor] = useState(null); // conversation id the switch is on for
+  const humanAgentOn = humanAgentWindow && String(humanAgentFor) === String(selectedId);
+  const windowClosed = waWindowExpired || msgWindow?.state === 'CLOSED';
+  const windowLocked = windowClosed || (humanAgentWindow && !humanAgentOn);
+  const composerLocked = !botPaused || windowLocked;
+  const composerPlaceholder = waWindowExpired
+    ? '24h window closed — send a template'
+    : msgWindow?.state === 'CLOSED'
+      ? (selectedPlatformUpper === 'FACEBOOK' ? 'Window closed — send a Utility template' : 'Window closed — wait for the customer to write')
+      : !botPaused
+        ? 'Join chat to type a reply...'
+        : humanAgentWindow && !humanAgentOn
+          ? 'Turn on Human Agent to reply'
+          : 'Type a message or reply... (Shift+Enter for new line, / for canned replies)';
   const selectedContactId = selectedConv?.contact_id || selectedConv?.contactId;
   const selectedContactIdRef = useRef(selectedContactId);
 
@@ -2052,22 +2075,16 @@ export default function InboxPage() {
     }
     if (!messageText.trim() || !selectedId || sending) return;
 
-    // WhatsApp 24-hour messaging window enforcement:
-    const isWhatsApp = (selectedConv?.platform || selectedConv?.integrationPlatform || selectedConv?.contactPlatform || '').toUpperCase() === 'WHATSAPP';
-    if (isWhatsApp) {
-      const rawInbound = selectedConv?.lastInboundAt || selectedConv?.last_inbound_at;
-      const inboundMs = rawInbound ? new Date(rawInbound).getTime() : 0;
-      const isExpired = !inboundMs || (Date.now() - inboundMs > 24 * 60 * 60 * 1000);
-      if (isExpired) {
-        setSendError('Out of 24 hours window, you can only send a message template.');
-        setTimeout(() => setSendError(''), 9000);
-        return;
-      }
-    }
-    if ((selectedPlatformUpper === 'FACEBOOK' || selectedPlatformUpper === 'INSTAGRAM') && msgWindow?.state === 'CLOSED') {
-      setSendError(selectedPlatformUpper === 'FACEBOOK'
-        ? 'Outside the messaging window — send a Utility template instead.'
-        : "Instagram's messaging window is closed — wait for this person to write again.");
+    // Channel window (see windowLocked): WhatsApp past 24h / Messenger past
+    // 7 days = templates only; Messenger / Instagram 24h–7d = Human Agent on first.
+    if (windowLocked) {
+      setSendError(waWindowExpired
+        ? 'Out of 24 hours window, you can only send a message template.'
+        : humanAgentWindow
+          ? 'Outside the 24-hour window — turn on Human Agent to reply.'
+          : selectedPlatformUpper === 'FACEBOOK'
+            ? 'Outside the messaging window — send a Utility template instead.'
+            : "Instagram's messaging window is closed — wait for this person to write again.");
       setTimeout(() => setSendError(''), 9000);
       return;
     }
@@ -2091,6 +2108,7 @@ export default function InboxPage() {
         senderType: 'AGENT',
         senderName: user?.name || user?.email?.split('@')[0] || 'Admin',
         agentName: user?.name || user?.email?.split('@')[0] || 'Admin',
+        ...(humanAgentOn ? { humanAgent: true } : {}),
       });
       const newMsg = res.data.message || res.data;
 
@@ -2154,22 +2172,16 @@ export default function InboxPage() {
     }
     if (hasNewerRef.current) await jumpToLatest();
 
-    // WhatsApp 24-hour messaging window enforcement:
-    const isWhatsApp = (selectedConv?.platform || selectedConv?.integrationPlatform || selectedConv?.contactPlatform || '').toUpperCase() === 'WHATSAPP';
-    if (isWhatsApp) {
-      const rawInbound = selectedConv?.lastInboundAt || selectedConv?.last_inbound_at;
-      const inboundMs = rawInbound ? new Date(rawInbound).getTime() : 0;
-      const isExpired = !inboundMs || (Date.now() - inboundMs > 24 * 60 * 60 * 1000);
-      if (isExpired) {
-        setSendError('Out of 24 hours window, you can only send a message template.');
-        setTimeout(() => setSendError(''), 9000);
-        return;
-      }
-    }
-    if ((selectedPlatformUpper === 'FACEBOOK' || selectedPlatformUpper === 'INSTAGRAM') && msgWindow?.state === 'CLOSED') {
-      setSendError(selectedPlatformUpper === 'FACEBOOK'
-        ? 'Outside the messaging window — send a Utility template instead.'
-        : "Instagram's messaging window is closed — wait for this person to write again.");
+    // Channel window (see windowLocked): WhatsApp past 24h / Messenger past
+    // 7 days = templates only; Messenger / Instagram 24h–7d = Human Agent on first.
+    if (windowLocked) {
+      setSendError(waWindowExpired
+        ? 'Out of 24 hours window, you can only send a message template.'
+        : humanAgentWindow
+          ? 'Outside the 24-hour window — turn on Human Agent to reply.'
+          : selectedPlatformUpper === 'FACEBOOK'
+            ? 'Outside the messaging window — send a Utility template instead.'
+            : "Instagram's messaging window is closed — wait for this person to write again.");
       setTimeout(() => setSendError(''), 9000);
       return;
     }
@@ -2191,6 +2203,7 @@ export default function InboxPage() {
         senderType: 'AGENT',
         senderName: user?.name || user?.email?.split('@')[0] || 'Admin',
         agentName: user?.name || user?.email?.split('@')[0] || 'Admin',
+        ...(humanAgentOn ? { humanAgent: true } : {}),
       });
 
       const newMsg = res.data.message || res.data;
@@ -4217,8 +4230,10 @@ export default function InboxPage() {
               </div>
 
               {/* Join Chat — one canonical entry point, directly above the
-                  composer, opens JoinChatModal instead of acting instantly. */}
-              {!botPaused && (
+                  composer, opens JoinChatModal instead of acting instantly.
+                  Hidden when the channel's window only allows templates
+                  (joining wouldn't let anyone type). */}
+              {!botPaused && !windowClosed && (
                 <div style={{
                   padding: '9px 18px',
                   borderTop: '1px solid #e2e8f0',
@@ -4254,12 +4269,7 @@ export default function InboxPage() {
               {/* Chat Input Bar */}
               <div style={{ borderTop: '1px solid #e2e8f0', background: '#ffffff' }}>
                 {/* WhatsApp 24-Hour Messaging Window Notice */}
-                {(() => {
-                  const isWA = ((selectedConv?.platform || selectedConv?.integrationPlatform || selectedConv?.contactPlatform || '').toUpperCase() === 'WHATSAPP');
-                  const rawInbound = selectedConv?.lastInboundAt || selectedConv?.last_inbound_at;
-                  const inboundMs = rawInbound ? new Date(rawInbound).getTime() : 0;
-                  const isExpired = isWA && (!inboundMs || (Date.now() - inboundMs > 24 * 60 * 60 * 1000));
-                  if (!isExpired) return null;
+                {waWindowExpired && (() => {
                   return (
                     <div
                       style={{
@@ -4320,15 +4330,17 @@ export default function InboxPage() {
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <Clock size={13} style={{ flexShrink: 0 }} />
-                        {human ? (
-                          <span><strong>Human Agent reply:</strong> outside the 24-hour window — your message is sent with Meta's HUMAN_AGENT tag ({leftText} left). Only a person may reply now, not the bot or AI.</span>
+                        {human && humanAgentOn ? (
+                          <span><strong>Human Agent on:</strong> outside the 24-hour window — your reply is sent with Meta's HUMAN_AGENT tag ({leftText} left). Only a person may reply now, not the bot or AI.</span>
+                        ) : human ? (
+                          <span><strong>Outside the 24-hour window:</strong> turn on <strong>Human Agent</strong> below to type a reply ({leftText} left){isFB ? ', or send an approved Utility template' : ''}.</span>
                         ) : isFB ? (
-                          <span><strong>Messaging window closed:</strong> {msgWindow.humanAgentAvailable && !msgWindow.humanAgentEnabled ? 'turn on the Human Agent switch below to reply for up to 7 days, or ' : ''}send an approved Utility template.</span>
+                          <span><strong>Messaging window closed:</strong> this person hasn't written in the last 7 days — only an approved Utility template can be sent.</span>
                         ) : (
-                          <span><strong>Messaging window closed:</strong> {msgWindow.humanAgentAvailable && !msgWindow.humanAgentEnabled ? 'turn on the Human Agent switch below to reply for up to 7 days after their last message.' : "Instagram only allows replies after the customer writes again."}</span>
+                          <span><strong>Messaging window closed:</strong> Instagram only allows replies after the customer writes again.</span>
                         )}
                       </div>
-                      {!human && isFB && (
+                      {isFB && (
                         <button type="button" onClick={handleOpenTemplatePicker} className="btn btn-secondary btn-sm" style={{ whiteSpace: 'nowrap' }}>
                           <FileText size={12} /> Utility Template
                         </button>
@@ -4392,7 +4404,7 @@ export default function InboxPage() {
                 {hasModule('feature_ai_assistant') && (
                   <AiAssistBar
                     conversationId={selectedId}
-                    disabled={!botPaused}
+                    disabled={composerLocked}
                     onUseReply={(text) => { setMessageText(text); messageInputRef.current?.focus(); }}
                   />
                 )}
@@ -4408,15 +4420,9 @@ export default function InboxPage() {
 
                   <button
                     type="button"
-                    disabled={!botPaused || uploading}
-                    onClick={() => {
-                      if (!botPaused) {
-                        setShowJoinModal(true);
-                        return;
-                      }
-                      fileInputRef.current?.click();
-                    }}
-                    title={!botPaused ? 'Join chat to send files' : 'Send image, video, audio or file'}
+                    disabled={composerLocked || uploading}
+                    onClick={() => fileInputRef.current?.click()}
+                    title={windowLocked ? composerPlaceholder : !botPaused ? 'Join chat to send files' : 'Send image, video, audio or file'}
                     className="transition-all duration-150 hover:bg-slate-100 active:scale-90 disabled:opacity-40"
                     style={{
                       width: 38,
@@ -4428,7 +4434,7 @@ export default function InboxPage() {
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      cursor: (!botPaused || uploading) ? 'not-allowed' : 'pointer',
+                      cursor: (composerLocked || uploading) ? 'not-allowed' : 'pointer',
                       flexShrink: 0,
                     }}
                   >
@@ -4632,26 +4638,47 @@ export default function InboxPage() {
                     )}
                   </div>
 
-                  {/* Human Agent (Messenger / Instagram): the bot account's HUMAN_AGENT
-                      switch, moved here from Bot Manager. Not the per-chat bot pause. */}
-                  {msgWindow && (msgWindow.platform === 'FACEBOOK' || msgWindow.platform === 'INSTAGRAM') && (
+                  {/* Message template — always at hand on WhatsApp and Messenger
+                      (the only thing that can be sent once the window closes). */}
+                  {(selectedPlatformUpper === 'WHATSAPP' || selectedPlatformUpper === 'FACEBOOK') && (
+                    <button
+                      type="button"
+                      onClick={handleOpenTemplatePicker}
+                      title={selectedPlatformUpper === 'FACEBOOK' ? 'Send a Utility template' : 'Send a message template'}
+                      aria-label={selectedPlatformUpper === 'FACEBOOK' ? 'Send a Utility template' : 'Send a message template'}
+                      data-testid="composer-template-button"
+                      className="transition-all duration-150 hover:bg-slate-100 active:scale-90"
+                      style={{
+                        width: 38, height: 38, borderRadius: '50%', flexShrink: 0, cursor: 'pointer',
+                        border: `1px solid ${windowClosed ? 'var(--primary-light)' : '#e2e8f0'}`,
+                        background: windowClosed ? 'var(--primary-soft)' : '#ffffff',
+                        color: windowClosed ? 'var(--primary-dark)' : '#64748b',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}
+                    >
+                      <FileText size={16} />
+                    </button>
+                  )}
+
+                  {/* Human Agent (Messenger / Instagram, 24h – 7 days after the
+                      customer's last message only): off every time a chat is
+                      opened; the person switches it on to type, and that reply
+                      goes out with Meta's HUMAN_AGENT tag. Not the bot pause. */}
+                  {humanAgentWindow && (
                     <HumanAgentToggle
-                      key={selectedConv?.integration_id || selectedConv?.integrationId}
-                      integrationId={selectedConv?.integration_id || selectedConv?.integrationId}
-                      enabled={msgWindow.humanAgentEnabled}
-                      canEdit={user?.role === 'RESELLER' || user?.role === 'ADMIN'}
-                      platformLabel={msgWindow.platform === 'FACEBOOK' ? 'this Page' : 'this Instagram account'}
-                      onChanged={(value) => {
-                        setMsgWindow((prev) => (prev ? { ...prev, humanAgentEnabled: value } : prev));
-                        setMsgWindowTick((t) => t + 1);
+                      enabled={humanAgentOn}
+                      platformLabel={selectedPlatformUpper === 'FACEBOOK' ? 'Messenger' : 'Instagram'}
+                      onChange={(value) => {
+                        setHumanAgentFor(value ? selectedId : null);
+                        if (value) setTimeout(() => messageInputRef.current?.focus(), 0);
                       }}
                     />
                   )}
 
                   <div
-                    style={{ flex: 1, position: 'relative', cursor: !botPaused ? 'pointer' : 'default' }}
+                    style={{ flex: 1, position: 'relative', cursor: !botPaused && !windowClosed ? 'pointer' : 'default' }}
                     onClick={() => {
-                      if (!botPaused) setShowJoinModal(true);
+                      if (!botPaused && !windowClosed) setShowJoinModal(true);
                     }}
                   >
                     {showCannedPicker && (
@@ -4713,9 +4740,9 @@ export default function InboxPage() {
                     <textarea
                       ref={messageInputRef}
                       rows={1}
-                      disabled={!botPaused || sending}
+                      disabled={composerLocked || sending}
                       className="form-input"
-                      placeholder={!botPaused ? 'Join chat to type a reply...' : 'Type a message or reply... (Shift+Enter for new line, / for canned replies)'}
+                      placeholder={composerPlaceholder}
                       value={messageText}
                       onChange={(e) => handleMessageTextChange(e.target.value)}
                       onKeyDown={(e) => {
@@ -4739,10 +4766,10 @@ export default function InboxPage() {
                         overflowY: 'auto',
                         boxSizing: 'border-box',
                         display: 'block',
-                        background: !botPaused ? '#f8fafc' : '#ffffff',
-                        color: !botPaused ? '#94a3b8' : '#0f172a',
-                        cursor: !botPaused ? 'not-allowed' : 'text',
-                        border: `1px solid ${!botPaused ? '#e2e8f0' : '#cbd5e1'}`,
+                        background: composerLocked ? '#f8fafc' : '#ffffff',
+                        color: composerLocked ? '#94a3b8' : '#0f172a',
+                        cursor: composerLocked ? 'not-allowed' : 'text',
+                        border: `1px solid ${composerLocked ? '#e2e8f0' : '#cbd5e1'}`,
                       }}
                     />
                   </div>
@@ -4751,7 +4778,7 @@ export default function InboxPage() {
                     <button
                       type="button"
                       onClick={() => setShowRewriteMenu((p) => !p)}
-                      disabled={!botPaused || !messageText.trim() || rewriting}
+                      disabled={composerLocked || !messageText.trim() || rewriting}
                       title="Rewrite with AI"
                       className="transition-all duration-150 hover:bg-slate-100 active:scale-90"
                       style={{
@@ -4760,8 +4787,8 @@ export default function InboxPage() {
                         background: showRewriteMenu ? 'var(--primary-soft)' : '#ffffff',
                         color: showRewriteMenu ? 'var(--primary-dark)' : '#64748b',
                         display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                        cursor: (!botPaused || !messageText.trim() || rewriting) ? 'default' : 'pointer',
-                        opacity: (!botPaused || !messageText.trim()) ? 0.5 : 1,
+                        cursor: (composerLocked || !messageText.trim() || rewriting) ? 'default' : 'pointer',
+                        opacity: (composerLocked || !messageText.trim()) ? 0.5 : 1,
                       }}
                     >
                       {rewriting ? <div className="loading-spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> : <Sparkles size={16} />}
@@ -4797,15 +4824,15 @@ export default function InboxPage() {
 
                   <button
                     type="submit"
-                    disabled={!botPaused || !messageText.trim() || sending}
-                    title={!botPaused ? 'Join chat to send messages' : 'Send message'}
+                    disabled={composerLocked || !messageText.trim() || sending}
+                    title={windowLocked ? composerPlaceholder : !botPaused ? 'Join chat to send messages' : 'Send message'}
                     className="transition-all duration-150 hover:brightness-110 active:scale-90 disabled:opacity-40"
                     style={{
                       width: 40, height: 40, borderRadius: '50%', border: 'none',
                       background: activePlatformInfo.color, color: '#fff',
                       display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                      cursor: (!botPaused || !messageText.trim() || sending) ? 'not-allowed' : 'pointer',
-                      boxShadow: (!botPaused || !messageText.trim()) ? 'none' : `0 2px 10px ${activePlatformInfo.color}55`,
+                      cursor: (composerLocked || !messageText.trim() || sending) ? 'not-allowed' : 'pointer',
+                      boxShadow: (composerLocked || !messageText.trim()) ? 'none' : `0 2px 10px ${activePlatformInfo.color}55`,
                     }}
                   >
                     <Send size={16} />

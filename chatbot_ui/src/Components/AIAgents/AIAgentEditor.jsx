@@ -214,7 +214,7 @@ export default function AIAgentEditor({ agentId, onBack, onDeleted }) {
               {providers.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
             </select>
             {providers.length === 0 && (
-              <span style={{ fontSize: 11, color: 'var(--warning)' }}>No AI provider connected yet — add one in Settings → AI Providers before this Agent can reply.</span>
+              <span style={{ fontSize: 11, color: 'var(--warning)' }}>The platform's AI isn't set up yet — this Agent can't reply until it is. Please contact support.</span>
             )}
           </div>
 
@@ -372,7 +372,7 @@ function RoutingRulesSection({ agentId }) {
           Real ways a customer might ask, even without the exact keywords above — used only when keywords don't match.
           {!hasEmbeddings && phrases.length > 0 && (
             <span style={{ color: 'var(--warning)', display: 'block', marginTop: 4 }}>
-              Connect an embeddings-capable AI provider (OpenAI or Gemini) in Settings → AI Providers to activate semantic matching for these.
+              Semantic matching for these needs an embeddings-capable AI provider on the platform (OpenAI or Gemini) — contact support.
             </span>
           )}
         </div>

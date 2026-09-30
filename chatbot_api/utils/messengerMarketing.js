@@ -89,6 +89,24 @@ export function describeMarketingMessage(spec = {}) {
   return String(spec.text || "");
 }
 
+// ─── Budget currency ─────────────────────────────────────────────────────────
+/**
+ * Meta budgets are in the ad account currency's smallest unit ("offset"):
+ * 100 for most (USD 12.50 → 1250), 1 for currencies without cents (JPY, VND,
+ * IDR, TWD, CLP, COP… — several are Marketing Messages markets). Source:
+ * developers.facebook.com/docs/marketing-api/currencies.
+ */
+const WHOLE_UNIT_CURRENCIES = new Set(["CLP", "COP", "CRC", "HUF", "ISK", "IDR", "JPY", "KRW", "PYG", "TWD", "VND"]);
+export const currencyOffset = (currency) => (WHOLE_UNIT_CURRENCIES.has(String(currency || "").toUpperCase()) ? 1 : 100);
+
+/** A typed budget (whole currency units) → Meta's value; null when it isn't a usable amount. */
+export function budgetForMeta(amount, currency) {
+  const n = Number(amount);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const value = Math.round(n * currencyOffset(currency));
+  return value >= 1 ? value : null;
+}
+
 // ─── Account (token + ad account) ────────────────────────────────────────────
 export async function getAccount(agencyId, integrationId) {
   const [[row]] = await pool.query("SELECT * FROM mm_accounts WHERE integration_id = ? AND agency_id = ?", [integrationId, agencyId]);
@@ -99,7 +117,9 @@ export async function getAccount(agencyId, integrationId) {
 export function publicAccount(acc) {
   if (!acc) return null;
   return {
-    adAccountId: acc.ad_account_id, adAccountName: acc.ad_account_name, tokenType: acc.token_type,
+    adAccountId: acc.ad_account_id, adAccountName: acc.ad_account_name, adAccountCurrency: acc.ad_account_currency || null,
+    wholeUnitCurrency: acc.ad_account_currency ? currencyOffset(acc.ad_account_currency) === 1 : false,
+    tokenType: acc.token_type,
     tokenExpiresAt: acc.token_expires_at, status: acc.status, lastError: acc.last_error,
     connectedAt: acc.connected_at, subscribersSyncedAt: acc.subscribers_synced_at,
   };
@@ -167,16 +187,18 @@ export async function listAdAccounts(token) {
   return (data.data || []).map((a) => ({ id: a.id, name: a.name, status: a.account_status, currency: a.currency }));
 }
 
-export async function saveAccount({ agencyId, integrationId, token, type, expiresAt, adAccountId, adAccountName }) {
+export async function saveAccount({ agencyId, integrationId, token, type, expiresAt, adAccountId, adAccountName, adAccountCurrency }) {
   // The ad account may be chosen right after login (saved without one first).
   const act = !adAccountId ? null : String(adAccountId).startsWith("act_") ? String(adAccountId) : `act_${adAccountId}`;
   if (act && !/^act_\d+$/.test(act)) throw bad("That isn't an ad account id");
   await pool.query(
-    `INSERT INTO mm_accounts (integration_id, agency_id, access_token, token_type, token_expires_at, ad_account_id, ad_account_name, status, last_error)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', NULL)
+    `INSERT INTO mm_accounts (integration_id, agency_id, access_token, token_type, token_expires_at, ad_account_id, ad_account_name, ad_account_currency, status, last_error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', NULL)
      ON DUPLICATE KEY UPDATE access_token = VALUES(access_token), token_type = VALUES(token_type), token_expires_at = VALUES(token_expires_at),
-       ad_account_id = VALUES(ad_account_id), ad_account_name = VALUES(ad_account_name), status = 'ACTIVE', last_error = NULL`,
-    [integrationId, agencyId, encryptSecret(token), type === "USER" ? "USER" : "SYSTEM_USER", expiresAt || null, act, adAccountName || null]
+       ad_account_id = VALUES(ad_account_id), ad_account_name = VALUES(ad_account_name), ad_account_currency = VALUES(ad_account_currency),
+       status = 'ACTIVE', last_error = NULL`,
+    [integrationId, agencyId, encryptSecret(token), type === "USER" ? "USER" : "SYSTEM_USER", expiresAt || null, act, adAccountName || null,
+      act && adAccountCurrency ? String(adAccountCurrency).toUpperCase().slice(0, 8) : null]
   );
 }
 
@@ -329,8 +351,11 @@ export async function executeCampaign(campaignId) {
 
     let metaCampaignId = campaign.meta_campaign_id;
     if (!metaCampaignId) {
-      const body = { name: campaign.name, page_id: integration.fb_page_id };
-      if (campaign.daily_budget) body.daily_budget = Number(campaign.daily_budget);
+      // Meta requires a daily (or lifetime) budget on the message campaign.
+      const currency = await ensureAdAccountCurrency(account);
+      const dailyBudget = budgetForMeta(campaign.daily_budget_amount, currency);
+      if (!dailyBudget) throw new Error("Set a daily budget for this campaign — Meta requires one for marketing messages.");
+      const body = { name: campaign.name, page_id: integration.fb_page_id, daily_budget: dailyBudget };
       const created = await graph("POST", `${account.ad_account_id}/message_campaign`, account.token, body);
       metaCampaignId = created.id;
       await pool.query("UPDATE mm_campaigns SET meta_campaign_id = ? WHERE id = ?", [metaCampaignId, campaignId]);
@@ -386,6 +411,44 @@ export async function executeCampaign(campaignId) {
   } finally {
     await emit();
   }
+}
+
+/** The billed ad account's currency, read from Meta once when it wasn't stored (accounts connected before it was). */
+export async function ensureAdAccountCurrency(account) {
+  if (!account?.ad_account_id) return null;
+  if (account.ad_account_currency) return account.ad_account_currency;
+  const data = await graph("GET", account.ad_account_id, account.token, { fields: "currency" });
+  const currency = data?.currency ? String(data.currency).toUpperCase().slice(0, 8) : null;
+  if (currency) {
+    await pool.query("UPDATE mm_accounts SET ad_account_currency = ? WHERE integration_id = ? AND ad_account_id = ?", [currency, account.integration_id, account.ad_account_id]);
+    account.ad_account_currency = currency;
+  }
+  return currency;
+}
+
+const INSIGHT_FIELDS = [
+  "marketing_messages_delivered", "marketing_messages_read_rate", "marketing_messages_link_btn_click",
+  "marketing_messages_link_btn_click_rate", "marketing_messages_spend", "marketing_messages_cost_per_delivered",
+];
+
+/**
+ * Meta's own numbers for a sent campaign (GET /<MESSAGE_CAMPAIGN_ID>/insights)
+ * — the documented source for delivered / read / clicks / spend; our counters
+ * come from webhooks whose exact shape isn't documented.
+ */
+export async function campaignInsights(account, metaCampaignId) {
+  const data = await graph("GET", `${metaCampaignId}/insights`, account.token, { fields: INSIGHT_FIELDS.join(","), date_preset: "maximum" });
+  const row = Array.isArray(data?.data) ? data.data[0] || {} : {};
+  const num = (v) => (v === undefined || v === null || v === "" ? null : Number(v));
+  return {
+    delivered: num(row.marketing_messages_delivered),
+    readRate: num(row.marketing_messages_read_rate),
+    clicks: num(row.marketing_messages_link_btn_click),
+    clickRate: num(row.marketing_messages_link_btn_click_rate),
+    spend: num(row.marketing_messages_spend),
+    costPerDelivered: num(row.marketing_messages_cost_per_delivered),
+    currency: account.ad_account_currency || null,
+  };
 }
 
 /**

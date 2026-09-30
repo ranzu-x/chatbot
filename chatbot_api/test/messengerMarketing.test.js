@@ -27,3 +27,16 @@ test("opt-in request uses the notification_messages template", () => {
   assert.equal(m.attachment.payload.notification_messages_timezone, "UTC");
   assert.throws(() => buildOptInRequest({ title: "" }), /title/);
 });
+
+test("budgets go to Meta in the ad account currency's smallest unit", async () => {
+  const { budgetForMeta, currencyOffset } = await import("../utils/messengerMarketing.js");
+  assert.equal(currencyOffset("USD"), 100);
+  assert.equal(currencyOffset("jpy"), 1);
+  assert.equal(budgetForMeta(12.5, "USD"), 1250);
+  assert.equal(budgetForMeta(50000, "VND"), 50000); // no ×100 for whole-unit currencies
+  assert.equal(budgetForMeta(20, "IDR"), 20);
+  assert.equal(budgetForMeta(10, null), 1000); // unknown currency → cents
+  assert.equal(budgetForMeta(0, "USD"), null);
+  assert.equal(budgetForMeta("abc", "USD"), null);
+  assert.equal(budgetForMeta(0.001, "USD"), null);
+});

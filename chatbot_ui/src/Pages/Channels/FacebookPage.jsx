@@ -259,18 +259,19 @@ export default function FacebookPage({ embedded = false }) {
           font-size: 0.74rem;
           font-weight: 700;
           letter-spacing: 0.5px;
-          color: #5c5c80;
-          border-bottom: 1px solid #e4e4f0;
-          background: #f8f8fc;
+          color: var(--text-tertiary);
+          border-bottom: 1px solid var(--border);
+          background: var(--bg-surface);
           white-space: nowrap;
           text-align: left;
         }
         .fb-table td {
           padding: 13px 14px;
           font-size: 0.83rem;
-          border-bottom: 1px solid #e4e4f0;
+          border-bottom: 1px solid var(--border);
           vertical-align: middle;
-          background: #ffffff;
+          background: var(--bg-card);
+          color: var(--text-primary);
         }
         .fb-switch {
           position: relative;

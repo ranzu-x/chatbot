@@ -2385,6 +2385,25 @@ export async function processFlow(agencyId, platform, conversation, contact, inc
           break;
         }
 
+        case "crmSync": {
+          // Send to CRM (utils/crm.js): creates / updates the subscriber in the
+          // chosen HubSpot / Salesforce / Zoho connection, with extra fields
+          // from variables; branches on Success / Fail like httpApi.
+          const { runCrmFlowStep } = await import("./crm.js");
+          const crmResult = await runCrmFlowStep({
+            agencyId,
+            contact,
+            data: node.data,
+            fill: (text) => replaceVariables(text, variables, contact),
+          });
+          variables.crm_synced = crmResult.ok ? "yes" : "no";
+          if (crmResult.externalId) variables.crm_record_id = String(crmResult.externalId);
+          if (!crmResult.ok) console.warn(`[Flow Engine] crmSync node ${node.id}: ${crmResult.error}`);
+          await pool.query("UPDATE flow_sessions SET variables = ? WHERE id = ?", [JSON.stringify(variables), session.id]);
+          currentNodeId = getNextNodeId(node.id, crmResult.ok ? "success" : "fail");
+          break;
+        }
+
         case "appointment": {
           // ── Appointment Booking Node ─────────────────────────────────────
           // This node launches the multi-step appointment booking conversation

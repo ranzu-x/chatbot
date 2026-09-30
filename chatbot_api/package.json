@@ -34,7 +34,8 @@
     "test:flow-analytics": "node scripts/test-flow-analytics.mjs",
     "test:growth-links": "node scripts/test-growth-links.mjs",
     "test:inbox-assist": "node scripts/test-inbox-assist.mjs",
-    "test:web-push": "node scripts/test-web-push.mjs"
+    "test:web-push": "node scripts/test-web-push.mjs",
+    "test:ai-credits": "node scripts/test-ai-credits.mjs"
   },
   "keywords": [],
   "author": "",

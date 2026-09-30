@@ -135,6 +135,9 @@ const RULES = [
   // Auto responders (Bot Settings → Auto Responder, routes/autoResponders.js). Re-testing saved keys changes nothing.
   ["POST", new RegExp(`^/auto-responders/${ID}/test$`), null],
   ...crud("/auto-responders", "autoresponder"),
+  // CRM (routes/crm.js): test / sync-existing are POSTs but change nothing about the connection itself.
+  ["POST", /^\/crm\/connections\/\d+\/(test|sync-existing)$/, "crm.update"],
+  ...crud("/crm/connections", "crm"),
   ["POST", new RegExp(`^/http-api-campaigns/${ID}/test$`), "integration_http_api.special"],
   ...crud("/http-api-campaigns", "integration_http_api"),
 

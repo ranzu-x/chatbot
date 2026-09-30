@@ -12,6 +12,7 @@ import { requireModule } from "../utils/entitlements.js";
 import {
   getAccount, publicAccount, loginConfigFor, exchangeLoginCode, listAdAccounts, saveAccount, syncSubscribers,
   buildMarketingMessage, describeMarketingMessage, computeAudience, executeCampaign, sendOptInRequest,
+  ensureAdAccountCurrency, campaignInsights, currencyOffset,
 } from "../utils/messengerMarketing.js";
 
 const router = express.Router();
@@ -42,6 +43,8 @@ router.get("/marketing-messages/:integrationId", async (req, res) => {
     if (!integration) return;
     const agencyId = agencyOf(req);
     const [account, cfg] = await Promise.all([getAccount(agencyId, integration.id), loginConfigFor(agencyId)]);
+    // Accounts connected before the currency was stored: read it once (never blocks the page).
+    if (account?.ad_account_id && !account.ad_account_currency) await ensureAdAccountCurrency(account).catch(() => {});
     const [[subs]] = await pool.query(
       `SELECT SUM(status = 'ACTIVE' AND (expires_at IS NULL OR expires_at > NOW())) AS active, SUM(status = 'STOPPED') AS stopped,
               SUM(status = 'ACTIVE' AND next_eligible_at > NOW()) AS resting
@@ -49,7 +52,7 @@ router.get("/marketing-messages/:integrationId", async (req, res) => {
       [integration.id, agencyId]
     );
     const [campaigns] = await pool.query(
-      `SELECT id, name, message, audience, daily_budget, status, total_targeted, sent_count, delivered_count, read_count, click_count,
+      `SELECT id, name, message, audience, daily_budget_amount, meta_campaign_id, status, total_targeted, sent_count, delivered_count, read_count, click_count,
               failed_count, skipped_count, error_message, created_at, sent_at
        FROM mm_campaigns WHERE integration_id = ? AND agency_id = ? ORDER BY id DESC LIMIT 100`,
       [integration.id, agencyId]
@@ -62,7 +65,13 @@ router.get("/marketing-messages/:integrationId", async (req, res) => {
       subscribers: { active: Number(subs.active) || 0, stopped: Number(subs.stopped) || 0, resting: Number(subs.resting) || 0 },
       campaigns: campaigns.map((c) => {
         const message = typeof c.message === "string" ? JSON.parse(c.message) : c.message;
-        return { ...c, message, preview: describeMarketingMessage(message), audience: typeof c.audience === "string" ? JSON.parse(c.audience || "null") : c.audience };
+        const { daily_budget_amount: amount, meta_campaign_id: metaId, ...rest } = c;
+        return {
+          ...rest, message, preview: describeMarketingMessage(message),
+          audience: typeof c.audience === "string" ? JSON.parse(c.audience || "null") : c.audience,
+          dailyBudgetAmount: amount === null || amount === undefined ? null : Number(amount),
+          hasMetaStats: Boolean(metaId),
+        };
       }),
     });
   } catch (err) {
@@ -126,7 +135,7 @@ router.put("/marketing-messages/:integrationId/ad-account", ownerOnly, async (re
     if (!chosen) return res.status(400).json({ success: false, message: "That ad account isn't available with this login" });
     await saveAccount({
       agencyId: agencyOf(req), integrationId: integration.id, token: account.token, type: account.token_type,
-      expiresAt: account.token_expires_at, adAccountId: chosen.id, adAccountName: chosen.name,
+      expiresAt: account.token_expires_at, adAccountId: chosen.id, adAccountName: chosen.name, adAccountCurrency: chosen.currency,
     });
     return res.json({ success: true, message: `Marketing messages will be billed to ${chosen.name}` });
   } catch (err) {
@@ -207,24 +216,30 @@ router.post("/marketing-messages/:integrationId/opt-in", async (req, res) => {
 });
 
 // ─── Campaigns ───────────────────────────────────────────────────────────────
-function cleanCampaignBody(body) {
+function cleanCampaignBody(body, currency) {
   const name = String(body?.name || "").trim().slice(0, 191);
   if (!name) throw Object.assign(new Error("Give the campaign a name"), { status: 400 });
   const message = body?.message || {};
   buildMarketingMessage(message); // validates
   const labelIds = (Array.isArray(body?.audience?.labelIds) ? body.audience.labelIds : []).map(Number).filter(Boolean).slice(0, 50);
-  const budget = body?.dailyBudget ? Math.round(Number(body.dailyBudget) * 100) : null;
-  if (budget !== null && !(budget > 0)) throw Object.assign(new Error("The daily budget must be more than 0"), { status: 400 });
-  return { name, message, audience: { labelIds }, dailyBudget: budget };
+  // Meta requires a budget on every marketing message campaign (daily or lifetime — we use daily).
+  // Stored as typed (whole currency units); converted to Meta's unit when the campaign is created.
+  const amount = Number(body?.dailyBudget);
+  if (!Number.isFinite(amount) || amount <= 0) throw Object.assign(new Error("Set a daily budget — Meta requires one for marketing messages"), { status: 400 });
+  if (currency && currencyOffset(currency) === 1 && !Number.isInteger(amount)) {
+    throw Object.assign(new Error(`${currency} budgets are whole amounts — no decimals`), { status: 400 });
+  }
+  return { name, message, audience: { labelIds }, dailyBudget: Math.round(amount * 100) / 100 };
 }
 
 router.post("/marketing-messages/:integrationId/campaigns", async (req, res) => {
   try {
     const integration = await loadPage(req, res);
     if (!integration) return;
-    const c = cleanCampaignBody(req.body);
+    const account = await getAccount(agencyOf(req), integration.id);
+    const c = cleanCampaignBody(req.body, account?.ad_account_currency);
     const [ins] = await pool.query(
-      "INSERT INTO mm_campaigns (agency_id, integration_id, name, message, audience, daily_budget, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO mm_campaigns (agency_id, integration_id, name, message, audience, daily_budget_amount, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [agencyOf(req), integration.id, c.name, JSON.stringify(c.message), JSON.stringify(c.audience), c.dailyBudget, req.user.id]
     );
     return res.json({ success: true, id: ins.insertId });
@@ -237,9 +252,10 @@ router.put("/marketing-messages/:integrationId/campaigns/:campaignId", async (re
   try {
     const integration = await loadPage(req, res);
     if (!integration) return;
-    const c = cleanCampaignBody(req.body);
+    const account = await getAccount(agencyOf(req), integration.id);
+    const c = cleanCampaignBody(req.body, account?.ad_account_currency);
     const [r] = await pool.query(
-      "UPDATE mm_campaigns SET name = ?, message = ?, audience = ?, daily_budget = ? WHERE id = ? AND integration_id = ? AND agency_id = ? AND status = 'DRAFT'",
+      "UPDATE mm_campaigns SET name = ?, message = ?, audience = ?, daily_budget_amount = ? WHERE id = ? AND integration_id = ? AND agency_id = ? AND status = 'DRAFT'",
       [c.name, JSON.stringify(c.message), JSON.stringify(c.audience), c.dailyBudget, req.params.campaignId, integration.id, agencyOf(req)]
     );
     if (!r.affectedRows) return res.status(404).json({ success: false, message: "Only a draft can be edited" });
@@ -285,13 +301,32 @@ router.post("/marketing-messages/:integrationId/campaigns/:campaignId/send", asy
     }
     const account = await getAccount(agencyOf(req), integration.id);
     if (!account?.ad_account_id) return res.status(400).json({ success: false, message: "Connect Marketing Messages and choose an ad account first" });
-    const [[campaign]] = await pool.query("SELECT id, status FROM mm_campaigns WHERE id = ? AND integration_id = ? AND agency_id = ?", [req.params.campaignId, integration.id, agencyOf(req)]);
+    const [[campaign]] = await pool.query("SELECT id, status, daily_budget_amount, meta_campaign_id FROM mm_campaigns WHERE id = ? AND integration_id = ? AND agency_id = ?", [req.params.campaignId, integration.id, agencyOf(req)]);
     if (!campaign) return res.status(404).json({ success: false, message: "Campaign not found" });
     if (!["DRAFT", "FAILED"].includes(campaign.status)) return res.status(400).json({ success: false, message: "This campaign was already sent" });
+    // The budget goes on Meta's message campaign; a retry of one already created there doesn't need it again.
+    if (!campaign.meta_campaign_id && !(Number(campaign.daily_budget_amount) > 0)) return res.status(400).json({ success: false, message: "Set a daily budget first — Meta requires one for marketing messages" });
     executeCampaign(campaign.id).catch((e) => console.error("[Marketing Messages] send:", e.message));
     return res.json({ success: true, message: "Sending started" });
   } catch (err) {
     return fail(res, err, "send");
+  }
+});
+
+// Meta's own delivered / read / clicks / spend for a sent campaign (GET /<MESSAGE_CAMPAIGN_ID>/insights).
+router.get("/marketing-messages/:integrationId/campaigns/:campaignId/insights", async (req, res) => {
+  try {
+    const integration = await loadPage(req, res);
+    if (!integration) return;
+    const [[campaign]] = await pool.query("SELECT id, meta_campaign_id FROM mm_campaigns WHERE id = ? AND integration_id = ? AND agency_id = ?", [req.params.campaignId, integration.id, agencyOf(req)]);
+    if (!campaign) return res.status(404).json({ success: false, message: "Campaign not found" });
+    if (!campaign.meta_campaign_id) return res.status(400).json({ success: false, message: "This campaign hasn't been sent to Meta yet" });
+    const account = await getAccount(agencyOf(req), integration.id);
+    if (!account?.ad_account_id) return res.status(400).json({ success: false, message: "Connect Marketing Messages first" });
+    await ensureAdAccountCurrency(account).catch(() => {});
+    return res.json({ success: true, insights: await campaignInsights(account, campaign.meta_campaign_id) });
+  } catch (err) {
+    return fail(res, err, "insights");
   }
 });
 

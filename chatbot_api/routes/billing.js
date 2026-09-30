@@ -430,6 +430,15 @@ router.post("/billing/webhook", express.raw({ type: "application/json" }), async
       case "checkout.session.completed": {
         const metadata = dataObject.metadata || {};
 
+        // AI credit add-on (utils/aiCredits/purchases.js): credited once, after the
+        // session, amount and purchase are checked against our own records.
+        if (metadata.kind === "ai_credit_addon") {
+          const { completeFromStripeSession } = await import("../utils/aiCredits/purchases.js");
+          const result = await completeFromStripeSession(dataObject);
+          if (!result.credited) console.log(`[STRIPE] AI credit add-on not credited: ${result.reason}`);
+          break;
+        }
+
         // Guest checkout (no existing agency/user — see routes/billing.js's
         // /billing/guest-checkout above): the account itself gets created
         // here, from this trusted webhook, not from the browser redirect.

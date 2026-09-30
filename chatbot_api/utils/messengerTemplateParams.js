@@ -380,7 +380,7 @@ export function friendlyMessengerError(metaError, platform = "FACEBOOK") {
     return `${channel}: this person's messaging window is closed.${platform === "FACEBOOK" ? " Send a Utility template instead." : ""}`;
   }
   if (code === 551 || sub === 1545041) return `${channel}: this person isn't available right now (they may have blocked the Page or deleted their account).`;
-  if (code === 10 && /human.?agent/i.test(msg)) return `${channel}: this app isn't approved for Human Agent yet — request the Human Agent feature in Meta App Review, or turn it off for this account.`;
+  if (code === 10 && /human.?agent/i.test(msg)) return `${channel}: this app isn't approved for Human Agent yet — request the Human Agent feature in Meta App Review, or send a Utility template.`;
   if (code === 100 && /tag/i.test(msg)) return `${channel}: Meta refused the message tag (${msg}). ACCOUNT_UPDATE, POST_PURCHASE_UPDATE and CONFIRMED_EVENT_UPDATE were removed on 27 Apr 2026 — use a Utility template.`;
   if (code === 190) return `${channel}: the Page's access token expired or was revoked — reconnect the account.`;
   if (/template/i.test(msg) && /(not found|does not exist|approved|paused|disabled)/i.test(msg)) return `${channel}: the Utility template isn't usable (${msg}). Sync templates and pick an approved one.`;

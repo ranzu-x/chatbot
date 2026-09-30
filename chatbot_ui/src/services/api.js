@@ -298,7 +298,7 @@ export const platformPaymentGatewayAPI = {
   remove: (provider) => api.delete(`/admin/payment-gateways/${provider}`),
 };
 
-// ─── AI Providers (Settings → AI Providers, agency-wide BYOK) ─────
+// ─── AI Providers (Settings → AI Providers — the PLATFORM's keys; Super Admin manages, others read a key-free list) ─────
 export const aiProviderAPI = {
   getAll: () => api.get("/ai/providers"),
   save: (providerId, data) => api.put(`/ai/providers/${providerId}`, data),
@@ -363,6 +363,49 @@ export const autoResponderAPI = {
   delete: (id) => api.delete(`/auto-responders/${id}`),
   lists: (id) => api.get(`/auto-responders/${id}/lists`),
   test: (id) => api.post(`/auto-responders/${id}/test`),
+};
+
+// AI Credits (chatbot_api/routes/aiCredits.js) — the caller's own workspace only.
+export const aiCreditAPI = {
+  summary: () => api.get('/ai-credits/summary'),
+  transactions: (params) => api.get('/ai-credits/transactions', { params }),
+  usage: (params) => api.get('/ai-credits/usage', { params }),
+  purchases: (params) => api.get('/ai-credits/purchases', { params }),
+  checkout: (addonId, provider) => api.post('/ai-credits/checkout', { addonId, provider }),
+  confirm: (purchaseId, sessionId) => api.post(`/ai-credits/purchases/${purchaseId}/confirm`, { sessionId }),
+};
+
+// Super Admin → AI Credits (chatbot_api/routes/adminAiCredits.js)
+export const adminAiCreditAPI = {
+  overview: (params) => api.get('/admin/ai-credits/overview', { params }),
+  addPlatformCredits: (amount, note) => api.post('/admin/ai-credits/platform', { amount, note }),
+  settings: () => api.get('/admin/ai-credits/settings'),
+  saveSettings: (settings) => api.put('/admin/ai-credits/settings', { settings }),
+  addons: () => api.get('/admin/ai-credits/addons'),
+  createAddon: (data) => api.post('/admin/ai-credits/addons', data),
+  updateAddon: (id, data) => api.put(`/admin/ai-credits/addons/${id}`, data),
+  setAddonActive: (id, isActive) => api.patch(`/admin/ai-credits/addons/${id}/active`, { isActive }),
+  deleteAddon: (id) => api.delete(`/admin/ai-credits/addons/${id}`),
+  usage: (params) => api.get('/admin/ai-credits/usage', { params }),
+  filters: () => api.get('/admin/ai-credits/filters'),
+  accounts: (q) => api.get('/admin/ai-credits/accounts', { params: { q } }),
+  account: (agencyId) => api.get(`/admin/ai-credits/accounts/${agencyId}`),
+  adjust: (agencyId, data) => api.post(`/admin/ai-credits/accounts/${agencyId}/adjust`, data),
+  transactions: (params) => api.get('/admin/ai-credits/transactions', { params }),
+  purchases: (params) => api.get('/admin/ai-credits/purchases', { params }),
+  refund: (id, note) => api.post(`/admin/ai-credits/purchases/${id}/refund`, { note }),
+};
+
+// CRM integrations — HubSpot / Salesforce / Zoho (chatbot_api/routes/crm.js)
+export const crmAPI = {
+  getAll: () => api.get('/crm/connections'),
+  create: (data) => api.post('/crm/connections', data),
+  update: (id, data) => api.put(`/crm/connections/${id}`, data),
+  delete: (id) => api.delete(`/crm/connections/${id}`),
+  fields: (id, object) => api.get(`/crm/connections/${id}/fields`, { params: object ? { object } : {} }),
+  stats: (id) => api.get(`/crm/connections/${id}/stats`),
+  test: (id) => api.post(`/crm/connections/${id}/test`),
+  syncExisting: (id) => api.post(`/crm/connections/${id}/sync-existing`),
 };
 
 // ─── Admin ────────────────────────────────────────────────────────
@@ -767,6 +810,7 @@ export const flowAPI = {
   create: (data) => api.post('/flows', data),
   update: (id, data) => api.put(`/flows/${id}`, data),
   toggle: (id) => api.patch(`/flows/${id}/toggle`),
+  rename: (id, name) => api.patch(`/flows/${id}/name`, { name }),
   delete: (id) => api.delete(`/flows/${id}`),
   clone: (id, data) => api.post(`/flows/${id}/clone`, data),
   // Portable bot file (chatbot_api/routes/flowTransfer.js)
@@ -1007,4 +1051,5 @@ export const marketingMessagesAPI = {
   deleteCampaign: (id, cid) => api.delete(`/marketing-messages/${id}/campaigns/${cid}`),
   audience: (id, cid) => api.get(`/marketing-messages/${id}/campaigns/${cid}/audience`),
   send: (id, cid) => api.post(`/marketing-messages/${id}/campaigns/${cid}/send`, { confirmPaid: true }),
+  insights: (id, cid) => api.get(`/marketing-messages/${id}/campaigns/${cid}/insights`),
 };

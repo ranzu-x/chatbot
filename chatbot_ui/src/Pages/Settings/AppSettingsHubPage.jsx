@@ -5,10 +5,12 @@ import AppLayout from '../../Layout/AppLayout';
 import MetaAppPage from './MetaAppPage';
 import TikTokAppPage from './TikTokAppPage';
 import StoreConnectionsManager from '../../Components/Commerce/StoreConnectionsManager';
+import CrmConnectionsManager from '../../Components/Integrations/CrmConnectionsManager';
 import { metaAppAPI, tiktokAppAPI } from '../../services/api';
 import { notify } from '../../utils/alerts';
 import {
   Radio,
+  Contact,
   Video,
   Globe,
   ShoppingBag,
@@ -101,7 +103,7 @@ const DEVELOPER_NAV_GROUPS = APP_NAV_GROUPS
 const DEVELOPER_TAB_IDS = DEVELOPER_NAV_GROUPS.flatMap((g) => g.items.map((i) => i.id));
 
 export default function AppSettingsHubPage({ section = 'store' }) {
-  const { user } = useAuth();
+  const { user, hasModule } = useAuth();
   const isDeveloper = section === 'developer';
   const [searchParams, setSearchParams] = useSearchParams();
   const rawTab = searchParams.get('tab') || 'meta_whatsapp';
@@ -191,25 +193,43 @@ export default function AppSettingsHubPage({ section = 'store' }) {
       <AppLayout>
         <div className="page-header" style={{ marginBottom: 18 }}>
           <h1 className="page-title" style={{ margin: 0, fontSize: '1.35rem', fontWeight: 800 }}>App Integrations</h1>
-          <p className="page-subtitle" style={{ margin: 0, fontSize: '0.82rem', color: '#64748b' }}>
-            Connect your online store to send order, COD and abandoned-cart messages
+          <p className="page-subtitle" style={{ margin: 0, fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
+            Connect your online store and your CRM
           </p>
         </div>
-        <div className="page-body">
-          <div className="card" style={{ padding: 22, borderRadius: 12, border: '1px solid #e2e8f0', background: '#ffffff' }}>
+        <div className="page-body" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          <div className="card" style={{ padding: 22, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
               <div style={{ width: 38, height: 38, borderRadius: 10, background: 'rgba(22, 163, 74, 0.08)', border: '1px solid rgba(22, 163, 74, 0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#16a34a' }}>
                 <ShoppingBag size={20} />
               </div>
               <div>
-                <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700, color: '#0f172a' }}>Store API — Shopify & WooCommerce</h2>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>
+                <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-primary)' }}>Store API — Shopify & WooCommerce</h2>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
                   Connect Shopify or WooCommerce stores, then set up order, COD and abandoned-cart messages in Automation → Commerce.
                 </p>
               </div>
             </div>
             <StoreConnectionsManager />
           </div>
+
+          {/* CRM — HubSpot / Salesforce / Zoho (Components/Integrations/CrmConnectionsManager.jsx) */}
+          {hasModule('feature_crm_integrations') && (
+            <div className="card" id="crm" style={{ padding: 22, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--bg-card)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                <div style={{ width: 38, height: 38, borderRadius: 10, background: 'var(--primary-soft)', border: '1px solid var(--primary-ring)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)' }}>
+                  <Contact size={20} />
+                </div>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-primary)' }}>CRM — HubSpot, Salesforce & Zoho</h2>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
+                    Send subscribers to your CRM automatically, log resolved chats on their record, and use the "Send to CRM" step in flows.
+                  </p>
+                </div>
+              </div>
+              <CrmConnectionsManager />
+            </div>
+          )}
         </div>
       </AppLayout>
     );

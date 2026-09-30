@@ -66,7 +66,7 @@ export async function routeMessage({ agencyId, agents, rulesByAgentId, message, 
   });
 
   if (messageLower && candidatesWithEmbeddings.length > 0) {
-    const resolved = await resolveCapability(agencyId, "embeddings");
+    const resolved = await resolveCapability(agencyId, "embeddings", null, { feature: "ai_reply" });
     if (resolved) {
       try {
         const [messageEmbedding] = await resolved.adapter.embed({ apiKey: resolved.apiKey, model: resolved.model, texts: [message] });

@@ -23,7 +23,8 @@ export const PACKAGE_FEATURE_ROWS = [
   { module: 'feature_bot_message_insight', label: 'Bot Message Insight', enforced: { toggle: false } },
   { module: 'feature_bot_conditional_reply', label: 'Bot Conditional Reply', enforced: { toggle: false } },
   { module: 'feature_bot_manager', label: 'Bot Manager (Flow Builder)', enforced: { toggle: true } },
-  { module: 'feature_ai_tokens', label: 'AI Token', limit: { field: 'maxAiTokensPerMonth', period: 'Monthly' }, enforced: { toggle: false, limit: true } },
+  // The plan's monthly AI credits (chatbot_api/utils/aiCredits). Empty = unlimited. Purchased add-on credits come on top.
+  { module: 'feature_ai_tokens', label: 'AI Credits', limit: { field: 'maxAiTokensPerMonth', period: 'Monthly' }, enforced: { toggle: false, limit: true } },
   { module: 'feature_user_input_flows', label: 'Input Flow Campaign', limit: { field: 'maxUserInputFlows', period: 'Fixed' }, enforced: { toggle: true, limit: true } },
   { module: 'feature_incoming_webhook', label: 'Incoming Message to Webhook URL', enforced: { toggle: false } },
   { module: 'feature_live_chat_widget', label: 'Live Chat - Widget', enforced: { toggle: false } },
@@ -58,6 +59,7 @@ export const PACKAGE_FEATURE_ROWS = [
   { module: 'feature_data_retention', label: 'Data Delete Retention', enforced: { toggle: false } },
   { module: 'feature_ai_agent', label: 'AI Agent', enforced: { toggle: false } },
   { module: 'feature_ai_assistant', label: 'AI Assistant', enforced: { toggle: true } },
+  { module: 'feature_crm_integrations', label: 'CRM Integrations (HubSpot, Salesforce, Zoho)', enforced: { toggle: true } },
 ];
 
 // "Disable <channel>" switches — inverted view of the channel modules.

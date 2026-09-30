@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import SelectToggle from '../../Components/Common/SelectToggle';
 import UserAvatar from '../../Components/Common/UserAvatar';
 import { useNavigate } from 'react-router';
 import AppLayout from '../../Layout/AppLayout';
@@ -713,10 +714,7 @@ export default function UsersPage({ scope = 'admin' }) {
                 <th style={{ width: 60 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span>#</span>
-                    <label className="switch-toggle" style={{ transform: 'scale(0.75)', margin: 0 }}>
-                      <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} />
-                      <span className="switch-slider" />
-                    </label>
+                    <SelectToggle checked={allSelected} indeterminate={selectedIds.size > 0} onChange={toggleSelectAll} label="Select all users on this page" />
                   </div>
                 </th>
                 <th>USER ID</th>
@@ -767,14 +765,7 @@ export default function UsersPage({ scope = 'admin' }) {
                           <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', minWidth: 16 }}>
                             {rowNum}
                           </span>
-                          <label className="switch-toggle" style={{ transform: 'scale(0.75)', margin: 0 }}>
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={(e) => toggleSelectOne(u.id, e)}
-                            />
-                            <span className="switch-slider" />
-                          </label>
+                          <SelectToggle checked={isChecked} onChange={(e) => toggleSelectOne(u.id, e)} label={`Select ${u.name || u.email}`} />
                         </div>
                       </td>
 

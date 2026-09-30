@@ -426,7 +426,7 @@ function getFallbackUnlimitedEntitlements() {
       "feature_whatsapp_embedded_signup", "feature_whatsapp_carousel", "feature_whatsapp_click_ads", "feature_whatsapp_catalog",
       "feature_whatsapp_about_brand", "feature_telegram_group_manager", "feature_google_contacts",
       "feature_google_connect_account", "feature_google_calendar", "feature_team_members", "feature_data_retention",
-      "feature_ai_assistant", "feature_messenger_utility"
+      "feature_ai_assistant", "feature_messenger_utility", "feature_crm_integrations"
     ],
     modulesMap: {},
   };
@@ -645,18 +645,12 @@ export async function assertLimit(agencyId, limitType, increment = 1, userId = n
   }
 
   if (limitType === "max_ai_tokens_per_month") {
-    const maxTokens = entitlements.modulesMap?.feature_ai_tokens?.limits?.maxAiTokensPerMonth;
-    if (maxTokens !== undefined && maxTokens !== null) {
-      const used = await getAiTokensUsedThisMonth(agencyId);
-      if (used + increment > Number(maxTokens)) {
-        const err = new Error(
-          `AI token limit reached: Your current plan (${pkg.name}) allows ${maxTokens} AI tokens per month. Used ${used} so far this month. Please upgrade your package.`
-        );
-        err.status = 403;
-        err.code = "LIMIT_EXCEEDED";
-        throw err;
-      }
-    }
+    // AI Credits (utils/aiCredits/service.js): the plan's monthly allowance
+    // (this same maxAiTokensPerMonth) + purchased add-on credits + the platform
+    // pool. Throws AiCreditError (402 INSUFFICIENT_AI_CREDITS / 503
+    // PLATFORM_AI_CREDITS_EXHAUSTED). Lazy import: service.js imports this file.
+    const { assertAiCreditsAvailable } = await import("./aiCredits/service.js");
+    await assertAiCreditsAvailable(agencyId, Math.max(1, Number(increment) || 1));
   }
 
   if (limitType === "max_user_input_flows") {

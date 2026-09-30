@@ -19,9 +19,9 @@ const LANG_NAMES = {
  * surface that as "connect an AI provider first", not a generic failure.
  */
 export async function translateText(agencyId, text, targetLang) {
-  const resolved = await resolveCapability(agencyId, "text_generation");
+  const resolved = await resolveCapability(agencyId, "text_generation", null, { feature: "translation" });
   if (!resolved) {
-    const err = new Error("No AI provider is configured for this workspace yet. Connect one under Settings → AI Providers to use the translator.");
+    const err = new Error("The platform's AI isn't set up yet — translation is unavailable. Please contact support.");
     err.status = 400;
     err.code = "AI_NOT_CONFIGURED";
     throw err;

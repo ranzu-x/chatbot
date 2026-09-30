@@ -35,9 +35,9 @@ router.post("/ai/rewrite-message", requireModule("feature_ai_assistant"), async 
 
     await assertLimit(agencyId, "max_ai_tokens_per_month", 0, req.user?.id);
 
-    const resolved = await resolveCapability(agencyId, "text_generation");
+    const resolved = await resolveCapability(agencyId, "text_generation", null, { feature: "ai_rewrite", userId: req.user?.id });
     if (!resolved) {
-      return res.status(403).json({ success: false, message: "No AI provider is configured for this workspace yet. Connect one under Settings → AI Providers.", code: "AI_NOT_CONFIGURED" });
+      return res.status(403).json({ success: false, message: "The platform's AI isn't set up yet — please contact support.", code: "AI_NOT_CONFIGURED" });
     }
 
     const messages = [

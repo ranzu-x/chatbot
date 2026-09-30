@@ -50,6 +50,9 @@
 
   --border: #e4e4e7;
   --border-light: #d4d4d8;
+  --border-subtle: #f1f1f3;
+  /* Quiet fill for chips / pills (date dividers …) — was referenced before it existed. */
+  --bg-muted: #f1f5f9;
 
   /* Four-tier text scale — darkest/most-emphasis to lightest/least. Neutral
      gray (zinc), not the blue-tinted slate this used to be — matches the
@@ -92,6 +95,7 @@
   --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.06), 0 1px 2px 0 rgba(0, 0, 0, 0.03);
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
   --shadow-md: 0 4px 12px 0 rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 12px 32px 0 rgba(0, 0, 0, 0.1);
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -107,6 +111,8 @@
 
   --border: #3f3f46;
   --border-light: #52525b;
+  --border-subtle: #2f2f35;
+  --bg-muted: #2f2f35;
 
   --text-primary: #fafafa;
   --text-secondary: #d4d4d8;
@@ -116,6 +122,7 @@
   --shadow: 0 4px 20px rgba(0,0,0,0.4);
   --shadow-sm: 0 2px 6px rgba(0,0,0,0.3);
   --shadow-md: 0 8px 24px rgba(0,0,0,0.5);
+  --shadow-lg: 0 16px 40px rgba(0,0,0,0.6);
 }
 
 /* ─── Reset & Base ──────────────────────────────────────────────── */
@@ -322,6 +329,17 @@ select.form-input { cursor: pointer; }
 .badge-success { background: rgba(16, 185, 129, 0.08); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.2); }
 .badge-warning { background: rgba(245, 158, 11, 0.08); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.2); }
 .badge-danger  { background: rgba(239, 68, 68, 0.08);  color: var(--danger);  border: 1px solid rgba(239, 68, 68, 0.2); }
+
+/* List selection switch (Components/Common/SelectToggle.jsx) — User Manager, Subscribers. */
+.select-toggle { position: relative; display: inline-block; width: 27px; height: 15px; flex-shrink: 0; cursor: pointer; vertical-align: middle; }
+.select-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.select-toggle__slider { position: absolute; inset: 0; border-radius: 15px; background: #cbd5e1; transition: background .2s; }
+.select-toggle__slider::before { content: ""; position: absolute; width: 11px; height: 11px; left: 2px; top: 2px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.2); transition: transform .2s; }
+.select-toggle input:checked + .select-toggle__slider { background: #10b981; }
+.select-toggle input:checked + .select-toggle__slider::before { transform: translateX(12px); }
+.select-toggle.is-partial .select-toggle__slider { background: rgba(16, 185, 129, 0.45); }
+.select-toggle input:focus-visible + .select-toggle__slider { box-shadow: 0 0 0 3px var(--primary-ring); }
+[data-theme="dark"] .select-toggle__slider { background: #52525b; }
 .badge-muted   { background: var(--bg-hover); color: var(--text-secondary); border: 1px solid var(--border); }
 
 /* ─── Table ──────────────────────────────────────────────────────  */
@@ -378,10 +396,17 @@ tr:hover td { background: var(--bg-hover); }
   left: 0; top: 0;
   z-index: 100;
   overflow-y: auto;
-  transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1), background 0.2s;
+  overflow-x: hidden;
+  transition: width var(--sidebar-slide), background 0.2s;
   box-shadow: 1px 0 3px rgba(0,0,0,0.02);
 }
 .sidebar.collapsed { width: 68px; }
+/* Collapse / expand: one timing for the sidebar and the page beside it
+   (Components/Sidebar.jsx uses the same value for its labels and padding). */
+:root { --sidebar-slide: 0.5s cubic-bezier(0.65, 0, 0.35, 1); } /* ease-in-out: starts and settles gently */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar, .sidebar *, .main-content { transition: none !important; }
+}
 
 .sidebar-logo {
   padding: 16px;
@@ -424,7 +449,7 @@ tr:hover td { background: var(--bg-hover); }
   background: var(--bg-base);
   display: flex;
   flex-direction: column;
-  transition: margin-left 0.22s cubic-bezier(0.4, 0, 0.2, 1), background 0.2s;
+  transition: margin-left var(--sidebar-slide), background 0.2s;
   min-width: 0;
 }
 

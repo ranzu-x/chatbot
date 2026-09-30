@@ -120,7 +120,10 @@
     "migrate_appointment_holds_and_retention.js",
     "migrate_flow_analytics.js",
     "migrate_growth_links.js",
-    "migrate_web_push.js"
+    "migrate_web_push.js",
+    "migrate_crm_integrations.js",
+    "migrate_mm_budget_currency.js",
+    "migrate_ai_credits.js"
   ],
   "manual": {
     "migrate_widget_key_rotation.js": "Rotates every webchat widget key on each run - breaks every pasted embed snippet. Run by hand only when you mean it.",

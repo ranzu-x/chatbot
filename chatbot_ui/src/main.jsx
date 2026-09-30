@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
+import './theme/darkSafetyNet.css'
 import App from './App.jsx'
 import { applyAppearance } from './theme/appearance'
 

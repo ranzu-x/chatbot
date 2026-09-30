@@ -24,7 +24,7 @@ const TYPE_LABEL = {
   start: 'Start', text: 'Text', buttons: 'Text message', interactive: 'Interactive', image: 'Image', video: 'Video',
   audio: 'Audio', file: 'File', quickReplies: 'Quick replies', listMenu: 'List menu', card: 'Card', carousel: 'Carousel',
   collectInput: 'Collect input', question: 'Question', condition: 'Condition', randomizer: 'Randomizer', delay: 'Delay',
-  webhook: 'Webhook', httpApi: 'HTTP API', payment: 'Payment', handoff: 'Agent handoff', end: 'End', actions: 'Actions',
+  webhook: 'Webhook', httpApi: 'HTTP API', crmSync: 'Send to CRM', payment: 'Payment', handoff: 'Agent handoff', end: 'End', actions: 'Actions',
   startAutomation: 'Start automation', messageBlock: 'Send message', appointment: 'Appointment booking',
   whatsappTemplate: 'Message template', messengerTemplate: 'Utility template', whatsappCtaUrl: 'CTA URL button',
   telegramPoll: 'Poll', telegramChecklist: 'Checklist', orderStatus: 'Order tracking', marketingOptIn: 'Marketing opt-in',

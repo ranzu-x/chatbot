@@ -112,6 +112,20 @@ export function getAppearance() {
 }
 
 /** Writes the chosen appearance onto :root as CSS variables. */
+/**
+ * Puts the saved light / dark choice (localStorage "theme", set by the TopBar
+ * toggle and Settings → Appearance) on <html data-theme>. Called by every
+ * dashboard shell — AppLayout and the full-screen Flow Builder — so a page
+ * without the TopBar (Inbox, builder) still opens in the chosen theme. Public
+ * pages (landing, login, forum…) don't call it and stay light.
+ */
+export function applySavedTheme() {
+  if (typeof document === 'undefined') return;
+  let theme = 'light';
+  try { theme = localStorage.getItem('theme') === 'dark' ? 'dark' : 'light'; } catch { /* storage blocked */ }
+  document.documentElement.setAttribute('data-theme', theme);
+}
+
 export function applyAppearance(appearance = getAppearance()) {
   if (typeof document === 'undefined') return appearance;
   const root = document.documentElement;

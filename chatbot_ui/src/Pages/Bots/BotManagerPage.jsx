@@ -48,6 +48,7 @@ import {
   Play,
   Pause,
   Edit3,
+  TextCursorInput,
   BarChart3,
   Copy,
   Trash2,
@@ -884,6 +885,29 @@ export default function BotManagerPage() {
     }
   };
 
+  /* ─── Rename (reference name only — PATCH /flows/:id/name) ─── */
+  const handleRenameFlow = async (flow, e) => {
+    if (e) e.stopPropagation();
+    const name = await alert.prompt({
+      title: 'Rename bot flow',
+      label: 'Reference name',
+      value: flow.name || '',
+      required: true,
+      validate: (v) => (String(v || '').trim().length > 200 ? 'At most 200 characters' : null),
+      confirm: 'Rename',
+    });
+    if (name === null || name === undefined) return;
+    const next = String(name).trim();
+    if (!next || next === flow.name) return;
+    try {
+      const res = await flowAPI.rename(flow.id, next);
+      setFlows((prev) => prev.map((f) => (f.id === flow.id ? { ...f, name: res.data?.name || next } : f)));
+      showToast('Renamed');
+    } catch (err) {
+      showToast(err?.response?.data?.message || 'Could not rename the flow', 'error');
+    }
+  };
+
   /* ─── Play / Pause Flow ─── */
   const handleToggleFlow = async (flow, e) => {
     if (e) e.stopPropagation();
@@ -1208,6 +1232,14 @@ export default function BotManagerPage() {
           font-size: 0.78rem;
           color: var(--text-tertiary);
           margin: 3px 0 0 0;
+        }
+        /* Padded body under .bm-card-header for panels made of boxed sections
+           (Marketing Messages …), so the boxes never sit on the card's edges. */
+        .bm-card-body {
+          padding: 18px 20px 20px;
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
         }
         .bm-action-bar {
           display: flex;
@@ -1840,6 +1872,14 @@ export default function BotManagerPage() {
                                 onClick={() => openFlowBuilder(flow.id)}
                               >
                                 <Edit3 size={13} />
+                              </button>
+                              <button
+                                className="bm-row-action"
+                                title="Rename"
+                                aria-label={`Rename ${flow.name}`}
+                                onClick={(e) => handleRenameFlow(flow, e)}
+                              >
+                                <TextCursorInput size={13} />
                               </button>
                               <button
                                 className="bm-row-action"

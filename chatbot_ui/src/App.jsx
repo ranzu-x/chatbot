@@ -64,6 +64,8 @@ const LandingPageEditorPage = lazy(() => import('./Pages/Agency/LandingPageEdito
 const PackagesPage         = lazy(() => import('./Pages/SuperAdmin/PackagesPage'));
 const PaymentGatewaysPage  = lazy(() => import('./Pages/SuperAdmin/PaymentGatewaysPage'));
 const CouponsPage          = lazy(() => import('./Pages/SuperAdmin/CouponsPage'));
+const AiCreditsAdminPage   = lazy(() => import('./Pages/SuperAdmin/AiCreditsAdminPage'));
+const AiCreditsPage        = lazy(() => import('./Pages/AiCredits/AiCreditsPage'));
 const InboxInsightsPage    = lazy(() => import('./Pages/Inbox/InboxInsightsPage'));
 const AffiliatesPage       = lazy(() => import('./Pages/SuperAdmin/AffiliatesPage'));
 const AffiliateDashboardPage = lazy(() => import('./Pages/Affiliate/AffiliateDashboardPage'));
@@ -282,7 +284,9 @@ export default function App() {
             <Route path="/settings/messenger-app" element={<ProtectedRoute roles={ALL_ROLES} requires="canManageDeveloperApps"><MetaAppPage forcedPlatformGroup="MESSENGER_INSTAGRAM" /></ProtectedRoute>} />
             <Route path="/settings/meta-app" element={<ProtectedRoute roles={ALL_ROLES} requires="canManageDeveloperApps"><MetaAppPage /></ProtectedRoute>} />
             <Route path="/settings/tiktok-app" element={<ProtectedRoute roles={ALL_ROLES} requires="canManageDeveloperApps"><TikTokAppPage /></ProtectedRoute>} />
-            <Route path="/settings/ai-providers" element={<ProtectedRoute roles={ADMIN_AGENCY}><AIProvidersPage /></ProtectedRoute>} />
+            {/* The platform's AI keys — Super Admin only (every workspace uses them and spends AI credits). */}
+            <Route path="/settings/ai-providers" element={<ProtectedRoute roles={['ADMIN']}><AIProvidersPage /></ProtectedRoute>} />
+            <Route path="/ai-credits" element={<ProtectedRoute roles={['RESELLER', 'USER']}><AiCreditsPage /></ProtectedRoute>} />
             {/* WhatsApp Flows — list lives in Bot Manager → Data Collection now,
                 not a standalone page — same pattern as /user-input-flows and
                 /sequences above redirecting to /bots. */}
@@ -332,6 +336,7 @@ export default function App() {
             <Route path="/admin/payment-gateways" element={<ProtectedRoute roles={['ADMIN']}><PaymentGatewaysPage /></ProtectedRoute>} />
             <Route path="/inbox/insights" element={<ProtectedRoute roles={ALL_ROLES}><InboxInsightsPage /></ProtectedRoute>} />
             <Route path="/admin/coupons" element={<ProtectedRoute roles={['ADMIN']}><CouponsPage /></ProtectedRoute>} />
+            <Route path="/admin/ai-credits" element={<ProtectedRoute roles={['ADMIN']}><AiCreditsAdminPage /></ProtectedRoute>} />
 
             {/* ── Admin Blog Management ── */}
             <Route path="/admin/blog"           element={<ProtectedRoute roles={['ADMIN']} requires="canManageBlog"><BlogManagerPage /></ProtectedRoute>} />

@@ -160,7 +160,7 @@ export async function generateCommentReply({ agencyId, promptInstruction, agentI
     agent = row || null;
   }
 
-  const resolved = await resolveCapability(agencyId, "text_generation", agent?.preferred_provider || null);
+  const resolved = await resolveCapability(agencyId, "text_generation", agent?.preferred_provider || null, { feature: "comment_reply", agentId: agent?.id || null });
   if (!resolved) {
     console.warn(`[Comment Automation] No AI provider configured for agency ${agencyId} — falling back to static text`);
     return fallbackText || "";

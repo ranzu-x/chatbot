@@ -197,6 +197,20 @@ router.patch("/flows/:id/toggle", async (req, res) => {
   } catch (err) { console.error(err); return res.status(500).json({ success: false, message: "Server error" }); }
 });
 
+// ── RENAME ────────────────────────────────────────────────────────
+// Reference name only (Bot Manager list "Rename", Flow Builder header). The
+// full save (PUT) rewrites nodes/edges too, so it can't be used for this.
+router.patch("/flows/:id/name", async (req, res) => {
+  try {
+    const name = String(req.body?.name ?? "").replace(/\s+/g, " ").trim();
+    if (!name) return res.status(400).json({ success: false, message: "The name can't be empty" });
+    if (name.length > 200) return res.status(400).json({ success: false, message: "The name can be at most 200 characters" });
+    const [result] = await pool.query("UPDATE flows SET name = ? WHERE id = ? AND agency_id = ?", [name, req.params.id, req.user.agencyId]);
+    if (!result.affectedRows) return res.status(404).json({ success: false, message: "Flow not found" });
+    return res.json({ success: true, name, message: "Renamed" });
+  } catch (err) { console.error("Flow rename error:", err); return res.status(500).json({ success: false, message: "Server error" }); }
+});
+
 // ── CLONE / DUPLICATE ──────────────────────────────────────────────
 router.post("/flows/:id/clone", async (req, res) => {
   try {

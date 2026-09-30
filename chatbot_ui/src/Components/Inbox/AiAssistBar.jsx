@@ -28,7 +28,17 @@ export default function AiAssistBar({ conversationId, onUseReply, disabled }) {
   const failed = (err, fallback) => {
     const data = err?.response?.data;
     if (data?.code === 'AI_NOT_CONFIGURED') {
-      toast.warning('No AI provider connected', { description: 'Connect one under Settings → AI Providers to use AI suggestions.' });
+      toast.warning("AI isn't available yet", { description: data.message });
+    } else if (data?.code === 'INSUFFICIENT_AI_CREDITS' || data?.code === 'PLATFORM_AI_CREDITS_EXHAUSTED') {
+      // AI Credits (chatbot_api/utils/aiCredits) — the message says what to do.
+      toast.warning('Not enough AI credits', {
+        description: data.message,
+        duration: 10000,
+        ...(data.code === 'INSUFFICIENT_AI_CREDITS' ? { action: { label: 'AI Credits', onClick: () => window.location.assign('/ai-credits') } } : {}),
+      });
+    } else if (data?.code === 'AI_PROVIDER_ERROR') {
+      // e.g. out of credit / invalid key — the provider's own reason, so it can be fixed
+      toast.error('Your AI provider refused the request', { description: data.message, duration: 12000 });
     } else {
       toast.error(data?.message || fallback);
     }

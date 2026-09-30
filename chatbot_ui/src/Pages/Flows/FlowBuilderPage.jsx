@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom';
-import React, { useState, useEffect, useCallback, useRef, useMemo, createContext, useContext } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, createContext, useContext } from 'react';
 import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router';
 import {
   ReactFlow, Background, Controls, MiniMap,
@@ -18,8 +18,10 @@ import {
   Video, Music, FileText, Globe, ExternalLink,
   Smartphone, RotateCcw, Undo2, Redo2, ThumbsUp, Sparkles, MoreVertical,
   Copy, ShoppingBag, BarChart3, PackageSearch, MailPlus, ListChecks, HelpCircle, Flag, ClipboardList, Workflow, Tag, Timer, Palette, Megaphone, Network, MessagesSquare,
-  ArrowUp, ArrowDown, MapPin, Contact, CalendarDays, BellRing, BellOff, Headset, Bot as BotIcon, Shuffle
+  ArrowUp, ArrowDown, MapPin, Contact, CalendarDays, BellRing, BellOff, Headset, Bot as BotIcon, Shuffle, Pencil
 } from 'lucide-react';
+import CrmSyncProperties from '../../Components/Flows/CrmSyncProperties';
+import { applySavedTheme } from '../../theme/appearance';
 import FlowPhonePreview from './FlowPhonePreview';
 import PlatformIcon, { getPlatformMeta } from '../../Components/Common/PlatformIcon';
 import BroadcastStartNodeProperties from '../../Components/Broadcast/BroadcastStartNodeProperties';
@@ -83,6 +85,7 @@ const PLATFORM_RULES = {
     delay: true,
     webhook: true,
     httpApi: true,
+    crmSync: true, // Send to CRM (chatbot_api/utils/crm.js)
     orderStatus: true, // Order Tracking (utils/orderLookup.js)
     payment: true,     // WhatsApp In-Chat Payment / Catalog Orders
     handoff: true,
@@ -127,6 +130,7 @@ const PLATFORM_RULES = {
     delay: true,
     webhook: true,
     httpApi: true,
+    crmSync: true, // Send to CRM (chatbot_api/utils/crm.js)
     marketingOptIn: true, // Marketing Messages opt-in request (utils/messengerMarketing.js)
     orderStatus: true, // Order Tracking (utils/orderLookup.js)
     payment: true,
@@ -168,6 +172,7 @@ const PLATFORM_RULES = {
     delay: true,
     webhook: true,
     httpApi: true,
+    crmSync: true, // Send to CRM (chatbot_api/utils/crm.js)
     orderStatus: true, // Order Tracking (utils/orderLookup.js)
     payment: false,
     handoff: true,
@@ -208,6 +213,7 @@ const PLATFORM_RULES = {
     delay: true,
     webhook: true,
     httpApi: true,
+    crmSync: true, // Send to CRM (chatbot_api/utils/crm.js)
     telegramPoll: true, // native Telegram poll (utils/telegramPolls.js)
     telegramChecklist: true, // checklist (interactive in Telegram Business chats)
     orderStatus: true, // Order Tracking (utils/orderLookup.js)
@@ -260,6 +266,7 @@ const PLATFORM_RULES = {
     delay: true,
     webhook: true,
     httpApi: true,
+    crmSync: true, // Send to CRM (chatbot_api/utils/crm.js)
     orderStatus: true, // Order Tracking (utils/orderLookup.js)
     payment: false,
     handoff: true,
@@ -300,6 +307,7 @@ const PLATFORM_RULES = {
     delay: true,
     webhook: true,
     httpApi: true,
+    crmSync: true, // Send to CRM (chatbot_api/utils/crm.js)
     orderStatus: true, // Order Tracking (utils/orderLookup.js)
     payment: true,
     handoff: true,
@@ -369,6 +377,7 @@ const NODE_COLORS = {
   randomizer: '#8b5cf6',   // Purple — A/B split
   delay: '#64748b',        // Slate
   webhook: '#2563eb',      // Royal blue
+  crmSync: '#0891b2',      // Cyan — Send to CRM
   httpApi: '#7c3aed',      // Violet (distinct from webhook's blue, matches Automation module's purple elsewhere)
   payment: '#16a34a',      // Green
   telegramPoll: '#229ed9', // Telegram blue
@@ -482,6 +491,7 @@ const NODE_ICONS = {
   delay: Clock,
   webhook: Globe,
   httpApi: Network,
+  crmSync: Contact,
   payment: ShoppingBag,
   telegramPoll: BarChart3,
   telegramChecklist: ListChecks,
@@ -541,6 +551,7 @@ const PALETTE_CATEGORIES = [
       { type: 'delay', label: 'Delay' },
       { type: 'webhook', label: 'Webhook / Zapier' },
       { type: 'httpApi', label: 'HTTP API' },
+      { type: 'crmSync', label: 'Send to CRM' },
       { type: 'payment', label: 'Catalog / Payment' },
       { type: 'orderStatus', label: 'Order Tracking' },
       { type: 'marketingOptIn', label: 'Marketing opt-in (Messenger)' },
@@ -655,6 +666,7 @@ const DEFAULT_NODE_DATA = {
   delay:        { label: 'Delay', seconds: 3 },
   webhook:      { label: 'Webhook / Zapier Action', url: '', method: 'POST', payloadMode: 'ALL_VARIABLES', customPayload: '', customHeaders: '' },
   httpApi:      { label: 'HTTP API', campaignId: '' },
+  crmSync:      { label: 'Send to CRM', connectionId: '', connectionName: '', extraFields: [], note: '' },
   marketingOptIn: { label: 'Marketing opt-in', title: 'Get our offers and updates', imageUrl: '' },
   orderStatus: { label: 'Order Tracking', lookup: 'latest', orderNumberVariable: '', message: 'Your order #{{order.order_number}} is {{order.order_status}}.\nItems: {{order.items}}\nTotal: {{order.total}}', notFoundMessage: "Sorry, I couldn't find an order for you. Please check the order number or contact us.", showTrackButton: true, trackButtonLabel: 'Track order' },
   telegramChecklist: { label: 'Checklist', title: 'Your checklist', tasks: ['First step', 'Second step'], othersCanMarkDone: true, othersCanAdd: false, saveToFieldId: null },
@@ -914,8 +926,16 @@ const builderStyles = `
     flex: 1;
     position: relative;
   }
+  .fb-flow-name { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px 0 0; border: 1px dashed transparent; border-radius: 6px; cursor: text; transition: border-color 0.15s, background 0.15s; }
+  .fb-flow-name:hover { border-color: var(--border-light); }
+  .fb-flow-name:focus-within { border-style: solid; border-color: var(--primary-light); background: var(--bg-card); }
+  .fb-flow-name input { font-weight: 700; font-size: 14px; color: var(--text-primary); border: none; outline: none; background: transparent; padding: 4px 4px 4px 8px; width: 220px; max-width: 26vw; font-family: inherit; }
+  .fb-flow-name svg { color: var(--text-tertiary); flex-shrink: 0; }
+  .fb-flow-name:focus-within svg { color: var(--primary); }
   .fb-canvas .react-flow__node { cursor: pointer; }
   .fb-canvas .react-flow__minimap { border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+  [data-theme="dark"] .fb-canvas .react-flow__minimap { background: var(--bg-card); }
+  [data-theme="dark"] .fb-canvas .react-flow__minimap-mask { fill: rgba(0, 0, 0, 0.45); }
   .fb-canvas .react-flow__controls { border-radius: 8px; overflow: hidden; border: 1px solid var(--border); box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
   .fb-canvas .react-flow__controls button {
     background: var(--bg-surface);
@@ -2604,6 +2624,11 @@ function validateNodeRequirements(node, platform = null) {
       }
       return null;
 
+    case 'crmSync':
+      if (!data.connectionId) return 'Choose a CRM connection';
+      if ((data.extraFields || []).some((f) => String(f.value || '').trim() && !f.target)) return 'Choose the CRM field for every extra value';
+      return null;
+
     case 'marketingOptIn':
       if (!String(data.title || '').trim()) return 'The opt-in request needs a title';
       if (String(data.title).length > 65) return 'The title can be at most 65 characters';
@@ -2706,6 +2731,7 @@ function getNodeDimensions(node) {
     case 'randomizer':
       return { width, height: 70 + 32 * Math.max(2, (node?.data?.branches || []).length) };
     case 'httpApi':
+    case 'crmSync':
       return { width, height: 135 };
     case 'startAutomation':
       return { width, height: 170 };
@@ -5855,7 +5881,45 @@ function WebhookNode({ id, data, selected }) {
 
 /* ── HTTP API Node — calls a saved HTTP API Campaign, branches on whether
    the request succeeded, same two-handle shape as ConditionNode ─────── */
-function HttpApiNode({ id, data, selected }) {
+function HttpApiNode(props) {
+  const { data } = props;
+  return (
+    <SuccessFailNode {...props} type="httpApi" title="HTTP API" icon={Network}>
+      {data.campaignName ? (
+        <span style={{ fontSize: 11, fontWeight: 600, color: '#1e293b' }}>{data.campaignName}</span>
+      ) : (
+        <span style={{ opacity: 0.5, fontStyle: 'italic', fontSize: 11, color: '#64748b' }}>No campaign selected</span>
+      )}
+    </SuccessFailNode>
+  );
+}
+
+/* ── Send to CRM Node (chatbot_api/utils/crm.js runCrmFlowStep) ───── */
+function CrmSyncNode(props) {
+  const { data } = props;
+  const extras = (data.extraFields || []).filter((f) => f.target).length;
+  return (
+    <SuccessFailNode {...props} type="crmSync" title="Send to CRM" icon={Contact}>
+      {data.connectionName ? (
+        <>
+          <span style={{ fontSize: 11, fontWeight: 600, color: '#1e293b' }}>{data.connectionName}</span>
+          {(extras > 0 || data.note) && (
+            <div style={{ fontSize: 10, color: '#64748b', marginTop: 3 }}>
+              {extras > 0 ? `+${extras} field${extras === 1 ? '' : 's'}` : ''}{extras > 0 && data.note ? ' · ' : ''}{data.note ? 'adds a note' : ''}
+            </div>
+          )}
+        </>
+      ) : (
+        <span style={{ opacity: 0.5, fontStyle: 'italic', fontSize: 11, color: '#64748b' }}>No CRM selected</span>
+      )}
+    </SuccessFailNode>
+  );
+}
+
+/* Two-handle (Success / Fail) action node shared by HTTP API and Send to CRM. */
+function SuccessFailNode({ id, data, selected, type, title, icon, children }) {
+  const Icon = icon;
+  const color = NODE_COLORS[type];
   const unsupported = data?._unsupported;
   const validationError = data?._validationError;
   const connectedHandles = useConnectedHandles(id);
@@ -5866,10 +5930,10 @@ function HttpApiNode({ id, data, selected }) {
       style={{
         background: '#ffffff',
         borderRadius: 20,
-        borderColor: validationError ? '#ef4444' : selected ? NODE_COLORS.httpApi : '#e2e8f0',
+        borderColor: validationError ? '#ef4444' : selected ? color : '#e2e8f0',
       }}
     >
-      <NodeHoverActions nodeId={id} nodeType="httpApi" />
+      <NodeHoverActions nodeId={id} nodeType={type} />
       <DelayPill data={data} />
       {validationError ? (
         <div className="fb-node-warning" style={{ background: '#ef4444' }} title={`Missing Data: ${validationError}`}>
@@ -5884,28 +5948,24 @@ function HttpApiNode({ id, data, selected }) {
       <div
         className="fb-node-header"
         style={{
-          background: validationError ? '#fef2f2' : `${NODE_COLORS.httpApi}12`,
-          borderBottom: `1px solid ${validationError ? '#fecaca' : `${NODE_COLORS.httpApi}22`}`,
+          background: validationError ? '#fef2f2' : `${color}12`,
+          borderBottom: `1px solid ${validationError ? '#fecaca' : `${color}22`}`,
           borderRadius: '19px 19px 0 0',
         }}
       >
         <div
           style={{
             width: 22, height: 22, borderRadius: 6,
-            background: validationError ? '#fee2e2' : `${NODE_COLORS.httpApi}1e`,
+            background: validationError ? '#fee2e2' : `${color}1e`,
             display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
           }}
         >
-          <Network size={13} style={{ color: validationError ? '#ef4444' : NODE_COLORS.httpApi }} />
+          <Icon size={13} style={{ color: validationError ? '#ef4444' : color }} />
         </div>
-        <span style={{ fontWeight: 700, fontSize: '11.5px', color: validationError ? '#b91c1c' : '#1e293b' }}>HTTP API</span>
+        <span style={{ fontWeight: 700, fontSize: '11.5px', color: validationError ? '#b91c1c' : '#1e293b' }}>{title}</span>
       </div>
       <div className="fb-node-body">
-        {data.campaignName ? (
-          <span style={{ fontSize: 11, fontWeight: 600, color: '#1e293b' }}>{data.campaignName}</span>
-        ) : (
-          <span style={{ opacity: 0.5, fontStyle: 'italic', fontSize: 11, color: '#64748b' }}>No campaign selected</span>
-        )}
+        {children}
       </div>
       <div className="fb-condition-outputs" style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 12px 10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
@@ -11107,6 +11167,9 @@ function PropertiesPanel({ node, onClose, onUpdate, onDelete, platform, customFi
           </div>
         );
 
+      case 'crmSync':
+        return <CrmSyncProperties data={data} updateFields={updateFields} />;
+
       case 'httpApi':
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -11875,6 +11938,7 @@ const nodeTypes = {
   delay: DelayNode,
   webhook: WebhookNode,
   httpApi: HttpApiNode,
+  crmSync: CrmSyncNode,
   payment: PaymentNode,
   telegramPoll: TelegramPollNode,
   telegramChecklist: TelegramChecklistNode,
@@ -13007,10 +13071,30 @@ function FlowBuilderInner() {
     // Intentionally loads once per flow id — re-running when the platform / history callbacks change would reload the canvas and drop unsaved edits.
   }, [id, setNodes, setEdges]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* ── Auto-save disabled on user request ─────────────────── */
-  const triggerAutoSave = useCallback(() => {
-    // Auto-save disabled
-  }, []);
+  /* ── Header rename ─────────────────────────────────────────
+     The canvas is only saved with Save (auto-save is off on request), but the
+     reference name of a regular flow is renamed on its own right away
+     (PATCH /flows/:id/name — it never touches the steps). Sequences, forms and
+     a drilled-in form keep their name for Save, which already sends it. */
+  const savedFlowNameRef = useRef('');
+  useEffect(() => {
+    if (flowData?.name !== undefined) savedFlowNameRef.current = flowData.name || '';
+  }, [flowData]);
+  const handleHeaderRename = useCallback(async () => {
+    const next = String(flowName || '').replace(/\s+/g, ' ').trim();
+    const previous = savedFlowNameRef.current;
+    if (!next) { setFlowName(previous || 'Untitled Flow'); return; }
+    if (next !== flowName) setFlowName(next);
+    if (next === previous || !id || id === 'new' || isUserInputFlow || isSequence || drilledIn) return;
+    try {
+      await flowAPI.rename(id, next);
+      savedFlowNameRef.current = next;
+      toast.success('Renamed', { description: next });
+    } catch (err) {
+      setFlowName(previous);
+      toast.error(err?.response?.data?.message || 'Could not rename the flow');
+    }
+  }, [flowName, id, isUserInputFlow, isSequence, drilledIn]);
 
   /* ── Auto-save on changes disabled ──────────────────────── */
   // Auto-save disabled per user request
@@ -13292,6 +13376,7 @@ function FlowBuilderInner() {
       }
       setAutoSaveStatus('saved');
       setTimeout(() => setAutoSaveStatus(''), 2500);
+      if (!drilledIn) savedFlowNameRef.current = flowName;
       if (drilledIn) setUifDirty(false);
       if (silent) return true;
 
@@ -13961,32 +14046,24 @@ function FlowBuilderInner() {
             </div>
           )}
 
-          <input
-            value={flowName}
-            onChange={(e) => setFlowName(e.target.value)}
-            onBlur={triggerAutoSave}
-            spellCheck={false}
-            style={{
-              fontWeight: 700,
-              fontSize: 14,
-              color: '#0f172a',
-              border: '1px solid transparent',
-              borderRadius: 6,
-              padding: '4px 8px',
-              outline: 'none',
-              maxWidth: 220,
-              background: 'transparent',
-              transition: 'border-color 0.15s',
-            }}
-            onFocus={(e) => {
-              e.currentTarget.style.borderColor = '#cbd5e1';
-              e.currentTarget.style.background = '#ffffff';
-            }}
-            onBlurCapture={(e) => {
-              e.currentTarget.style.borderColor = 'transparent';
-              e.currentTarget.style.background = 'transparent';
-            }}
-          />
+          {/* Reference name — click to rename. A regular flow is renamed right away
+              (PATCH /flows/:id/name); a sequence / form keeps it for Save. */}
+          <label className="fb-flow-name" title="Click to rename" data-testid="flow-name">
+            <input
+              value={flowName}
+              onChange={(e) => setFlowName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur();
+                if (e.key === 'Escape') { setFlowName(savedFlowNameRef.current); e.currentTarget.blur(); }
+              }}
+              onBlur={handleHeaderRename}
+              maxLength={200}
+              placeholder="Name this flow"
+              aria-label="Flow name"
+              spellCheck={false}
+            />
+            <Pencil size={12} aria-hidden="true" />
+          </label>
 
           <span
             style={{
@@ -14367,6 +14444,9 @@ function TopBarThemedButton({ platform, onClick, disabled = false, busy = false,
    ═══════════════════════════════════════════════════════════════════ */
 
 export default function FlowBuilderPage() {
+  // The builder has no AppLayout / TopBar, so a flow opened directly (new tab,
+  // refresh) used to always show light mode.
+  useLayoutEffect(() => { applySavedTheme(); }, []);
   return (
     <>
       <style>{builderStyles}</style>

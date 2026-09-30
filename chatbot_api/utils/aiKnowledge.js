@@ -105,7 +105,7 @@ export async function indexKnowledgeSource({ sourceId, agentId, agencyId, text }
   await pool.query("DELETE FROM ai_knowledge_chunks WHERE source_id = ?", [sourceId]);
 
   let embeddings = null;
-  const resolved = await resolveCapability(agencyId, "embeddings");
+  const resolved = await resolveCapability(agencyId, "embeddings", null, { feature: "knowledge_index" });
   if (resolved) {
     try {
       embeddings = [];
@@ -130,7 +130,7 @@ export async function indexKnowledgeSource({ sourceId, agentId, agencyId, text }
   const status = embeddings ? "indexed" : "error";
   const errorMessage = embeddings
     ? null
-    : "Chunked, but no embeddings-capable AI provider is connected — connect OpenAI or Gemini in Settings → AI Providers, then re-index this source.";
+    : "Chunked, but the platform's AI has no embeddings-capable provider yet — re-index this source once support has set one up.";
   await pool.query(
     "UPDATE ai_agent_knowledge_sources SET status = ?, error_message = ?, last_indexed_at = NOW() WHERE id = ?",
     [status, errorMessage, sourceId]

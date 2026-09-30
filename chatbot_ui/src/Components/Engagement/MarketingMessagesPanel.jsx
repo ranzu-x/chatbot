@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, RefreshCw, Plus, Send, Trash2, Megaphone, KeyRound, AlertTriangle, X } from 'lucide-react';
+import { Loader2, RefreshCw, Plus, Send, Trash2, Megaphone, KeyRound, AlertTriangle, X, BarChart3 } from 'lucide-react';
 import { marketingMessagesAPI, labelAPI } from '../../services/api';
 import useFacebookSDK from '../../hooks/useFacebookSDK';
 import { useAuth } from '../../Provider/AuthContext';
@@ -26,6 +26,7 @@ export default function MarketingMessagesPanel({ account }) {
   const [editing, setEditing] = useState(null); // null | 'new' | campaign id
   const [form, setForm] = useState(EMPTY);
   const [labels, setLabels] = useState([]);
+  const [insights, setInsights] = useState({}); // campaign id → Meta's numbers (GET /<campaign>/insights)
 
   const load = useCallback(() => {
     marketingMessagesAPI.get(account.id)
@@ -74,10 +75,15 @@ export default function MarketingMessagesPanel({ account }) {
       name: c.name,
       message: { ...EMPTY.message, ...c.message, buttons: c.message.buttons || [] },
       labelIds: c.audience?.labelIds || [],
-      dailyBudget: c.daily_budget ? String(c.daily_budget / 100) : '',
+      dailyBudget: c.dailyBudgetAmount ? String(c.dailyBudgetAmount) : '',
     });
     setEditing(c.id);
   };
+
+  const loadInsights = (c) => run(`ins-${c.id}`, async () => {
+    const res = await marketingMessagesAPI.insights(account.id, c.id);
+    setInsights((m) => ({ ...m, [c.id]: res.data.insights }));
+  });
 
   const saveCampaign = () => run('save', async () => {
     const body = { name: form.name, message: form.message, audience: { labelIds: form.labelIds }, dailyBudget: form.dailyBudget ? Number(form.dailyBudget) : null };
@@ -95,7 +101,7 @@ export default function MarketingMessagesPanel({ account }) {
     if (!count) { notify.error('Nobody to send to — no active subscribers match this audience'); return; }
     const ok = await showAlert.confirm(
       'Send this paid campaign?',
-      `${count} subscriber(s)${resting ? `, ${resting} of them got a marketing message in the last 12 hours and will be skipped` : ''}. Meta charges your ad account (${data.account?.adAccountName || data.account?.adAccountId}) for each delivered message.`,
+      `${count} subscriber(s)${resting ? `, ${resting} of them got a marketing message in the last 12 hours and will be skipped` : ''}. Meta charges your ad account (${data.account?.adAccountName || data.account?.adAccountId}) for each delivered message, up to a daily budget of ${c.dailyBudgetAmount} ${data.account?.adAccountCurrency || ''}.`,
       'Send now'
     );
     if (!ok) return;
@@ -115,7 +121,10 @@ export default function MarketingMessagesPanel({ account }) {
   if (!data) return <div className="bm-content-card"><div style={{ padding: 40, textAlign: 'center' }}><Loader2 className="animate-spin" size={22} /></div></div>;
 
   const acc = data.account;
-  const box = { background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 10, padding: 16, marginBottom: 14 };
+  const box = { background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 10, padding: 16 };
+  const currency = acc?.adAccountCurrency || '';
+  const wholeUnits = Boolean(acc?.wholeUnitCurrency);
+  const money = (v) => (v === null || v === undefined ? '—' : `${Number(v).toLocaleString(undefined, { maximumFractionDigits: wholeUnits ? 0 : 2 })}${currency ? ` ${currency}` : ''}`);
   const hint = { fontSize: '0.78rem', color: 'var(--text-muted)', margin: '4px 0 10px', lineHeight: 1.5 };
   const m = form.message;
   const setMsg = (patch) => setForm((f) => ({ ...f, message: { ...f.message, ...patch } }));
@@ -127,6 +136,7 @@ export default function MarketingMessagesPanel({ account }) {
         <p className="bm-card-sub">Paid promotional messages on Messenger to people who agreed to receive them — any time, beyond the 24-hour window. Meta bills your ad account per delivered message; each person gets at most one every 12 hours.</p>
       </div>
 
+      <div className="bm-card-body">
       {/* ── Connection ── */}
       <div style={box}>
         <strong style={{ fontSize: '0.9rem' }}>Connection</strong>
@@ -147,8 +157,8 @@ export default function MarketingMessagesPanel({ account }) {
                 {busy === 'connect' ? <Loader2 size={14} className="animate-spin" /> : <Megaphone size={14} />} {acc ? 'Reconnect with Facebook' : 'Connect with Facebook'}
               </button>
             ) : (
-              <span style={{ fontSize: '0.8rem', color: 'var(--warning)' }}>
-                <AlertTriangle size={13} /> The Meta app has no Marketing Messages login configuration yet — add it in Settings → Meta App Setup (Messenger / Instagram).
+              <span style={{ fontSize: '0.8rem', color: 'var(--warning)', display: 'flex', gap: 6, alignItems: 'flex-start', flexBasis: '100%', lineHeight: 1.45 }}>
+                <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2 }} /> The Meta app has no Marketing Messages login configuration yet — add it in Settings → Meta App Setup (Messenger / Instagram).
               </span>
             )}
             {acc && <button type="button" className="btn btn-secondary btn-sm" onClick={() => run('adlist', async () => { const r = await marketingMessagesAPI.adAccounts(account.id); setAdAccounts(r.data.adAccounts); })}>Change ad account</button>}
@@ -194,7 +204,7 @@ export default function MarketingMessagesPanel({ account }) {
         </div>
 
         {editing && (
-          <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, marginBottom: 12, background: '#fff', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 12, marginBottom: 12, background: 'var(--bg-card)', display: 'flex', flexDirection: 'column', gap: 10 }}>
             <input className="form-input" placeholder="Campaign name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
             <select className="form-input" value={m.type} onChange={(e) => setMsg({ type: e.target.value })}>
               <option value="text">Text</option>
@@ -239,7 +249,13 @@ export default function MarketingMessagesPanel({ account }) {
               </select>
               <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>No label chosen = every subscriber of this Page.</span>
             </div>
-            <input className="form-input" type="number" min="1" step="0.01" placeholder="Daily budget in your ad account's currency (optional — Meta sets one otherwise)" value={form.dailyBudget} onChange={(e) => setForm((f) => ({ ...f, dailyBudget: e.target.value }))} />
+            <div>
+              <label style={{ fontSize: '0.78rem', fontWeight: 600 }}>Daily budget{currency ? ` (${currency})` : ''} *</label>
+              <input className="form-input" type="number" min={wholeUnits ? 1 : 0.01} step={wholeUnits ? 1 : 0.01} placeholder={`e.g. ${wholeUnits ? '50000' : '10.00'}`} value={form.dailyBudget} onChange={(e) => setForm((f) => ({ ...f, dailyBudget: e.target.value }))} />
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                Required by Meta. Caps what this campaign can spend per day — once it's reached, no more messages go out that day.{!currency ? " Uses your ad account's currency." : ''}
+              </span>
+            </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditing(null)}>Cancel</button>
               <button type="button" className="btn btn-primary btn-sm" disabled={busy === 'save'} onClick={saveCampaign}>{busy === 'save' ? <Loader2 size={14} className="animate-spin" /> : 'Save draft'}</button>
@@ -250,19 +266,29 @@ export default function MarketingMessagesPanel({ account }) {
         {data.campaigns.length === 0 && !editing ? <p style={{ ...hint, margin: 0 }}>No campaigns yet.</p> : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {data.campaigns.map((c) => (
-              <div key={c.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, background: '#fff' }}>
+              <div key={c.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, background: 'var(--bg-card)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 700, fontSize: '0.86rem' }}>{c.name} <span className="badge badge-muted" style={{ marginLeft: 6 }}>{STATUS[c.status] || c.status}</span></div>
                     <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.preview}</div>
+                    {c.status === 'DRAFT' && (
+                      c.dailyBudgetAmount
+                        ? <div style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>Daily budget {money(c.dailyBudgetAmount)}</div>
+                        : <div style={{ fontSize: '0.72rem', color: 'var(--warning)' }}><AlertTriangle size={11} /> Needs a daily budget — edit it before sending</div>
+                    )}
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                     {['DRAFT', 'FAILED'].includes(c.status) && (
-                      <button type="button" className="btn btn-primary btn-sm" disabled={!acc?.adAccountId || busy.startsWith('send') || busy.startsWith('aud')} onClick={() => send(c)}>
+                      <button type="button" className="btn btn-primary btn-sm" disabled={!acc?.adAccountId || (c.status === 'DRAFT' && !c.dailyBudgetAmount) || busy.startsWith('send') || busy.startsWith('aud')} onClick={() => send(c)}>
                         {busy === `send-${c.id}` || busy === `aud-${c.id}` ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Send
                       </button>
                     )}
                     {c.status === 'DRAFT' && <button type="button" className="btn btn-secondary btn-sm" onClick={() => openEditor(c)}>Edit</button>}
+                    {c.hasMetaStats && (
+                      <button type="button" className="btn btn-secondary btn-sm" title="Delivered, read, clicks and spend as Meta reports them" disabled={busy === `ins-${c.id}`} onClick={() => loadInsights(c)}>
+                        {busy === `ins-${c.id}` ? <Loader2 size={13} className="animate-spin" /> : <BarChart3 size={13} />} Meta stats
+                      </button>
+                    )}
                     {c.status === 'DRAFT' && <button type="button" className="btn btn-ghost btn-sm" aria-label="Delete" onClick={() => del(c)}><Trash2 size={13} /></button>}
                   </div>
                 </div>
@@ -277,11 +303,22 @@ export default function MarketingMessagesPanel({ account }) {
                     {c.failed_count > 0 && <span style={{ color: 'var(--danger)' }}>Failed <b>{c.failed_count}</b></span>}
                   </div>
                 )}
+                {insights[c.id] && (
+                  <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: '0.76rem', marginTop: 6, padding: '6px 8px', borderRadius: 8, background: 'var(--bg-hover)' }}>
+                    <span style={{ fontWeight: 700 }}>Meta:</span>
+                    <span>Delivered <b>{insights[c.id].delivered ?? '—'}</b></span>
+                    <span>Read rate <b>{insights[c.id].readRate === null ? '—' : `${Math.round(insights[c.id].readRate * (insights[c.id].readRate <= 1 ? 100 : 1))}%`}</b></span>
+                    <span>Clicks <b>{insights[c.id].clicks ?? '—'}</b></span>
+                    <span>Spend <b>{money(insights[c.id].spend)}</b></span>
+                    {insights[c.id].costPerDelivered !== null && <span>Per delivered <b>{money(insights[c.id].costPerDelivered)}</b></span>}
+                  </div>
+                )}
                 {c.error_message && <div style={{ fontSize: '0.74rem', color: 'var(--danger)', marginTop: 4 }}>{c.error_message}</div>}
               </div>
             ))}
           </div>
         )}
+      </div>
       </div>
     </div>
   );

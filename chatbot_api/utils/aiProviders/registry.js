@@ -16,6 +16,8 @@ import { decryptSecret } from "../cryptoVault.js";
 import { createOpenAICompatibleAdapter } from "./openAICompatibleAdapter.js";
 import { anthropicAdapter } from "./anthropicAdapter.js";
 import { geminiAdapter } from "./geminiAdapter.js";
+import { resolveAiResource } from "../aiCredits/resource.js";
+import { meterAdapter } from "../aiCredits/meter.js";
 
 export const PROVIDERS = {
   openai: {
@@ -110,55 +112,28 @@ async function loadAgencyProvidersRaw(agencyId) {
 }
 
 /**
- * Loads this agency's enabled, credentialed providers from the DB.
- * Returns [{ id, model, apiKey }] — apiKey already decrypted, never logged.
- *
- * Reseller-customer inheritance (approved SaaS hierarchy plan §11): a
- * RESELLER_CUSTOMER with none of its own configured providers falls back to
- * its parent RESELLER's own providers, but ONLY when BOTH gates pass —
- * the platform-wide `custom_ai_api_for_resellers` toggle (platform_settings)
- * AND the reseller's own package having the `custom_ai_api` module enabled
- * (package_modules). Platform-level credentials are never involved either
- * way — a reseller customer either uses its own keys, its reseller's keys
- * (if both gates allow), or gets nothing, exactly like every other BYOK
- * surface in this app.
- */
-async function loadAgencyProviders(agencyId) {
-  const own = await loadAgencyProvidersRaw(agencyId);
-  if (own.length) return own;
-
-  try {
-    const [[agency]] = await pool.query("SELECT account_type, parent_agency_id FROM agencies WHERE id = ?", [agencyId]);
-    if (agency?.account_type !== "RESELLER_CUSTOMER" || !agency.parent_agency_id) return own;
-
-    const [[platformGate]] = await pool.query("SELECT value FROM platform_settings WHERE setting_key = 'custom_ai_api_for_resellers'");
-    const platformEnabled = platformGate ? Boolean((typeof platformGate.value === "string" ? JSON.parse(platformGate.value) : platformGate.value)?.enabled) : false;
-    if (!platformEnabled) return own;
-
-    // getAgencyEntitlements is defined in utils/entitlements.js, which
-    // itself never imports this file — safe to import lazily here to avoid
-    // a circular import between the two utils modules.
-    const { getAgencyEntitlements } = await import("../entitlements.js");
-    const resellerEntitlements = await getAgencyEntitlements(agency.parent_agency_id, null);
-    const packageGateEnabled = Boolean(resellerEntitlements.modulesMap?.custom_ai_api?.isEnabled);
-    if (!packageGateEnabled) return own;
-
-    return await loadAgencyProvidersRaw(agency.parent_agency_id);
-  } catch (err) {
-    console.error("AI provider reseller-inheritance check failed:", err.message);
-    return own;
-  }
-}
-
-/**
  * Finds the best configured, enabled provider for a capability.
- * @param {number} agencyId
+ *
+ * AI resource (utils/aiCredits/resource.js): this release serves every
+ * workspace from the PLATFORM resource — the Super Admin's own providers
+ * (the Platform workspace's ai_providers rows) — and meters every call in AI
+ * credits (utils/aiCredits/meter.js): the returned adapter reserves credits
+ * before calling the provider and throws AiCreditError when the workspace or
+ * the platform pool can't cover it. Workspaces' own keys are kept but unused
+ * (decided with the user). The old reseller-customer key inheritance
+ * (custom_ai_api_for_resellers) is not used; a future RESELLER_API resource
+ * would be resolved in resource.js instead.
+ *
+ * @param {number} agencyId - the workspace the call is FOR (its credits are spent)
  * @param {'text_generation'|'vision'|'audio_transcription'|'video_understanding'|'embeddings'|'tool_calling'} capability
  * @param {string|null} preferredProviderId - tried first if it also has the capability
- * @returns {Promise<{ providerId: string, model: string, apiKey: string, adapter: object, meta: object } | null>}
+ * @param {{ feature?: string, userId?: number, integrationId?: number, agentId?: number, conversationId?: number }} [context] - for the usage history
+ * @returns {Promise<{ providerId: string, model: string, apiKey: string, adapter: object, meta: object, resource: string } | null>}
  */
-export async function resolveCapability(agencyId, capability, preferredProviderId = null) {
-  const configured = await loadAgencyProviders(agencyId);
+export async function resolveCapability(agencyId, capability, preferredProviderId = null, context = {}) {
+  const resource = await resolveAiResource(agencyId);
+  if (!resource.providerAgencyId) return null;
+  const configured = await loadAgencyProvidersRaw(resource.providerAgencyId);
   if (configured.length === 0) return null;
 
   const eligible = configured.filter((c) => providerSupports(c.id, capability));
@@ -177,7 +152,17 @@ export async function resolveCapability(agencyId, capability, preferredProviderI
     providerId: chosen.id,
     model,
     apiKey: chosen.apiKey,
-    adapter: meta.adapter,
+    adapter: resource.metered
+      ? meterAdapter(meta.adapter, { agencyId, capability, providerId: chosen.id, model, resource: resource.type, context })
+      : meta.adapter,
     meta,
+    resource: resource.type,
   };
+}
+
+/** The providers the platform resource offers (for pickers such as an agent's preferred provider). No keys. */
+export async function listResourceProviders(agencyId) {
+  const resource = await resolveAiResource(agencyId);
+  if (!resource.providerAgencyId) return [];
+  return (await loadAgencyProvidersRaw(resource.providerAgencyId)).map((c) => ({ id: c.id, model: c.model }));
 }

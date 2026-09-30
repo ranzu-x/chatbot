@@ -10,8 +10,9 @@
  * Message tags: since 27 Apr 2026 only HUMAN_AGENT is left (the others answer
  * error 100). It lets a person — never automation — reply up to 7 days after
  * the customer's last message, on Messenger and Instagram, once the app has
- * the Human Agent feature from Meta App Review. `integrations.human_agent_enabled`
- * records that the owner has it; routes/conversations.js decides per send.
+ * the Human Agent feature from Meta App Review. The person switches it on in
+ * the Inbox composer for that reply (`humanAgent: true` on the send);
+ * routes/conversations.js decides per send.
  */
 import axios from "axios";
 import { META_API_VERSION } from "./metaApi.js";
@@ -273,14 +274,19 @@ export function buildMessengerUtilitySend(tpl, params, render, options = {}) {
   };
 }
 
-/** Last inbound time + the window state for a conversation (Messenger / Instagram). */
-export async function conversationWindow(conversationId, integration) {
+/**
+ * Last inbound time + the window state for a conversation (Messenger / Instagram).
+ * 24h – 7 days is always HUMAN_AGENT ("a person may reply with the tag"): the
+ * Inbox person opts in per reply, so the old account-wide switch
+ * (`integrations.human_agent_enabled`) no longer gates it.
+ */
+export async function conversationWindow(conversationId) {
   const [[row]] = await pool.query(
     `SELECT COALESCE(cv.last_inbound_at, (SELECT MAX(m.created_at) FROM messages m WHERE m.conversation_id = cv.id AND m.direction = 'INBOUND')) AS last_inbound
      FROM conversations cv WHERE cv.id = ?`,
     [conversationId]
   );
-  return messengerWindowState(row?.last_inbound || null, { humanAgentEnabled: Boolean(integration?.human_agent_enabled) });
+  return messengerWindowState(row?.last_inbound || null, { humanAgentEnabled: true });
 }
 
 export { parseJson };

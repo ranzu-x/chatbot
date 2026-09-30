@@ -272,11 +272,11 @@ router.post("/ai/agents/:id/test-chat", async (req, res) => {
     if (!message) return res.status(400).json({ success: false, message: "Message is required" });
     const history = Array.isArray(req.body?.history) ? req.body.history.slice(-10) : [];
 
-    const resolved = await resolveCapability(agencyId, "text_generation", agent.preferred_provider);
+    const resolved = await resolveCapability(agencyId, "text_generation", agent.preferred_provider, { feature: "agent_test", userId: req.user?.id, agentId: agent.id });
     if (!resolved) {
       return res.status(400).json({
         success: false,
-        message: "No AI provider is connected yet — add one in Settings → AI Providers first.",
+        message: "The platform's AI isn't set up yet — please contact support.",
       });
     }
 
@@ -341,7 +341,7 @@ router.put("/ai/agents/:id/routing", async (req, res) => {
 
     let exampleEmbeddings = null;
     if (examplePhrases.length > 0) {
-      const resolved = await resolveCapability(agencyId, "embeddings");
+      const resolved = await resolveCapability(agencyId, "embeddings", null, { feature: "agent_routing", userId: req.user?.id });
       if (resolved) {
         try {
           exampleEmbeddings = await resolved.adapter.embed({ apiKey: resolved.apiKey, model: resolved.model, texts: examplePhrases });
@@ -363,7 +363,7 @@ router.put("/ai/agents/:id/routing", async (req, res) => {
       success: true,
       message: exampleEmbeddings || examplePhrases.length === 0
         ? "Routing rules saved."
-        : "Routing rules saved — keyword matching is active, but semantic matching needs an embeddings-capable AI provider connected (e.g. OpenAI or Gemini) in Settings → AI Providers.",
+        : "Routing rules saved — keyword matching is active, but semantic matching needs an embeddings-capable AI provider on the platform (contact support).",
     });
   } catch (err) {
     const status = err.status || 500;

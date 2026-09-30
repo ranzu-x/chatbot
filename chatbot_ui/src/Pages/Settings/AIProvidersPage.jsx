@@ -256,7 +256,7 @@ export default function AIProvidersPage() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 14 }}>
           <div>
             <h1 className="page-title">AI Providers</h1>
-            <p className="page-subtitle">Connect the AI models your Agents draw on. Keys are encrypted and never shown again after you save them.</p>
+            <p className="page-subtitle">The platform's AI keys — every account's AI (AI replies, agents, rewrites, suggestions, translation, transcription) runs on these and spends AI credits. Keys are encrypted and never shown again after you save them.</p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{

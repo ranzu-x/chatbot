@@ -61,9 +61,9 @@ const uploadImage = multer({
 
 /** A vision-capable provider's factual description of an image — this text is what actually gets chunked/embedded/searched. */
 async function describeImage(agencyId, buffer, mimeType) {
-  const resolved = await resolveCapability(agencyId, "vision");
+  const resolved = await resolveCapability(agencyId, "vision", null, { feature: "knowledge_index" });
   if (!resolved) {
-    throw Object.assign(new Error("No vision-capable AI provider connected — connect OpenAI or Gemini in Settings → AI Providers."), { status: 400 });
+    throw Object.assign(new Error("The platform's AI can't read images yet (no vision-capable provider) — please contact support."), { status: 400 });
   }
   const result = await resolved.adapter.generate({
     apiKey: resolved.apiKey,

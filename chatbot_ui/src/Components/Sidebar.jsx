@@ -70,6 +70,7 @@ const NAV_CONFIG = {
       { label: 'Packages & Modules',  icon: Package,   path: '/admin/packages' },
       { label: 'Payment Gateways',    icon: Zap,       path: '/admin/payment-gateways' },
       { label: 'Coupons',             icon: Ticket,    path: '/admin/coupons' },
+      { label: 'AI Credits',          icon: Sparkles,  path: '/admin/ai-credits' },
       { label: 'Resellers',           icon: Building2, path: '/admin/agencies' },
       { label: 'Developer Apps',      icon: KeyRound,  path: '/settings/developer-apps' },
       { label: 'Platform Settings',   icon: Settings,  path: '/admin/platform-settings' },
@@ -96,7 +97,8 @@ const NAV_CONFIG = {
     ]},
     { section: 'Integration', items: [
       { label: 'App Integrations',    icon: Blocks,   path: '/settings/apps' },
-      { label: 'AI Providers',        icon: KeyRound, path: '/settings/ai-providers', moduleKey: 'feature_ai_agent' },
+      // AI runs on the platform's providers; the workspace sees its AI credits (Pages/AiCredits/AiCreditsPage.jsx).
+      { label: 'AI Credits',          icon: Sparkles, path: '/ai-credits' },
       { label: 'Webhooks & Zapier',   icon: Globe,    path: '/webhooks' },
       { label: 'Custom Domain',       icon: Globe,    path: '/agency/domain-settings', moduleKey: 'feature_custom_domain', accountTypeIn: ['RESELLER'] },
       // The Reseller's own public landing page + pricing (chatbot_api/routes/resellerSite.js).
@@ -142,6 +144,7 @@ const NAV_CONFIG = {
     ]},
     { section: 'Control Panel', items: [
       { label: 'Team Members',     icon: Users,    path: '/team' },
+      { label: 'AI Credits',       icon: Sparkles, path: '/ai-credits' },
       // Only with the developer_apps.manage team permission, on the Platform's / a Reseller's team.
       { label: 'Developer Apps',   icon: KeyRound, path: '/settings/developer-apps', userFlag: 'canManageDeveloperApps' },
     ]},
@@ -156,10 +159,23 @@ const NAV_CONFIG = {
 // "USER"-role account is a User (a team member).
 const KIND_SUBTITLES = { SUPER_ADMIN: 'Super Admin', RESELLER: 'Reseller Portal', END_USER: 'Workspace', TEAM_MEMBER: 'Team Member' };
 
+/* Collapse / expand animation — same timing as .sidebar / .main-content in
+   index.css (--sidebar-slide). Labels stay mounted and fade while the width
+   clips them, so nothing pops in or out; icons never move sideways. */
+const SLIDE = 'var(--sidebar-slide)';
+const fadeLabel = (collapsed) => ({
+  opacity: collapsed ? 0 : 1,
+  // Fade out quickly when collapsing; fade in once the bar has mostly opened.
+  transition: collapsed ? 'opacity 0.15s ease' : 'opacity 0.3s ease 0.15s',
+  whiteSpace: 'nowrap',
+  pointerEvents: collapsed ? 'none' : undefined,
+});
+
 /** The brand in the sidebar header: the uploaded logo, else icon + name. `compact` = collapsed sidebar. */
 function BrandMark({ compact = false, size = 36, subtitle = '' }) {
   const { brandName, logoUrl, logoIconUrl } = useBranding();
-  if (compact) {
+  // Only a wide uploaded logo has to be swapped for the square mark; the icon + name version fades its text.
+  if (compact && logoUrl) {
     return logoIconUrl
       ? <img src={assetUrl(logoIconUrl)} alt={brandName} style={{ width: size, height: size, objectFit: 'contain', borderRadius: 8, flexShrink: 0 }} />
       : <DefaultMark size={size} />;
@@ -172,7 +188,7 @@ function BrandMark({ compact = false, size = 36, subtitle = '' }) {
       {logoIconUrl
         ? <img src={assetUrl(logoIconUrl)} alt="" style={{ width: size, height: size, objectFit: 'contain', borderRadius: 8, flexShrink: 0 }} />
         : <DefaultMark size={size} />}
-      <div style={{ minWidth: 0 }}>
+      <div style={{ minWidth: 0, ...fadeLabel(compact) }} aria-hidden={compact || undefined}>
         <div className="sidebar-logo-text" style={{ fontSize: '0.98rem', fontWeight: 800, letterSpacing: '-0.3px', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 150 }}>
           {brandName}
         </div>
@@ -394,7 +410,8 @@ export default function Sidebar() {
       className={`sidebar ${collapsed ? 'collapsed' : ''}`}
       style={{
         width: collapsed ? 68 : 260,
-        transition: 'width 0.22s cubic-bezier(0.4, 0, 0.2, 1)',
+        transition: `width ${SLIDE}`,
+        overflowX: 'hidden',
         background: 'var(--bg-surface)',
         borderRight: '1px solid var(--border)',
       }}
@@ -405,8 +422,9 @@ export default function Sidebar() {
         className="sidebar-logo"
         style={{
           height: 'var(--topbar-height)',
-          padding: collapsed ? '0 12px' : '0 16px',
-          justifyContent: collapsed ? 'center' : 'space-between',
+          padding: '0 16px',
+          justifyContent: 'flex-start',
+          overflow: 'hidden',
           borderBottom: '1px solid var(--border)',
           flexShrink: 0,
           boxSizing: 'border-box',
@@ -426,40 +444,32 @@ export default function Sidebar() {
         >
           <BrandMark compact={collapsed} subtitle={subtitle} />
         </Link>
-
-        {!collapsed && (
-          <button
-            onClick={toggleSidebar}
-            title="Collapse Sidebar"
-            style={{
-              width: 26,
-              height: 26,
-              borderRadius: 6,
-              border: '1px solid var(--border)',
-              background: 'var(--bg-input)',
-              color: 'var(--text-tertiary)',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <ChevronLeft size={15} />
-          </button>
-        )}
+        {/* No collapse arrow here (removed on request) — the footer button and the
+            top bar's menu button collapse / expand the sidebar. */}
       </div>
 
       {/* Navigation Items */}
-      <nav className="sidebar-nav" style={{ padding: collapsed ? '10px 8px' : '14px 10px', flex: 1, overflowY: 'auto' }}>
+      <nav className="sidebar-nav" style={{ padding: '14px 10px', flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
         {sections.map((section, sIdx) => (
-          <div key={section.section} style={{ marginBottom: collapsed ? 6 : 14 }}>
-            {collapsed ? (
-              sIdx > 0 && <div style={{ height: 1, background: 'var(--border)', margin: '6px 4px' }} />
-            ) : (
-              <div className="sidebar-section-label" style={{ fontSize: '0.66rem', fontWeight: 700, letterSpacing: '0.8px', color: 'var(--text-muted)', padding: '6px 8px 4px' }}>
-                {section.section}
-              </div>
+          <div key={section.section} style={{ marginBottom: collapsed ? 6 : 14, transition: `margin ${SLIDE}` }}>
+            {/* Section title folds away into a thin divider when collapsed. */}
+            {sIdx > 0 && (
+              <div aria-hidden="true" style={{ height: 1, background: 'var(--border)', margin: collapsed ? '6px 4px' : '0 4px', opacity: collapsed ? 1 : 0, transition: `opacity 0.3s ease, margin ${SLIDE}` }} />
             )}
+            <div
+              className="sidebar-section-label"
+              aria-hidden={collapsed || undefined}
+              style={{
+                fontSize: '0.66rem', fontWeight: 700, letterSpacing: '0.8px', color: 'var(--text-muted)',
+                padding: collapsed ? '0 8px' : '6px 8px 4px',
+                maxHeight: collapsed ? 0 : 28,
+                overflow: 'hidden',
+                ...fadeLabel(collapsed),
+                transition: `${fadeLabel(collapsed).transition}, max-height ${SLIDE}, padding ${SLIDE}`,
+              }}
+            >
+              {section.section}
+            </div>
 
             {section.items.map((item) => {
               const Icon = item.icon;
@@ -474,16 +484,18 @@ export default function Sidebar() {
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: collapsed ? 'center' : 'flex-start',
+                    justifyContent: 'flex-start',
                     gap: 10,
-                    padding: collapsed ? '9px 0' : '7px 10px',
+                    // 48px-wide item when collapsed: 15.5px each side centres the 17px icon.
+                    padding: collapsed ? '8px 15.5px' : '8px 10px',
+                    overflow: 'hidden',
                     borderRadius: 7,
                     textDecoration: 'none',
                     fontSize: '0.84rem',
                     fontWeight: active ? 700 : 500,
                     color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
                     background: active ? 'var(--bg-selected)' : 'transparent',
-                    transition: 'all 0.12s ease',
+                    transition: `background 0.12s ease, color 0.12s ease, padding ${SLIDE}`,
                     marginBottom: 2,
                   }}
                   onMouseEnter={(e) => {
@@ -504,7 +516,7 @@ export default function Sidebar() {
                     color={active ? 'var(--text-primary)' : 'var(--text-tertiary)'}
                     style={{ flexShrink: 0 }}
                   />
-                  {!collapsed && <span style={{ whiteSpace: 'nowrap' }}>{item.label}</span>}
+                  <span style={fadeLabel(collapsed)} aria-hidden={collapsed || undefined}>{item.label}</span>
                 </Link>
               );
             })}
@@ -518,17 +530,27 @@ export default function Sidebar() {
         style={{
           display: 'flex',
           alignItems: 'center',
-          justifyContent: collapsed ? 'center' : 'space-between',
-          padding: collapsed ? '10px 6px' : '10px 14px',
+          justifyContent: 'space-between',
+          gap: 8,
+          // 68px collapsed: 20px each side centres the 28px button.
+          padding: collapsed ? '10px 20px' : '10px 14px',
+          transition: `padding ${SLIDE}`,
+          overflow: 'hidden',
           borderTop: '1px solid var(--border)',
           background: 'var(--bg-surface)',
         }}
       >
-        {!collapsed ? (
-          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 500 }}>
-            {brandName}
-          </div>
-        ) : null}
+        <div
+          aria-hidden={collapsed || undefined}
+          style={{
+            fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0,
+            maxWidth: collapsed ? 0 : 200,
+            ...fadeLabel(collapsed),
+            transition: `${fadeLabel(collapsed).transition}, max-width ${SLIDE}`,
+          }}
+        >
+          {brandName}
+        </div>
 
         <button
           onClick={toggleSidebar}
@@ -544,10 +566,11 @@ export default function Sidebar() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            transition: 'all 0.12s',
+            flexShrink: 0,
+            transition: 'background 0.12s, color 0.12s',
           }}
         >
-          {collapsed ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
+          <ChevronLeft size={15} style={{ transform: collapsed ? 'rotate(180deg)' : 'none', transition: `transform ${SLIDE}` }} />
         </button>
       </div>
     </aside>

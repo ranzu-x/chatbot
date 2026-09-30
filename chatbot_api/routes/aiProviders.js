@@ -1,5 +1,12 @@
 /**
- * Settings → AI Providers (agency-wide BYOK AI credentials)
+ * Settings → AI Providers — the PLATFORM's AI credentials.
+ *
+ * AI Credits release (decided with the user): every workspace uses the Super
+ * Admin's providers and spends AI credits (utils/aiCredits). Only the Super
+ * Admin / the Platform workspace may save, test or remove keys, and they are
+ * always the Platform workspace's rows. Everyone else gets a read-only,
+ * key-free view of what the platform offers (the AI Agent editor's provider
+ * picker uses it). Workspaces' own old rows are kept but unused.
  *
  * Mirrors the existing agency_payment_gateways BYOK pattern
  * (routes/agencyPaymentGateways.js) exactly: credentials are AES-256-GCM
@@ -12,6 +19,7 @@ import { authMiddleware } from "../middleware/authmiddleware.js";
 import { roleMiddleware } from "../middleware/roleMiddleware.js";
 import { encryptSecret, decryptSecret, maskSecret } from "../utils/cryptoVault.js";
 import { PROVIDERS } from "../utils/aiProviders/registry.js";
+import { platformAgencyId } from "../utils/aiCredits/resource.js";
 
 const router = express.Router();
 
@@ -19,11 +27,17 @@ const router = express.Router();
 // comment on why a bare router.use(...) here would be dangerous (it would
 // 403 every request on this whole Express app that happens to run after
 // this router is mounted, not just requests to these routes).
-router.use("/ai/providers", authMiddleware, roleMiddleware("RESELLER", "ADMIN"));
+router.use("/ai/providers", authMiddleware, roleMiddleware("RESELLER", "ADMIN", "USER"));
 
-function getAgencyId(req) {
-  const agencyId = req.user?.agencyId;
-  if (!agencyId) throw Object.assign(new Error("No agency associated with this account"), { status: 400 });
+const isPlatformAdmin = (req) => req.user?.role === "ADMIN" || (req.tenant?.accountType === "PLATFORM" && req.user?.role === "RESELLER");
+
+/** The platform's own rows — never the caller's workspace (there is no per-workspace AI key any more). */
+async function getAgencyId(req, { write = false } = {}) {
+  if (write && !isPlatformAdmin(req)) {
+    throw Object.assign(new Error("AI providers are managed by the platform. Your workspace uses the platform's AI with AI credits."), { status: 403 });
+  }
+  const agencyId = await platformAgencyId();
+  if (!agencyId) throw Object.assign(new Error("No platform workspace found"), { status: 500 });
   return agencyId;
 }
 
@@ -36,14 +50,15 @@ function requireKnownProvider(providerId) {
 // ─── LIST ALL PROVIDERS (registry metadata + this agency's saved state) ──────
 router.get("/ai/providers", async (req, res) => {
   try {
-    const agencyId = getAgencyId(req);
+    const agencyId = await getAgencyId(req);
+    const manage = isPlatformAdmin(req);
     const [rows] = await pool.query("SELECT * FROM ai_providers WHERE agency_id = ?", [agencyId]);
     const byId = Object.fromEntries(rows.map((r) => [r.provider, r]));
 
     const providers = Object.values(PROVIDERS).map((meta) => {
       const row = byId[meta.id];
       let maskedKey = null;
-      if (row) {
+      if (row && manage) {
         try {
           const creds = JSON.parse(decryptSecret(row.credentials));
           maskedKey = maskSecret(creds.apiKey || "");
@@ -62,11 +77,11 @@ router.get("/ai/providers", async (req, res) => {
         defaultModel: row?.default_model || meta.defaultModel,
         lastVerifiedAt: row?.last_verified_at || null,
         lastVerifyStatus: row?.last_verify_status || null,
-        lastVerifyError: row?.last_verify_error || null,
+        lastVerifyError: manage ? (row?.last_verify_error || null) : null,
       };
     });
 
-    return res.json({ success: true, providers });
+    return res.json({ success: true, providers, managedByPlatform: !manage });
   } catch (err) {
     const status = err.status || 500;
     console.error("List AI providers error:", err);
@@ -80,7 +95,7 @@ router.get("/ai/providers", async (req, res) => {
 // doesn't force re-entering the key) — mirrors how a masked-key UI works.
 router.put("/ai/providers/:provider", async (req, res) => {
   try {
-    const agencyId = getAgencyId(req);
+    const agencyId = await getAgencyId(req, { write: true });
     const meta = requireKnownProvider(req.params.provider);
     const { apiKey, defaultModel, enabled } = req.body || {};
 
@@ -129,7 +144,7 @@ router.put("/ai/providers/:provider", async (req, res) => {
 // ─── TEST CONNECTION — a real, minimal call against the provider's own API ──
 router.post("/ai/providers/:provider/test", async (req, res) => {
   try {
-    const agencyId = getAgencyId(req);
+    const agencyId = await getAgencyId(req, { write: true });
     const meta = requireKnownProvider(req.params.provider);
 
     const [[row]] = await pool.query(
@@ -173,7 +188,7 @@ router.post("/ai/providers/:provider/test", async (req, res) => {
 // ─── DISCONNECT A PROVIDER ────────────────────────────────────────────────
 router.delete("/ai/providers/:provider", async (req, res) => {
   try {
-    const agencyId = getAgencyId(req);
+    const agencyId = await getAgencyId(req, { write: true });
     const meta = requireKnownProvider(req.params.provider);
     await pool.query("DELETE FROM ai_providers WHERE agency_id = ? AND provider = ?", [agencyId, meta.id]);
     return res.json({ success: true, message: `${meta.label} disconnected.` });

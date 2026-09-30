@@ -303,6 +303,17 @@ export const TEAM_RULES_CATEGORIES = [
         ],
       },
       {
+        // Settings → App Integrations → CRM (chatbot_api/routes/crm.js). Holds CRM API keys — grant with care.
+        id: 'crm',
+        name: 'CRM Integrations',
+        description: 'Connect HubSpot, Salesforce or Zoho CRM, map fields, and send subscribers and resolved chats to it.',
+        actions: [
+          { key: 'crm.create', type: 'create', label: 'Connect' },
+          { key: 'crm.update', type: 'update', label: 'Edit / Sync' },
+          { key: 'crm.delete', type: 'delete', label: 'Disconnect' },
+        ],
+      },
+      {
         id: 'google_sheets',
         name: 'Google - Google Sheet',
         description: 'Export User Input Flow responses and sync knowledge bases with Google Spreadsheets.',

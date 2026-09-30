@@ -1,0 +1,390 @@
+/*
+ * Dark-mode safety net (generated once from a colour table; edit by hand now).
+ *
+ * Much of the dashboard sets light colours as inline styles (background:
+ * '#ffffff', color: '#0f172a', border: '1px solid #e2e8f0', light tinted
+ * boxes …), which the [data-theme="dark"] tokens in index.css can't reach.
+ * React writes inline styles into the style attribute as rgb(…) text, so these
+ * attribute selectors find exactly those values and swap them for the theme
+ * tokens (and !important beats a normal inline style).
+ *
+ * New code should use the tokens (var(--bg-card), var(--text-primary),
+ * var(--border) …) and never rely on this file. An element that must stay light
+ * in dark mode (a phone mock-up, a QR code, a colour swatch) gets the
+ * data-keep-light attribute. The Community Forum (.fm-root) and Support Desk
+ * (.sd-root) have their own themes and are left alone.
+ */
+
+
+/* ── Backgrounds ── */
+
+:root[data-theme="dark"] :is([style*="background: rgb(255, 255, 255)"]:not([style*="border-radius: 50%"][style*="position: absolute"]),
+  [style*="background-color: rgb(255, 255, 255)"]:not([style*="border-radius: 50%"][style*="position: absolute"])):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  background-color: var(--bg-card) !important;
+}
+
+:root[data-theme="dark"] :is([style*="background: rgb(248, 250, 252)"],
+  [style*="background-color: rgb(248, 250, 252)"],
+  [style*="background: rgb(250, 251, 252)"],
+  [style*="background-color: rgb(250, 251, 252)"],
+  [style*="background: rgb(249, 250, 251)"],
+  [style*="background-color: rgb(249, 250, 251)"],
+  [style*="background: rgb(250, 250, 250)"],
+  [style*="background-color: rgb(250, 250, 250)"],
+  [style*="background: rgb(248, 249, 250)"],
+  [style*="background-color: rgb(248, 249, 250)"],
+  [style*="background: rgb(252, 252, 253)"],
+  [style*="background-color: rgb(252, 252, 253)"],
+  [style*="background: rgb(250, 251, 254)"],
+  [style*="background-color: rgb(250, 251, 254)"],
+  [style*="background: rgb(248, 248, 252)"],
+  [style*="background-color: rgb(248, 248, 252)"],
+  [style*="background: rgb(253, 253, 253)"],
+  [style*="background-color: rgb(253, 253, 253)"],
+  [style*="background: rgb(254, 254, 254)"],
+  [style*="background-color: rgb(254, 254, 254)"],
+  [style*="background: rgb(248, 250, 255)"],
+  [style*="background-color: rgb(248, 250, 255)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  background-color: var(--bg-surface) !important;
+}
+
+:root[data-theme="dark"] :is([style*="background: rgb(241, 245, 249)"],
+  [style*="background-color: rgb(241, 245, 249)"],
+  [style*="background: rgb(243, 244, 246)"],
+  [style*="background-color: rgb(243, 244, 246)"],
+  [style*="background: rgb(244, 244, 245)"],
+  [style*="background-color: rgb(244, 244, 245)"],
+  [style*="background: rgb(238, 242, 247)"],
+  [style*="background-color: rgb(238, 242, 247)"],
+  [style*="background: rgb(240, 242, 245)"],
+  [style*="background-color: rgb(240, 242, 245)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  background-color: var(--bg-hover) !important;
+}
+
+:root[data-theme="dark"] :is([style*="background: rgb(226, 232, 240)"],
+  [style*="background-color: rgb(226, 232, 240)"],
+  [style*="background: rgb(229, 231, 235)"],
+  [style*="background-color: rgb(229, 231, 235)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  background-color: var(--border) !important;
+}
+
+:root[data-theme="dark"] :is([style*="background: rgb(254, 242, 242)"],
+  [style*="background-color: rgb(254, 242, 242)"],
+  [style*="background: rgb(255, 241, 242)"],
+  [style*="background-color: rgb(255, 241, 242)"],
+  [style*="background: rgb(255, 245, 245)"],
+  [style*="background-color: rgb(255, 245, 245)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  background-color: rgba(239, 68, 68, 0.12) !important;
+}
+
+:root[data-theme="dark"] :is([style*="background: rgb(254, 226, 226)"],
+  [style*="background-color: rgb(254, 226, 226)"],
+  [style*="background: rgb(255, 228, 230)"],
+  [style*="background-color: rgb(255, 228, 230)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  background-color: rgba(239, 68, 68, 0.18) !important;
+}
+
+:root[data-theme="dark"] :is([style*="background: rgb(239, 246, 255)"],
+  [style*="background-color: rgb(239, 246, 255)"],
+  [style*="background: rgb(240, 249, 255)"],
+  [style*="background-color: rgb(240, 249, 255)"],
+  [style*="background: rgb(224, 242, 254)"],
+  [style*="background-color: rgb(224, 242, 254)"],
+  [style*="background: rgb(219, 234, 254)"],
+  [style*="background-color: rgb(219, 234, 254)"],
+  [style*="background: rgb(240, 247, 255)"],
+  [style*="background-color: rgb(240, 247, 255)"],
+  [style*="background: rgb(245, 249, 255)"],
+  [style*="background-color: rgb(245, 249, 255)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  background-color: rgba(59, 130, 246, 0.14) !important;
+}
+
+:root[data-theme="dark"] :is([style*="background: rgb(238, 242, 255)"],
+  [style*="background-color: rgb(238, 242, 255)"],
+  [style*="background: rgb(224, 231, 255)"],
+  [style*="background-color: rgb(224, 231, 255)"],
+  [style*="background: rgb(245, 243, 255)"],
+  [style*="background-color: rgb(245, 243, 255)"],
+  [style*="background: rgb(237, 233, 254)"],
+  [style*="background-color: rgb(237, 233, 254)"],
+  [style*="background: rgb(250, 245, 255)"],
+  [style*="background-color: rgb(250, 245, 255)"],
+  [style*="background: rgb(253, 244, 255)"],
+  [style*="background-color: rgb(253, 244, 255)"],
+  [style*="background: rgb(243, 232, 255)"],
+  [style*="background-color: rgb(243, 232, 255)"],
+  [style*="background: rgb(245, 247, 255)"],
+  [style*="background-color: rgb(245, 247, 255)"],
+  [style*="background: rgb(245, 245, 255)"],
+  [style*="background-color: rgb(245, 245, 255)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  background-color: rgba(99, 102, 241, 0.14) !important;
+}
+
+:root[data-theme="dark"] :is([style*="background: rgb(255, 251, 235)"],
+  [style*="background-color: rgb(255, 251, 235)"],
+  [style*="background: rgb(254, 243, 199)"],
+  [style*="background-color: rgb(254, 243, 199)"],
+  [style*="background: rgb(255, 247, 237)"],
+  [style*="background-color: rgb(255, 247, 237)"],
+  [style*="background: rgb(255, 237, 213)"],
+  [style*="background-color: rgb(255, 237, 213)"],
+  [style*="background: rgb(254, 252, 232)"],
+  [style*="background-color: rgb(254, 252, 232)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  background-color: rgba(245, 158, 11, 0.14) !important;
+}
+
+:root[data-theme="dark"] :is([style*="background: rgb(240, 253, 244)"],
+  [style*="background-color: rgb(240, 253, 244)"],
+  [style*="background: rgb(236, 253, 245)"],
+  [style*="background-color: rgb(236, 253, 245)"],
+  [style*="background: rgb(220, 252, 231)"],
+  [style*="background-color: rgb(220, 252, 231)"],
+  [style*="background: rgb(209, 250, 229)"],
+  [style*="background-color: rgb(209, 250, 229)"],
+  [style*="background: rgb(240, 253, 250)"],
+  [style*="background-color: rgb(240, 253, 250)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  background-color: rgba(16, 185, 129, 0.13) !important;
+}
+
+:root[data-theme="dark"] :is([style*="background: rgb(253, 242, 248)"],
+  [style*="background-color: rgb(253, 242, 248)"],
+  [style*="background: rgb(252, 231, 243)"],
+  [style*="background-color: rgb(252, 231, 243)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  background-color: rgba(236, 72, 153, 0.13) !important;
+}
+
+:root[data-theme="dark"] :is([style*="deg, rgb(255, 255, 255)"],
+  [style*="gradient(to right, rgb(255, 255, 255)"],
+  [style*="gradient(to bottom, rgb(255, 255, 255)"],
+  [style*="deg, rgb(248, 250, 252)"],
+  [style*="gradient(to right, rgb(248, 250, 252)"],
+  [style*="gradient(to bottom, rgb(248, 250, 252)"],
+  [style*="deg, rgb(250, 251, 252)"],
+  [style*="gradient(to right, rgb(250, 251, 252)"],
+  [style*="gradient(to bottom, rgb(250, 251, 252)"],
+  [style*="deg, rgb(254, 242, 242)"],
+  [style*="gradient(to right, rgb(254, 242, 242)"],
+  [style*="gradient(to bottom, rgb(254, 242, 242)"],
+  [style*="deg, rgb(255, 241, 242)"],
+  [style*="gradient(to right, rgb(255, 241, 242)"],
+  [style*="gradient(to bottom, rgb(255, 241, 242)"],
+  [style*="deg, rgb(255, 245, 245)"],
+  [style*="gradient(to right, rgb(255, 245, 245)"],
+  [style*="gradient(to bottom, rgb(255, 245, 245)"],
+  [style*="deg, rgb(239, 246, 255)"],
+  [style*="gradient(to right, rgb(239, 246, 255)"],
+  [style*="gradient(to bottom, rgb(239, 246, 255)"],
+  [style*="deg, rgb(240, 249, 255)"],
+  [style*="gradient(to right, rgb(240, 249, 255)"],
+  [style*="gradient(to bottom, rgb(240, 249, 255)"],
+  [style*="deg, rgb(255, 251, 235)"],
+  [style*="gradient(to right, rgb(255, 251, 235)"],
+  [style*="gradient(to bottom, rgb(255, 251, 235)"],
+  [style*="deg, rgb(254, 252, 232)"],
+  [style*="gradient(to right, rgb(254, 252, 232)"],
+  [style*="gradient(to bottom, rgb(254, 252, 232)"],
+  [style*="deg, rgb(255, 247, 237)"],
+  [style*="gradient(to right, rgb(255, 247, 237)"],
+  [style*="gradient(to bottom, rgb(255, 247, 237)"],
+  [style*="deg, rgb(240, 253, 244)"],
+  [style*="gradient(to right, rgb(240, 253, 244)"],
+  [style*="gradient(to bottom, rgb(240, 253, 244)"],
+  [style*="deg, rgb(236, 253, 245)"],
+  [style*="gradient(to right, rgb(236, 253, 245)"],
+  [style*="gradient(to bottom, rgb(236, 253, 245)"],
+  [style*="deg, rgb(253, 242, 248)"],
+  [style*="gradient(to right, rgb(253, 242, 248)"],
+  [style*="gradient(to bottom, rgb(253, 242, 248)"],
+  [style*="deg, rgb(250, 245, 255)"],
+  [style*="gradient(to right, rgb(250, 245, 255)"],
+  [style*="gradient(to bottom, rgb(250, 245, 255)"],
+  [style*="deg, rgb(245, 243, 255)"],
+  [style*="gradient(to right, rgb(245, 243, 255)"],
+  [style*="gradient(to bottom, rgb(245, 243, 255)"],
+  [style*="deg, rgb(238, 242, 255)"],
+  [style*="gradient(to right, rgb(238, 242, 255)"],
+  [style*="gradient(to bottom, rgb(238, 242, 255)"],
+  [style*="deg, rgb(245, 247, 255)"],
+  [style*="gradient(to right, rgb(245, 247, 255)"],
+  [style*="gradient(to bottom, rgb(245, 247, 255)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  background: var(--bg-surface) !important;
+}
+
+/* ── Text ── */
+
+:root[data-theme="dark"] :is([style*="color: rgb(15, 23, 42)"],
+  [style*="color: rgb(30, 41, 59)"],
+  [style*="color: rgb(26, 26, 46)"],
+  [style*="color: rgb(17, 24, 39)"],
+  [style*="color: rgb(31, 41, 55)"],
+  [style*="color: rgb(24, 24, 27)"],
+  [style*="color: rgb(0, 0, 0)"],
+  [style*="color: rgb(2, 6, 23)"],
+  [style*="color: rgb(30, 27, 75)"],
+  [style*="color: rgb(23, 37, 84)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  color: var(--text-primary) !important;
+}
+
+:root[data-theme="dark"] :is([style*="color: rgb(51, 65, 85)"],
+  [style*="color: rgb(55, 65, 81)"],
+  [style*="color: rgb(71, 85, 105)"],
+  [style*="color: rgb(75, 85, 99)"],
+  [style*="color: rgb(92, 92, 128)"],
+  [style*="color: rgb(63, 63, 70)"],
+  [style*="color: rgb(82, 82, 91)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  color: var(--text-secondary) !important;
+}
+
+:root[data-theme="dark"] :is([style*="color: rgb(100, 116, 139)"],
+  [style*="color: rgb(107, 114, 128)"],
+  [style*="color: rgb(113, 113, 122)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  color: var(--text-tertiary) !important;
+}
+
+:root[data-theme="dark"] :is([style*="color: rgb(153, 27, 27)"],
+  [style*="color: rgb(185, 28, 28)"],
+  [style*="color: rgb(127, 29, 29)"],
+  [style*="color: rgb(159, 18, 57)"],
+  [style*="color: rgb(190, 18, 60)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  color: #fca5a5 !important;
+}
+
+:root[data-theme="dark"] :is([style*="color: rgb(146, 64, 14)"],
+  [style*="color: rgb(180, 83, 9)"],
+  [style*="color: rgb(120, 53, 15)"],
+  [style*="color: rgb(154, 52, 18)"],
+  [style*="color: rgb(194, 65, 12)"],
+  [style*="color: rgb(133, 77, 14)"],
+  [style*="color: rgb(161, 98, 7)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  color: #fcd34d !important;
+}
+
+:root[data-theme="dark"] :is([style*="color: rgb(22, 101, 52)"],
+  [style*="color: rgb(6, 95, 70)"],
+  [style*="color: rgb(21, 128, 61)"],
+  [style*="color: rgb(4, 120, 87)"],
+  [style*="color: rgb(20, 83, 45)"],
+  [style*="color: rgb(15, 118, 110)"],
+  [style*="color: rgb(17, 94, 89)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  color: #86efac !important;
+}
+
+:root[data-theme="dark"] :is([style*="color: rgb(30, 64, 175)"],
+  [style*="color: rgb(29, 78, 216)"],
+  [style*="color: rgb(30, 58, 138)"],
+  [style*="color: rgb(7, 89, 133)"],
+  [style*="color: rgb(3, 105, 161)"],
+  [style*="color: rgb(30, 58, 95)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  color: #93c5fd !important;
+}
+
+:root[data-theme="dark"] :is([style*="color: rgb(55, 48, 163)"],
+  [style*="color: rgb(67, 56, 202)"],
+  [style*="color: rgb(91, 33, 182)"],
+  [style*="color: rgb(109, 40, 217)"],
+  [style*="color: rgb(49, 46, 129)"],
+  [style*="color: rgb(79, 70, 229)"],
+  [style*="color: rgb(124, 58, 237)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  color: #c4b5fd !important;
+}
+
+:root[data-theme="dark"] :is([style*="color: rgb(157, 23, 77)"],
+  [style*="color: rgb(190, 24, 93)"],
+  [style*="color: rgb(131, 24, 67)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  color: #f9a8d4 !important;
+}
+
+/* ── Borders ── */
+
+:root[data-theme="dark"] :is([style*="solid rgb(226, 232, 240)"],
+  [style*="solid rgb(229, 231, 235)"],
+  [style*="solid rgb(228, 228, 240)"],
+  [style*="solid rgb(241, 245, 249)"],
+  [style*="solid rgb(243, 244, 246)"],
+  [style*="solid rgb(238, 242, 247)"],
+  [style*="solid rgb(228, 228, 231)"],
+  [style*="border-color: rgb(226, 232, 240)"],
+  [style*="border-color: rgb(229, 231, 235)"],
+  [style*="border-color: rgb(228, 228, 240)"],
+  [style*="border-color: rgb(241, 245, 249)"],
+  [style*="border-color: rgb(243, 244, 246)"],
+  [style*="border-color: rgb(238, 242, 247)"],
+  [style*="border-color: rgb(228, 228, 231)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  border-color: var(--border) !important;
+}
+
+:root[data-theme="dark"] :is([style*="solid rgb(203, 213, 225)"],
+  [style*="solid rgb(209, 213, 219)"],
+  [style*="solid rgb(212, 212, 216)"],
+  [style*="border-color: rgb(203, 213, 225)"],
+  [style*="border-color: rgb(209, 213, 219)"],
+  [style*="border-color: rgb(212, 212, 216)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  border-color: var(--border-light) !important;
+}
+
+:root[data-theme="dark"] :is([style*="solid rgb(254, 202, 202)"],
+  [style*="solid rgb(252, 165, 165)"],
+  [style*="solid rgb(254, 226, 226)"],
+  [style*="solid rgb(254, 205, 211)"],
+  [style*="border-color: rgb(254, 202, 202)"],
+  [style*="border-color: rgb(252, 165, 165)"],
+  [style*="border-color: rgb(254, 226, 226)"],
+  [style*="border-color: rgb(254, 205, 211)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  border-color: rgba(239, 68, 68, 0.35) !important;
+}
+
+:root[data-theme="dark"] :is([style*="solid rgb(191, 219, 254)"],
+  [style*="solid rgb(186, 230, 253)"],
+  [style*="solid rgb(219, 234, 254)"],
+  [style*="solid rgb(199, 210, 254)"],
+  [style*="solid rgb(221, 214, 254)"],
+  [style*="solid rgb(165, 180, 252)"],
+  [style*="border-color: rgb(191, 219, 254)"],
+  [style*="border-color: rgb(186, 230, 253)"],
+  [style*="border-color: rgb(219, 234, 254)"],
+  [style*="border-color: rgb(199, 210, 254)"],
+  [style*="border-color: rgb(221, 214, 254)"],
+  [style*="border-color: rgb(165, 180, 252)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  border-color: rgba(99, 130, 246, 0.35) !important;
+}
+
+:root[data-theme="dark"] :is([style*="solid rgb(253, 230, 138)"],
+  [style*="solid rgb(254, 215, 170)"],
+  [style*="solid rgb(254, 243, 199)"],
+  [style*="border-color: rgb(253, 230, 138)"],
+  [style*="border-color: rgb(254, 215, 170)"],
+  [style*="border-color: rgb(254, 243, 199)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  border-color: rgba(245, 158, 11, 0.35) !important;
+}
+
+:root[data-theme="dark"] :is([style*="solid rgb(187, 247, 208)"],
+  [style*="solid rgb(167, 243, 208)"],
+  [style*="solid rgb(134, 239, 172)"],
+  [style*="border-color: rgb(187, 247, 208)"],
+  [style*="border-color: rgb(167, 243, 208)"],
+  [style*="border-color: rgb(134, 239, 172)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  border-color: rgba(16, 185, 129, 0.35) !important;
+}
+
+:root[data-theme="dark"] :is([style*="solid rgb(251, 207, 232)"],
+  [style*="solid rgb(249, 168, 212)"],
+  [style*="solid rgb(252, 231, 243)"],
+  [style*="border-color: rgb(251, 207, 232)"],
+  [style*="border-color: rgb(249, 168, 212)"],
+  [style*="border-color: rgb(252, 231, 243)"]):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) {
+  border-color: rgba(236, 72, 153, 0.35) !important;
+}
+
+/* ── Tailwind light utility classes used in a few dashboard screens ── */
+
+:root[data-theme="dark"] :is(.bg-white):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) { background-color: var(--bg-card) !important; }
+
+:root[data-theme="dark"] :is(.bg-slate-50, .bg-gray-50, .bg-zinc-50):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) { background-color: var(--bg-surface) !important; }
+
+:root[data-theme="dark"] :is(.bg-slate-100, .bg-gray-100, .bg-zinc-100):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) { background-color: var(--bg-hover) !important; }
+
+:root[data-theme="dark"] :is(.text-slate-900, .text-gray-900, .text-slate-800, .text-gray-800, .text-zinc-900, .text-black):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) { color: var(--text-primary) !important; }
+
+:root[data-theme="dark"] :is(.text-slate-700, .text-gray-700, .text-slate-600, .text-gray-600):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) { color: var(--text-secondary) !important; }
+
+:root[data-theme="dark"] :is(.border-slate-200, .border-gray-200, .border-slate-100, .border-gray-100):not(.fm-root *, .sd-root *, [data-keep-light], [data-keep-light] *) { border-color: var(--border) !important; }
